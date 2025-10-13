@@ -277,7 +277,7 @@ impl Tokenizer {
     pub fn train_from_iterator(
         &mut self,
         py: pyo3::Python<'_>,
-        iterator: &pyo3::Bound<'_, pyo3::PyAny>,
+        iterator: pyo3::Py<pyo3::types::PyIterator>,
         vocab_size: u32,
         buffer_size: usize,
         pattern: Option<String>,
@@ -289,12 +289,6 @@ impl Tokenizer {
         self.pattern = pattern_str.clone();
         self.compiled_pattern = Regex::new(&pattern_str)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e)))?;
-
-        // Prepare a true Python iterator object
-        let py_iter: pyo3::Py<pyo3::PyAny> = unsafe {
-            pyo3::Bound::from_borrowed_ptr_or_err(py, pyo3::ffi::PyObject_GetIter(iterator.as_ptr()))?
-                .into()
-        };
 
         // Global chunk counts
         let mut counts: AHashMap<CompactString, i32> = AHashMap::new();
@@ -308,28 +302,21 @@ impl Tokenizer {
         // Helper: refill `buf` with up to `buffer_size` strings from the Python iterator.
         // Returns Ok(true) if the iterator is exhausted, Ok(false) otherwise.
         let refill = |buf: &mut Vec<String>| -> PyResult<bool> {
-            pyo3::Python::with_gil(|py| {
+            pyo3::Python::attach(|py| {
                 buf.clear();
-                let it = py_iter.bind(py);
+                let mut it = iterator.bind(py).clone();
                 loop {
                     if buf.len() >= buffer_size {
                         return Ok(false);
                     }
-                    // next(it)
-                    let next_obj = unsafe {
-                        pyo3::Bound::from_owned_ptr_or_opt(py, pyo3::ffi::PyIter_Next(it.as_ptr()))
-                    };
-                    match next_obj {
-                        Some(obj) => {
+                    match it.next() {
+                        Some(Ok(obj)) => {
                             let s: String = obj.extract()?;
                             buf.push(s);
-                        }
+                        },
+                        Some(Err(e)) => return Err(e),
                         None => {
-                            if pyo3::PyErr::occurred(py) {
-                                return Err(pyo3::PyErr::fetch(py));
-                            } else {
-                                return Ok(true); // exhausted
-                            }
+                            return Ok(true); // exhausted
                         }
                     }
                 }
@@ -346,7 +333,7 @@ impl Tokenizer {
             total_sequences += buf.len() as u64;
 
             let pattern = self.compiled_pattern.clone();
-            let local: AHashMap<CompactString, i32> = py.allow_threads(|| {
+            let local: AHashMap<CompactString, i32> = py.detach(|| {
                 buf.par_iter()
                     .map(|s| {
                         let mut m: AHashMap<CompactString, i32> = AHashMap::new();
