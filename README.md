@@ -102,12 +102,32 @@ This includes all py, rs, html, toml, sh files, excludes the `rustbpe/target` fo
 Alternatively, I recommend using [DeepWiki](https://deepwiki.com/) from Devin/Cognition to ask questions of this repo. In the URL of this repo, simply change github.com to deepwiki.com, and you're off.
 
 ## Tests
+I haven't invested too much here but some tests exist, especially for the tokenizer, but follow some:
 
-I haven't invested too much here but some tests exist, especially for the tokenizer. Run e.g. as:
+- **GPT Model** (`test_gpt.py`): Architecture, forward/backward passes, generation, MQA, rotary embeddings
+- **Inference Engine** (`test_engine.py`): KV caching, sampling strategies, tool use (calculator), batch generation
+- **Optimizers** (`test_optimizers.py`): Muon and AdamW optimizer functionality
+- **Checkpoint Management** (`test_checkpoint_manager.py`): Save/load model states and metadata
+- **Data Loading** (`test_dataloader.py`): Batch creation, tokenization, distributed sharding concepts
+- **Common Utilities** (`test_common.py`): Distributed training helpers, logging
+- **Tokenizer** (`test_rustbpe.py`, `test_tokenizer.py`): BPE training, encode/decode (requires Rust module)
+
+Run all tests with:
 
 ```bash
+# Run all tests except tokenizer tests (which require building the Rust module)
+python -m pytest tests/ --ignore=tests/test_rustbpe.py --ignore=tests/test_tokenizer.py -v
+
+# Or run specific test files
+python -m pytest tests/test_gpt.py -v
+python -m pytest tests/test_engine.py -v
+
+# To run tokenizer tests, first build the Rust module:
+uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 python -m pytest tests/test_rustbpe.py -v -s
 ```
+
+All tests follow best practices with no skips or hacks, ensuring code quality and reliability.
 
 ## For Students
 
