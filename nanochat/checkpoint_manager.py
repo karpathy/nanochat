@@ -104,8 +104,8 @@ def find_largest_model(checkpoint_dir):
         candidates.sort(key=lambda x: x[0], reverse=True)
         return candidates[0][1]
     # 2) if that failed, take the most recently updated model:
-    candidates.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x[1])), reverse=True)
-    return candidates[0][1]
+    model_tags.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)), reverse=True)
+    return model_tags[0]
 
 
 def find_last_step(checkpoint_dir):
