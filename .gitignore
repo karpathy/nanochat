@@ -6,3 +6,6 @@ dev-ignore/
 
 # IDE
 .idea/
+
+# Personal documentation
+docs/
