@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 rustbpe/target/
 dev-ignore/
+
+# IDE
+.idea/
