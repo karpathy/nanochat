@@ -58,6 +58,8 @@ sky status --endpoint 8000 nanochat-serve
 ```
 
 Open the displayed URL in your browser to chat with your trained model!
+<img width="940" height="1050" alt="image" src="https://github.com/user-attachments/assets/ee8b1536-1faa-435a-ab22-4db2c8cf9220" />
+
 
 ### Shared Storage
 
