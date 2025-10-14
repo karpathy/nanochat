@@ -13,6 +13,10 @@
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# For newer AMD GPUs that are not yet officially supported by PyTorch ROCm builds,
+# we can override the detected GPU architecture to a compatible one.
+# For example, for a gfx1151 GPU, we can use gfx1100 (11.0.0).
+export HSA_OVERRIDE_GFX_VERSION=11.0.0
 NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
