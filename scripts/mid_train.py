@@ -16,7 +16,7 @@ import time
 import wandb
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, resolve_autocast_dtype
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -51,9 +51,11 @@ user_config = {k: globals()[k] for k in config_keys} # possibly useful for loggi
 
 # Compute init
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
+device_type = device.type
+is_cuda = device_type == "cuda"
 master_process = ddp_rank == 0
-dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=dtype)
+autocast_dtype = resolve_autocast_dtype(device_type, dtype)
+autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=autocast_dtype)
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
@@ -129,8 +131,8 @@ def mid_data_generator(split):
             scratch[i] = token_buffer.popleft()
         inputs_cpu = scratch[:-1].to(dtype=torch.int32)
         targets_cpu = scratch[1:]
-        inputs = inputs_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int32, non_blocking=True)
-        targets = targets_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int64, non_blocking=True)
+        inputs = inputs_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int32, non_blocking=is_cuda)
+        targets = targets_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int64, non_blocking=is_cuda)
         if split == "train":
             approx_progress = cursor / dataset_size # approximate progress as a fraction of the dataset
         yield inputs, targets
@@ -156,6 +158,7 @@ min_val_bpb = float("inf")
 smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
+mfu = None
 step = 0
 while True:
     flops_so_far = num_flops_per_token * total_batch_size * step
@@ -214,7 +217,8 @@ while True:
     # -------------------------------------------------------------------------
     # single training step
     # evaluate the gradient
-    torch.cuda.synchronize()
+    if is_cuda:
+        torch.cuda.synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
@@ -222,7 +226,7 @@ while True:
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         loss.backward()
-        x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+        x, y = next(train_loader) # prefetch the next batch while the accelerator is busy with forward/backward
         progress = max(progress, approx_progress) # only increase progress monotonically
     # step the optimizers
     lrm = get_lr_multiplier(progress)
@@ -235,7 +239,8 @@ while True:
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
-    torch.cuda.synchronize()
+    if is_cuda:
+        torch.cuda.synchronize()
     t1 = time.time()
     dt = t1 - t0
     # -------------------------------------------------------------------------
@@ -249,13 +254,14 @@ while True:
     pct_done = 100 * progress
     tok_per_sec = int(world_tokens_per_fwdbwd / dt)
     flops_per_sec = num_flops_per_token * total_batch_size / dt
-    promised_flops_per_sec_h100 = 989e12 * ddp_world_size # bfloat16 H100 SXM and without 2:4 sparsity
-    mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
+    promised_flops_per_sec = 989e12 * ddp_world_size if is_cuda else None # bfloat16 H100 baseline
+    mfu = 100 * flops_per_sec / promised_flops_per_sec if promised_flops_per_sec else None
+    mfu_display = f"{mfu:.2f}" if mfu is not None else "N/A"
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
-    print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
+    print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu_display} | total time: {total_training_time/60:.2f}m")
     if step % 10 == 0:
-        wandb_run.log({
+        log_payload = {
             "step": step,
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
@@ -263,11 +269,17 @@ while True:
             "train/lrm": lrm,
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,
-            "train/mfu": mfu,
-        })
+        }
+        if mfu is not None:
+            log_payload["train/mfu"] = mfu
+        wandb_run.log(log_payload)
 
 # print a few more stats
-print0(f"Peak memory usage: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MiB")
+peak_memory_mib = (torch.cuda.max_memory_allocated() / 1024 / 1024) if is_cuda else None
+if peak_memory_mib is not None:
+    print0(f"Peak memory usage: {peak_memory_mib:.2f}MiB")
+else:
+    print0("Peak memory usage: N/A (CPU run)")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 

@@ -2,10 +2,10 @@
 Train model. Run as:
 
 python base_train.py
-
+        "MFU %": f"{mfu:.2f}%" if mfu is not None else "N/A",
 or distributed as:
 
-torchrun --nproc_per_node=8 base_train.py
+        "Peak memory usage": f"{peak_memory_mib:.2f}MiB" if peak_memory_mib is not None else "N/A",
 """
 
 import os
@@ -16,7 +16,7 @@ import torch
 
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, resolve_autocast_dtype
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -58,8 +58,11 @@ user_config = {k: globals()[k] for k in config_keys} # will be useful for loggin
 
 # Compute init
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
+device_type = device.type
+is_cuda = device_type == "cuda"
+autocast_dtype = resolve_autocast_dtype(device_type)
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=autocast_dtype)
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
@@ -96,7 +99,7 @@ model_config_kwargs = dict(sequence_len=max_seq_len, vocab_size=vocab_size, n_la
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
     model = GPT(model_config)
-model.to_empty(device="cuda")
+model.to_empty(device=device)
 model.init_weights()
 orig_model = model # original, uncompiled model, for saving raw model state_dict
 model = torch.compile(model, dynamic=False) # TODO: dynamic True/False think through
@@ -133,8 +136,8 @@ adamw_optimizer, muon_optimizer = optimizers
 # Initialize the DataLoaders for train/val
 base_dir = get_base_dir()
 tokens_dir = os.path.join(base_dir, "tokenized_data")
-train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train")
-build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val")
+train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", device=device)
+build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)
 x, y = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
@@ -165,16 +168,22 @@ def get_muon_momentum(it):
 # -----------------------------------------------------------------------------
 # Training loop
 min_val_bpb = float("inf")
+last_val_bpb = float("nan")
 smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
+mfu = None
+core_results = {"core_metric": float("nan"), "centered_results": {}}
+eval_enabled = eval_every > 0 and eval_tokens > 0
+core_metric_enabled = core_metric_every > 0 and core_metric_max_per_task > 0
+sample_enabled = sample_every > 0
 # note that we run +1 steps only so that we can eval and save at the end
 for step in range(num_iterations + 1):
     last_step = step == num_iterations
     flops_so_far = num_flops_per_token * total_batch_size * step
 
     # once in a while: evaluate the val bpb (all ranks participate)
-    if last_step or step % eval_every == 0:
+    if eval_enabled and (last_step or step % eval_every == 0):
         model.eval()
         val_loader = build_val_loader()
         eval_steps = eval_tokens // (device_batch_size * max_seq_len * ddp_world_size)
@@ -183,6 +192,7 @@ for step in range(num_iterations + 1):
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
+        last_val_bpb = val_bpb
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -193,22 +203,22 @@ for step in range(num_iterations + 1):
 
     # once in a while: estimate the CORE metric (all ranks participate)
     # use the original uncompiled model because the inputs keep changing shape
-    if last_step or (step > 0 and step % core_metric_every == 0):
+    if core_metric_enabled and (last_step or (step > 0 and step % core_metric_every == 0)):
         model.eval()
         with autocast_ctx:
-            results = evaluate_model(orig_model, tokenizer, device, max_per_task=core_metric_max_per_task)
-        print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
+            core_results = evaluate_model(orig_model, tokenizer, device, max_per_task=core_metric_max_per_task)
+        print0(f"Step {step:05d} | CORE metric: {core_results['core_metric']:.4f}")
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
-            "core_metric": results["core_metric"],
-            "centered_results": results["centered_results"],
+            "core_metric": core_results["core_metric"],
+            "centered_results": core_results["centered_results"],
         })
         model.train()
 
     # once in a while: sample from the model (only on master process)
     # use the original uncompiled model because the inputs keep changing shape
-    if master_process and (last_step or (step > 0 and step % sample_every == 0)):
+    if sample_enabled and master_process and (last_step or (step > 0 and step % sample_every == 0)):
         model.eval()
         prompts = [
             "The capital of France is",
@@ -252,7 +262,8 @@ for step in range(num_iterations + 1):
     # -------------------------------------------------------------------------
     # single training step
     # evaluate the gradient
-    torch.cuda.synchronize()
+    if is_cuda:
+        torch.cuda.synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
@@ -260,7 +271,7 @@ for step in range(num_iterations + 1):
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         loss.backward()
-        x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+        x, y = next(train_loader) # prefetch the next batch while the accelerator is busy with forward/backward
     # gradient clipping (TODO possibly expertiment with)
     if grad_clip > 0.0:
         torch.nn.utils.clip_grad_norm_(orig_model.parameters(), grad_clip)
@@ -275,7 +286,8 @@ for step in range(num_iterations + 1):
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
-    torch.cuda.synchronize()
+    if is_cuda:
+        torch.cuda.synchronize()
     t1 = time.time()
     dt = t1 - t0
     # -------------------------------------------------------------------------
@@ -286,13 +298,14 @@ for step in range(num_iterations + 1):
     pct_done = 100 * step / num_iterations
     tok_per_sec = int(world_tokens_per_fwdbwd / dt)
     flops_per_sec = num_flops_per_token * total_batch_size / dt
-    promised_flops_per_sec_h100 = 989e12 * ddp_world_size # bfloat16 H100 SXM and without 2:4 sparsity
-    mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
+    promised_flops_per_sec = 989e12 * ddp_world_size if is_cuda else None # bfloat16 H100 baseline
+    mfu = 100 * flops_per_sec / promised_flops_per_sec if promised_flops_per_sec else None
+    mfu_display = f"{mfu:.2f}" if mfu is not None else "N/A"
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
-    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu_display} | total time: {total_training_time/60:.2f}m")
     if step % 100 == 0:
-        wandb_run.log({
+        log_payload = {
             "step": step,
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
@@ -300,11 +313,17 @@ for step in range(num_iterations + 1):
             "train/lrm": lrm,
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,
-            "train/mfu": mfu,
-        })
+        }
+        if mfu is not None:
+            log_payload["train/mfu"] = mfu
+        wandb_run.log(log_payload)
 
 # print a few more stats
-print0(f"Peak memory usage: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MiB")
+peak_memory_mib = (torch.cuda.max_memory_allocated() / 1024 / 1024) if is_cuda else None
+if peak_memory_mib is not None:
+    print0(f"Peak memory usage: {peak_memory_mib:.2f}MiB")
+else:
+    print0("Peak memory usage: N/A (CPU run)")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
@@ -325,12 +344,12 @@ get_report().log(section="Base model training", data=[
     },
     { # stats about training outcomes
         "Minimum validation bpb": min_val_bpb,
-        "Final validation bpb": val_bpb,
-        "CORE metric estimate": results["core_metric"],
-        "MFU %": f"{mfu:.2f}%",
+        "Final validation bpb": last_val_bpb,
+        "CORE metric estimate": core_results["core_metric"],
+        "MFU %": f"{mfu:.2f}%" if mfu is not None else "N/A",
         "Total training flops": f"{flops_so_far:e}",
         "Total training time": f"{total_training_time/60:.2f}m",
-        "Peak memory usage": f"{torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MiB",
+        "Peak memory usage": f"{peak_memory_mib:.2f}MiB" if peak_memory_mib is not None else "N/A",
     }
 ])
 
