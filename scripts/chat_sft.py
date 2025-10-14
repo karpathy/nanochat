@@ -208,17 +208,23 @@ for step in range(num_iterations):
         break
 
     # evaluate the gradient
-    num_tokens = torch.tensor(0, device=device) # the number of "active" tokens of supervision seen
+    num_tokens = torch.tensor(0, device=device)  # the number of "active" tokens of supervision seen
+
+    # accumulate raw micro-batch losses on-device to avoid needless CPU/GPU syncs
+    accumulated_loss = torch.tensor(0.0, device=device)
     for micro_step in range(grad_accum_steps):
         train_inputs, train_targets = next(train_iter)
         with autocast_ctx:
             loss = model(train_inputs, train_targets)
-        train_loss = loss.detach() # for logging
-        loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
-        loss.backward() # accumulate the gradient
+        accumulated_loss += loss.detach()  # accumulate the raw micro-batch loss (no grad)
+        loss = loss / grad_accum_steps      # normalize before backward for correct grad accumulation
+        loss.backward()                     # accumulate gradients
         num_tokens += (train_targets >= 0).sum()
     if ddp:
-        dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM) # sum over ranks
+        dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM)  # sum over ranks
+
+    # average loss across micro-steps for logging (tensor, still on device)
+    train_loss = accumulated_loss / grad_accum_steps
 
     # learning rate scheduler
     lrm = get_lr_multiplier(step)
