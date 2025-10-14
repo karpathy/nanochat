@@ -93,15 +93,15 @@ def compute_init():
     """Basic initialization that we keep doing over and over, so make common."""
 
     # Detect hardware
-    if torch.cuda.is_available():
+    if hasattr(torch.version, 'hip') and torch.version.hip and torch.cuda.is_available():
+        device_type = "cuda" # ROCm uses cuda naming in torch
+        backend = "rccl"
+    elif torch.cuda.is_available():
         device_type = "cuda"
         backend = "nccl"
     elif torch.xpu.is_available():
         device_type = "xpu"
         backend = "ccl"
-    elif hasattr(torch.version, 'hip') and torch.version.hip and torch.cuda.is_available():
-        device_type = "cuda" # ROCm uses cuda naming in torch
-        backend = "rccl"
     else:
         device_type = "cpu"
         backend = "gloo"
