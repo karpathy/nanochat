@@ -1,0 +1,28 @@
+# Run the full nanochat training speedrun
+#
+# Launch:
+#   sky launch -c nanochat-speedrun cloud/speedrun.sky.yaml --infra <aws|gcp|nebius|lambda|etc>
+#
+# Monitor progress:
+#   sky logs nanochat-speedrun
+#
+# This will train the model using 8x H100 GPUs and save results to S3.
+
+name: nanochat-speedrun
+
+resources:
+  accelerators: H100:8
+  disk_size: 512
+
+file_mounts:
+  /tmp/nanochat:
+    source: s3://nanochat-data
+
+workdir: .
+
+setup: |
+  sudo apt-get install -y unzip
+
+run: |
+  export NANOCHAT_BASE_DIR=/tmp/nanochat
+  bash speedrun.sh
