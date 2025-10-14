@@ -225,6 +225,8 @@ for step in range(num_iterations):
 
     # average loss across micro-steps for logging (tensor, still on device)
     train_loss = accumulated_loss / grad_accum_steps
+    if ddp:
+        dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM) # sum over ranks
 
     # learning rate scheduler
     lrm = get_lr_multiplier(step)
