@@ -91,6 +91,13 @@ def get_device_type():
         return "cpu"
     return "cuda"
 
+def get_default_dtype():
+    """Get the default dtype for training: bfloat16 on GPU, float32 on CPU."""
+    # bfloat16 is well-supported on modern GPUs but may have issues on CPU
+    if torch.cuda.is_available():
+        return torch.bfloat16
+    return torch.float32
+
 def get_dist_info():
     if is_ddp():
         assert all(var in os.environ for var in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE'])

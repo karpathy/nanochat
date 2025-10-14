@@ -19,7 +19,7 @@ import yaml
 import pandas as pd
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, get_device_type
+from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, get_device_type, get_default_dtype
 from nanochat.tokenizer import HuggingFaceTokenizer
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
@@ -122,7 +122,7 @@ def main():
 
     # distributed / precision setup
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
-    autocast_ctx = torch.amp.autocast(device_type=get_device_type(), dtype=torch.bfloat16)
+    autocast_ctx = torch.amp.autocast(device_type=get_device_type(), dtype=get_default_dtype())
 
     # Load model and tokenizer from command line or from file system
     if len(sys.argv) >= 2:
