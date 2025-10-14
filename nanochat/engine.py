@@ -46,7 +46,12 @@ def eval_with_timeout(formula, max_time=3):
 def use_calculator(expr):
     """Evaluate a math expression safely."""
     expr = expr.replace(",", "")
-    if any([x not in "0123456789*+-/.() " for x in expr]): # for now disallow non-numeric chars
+    # Faster and safer check for allowed characters
+    allowed_chars = set("0123456789*+-/.() ")
+    if not all(c in allowed_chars for c in expr):
+        return None
+    # Disallow access to built-ins and other sensitive attributes
+    if "__" in expr:
         return None
     if "**" in expr: # for now disallow power operator, could be very expensive
         return None
