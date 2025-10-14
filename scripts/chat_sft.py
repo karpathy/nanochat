@@ -17,7 +17,7 @@ import wandb
 import torch
 import torch.distributed as dist
 
-from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb
+from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb, get_device_type
 from nanochat.checkpoint_manager import load_model
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.engine import Engine
@@ -63,7 +63,7 @@ user_config = {k: globals()[k] for k in config_keys} # possibly useful for loggi
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 master_process = ddp_rank == 0
 dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=dtype)
+autocast_ctx = torch.amp.autocast(device_type=get_device_type(), dtype=dtype)
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process

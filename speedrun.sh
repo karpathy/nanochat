@@ -22,8 +22,19 @@ mkdir -p $NANOCHAT_BASE_DIR
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
-# install the repo dependencies
-uv sync
+
+# Detect hardware and install appropriate PyTorch version
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "Detected macOS - installing CPU version of PyTorch"
+    uv sync --extra cpu
+elif command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+    echo "Detected NVIDIA GPU(s) - installing CUDA version of PyTorch"
+    uv sync --extra gpu
+else
+    echo "No GPU detected - installing CPU version of PyTorch"
+    uv sync --extra cpu
+fi
+
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
 
@@ -71,6 +82,23 @@ python -m scripts.tok_train --max_chars=2000000000
 python -m scripts.tok_eval
 
 # -----------------------------------------------------------------------------
+# Platform detection for compute configuration
+
+# Check if running on macOS
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "Detected macOS - running in CPU mode (single process)"
+    TORCHRUN_CMD="python"
+# Check if CUDA/GPUs are available
+elif command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+    GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
+    echo "Detected $GPU_COUNT GPU(s) - running in GPU mode"
+    TORCHRUN_CMD="torchrun --standalone --nproc_per_node=$GPU_COUNT"
+else
+    echo "No GPUs detected - running in CPU mode (single process)"
+    TORCHRUN_CMD="python"
+fi
+
+# -----------------------------------------------------------------------------
 # Base model (pretraining)
 
 # Download the eval_bundle from s3 to evaluate CORE metric during training (~162MB)
@@ -92,25 +120,25 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
+$TORCHRUN_CMD -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
 # evaluate the model on a larger chunk of train/val data and draw some samples
-torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
+$TORCHRUN_CMD -m scripts.base_loss
 # evaluate the model on CORE tasks
-torchrun --standalone --nproc_per_node=8 -m scripts.base_eval
+$TORCHRUN_CMD -m scripts.base_eval
 
 # -----------------------------------------------------------------------------
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
 # run midtraining and eval the model
-torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i mid
+$TORCHRUN_CMD -m scripts.mid_train -- --run=$WANDB_RUN
+$TORCHRUN_CMD -m scripts.chat_eval -- -i mid
 
 # -----------------------------------------------------------------------------
 # Supervised Finetuning (domain adaptation to each sequence all by itself per row)
 
 # train sft and re-eval right away (should see a small bump)
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
+$TORCHRUN_CMD -m scripts.chat_sft -- --run=$WANDB_RUN
+$TORCHRUN_CMD -m scripts.chat_eval -- -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"
@@ -123,9 +151,9 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 # (optional)
 
 # run reinforcement learning
-# torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=$WANDB_RUN
+# $TORCHRUN_CMD -m scripts.chat_rl -- --run=$WANDB_RUN
 # eval the RL model only on GSM8K
-# torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i rl -a GSM8K
+# $TORCHRUN_CMD -m scripts.chat_eval -- -i rl -a GSM8K
 
 # -----------------------------------------------------------------------------
 # Generate the full report by putting together all the sections

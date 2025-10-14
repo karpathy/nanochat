@@ -2,7 +2,7 @@ from collections import deque
 
 import torch
 
-from nanochat.common import get_dist_info
+from nanochat.common import get_dist_info, get_device_type
 from nanochat.dataset import parquets_iter_batched
 from nanochat.tokenizer import get_tokenizer
 
@@ -43,7 +43,8 @@ def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokeniz
         # Create the inputs/targets as 1D tensors
         inputs_cpu = scratch[:-1].to(dtype=torch.int32)
         targets_cpu = scratch[1:]
-        # Reshape to 2D and move to GPU async
-        inputs = inputs_cpu.view(B, T).to(device="cuda", dtype=torch.int32, non_blocking=True)
-        targets = targets_cpu.view(B, T).to(device="cuda", dtype=torch.int64, non_blocking=True)
+        # Reshape to 2D and move to device async
+        device_type = get_device_type()
+        inputs = inputs_cpu.view(B, T).to(device=device_type, dtype=torch.int32, non_blocking=True)
+        targets = targets_cpu.view(B, T).to(device=device_type, dtype=torch.int64, non_blocking=True)
         yield inputs, targets

@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, AsyncGenerator
 
-from nanochat.common import compute_init
+from nanochat.common import compute_init, get_device_type
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
 
@@ -32,7 +32,7 @@ parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind th
 args = parser.parse_args()
 
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+autocast_ctx = torch.amp.autocast(device_type=get_device_type(), dtype=torch.bfloat16)
 
 class ChatMessage(BaseModel):
     role: str

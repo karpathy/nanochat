@@ -79,6 +79,18 @@ def is_ddp():
     # TODO is there a proper way
     return int(os.environ.get('RANK', -1)) != -1
 
+def is_macos():
+    """Check if running on macOS."""
+    import platform
+    return platform.system() == "Darwin"
+
+def get_device_type():
+    """Get the device type string for autocast: 'cuda' or 'cpu'."""
+    # Use CPU if on macOS or if CUDA is not available
+    if is_macos() or not torch.cuda.is_available():
+        return "cpu"
+    return "cuda"
+
 def get_dist_info():
     if is_ddp():
         assert all(var in os.environ for var in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE'])
@@ -92,12 +104,14 @@ def get_dist_info():
 def compute_init():
     """Basic initialization that we keep doing over and over, so make common."""
 
-    # CUDA is currently required
-    assert torch.cuda.is_available(), "CUDA is needed for a distributed run atm"
+    # Check if CUDA is available
+    has_cuda = torch.cuda.is_available()
+    on_macos = is_macos()
 
     # Reproducibility
     torch.manual_seed(42)
-    torch.cuda.manual_seed(42)
+    if has_cuda:
+        torch.cuda.manual_seed(42)
     # skipping full reproducibility for now, possibly investigate slowdown later
     # torch.use_deterministic_algorithms(True)
     # torch.backends.cudnn.deterministic = True
@@ -108,13 +122,25 @@ def compute_init():
 
     # Distributed setup: Distributed Data Parallel (DDP), optional
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
-    if ddp:
+
+    # Determine device
+    if on_macos or not has_cuda:
+        device = torch.device("cpu")
+        if on_macos:
+            logger.info("Running on macOS with CPU")
+        else:
+            logger.info("Running on CPU (CUDA not available)")
+        if ddp:
+            logger.warning("DDP requested but will run on CPU")
+    elif ddp:
         device = torch.device("cuda", ddp_local_rank)
         torch.cuda.set_device(device) # make "cuda" default to this device
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
+        logger.info(f"Running on CUDA with DDP (rank {ddp_rank}/{ddp_world_size})")
     else:
         device = torch.device("cuda")
+        logger.info("Running on CUDA (single GPU)")
 
     if ddp_rank == 0:
         logger.info(f"Distributed world size: {ddp_world_size}")
