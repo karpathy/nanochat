@@ -16,6 +16,7 @@ import copy
 import wandb
 import torch
 import torch.distributed as dist
+from contextlib import nullcontext
 
 from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb
 from nanochat.checkpoint_manager import load_model
@@ -211,11 +212,15 @@ for step in range(num_iterations):
     num_tokens = torch.tensor(0, device=device) # the number of "active" tokens of supervision seen
     for micro_step in range(grad_accum_steps):
         train_inputs, train_targets = next(train_iter)
-        with autocast_ctx:
-            loss = model(train_inputs, train_targets)
-        train_loss = loss.detach() # for logging
-        loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
-        loss.backward() # accumulate the gradient
+        sync_needed = (not ddp) or (micro_step == grad_accum_steps - 1)
+        sync_context = nullcontext() if sync_needed else model.no_sync()
+        with sync_context:
+            with autocast_ctx:
+                loss = model(train_inputs, train_targets)
+            if micro_step == 0:
+                train_loss = loss.detach()  # log once per iteration
+            loss = loss / grad_accum_steps  # normalize loss
+            loss.backward()  # accumulate gradient
         num_tokens += (train_targets >= 0).sum()
     if ddp:
         dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM) # sum over ranks
