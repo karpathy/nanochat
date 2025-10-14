@@ -10,6 +10,7 @@ dependencies = [
     "files-to-prompt>=0.6",
     "numpy==1.26.4",
     "psutil>=7.1.0",
+    "pyarrow>=21.0.0",
     "regex>=2025.9.1",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
