@@ -82,12 +82,50 @@ torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_
 
 That's it! The biggest thing to pay attention to is making sure you have enough data shards to train on (the code will loop and do more epochs over the same training set otherwise, decreasing learning speed a bit), and managing your memory/VRAM, primarily by decreasing the `device_batch_size` until things fit (the scripts automatically compensates by increasing the number of gradient accumulation loops, simply turning parallel compute to sequential compute).
 
-And a bit more about computing environments that will run nanochat:
+## Computing Environments
 
-- The code will run just fine on the Ampere 8XA100 GPU node as well, but a bit slower.
-- All code will run just fine on even a single GPU by omitting `torchrun`, and will produce ~identical results (code will automatically switch to gradient accumulation), but you'll have to wait 8 times longer.
-- If your GPU(s) have less than 80GB, you'll have to tune some of the hyperparameters or you will OOM / run out of VRAM. Look for `--device_batch_size` in the scripts and reduce it until things fit. E.g. from 32 (default) to 16, 8, 4, 2, or even 1. Less than that you'll have to know a bit more what you're doing and get more creative.
-- Most of the code is fairly vanilla PyTorch so it should run on anything that supports that - xpu, mps, or etc, but I haven't implemented this out of the box so it might take a bit of tinkering.
+nanochat is designed to be flexible and can run on a variety of hardware backends, including NVIDIA GPUs (via CUDA) and AMD GPUs (via ROCm). The code is written to be device-agnostic and will automatically detect and use the available hardware.
+
+### Prerequisites
+
+Before you begin, ensure you have the necessary drivers and toolkits installed for your hardware:
+
+-   **NVIDIA GPUs:** You will need the NVIDIA driver and the CUDA Toolkit installed.
+-   **AMD GPUs:** You will need to install the ROCm platform.
+
+### Python Dependencies
+
+The Python dependencies are managed by `uv`. The project is configured to install a specific version of PyTorch that is compatible with your hardware.
+
+**Important:** Before installing the dependencies, you must configure `pyproject.toml` to use the correct PyTorch build for your system.
+
+-   **For ROCm:**
+    Open `pyproject.toml` and ensure the `tool.uv.index` section points to the ROCm wheels. For example:
+    ```toml
+    [[tool.uv.index]]
+    name = "pytorch-rocm63"
+    url = "https://download.pytorch.org/whl/rocm6.3"
+    explicit = true
+    ```
+-   **For CUDA:**
+    You will need to change the `url` to the appropriate CUDA version. For example, for CUDA 12.8:
+    ```toml
+    [[tool.uv.index]]
+    name = "pytorch-cu128"
+    url = "https://download.pytorch.org/whl/cu128"
+    explicit = true
+    ```
+    You can find the correct URL for your CUDA version on the [PyTorch website](https://pytorch.org/get-started/locally/).
+
+Once you have configured `pyproject.toml`, you can install the dependencies by running `uv sync` from within the activated virtual environment, as shown in the `speedrun.sh` script.
+
+### Running on a Single GPU
+
+The `speedrun.sh` script has been configured to run on a single GPU by default, using `python -m ...` instead of `torchrun`. If you have a multi-GPU setup, you can modify the script to use `torchrun` with the appropriate `--nproc_per_node` setting.
+
+### Memory Considerations
+
+If your GPU has less than 80GB of VRAM, you may need to reduce the `device_batch_size` in the training scripts to avoid running out of memory. This will increase training time but will allow the model to train successfully on lower-VRAM cards.
 
 ## Questions
 
