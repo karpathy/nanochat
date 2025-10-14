@@ -185,7 +185,7 @@ class Engine:
             seq_len=len(tokens),
             **kv_model_kwargs,
         )
-        ids = torch.tensor([tokens], dtype=torch.long, device=device)
+        ids = torch.tensor([tokens.copy() for _ in range(num_samples)], dtype=torch.long, device=device)
         logits = self.model.forward(ids, kv_cache=kv_cache_prefill)
         logits = logits[:, -1, :]
         next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
@@ -218,7 +218,7 @@ class Engine:
             # Get sampled tokens - either from prefill or from forward pass
             if first_iteration:
                 # Use the tokens we already sampled from prefill
-                sampled_tokens = [sampled_tokens[0]] * num_samples  # Broadcast first token to all rows
+                # sampled_tokens = [sampled_tokens[0]] * num_samples  # Broadcast first token to all rows
                 # TODO: we should sample a token for each row instead of broadcasting
                 first_iteration = False
             else:
