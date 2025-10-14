@@ -102,7 +102,7 @@ This includes all py, rs, html, toml, sh files, excludes the `rustbpe/target` fo
 Alternatively, I recommend using [DeepWiki](https://deepwiki.com/) from Devin/Cognition to ask questions of this repo. In the URL of this repo, simply change github.com to deepwiki.com, and you're off.
 
 ## Tests
-I haven't invested too much here but some tests exist, especially for the tokenizer, but follow some:
+Here are some tests:
 
 - **GPT Model** (`test_gpt.py`): Architecture, forward/backward passes, generation, MQA, rotary embeddings
 - **Inference Engine** (`test_engine.py`): KV caching, sampling strategies, tool use (calculator), batch generation
