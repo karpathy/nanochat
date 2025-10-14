@@ -80,7 +80,7 @@ torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=26 --d
 torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_size=16
 ```
 
-That's it! The biggest thing to pay attention to is making sure you have enough data shards to train on (the code will loop and do more epochs over the same training set otherwise, decreasing learning speed a bit), and managing your memory/VRAM, primarily by decreasing the `device_batch_size` until things fit (the scripts automatically compensates by increasing the number of gradient accumulation loops, simply turning parallel compute to sequential compute).
+That's it! The biggest thing to pay attention to is making sure you have enough data shards to train on (the code will loop and do more epochs over the same training set otherwise, decreasing learning speed a bit), and managing your memory/VRAM, primarily by decreasing the `device_batch_size` until things fit (the scripts automatically compensate by increasing the number of gradient accumulation loops, simply turning parallel compute to sequential compute).
 
 And a bit more about computing environments that will run nanochat:
 
