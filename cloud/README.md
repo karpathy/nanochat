@@ -1,19 +1,20 @@
 # Running nanochat on the Cloud with SkyPilot
 
-This directory contains [SkyPilot](https://skypilot.readthedocs.io/) configurations for easily launching nanochat on various cloud providers.
+This directory contains [SkyPilot](https://skypilot.readthedocs.io/) configurations for easily launching nanochat on various cloud providers and Kubernetes clusters.
 
 ## Prerequisites
 
-1. Install SkyPilot and configure it with your cloud provider(s):
+1. Install SkyPilot and configure it with your cloud provider(s) or Kubernetes cluster:
    - Follow the [SkyPilot installation guide](https://docs.skypilot.co/en/latest/getting-started/installation.html)
-   - Configure your cloud credentials (AWS, GCP, Azure, Lambda, Nebius, etc.)
+   - Configure your cloud credentials (AWS, GCP, Azure, Lambda, Nebius, etc.) OR
+   - Configure Kubernetes access via [SkyPilot's Kubernetes support](https://docs.skypilot.co/en/latest/reference/kubernetes/index.html)
 
 ## Training: Running the Speedrun Pipeline
 
 Launch the speedrun training pipeline on any cloud provider with a single command:
 
 ```bash
-sky launch -c nanochat-speedrun cloud/speedrun.sky.yaml --infra <aws|gcp|nebius|lambda|etc>
+sky launch -c nanochat-speedrun cloud/speedrun.sky.yaml --infra <k8s|aws|gcp|nebius|lambda|etc>
 ```
 
 This will:
@@ -40,7 +41,7 @@ sky logs nanochat-speedrun
 Once training is complete, serve your trained model with the web UI:
 
 ```bash
-sky launch -c nanochat-serve cloud/serve.sky.yaml --infra <aws|gcp|nebius|lambda|etc>
+sky launch -c nanochat-serve cloud/serve.sky.yaml --infra <k8s|aws|gcp|nebius|lambda|etc>
 ```
 
 This will:
