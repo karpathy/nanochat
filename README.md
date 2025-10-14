@@ -101,7 +101,31 @@ This includes all py, rs, html, toml, sh files, excludes the `rustbpe/target` fo
 
 Alternatively, I recommend using [DeepWiki](https://deepwiki.com/) from Devin/Cognition to ask questions of this repo. In the URL of this repo, simply change github.com to deepwiki.com, and you're off.
 
+## Setup
+
+If you want to work on the codebase or run tests independently (rather than using `speedrun.sh` which handles setup automatically), you'll need to set up your environment:
+
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create a virtual environment
+uv venv
+
+# Install dependencies
+uv sync
+
+# Activate the virtual environment
+source .venv/bin/activate
+
+# (Optional) Build the Rust tokenizer module for tokenizer tests
+uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+```
+
+Note: If you're just running `speedrun.sh`, it handles all of this setup automatically.
+
 ## Tests
+
 Here are some tests:
 
 - **GPT Model** (`test_gpt.py`): Architecture, forward/backward passes, generation, MQA, rotary embeddings
