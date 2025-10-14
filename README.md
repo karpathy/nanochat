@@ -93,6 +93,8 @@ Before you begin, ensure you have the necessary drivers and toolkits installed f
 -   **NVIDIA GPUs:** You will need the NVIDIA driver and the CUDA Toolkit installed.
 -   **AMD GPUs:** You will need to install the ROCm platform.
 
+    **Note for newer AMD GPUs:** Some newer AMD GPU architectures (e.g., `gfx1151`) may not be officially supported by the pre-compiled PyTorch ROCm builds yet. If you encounter a `torch.AcceleratorError: HIP error: invalid device function` error, you can work around this by setting the `HSA_OVERRIDE_GFX_VERSION` environment variable to a compatible, supported architecture. For example, for `gfx1151`, you can use `11.0.0`. The `speedrun.sh` script includes this workaround by default.
+
 ### Python Dependencies
 
 The Python dependencies are managed by `uv`. The project is configured to install a specific version of PyTorch that is compatible with your hardware.
