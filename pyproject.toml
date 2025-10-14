@@ -14,6 +14,7 @@ dependencies = [
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
     "torch>=2.8.0",
+    "pytorch-triton-rocm==3.4.0; platform_machine == 'x86_64' and sys_platform == 'linux'",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
 ]
@@ -22,15 +23,18 @@ dependencies = [
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
-# target torch to cuda 12.8
+# target torch to rocm 6.3
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu128" },
+    { index = "pytorch-rocm63" },
+]
+pytorch-triton-rocm = [
+    { index = "pytorch-rocm63" },
 ]
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-rocm63"
+url = "https://download.pytorch.org/whl/rocm6.3"
 explicit = true
 
 [tool.maturin]
@@ -39,7 +43,7 @@ bindings = "pyo3"
 python-source = "."
 manifest-path = "rustbpe/Cargo.toml"
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
     "maturin>=1.9.4",
     "pytest>=8.0.0",

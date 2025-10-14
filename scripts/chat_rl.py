@@ -57,7 +57,7 @@ user_config = {k: globals()[k] for k in config_keys} # will be useful for loggin
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=dtype)
+autocast_ctx = torch.amp.autocast(device_type=device.type, dtype=dtype)
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process

@@ -32,7 +32,7 @@ parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind th
 args = parser.parse_args()
 
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+autocast_ctx = torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16)
 
 class ChatMessage(BaseModel):
     role: str

@@ -21,7 +21,7 @@ args = parser.parse_args()
 
 # Init the model and tokenizer
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+autocast_ctx = torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16)
 model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
 
 # Special tokens for the chat state machine
