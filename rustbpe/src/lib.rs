@@ -112,12 +112,10 @@ impl PartialOrd for MergeJob {
 impl Ord for MergeJob {
     fn cmp(&self, other: &Self) -> Ordering {
         // Max-heap by count; tie-break to ascending pair order (deterministic)
-        if self.count != other.count {
-            self.count.cmp(&other.count)
-        } else {
+        self.count.cmp(&other.count).then_with(||
             // ascending order on the pair when counts tie
             other.pair.cmp(&self.pair)
-        }
+        )
     }
 }
 
