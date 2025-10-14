@@ -13,6 +13,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
 import torch
+from contextlib import nullcontext
 
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader
@@ -255,12 +256,19 @@ for step in range(num_iterations + 1):
     torch.cuda.synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
-        with autocast_ctx:
-            loss = model(x, y)
-        train_loss = loss.detach() # for logging
-        loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
-        loss.backward()
-        x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+        # During gradient accumulation disable gradient synchronization to avoid
+        # unnecessary all-reduce, re-enable on the final micro-step.
+        sync_needed = (not ddp) or (micro_step == grad_accum_steps - 1)
+        sync_context = nullcontext() if sync_needed else model.no_sync()
+        with sync_context:
+            with autocast_ctx:
+                loss = model(x, y)
+            if micro_step == 0:
+                train_loss = loss.detach()  # log only once per iteration
+            loss = loss / grad_accum_steps  # normalize loss before backward
+            loss.backward()
+        # Prefetch the next batch while GPU processes backward pass
+        x, y = next(train_loader)
     # gradient clipping (TODO possibly expertiment with)
     if grad_clip > 0.0:
         torch.nn.utils.clip_grad_norm_(orig_model.parameters(), grad_clip)
