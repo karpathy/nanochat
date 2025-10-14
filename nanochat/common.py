@@ -89,15 +89,18 @@ def get_dist_info():
     else:
         return False, 0, 0, 1
 
-def compute_init():
+def compute_init(device_type="cuda"):
     """Basic initialization that we keep doing over and over, so make common."""
 
     # CUDA is currently required
-    assert torch.cuda.is_available(), "CUDA is needed for a distributed run atm"
+    assert torch.cuda.is_available() | torch.mps.is_available(), "CUDA or MPS is needed for a distributed run atm"
 
     # Reproducibility
     torch.manual_seed(42)
+    if device_type == "cuda":
     torch.cuda.manual_seed(42)
+    elif device_type == "mps":
+        torch.mps.manual_seed(42)
     # skipping full reproducibility for now, possibly investigate slowdown later
     # torch.use_deterministic_algorithms(True)
     # torch.backends.cudnn.deterministic = True
@@ -109,12 +112,15 @@ def compute_init():
     # Distributed setup: Distributed Data Parallel (DDP), optional
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     if ddp:
-        device = torch.device("cuda", ddp_local_rank)
-        torch.cuda.set_device(device) # make "cuda" default to this device
+        device = torch.device(device_type, ddp_local_rank)
+        if device_type == "mps":
+            torch.mps.set_device(device) # make "device" default to this device
+        else:
+            torch.cuda.set_device(device) # make "device" default to this device
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
     else:
-        device = torch.device("cuda")
+        device = torch.device(device_type)
 
     if ddp_rank == 0:
         logger.info(f"Distributed world size: {ddp_world_size}")

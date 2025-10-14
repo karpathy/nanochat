@@ -17,11 +17,13 @@ parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
 parser.add_argument('-p', '--prompt', type=str, default='', help='Prompt the model, get a single response back')
 parser.add_argument('-t', '--temperature', type=float, default=0.6, help='Temperature for generation')
 parser.add_argument('-k', '--top-k', type=int, default=50, help='Top-k sampling parameter')
+parser.add_argument('-d', '--device', type=str, default='cuda', help='Device to run the model on: cuda|mps')
+
 args = parser.parse_args()
 
 # Init the model and tokenizer
-ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(args.device)
+autocast_ctx = torch.amp.autocast(device_type=args.device, dtype=torch.bfloat16)
 model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
 
 # Special tokens for the chat state machine
