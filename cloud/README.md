@@ -1,6 +1,6 @@
 # Running nanochat on the Cloud with SkyPilot
 
-This directory contains [SkyPilot](https://skypilot.readthedocs.io/) configurations for easily launching nanochat on various cloud providers and Kubernetes clusters.
+This directory contains [SkyPilot](https://skypilot.readthedocs.io/) configurations for easily launching nanochat on major cloud providers (AWS, GCP, Azure), GPU clouds (Lambda, Nebius, RunPod, etc.), and Kubernetes clusters.
 
 ## Prerequisites
 
