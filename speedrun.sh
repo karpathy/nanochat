@@ -102,15 +102,15 @@ python -m scripts.base_eval
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
 # run midtraining and eval the model
-python -m scripts.mid_train -- --run=$WANDB_RUN
-python -m scripts.chat_eval -- -i mid
+python -m scripts.mid_train --run=$WANDB_RUN
+python -m scripts.chat_eval -i mid
 
 # -----------------------------------------------------------------------------
 # Supervised Finetuning (domain adaptation to each sequence all by itself per row)
 
 # train sft and re-eval right away (should see a small bump)
-python -m scripts.chat_sft -- --run=$WANDB_RUN
-python -m scripts.chat_eval -- -i sft
+python -m scripts.chat_sft --run=$WANDB_RUN
+python -m scripts.chat_eval -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"
