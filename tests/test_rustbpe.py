@@ -438,10 +438,12 @@ def enwik8_path():
     enwik8_local_path_zip = os.path.join(base_dir, "enwik8.zip")
     if not os.path.exists(enwik8_local_path):
         print(f"Downloading enwik8 to {enwik8_local_path_zip}")
-        import requests
-        response = requests.get(enwik8_url)
-        with open(enwik8_local_path_zip, "wb") as f:
-            f.write(response.content)
+        import urllib.request, urllib.error
+        try:
+            with urllib.request.urlopen(enwik8_url, timeout=30) as resp, open(enwik8_local_path_zip, "wb") as f:
+                f.write(resp.read())
+        except (urllib.error.URLError, urllib.error.HTTPError) as e:
+            pytest.skip(f"Network unavailable or download failed: {e}")
         with zipfile.ZipFile(enwik8_local_path_zip, "r") as zip_ref:
             zip_ref.extractall(base_dir)
         print(f"Unzipped enwik8 to {enwik8_local_path}")
