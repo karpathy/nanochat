@@ -23,7 +23,9 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
 # install the repo dependencies
-uv sync
+# picking the NVIDIA GPU if available, otherwise CPU
+choose_extra() { nvidia-smi -L >/dev/null 2>&1 && printf gpu || printf cpu; }
+uv sync --extra "$(choose_extra)"
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
 
