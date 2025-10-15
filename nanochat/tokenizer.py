@@ -347,7 +347,7 @@ class RustBPETokenizer:
         GREEN = '\033[92m'
         RESET = '\033[0m'
         tokens = []
-        for i, (token_id, mask_val) in enumerate(zip(ids, mask)):
+        for token_id, mask_val in zip(ids, mask):
             token_str = self.decode([token_id])
             color = GREEN if mask_val == 1 else RED
             tokens.append(f"{color}{token_str}{RESET}")
