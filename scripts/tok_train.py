@@ -66,7 +66,7 @@ Special chars: @#$%^&*()
 Unicode: 你好世界 🌍"""
 encoded = tokenizer.encode(test_text)
 decoded = tokenizer.decode(encoded)
-assert decoded == test_text
+assert decoded == test_text, f"Decode-encode roundtrip failed: decoded != original"
 
 # -----------------------------------------------------------------------------
 # One more thing: we wish to cache a mapping from token id to number of bytes of that token

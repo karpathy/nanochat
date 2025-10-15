@@ -95,8 +95,8 @@ def download_single_file(index):
                 if os.path.exists(path):
                     try:
                         os.remove(path)
-                    except:
-                        pass
+                    except (OSError, PermissionError) as e:
+                        logger.warning(f"Could not remove file: {e}")
             # Try a few times with exponential backoff: 2^attempt seconds
             if attempt < max_attempts:
                 wait_time = 2 ** attempt
