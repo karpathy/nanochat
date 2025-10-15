@@ -34,7 +34,7 @@ from tasks.smoltalk import SmolTalk
 # SFT Hyperparameters
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
 # input model options
-source = "base" # base|mid , which checkpoint to load the model from (base model or midtrained model)
+source = "mid" # base|mid , which checkpoint to load the model from (base model or midtrained model)
 model_tag = None # model tag to load the model from (base model or midtrained model)
 step = None # step to load the model from (base model or midtrained model)
 # compute/precision
