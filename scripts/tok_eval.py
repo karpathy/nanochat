@@ -2,6 +2,9 @@
 Evaluate compression ratio of the tokenizer.
 """
 
+import colorama
+colorama.init()
+
 from nanochat.tokenizer import get_tokenizer, RustBPETokenizer
 from nanochat.dataset import parquets_iter_batched
 
@@ -263,3 +266,5 @@ report_markdown = "\n".join(lines)
 get_report().log(section="Tokenizer evaluation", data=[
     report_markdown,
 ])
+
+colorama.deinit()
