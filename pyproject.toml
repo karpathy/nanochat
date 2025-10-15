@@ -45,6 +45,20 @@ dev = [
     "pytest>=8.0.0",
 ]
 
+# Optional: RAG (Retrieval-Augmented Generation)
+rag = [
+    "sentence-transformers>=2.0.0",  # Dense retrieval embeddings
+    "faiss-cpu>=1.7.0",              # Vector similarity search (CPU)
+    "rank-bm25>=0.2.0",              # BM25 sparse retrieval
+]
+
+# Optional: Mamba SSM architecture
+mamba = [
+    "mamba-ssm>=2.0.0",              # Mamba selective state space models
+    "causal-conv1d>=1.4.0",          # Causal convolution for Mamba
+    "triton>=2.0.0",                 # Triton kernels for GPU acceleration
+]
+
 [tool.pytest.ini_options]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
