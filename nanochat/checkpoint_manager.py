@@ -58,6 +58,10 @@ def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False):
 def build_model(checkpoint_dir, step, device, phase):
     """
     A bunch of repetitive code to build a model from a given checkpoint.
+    
+    Note: Supports both legacy transformer-only checkpoints and new hybrid checkpoints.
+    Legacy checkpoints (without block_pattern) will default to all transformer blocks.
+    
     Returns:
     - base model - uncompiled, not wrapped in DDP
     - tokenizer
