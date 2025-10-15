@@ -20,7 +20,7 @@ Alternatively, since the script runs for 4 hours, I like to launch it like this 
 screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
 ```
 
-See the [screen cheatsheet](https://gist.github.com/jctosta/af918e1618682638aa82) if you are less familiar. You can watch it go inside the screen session, or detach with `Ctrl-a d` and `tail speedrun.log` to view progress. Now wait 4 hours. Once it's done, you can talk to your LLM via the ChatGPT-like web UI. Make sure again that your local uv virtual environment is active (run `source .venv/bin/activative`), and serve it:
+See the [screen cheatsheet](https://gist.github.com/jctosta/af918e1618682638aa82) if you are less familiar. You can watch it go inside the screen session, or detach with `Ctrl-a d` and `tail speedrun.log` to view progress. Now wait 4 hours. Once it's done, you can talk to your LLM via the ChatGPT-like web UI. Make sure again that your local uv virtual environment is active (run `source .venv/bin/activate`), and serve it:
 
 ```bash
 python -m scripts.chat_web
@@ -34,7 +34,7 @@ And then visit the URL shown. Make sure to access it correctly, e.g. on Lambda u
 
 ---
 
-You can also `cat report.md` file which appeared in the project directory and contains the "report card" of the run, i.e. a bunch of evaluations and metrics. At the vert end, you'll see a summary table, for example:
+You can also `cat report.md` file which appeared in the project directory and contains the "report card" of the run, i.e. a bunch of evaluations and metrics. At the very end, you'll see a summary table, for example:
 
 ---
 
@@ -73,7 +73,7 @@ That said, to give a sense, the example changes needed for the [speedrun.sh](spe
 # divide by 250 million to get number of shards. todo need to improve this...
 python -m nanochat.dataset -n 450 &
 ...
-# use --depth to increase model size. to not oom, halve device bath size 32 -> 16:
+# use --depth to increase model size. to not oom, halve device batch size 32 -> 16:
 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=26 --device_batch_size=16
 ...
 # make sure to use the same later during midtraining:
