@@ -1,5 +1,5 @@
 """
-Evlauate the CORE metric for a given model.
+Evaluate the CORE metric for a given model.
 
 Run on a single GPU:
 python base_eval.py
