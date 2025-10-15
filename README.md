@@ -13,7 +13,7 @@ This repo is a full-stack implementation of an LLM like ChatGPT in a single, cle
 
 Here’s an overview of the nanochat architecture:
 
-![nanochat architecture](dev/nanochat_architecture.png)
+![nanochat architecture](dev/nanochat_architecture.jpg)
 
 ---
 
