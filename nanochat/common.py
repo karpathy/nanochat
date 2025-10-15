@@ -98,7 +98,7 @@ def compute_init(device_type="cuda"):
     # Reproducibility
     torch.manual_seed(42)
     if device_type == "cuda":
-    torch.cuda.manual_seed(42)
+        torch.cuda.manual_seed(42)
     elif device_type == "mps":
         torch.mps.manual_seed(42)
     # skipping full reproducibility for now, possibly investigate slowdown later

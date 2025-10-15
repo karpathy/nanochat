@@ -29,7 +29,7 @@ parser.add_argument('-g', '--model-tag', type=str, default=None, help='Model tag
 parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
 parser.add_argument('-p', '--port', type=int, default=8000, help='Port to run the server on')
 parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind the server to')
-parser.add_argument('-d', '--device', type=str, default='cuda', help='Device to run the model on: cuda|mps')
+parser.add_argument('-d', '--device', type=str, default='cuda', choices=['mps', 'cuda'], help='Device to run the model on: cuda|mps')
 args = parser.parse_args()
 
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(args.device)
