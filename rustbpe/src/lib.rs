@@ -1,5 +1,5 @@
-use std::cmp::Ordering;
-use std::collections::HashMap as StdHashMap;
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BinaryHeap, HashMap as StdHashMap};
 
 use dary_heap::OctonaryHeap;
 use fancy_regex::Regex;
@@ -32,6 +32,38 @@ struct Word {
     ids: Vec<u32>,
 }
 
+#[derive(Clone, Debug)]
+struct TokenNode {
+    value: u32,
+    prev: Option<usize>,
+    next: Option<usize>,
+    alive: bool,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+struct QueueItem {
+    rank: u32,
+    left: usize,
+    order: u64,
+    version: u32,
+}
+
+impl Ord for QueueItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.rank
+            .cmp(&other.rank)
+            .then(self.left.cmp(&other.left))
+            .then(self.order.cmp(&other.order))
+            .then(self.version.cmp(&other.version))
+    }
+}
+
+impl PartialOrd for QueueItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl Word {
     #[inline]
     fn new(ids: Vec<u32>) -> Self {
@@ -62,7 +94,11 @@ impl Word {
         while i < n {
             if i + 1 < n && self.ids[i] == a && self.ids[i + 1] == b {
                 let left = out.last().copied();
-                let right = if i + 2 < n { Some(self.ids[i + 2]) } else { None };
+                let right = if i + 2 < n {
+                    Some(self.ids[i + 2])
+                } else {
+                    None
+                };
 
                 // remove old pairs
                 if let Some(x) = left {
@@ -154,10 +190,42 @@ fn count_pairs_parallel(
         )
 }
 
+#[inline]
+fn schedule_pair(
+    left: usize,
+    nodes: &[TokenNode],
+    merges: &StdHashMap<Pair, u32>,
+    versions: &mut [u32],
+    heap: &mut BinaryHeap<Reverse<QueueItem>>,
+    order_counter: &mut u64,
+) {
+    if left >= nodes.len() {
+        return;
+    }
+    versions[left] = versions[left].wrapping_add(1);
+    let node = &nodes[left];
+    if !node.alive {
+        return;
+    }
+    if let Some(right) = node.next {
+        if right < nodes.len() && nodes[right].alive {
+            let pair = (node.value, nodes[right].value);
+            if let Some(&rank) = merges.get(&pair) {
+                *order_counter += 1;
+                heap.push(Reverse(QueueItem {
+                    rank,
+                    left,
+                    order: *order_counter,
+                    version: versions[left],
+                }));
+            }
+        }
+    }
+}
+
 // ------------------------ END helpers ------------------------
 
 impl Tokenizer {
-
     /// Core incremental BPE training given unique words and their counts.
     /// `words`: one entry per unique chunk (Vec<u32> of token-ids/bytes).
     /// `counts`: same length as `words`, count per chunk.
@@ -168,7 +236,10 @@ impl Tokenizer {
         self.merges.clear();
 
         // ---- Initial pair_counts and where_to_update (parallel) ----
-        log::info!("Computing initial pair counts from {} unique sequences", words.len());
+        log::info!(
+            "Computing initial pair counts from {} unique sequences",
+            words.len()
+        );
         let (mut pair_counts, mut where_to_update) = count_pairs_parallel(&words, &counts);
 
         // ---- Build heap ----
@@ -191,7 +262,9 @@ impl Tokenizer {
         let mut last_log_percent = 0u32;
 
         while merges_done < num_merges {
-            let Some(mut top) = heap.pop() else { break; };
+            let Some(mut top) = heap.pop() else {
+                break;
+            };
 
             // Lazy refresh
             let current = *pair_counts.get(&top.pair).unwrap_or(&0);
@@ -246,13 +319,137 @@ impl Tokenizer {
             if current_percent > last_log_percent {
                 log::info!(
                     "Progress: {}% ({}/{} merges) - Last merge: {:?} -> {} (frequency: {})",
-                    current_percent, merges_done, num_merges, top.pair, new_id, top.count
+                    current_percent,
+                    merges_done,
+                    num_merges,
+                    top.pair,
+                    new_id,
+                    top.count
                 );
                 last_log_percent = current_percent;
             }
         }
 
         log::info!("Finished training: {} merges completed", merges_done);
+    }
+
+    fn encode_chunk(&self, bytes: &[u8]) -> Vec<u32> {
+        match bytes.len() {
+            0 => return Vec::new(),
+            1 => return vec![bytes[0] as u32],
+            _ => {}
+        }
+
+        let mut nodes: Vec<TokenNode> = bytes
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| TokenNode {
+                value: b as u32,
+                prev: if i > 0 { Some(i - 1) } else { None },
+                next: if i + 1 < bytes.len() {
+                    Some(i + 1)
+                } else {
+                    None
+                },
+                alive: true,
+            })
+            .collect();
+
+        let mut versions = vec![0u32; nodes.len()];
+        let mut heap: BinaryHeap<Reverse<QueueItem>> = BinaryHeap::new();
+        let mut order_counter = 0u64;
+
+        for left in 0..nodes.len().saturating_sub(1) {
+            schedule_pair(
+                left,
+                &nodes,
+                &self.merges,
+                &mut versions,
+                &mut heap,
+                &mut order_counter,
+            );
+        }
+
+        while let Some(Reverse(item)) = heap.pop() {
+            if versions[item.left] != item.version {
+                continue;
+            }
+            if !nodes[item.left].alive {
+                continue;
+            }
+            let Some(right) = nodes[item.left].next else {
+                continue;
+            };
+            if !nodes[right].alive {
+                continue;
+            }
+            let pair = (nodes[item.left].value, nodes[right].value);
+            let Some(&rank) = self.merges.get(&pair) else {
+                continue;
+            };
+            if rank != item.rank {
+                continue;
+            }
+
+            let prev = nodes[item.left].prev;
+            let next = nodes[right].next;
+
+            nodes[item.left].value = rank;
+            nodes[item.left].next = next;
+            if let Some(next_idx) = next {
+                nodes[next_idx].prev = Some(item.left);
+            }
+            nodes[right].alive = false;
+            nodes[right].prev = None;
+            nodes[right].next = None;
+
+            if let Some(prev_idx) = prev {
+                schedule_pair(
+                    prev_idx,
+                    &nodes,
+                    &self.merges,
+                    &mut versions,
+                    &mut heap,
+                    &mut order_counter,
+                );
+            }
+            schedule_pair(
+                item.left,
+                &nodes,
+                &self.merges,
+                &mut versions,
+                &mut heap,
+                &mut order_counter,
+            );
+        }
+
+        let mut output = Vec::with_capacity(bytes.len());
+        let mut start = None;
+        for (idx, node) in nodes.iter().enumerate() {
+            if node.alive && node.prev.is_none() {
+                start = Some(idx);
+                break;
+            }
+        }
+
+        if let Some(mut idx) = start {
+            loop {
+                let node = &nodes[idx];
+                if node.alive {
+                    output.push(node.value);
+                    match node.next {
+                        Some(next_idx) => idx = next_idx,
+                        None => break,
+                    }
+                } else {
+                    break;
+                }
+            }
+        } else {
+            debug_assert!(bytes.is_empty());
+        }
+
+        output
     }
 }
 
@@ -287,13 +484,17 @@ impl Tokenizer {
 
         // Update the stored pattern and compile it
         self.pattern = pattern_str.clone();
-        self.compiled_pattern = Regex::new(&pattern_str)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e)))?;
+        self.compiled_pattern = Regex::new(&pattern_str).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
+        })?;
 
         // Prepare a true Python iterator object
         let py_iter: pyo3::Py<pyo3::PyAny> = unsafe {
-            pyo3::Bound::from_borrowed_ptr_or_err(py, pyo3::ffi::PyObject_GetIter(iterator.as_ptr()))?
-                .into()
+            pyo3::Bound::from_borrowed_ptr_or_err(
+                py,
+                pyo3::ffi::PyObject_GetIter(iterator.as_ptr()),
+            )?
+            .into()
         };
 
         // Global chunk counts
@@ -302,7 +503,10 @@ impl Tokenizer {
         // Temporary buffer we refill under the GIL
         let mut buf: Vec<String> = Vec::with_capacity(buffer_size);
 
-        log::info!("Processing sequences from iterator (buffer_size: {})", buffer_size);
+        log::info!(
+            "Processing sequences from iterator (buffer_size: {})",
+            buffer_size
+        );
         let mut total_sequences = 0u64;
 
         // Helper: refill `buf` with up to `buffer_size` strings from the Python iterator.
@@ -376,13 +580,19 @@ impl Tokenizer {
                 break;
             }
         }
-        log::info!("Processed {} sequences total, {} unique", total_sequences, counts.len());
+        log::info!(
+            "Processed {} sequences total, {} unique",
+            total_sequences,
+            counts.len()
+        );
 
         // Materialize words & counts
         let mut words = Vec::with_capacity(counts.len());
         let mut cvec = Vec::with_capacity(counts.len());
         for (chunk, c) in counts.into_iter() {
-            words.push(Word::new(chunk.as_bytes().iter().map(|&b| b as u32).collect()));
+            words.push(Word::new(
+                chunk.as_bytes().iter().map(|&b| b as u32).collect(),
+            ));
             cvec.push(c);
         }
 
@@ -429,41 +639,12 @@ impl Tokenizer {
     /// Encode a string into token IDs
     pub fn encode(&self, text: &str) -> Vec<u32> {
         let mut all_ids = Vec::new();
-
-        // Split text using the regex pattern
         for m in self.compiled_pattern.find_iter(text) {
             let chunk = m.expect("regex match failed").as_str();
-
-            // Convert chunk to bytes then to u32 IDs
-            let mut ids: Vec<u32> = chunk.bytes().map(|b| b as u32).collect();
-
-            // Apply merges iteratively
-            while ids.len() >= 2 {
-                // Find the best pair to merge
-                let mut best_pair: Option<(usize, Pair, u32)> = None;
-
-                for i in 0..ids.len() - 1 {
-                    let pair: Pair = (ids[i], ids[i + 1]);
-                    if let Some(&new_id) = self.merges.get(&pair) {
-                        if best_pair.is_none() || new_id < best_pair.unwrap().2 {
-                            best_pair = Some((i, pair, new_id));
-                        }
-                    }
-                }
-
-                // If we found a pair to merge, apply it
-                if let Some((idx, _pair, new_id)) = best_pair {
-                    ids[idx] = new_id;
-                    ids.remove(idx + 1);
-                } else {
-                    // No more merges possible
-                    break;
-                }
+            if !chunk.is_empty() {
+                all_ids.extend(self.encode_chunk(chunk.as_bytes()));
             }
-
-            all_ids.extend(ids);
         }
-
         all_ids
     }
 }
