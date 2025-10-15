@@ -79,6 +79,75 @@ def is_ddp():
     # TODO is there a proper way
     return int(os.environ.get('RANK', -1)) != -1
 
+def is_macos():
+    """Check if running on macOS."""
+    import platform
+    return platform.system() == "Darwin"
+
+def get_device_type():
+    """Get the device type string for autocast: 'cuda', 'mps', or 'cpu'."""
+    if torch.cuda.is_available():
+        return "cuda"
+    # Check for MPS (Metal Performance Shaders on Apple Silicon)
+    if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+def get_safe_autocast_dtype(device_type: str, preferred_dtype=None) -> torch.dtype:
+    """
+    Return a safe dtype for autocast on the given device.
+
+    Args:
+        device_type: "cuda", "mps", or "cpu"
+        preferred_dtype: Preferred dtype (torch.dtype, str, or None)
+
+    Returns:
+        A dtype that is safe for autocast on the device
+    """
+    # Parse the preferred dtype
+    if isinstance(preferred_dtype, torch.dtype):
+        dtype = preferred_dtype
+    elif isinstance(preferred_dtype, str):
+        dtype_map = {
+            "bfloat16": torch.bfloat16, "bf16": torch.bfloat16,
+            "float16": torch.float16, "fp16": torch.float16, "half": torch.float16,
+            "float32": torch.float32, "fp32": torch.float32,
+        }
+        dtype = dtype_map.get(preferred_dtype.lower())
+        if dtype is None:
+            raise ValueError(f"Unknown dtype string: {preferred_dtype}")
+    elif preferred_dtype is None:
+        # Default: bfloat16 on CUDA, float16 on MPS, bfloat16 on CPU
+        if device_type == "cuda":
+            dtype = torch.bfloat16
+        elif device_type == "mps":
+            dtype = torch.float16  # MPS works best with float16
+        else:
+            dtype = torch.bfloat16
+    else:
+        raise TypeError(f"Invalid dtype type: {type(preferred_dtype)}")
+
+    # Validate dtype compatibility with device
+    if device_type == "cpu" and dtype == torch.float32:
+        logger.warning(
+            f"CPU autocast doesn't support {dtype}, using bfloat16 instead"
+        )
+        dtype = torch.bfloat16
+    elif device_type == "mps":
+        # MPS has limited dtype support, prefer float16
+        if dtype not in {torch.float16, torch.float32}:
+            logger.warning(
+                f"MPS autocast works best with float16, converting from {dtype}"
+            )
+            dtype = torch.float16
+
+    return dtype
+
+def get_default_dtype():
+    """Get the default dtype for training based on available hardware."""
+    device_type = get_device_type()
+    return get_safe_autocast_dtype(device_type)
+
 def get_dist_info():
     if is_ddp():
         assert all(var in os.environ for var in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE'])
@@ -92,12 +161,15 @@ def get_dist_info():
 def compute_init():
     """Basic initialization that we keep doing over and over, so make common."""
 
-    # CUDA is currently required
-    assert torch.cuda.is_available(), "CUDA is needed for a distributed run atm"
+    # Check available hardware
+    has_cuda = torch.cuda.is_available()
+    has_mps = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()
+    on_macos = is_macos()
 
     # Reproducibility
     torch.manual_seed(42)
-    torch.cuda.manual_seed(42)
+    if has_cuda:
+        torch.cuda.manual_seed(42)
     # skipping full reproducibility for now, possibly investigate slowdown later
     # torch.use_deterministic_algorithms(True)
     # torch.backends.cudnn.deterministic = True
@@ -108,13 +180,27 @@ def compute_init():
 
     # Distributed setup: Distributed Data Parallel (DDP), optional
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
-    if ddp:
+
+    # Determine device
+    if has_cuda and ddp:
         device = torch.device("cuda", ddp_local_rank)
-        torch.cuda.set_device(device) # make "cuda" default to this device
+        torch.cuda.set_device(device)
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
-    else:
+        logger.info(f"Running on CUDA with DDP (rank {ddp_rank}/{ddp_world_size})")
+    elif has_cuda:
         device = torch.device("cuda")
+        logger.info("Running on CUDA (single GPU)")
+    elif has_mps:
+        device = torch.device("mps")
+        logger.info("Running on MPS (Apple Silicon GPU)")
+        if ddp:
+            logger.warning("DDP not supported on MPS, running single process")
+    else:
+        device = torch.device("cpu")
+        logger.info("Running on CPU")
+        if ddp:
+            logger.warning("DDP requested but will run on CPU")
 
     if ddp_rank == 0:
         logger.info(f"Distributed world size: {ddp_world_size}")

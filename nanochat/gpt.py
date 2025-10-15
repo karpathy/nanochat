@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from nanochat.common import get_dist_info, print0
+from nanochat.common import get_dist_info, print0, get_default_dtype
 from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
 
@@ -169,8 +169,9 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
         self.register_buffer("sin", sin, persistent=False)
-        # Cast the embeddings from fp32 to bf16: optim can tolerate it and it saves memory: both in the model and the activations
-        self.transformer.wte.to(dtype=torch.bfloat16)
+        # Cast the embeddings to the default dtype: optim can tolerate it and it saves memory: both in the model and the activations
+        default_dtype = get_default_dtype()
+        self.transformer.wte.to(dtype=default_dtype)
 
     def init_weights(self):
         self.apply(self._init_weights)
@@ -210,7 +211,9 @@ class GPT(nn.Module):
         # calculate the rotation frequencies at each (time, channel) pair
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16() # keep them in bfloat16
+        # keep them in the default dtype (bfloat16 on GPU, float32 on CPU)
+        default_dtype = get_default_dtype()
+        cos, sin = cos.to(default_dtype), sin.to(default_dtype)
         cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
         return cos, sin
 
@@ -262,7 +265,9 @@ class GPT(nn.Module):
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
-        assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
+        # Rotary embeddings should match the default dtype for the platform
+        expected_dtype = get_default_dtype()
+        assert self.cos.dtype == expected_dtype, f"Rotary embeddings must be in {expected_dtype}, but got {self.cos.dtype}"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
