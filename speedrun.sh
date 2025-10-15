@@ -88,14 +88,17 @@ python -m scripts.tok_eval
 if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "Detected macOS - running in CPU mode (single process)"
     TORCHRUN_CMD="python"
+    ARGS_SEP=""  # No separator needed for python
 # Check if CUDA/GPUs are available
 elif command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
     GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
     echo "Detected $GPU_COUNT GPU(s) - running in GPU mode"
     TORCHRUN_CMD="torchrun --standalone --nproc_per_node=$GPU_COUNT"
+    ARGS_SEP="--"  # Separator needed for torchrun
 else
     echo "No GPUs detected - running in CPU mode (single process)"
     TORCHRUN_CMD="python"
+    ARGS_SEP=""  # No separator needed for python
 fi
 
 # -----------------------------------------------------------------------------
@@ -120,7 +123,7 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-$TORCHRUN_CMD -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
+$TORCHRUN_CMD -m scripts.base_train $ARGS_SEP --depth=20 --run=$WANDB_RUN
 # evaluate the model on a larger chunk of train/val data and draw some samples
 $TORCHRUN_CMD -m scripts.base_loss
 # evaluate the model on CORE tasks
@@ -130,15 +133,15 @@ $TORCHRUN_CMD -m scripts.base_eval
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
 # run midtraining and eval the model
-$TORCHRUN_CMD -m scripts.mid_train -- --run=$WANDB_RUN
-$TORCHRUN_CMD -m scripts.chat_eval -- -i mid
+$TORCHRUN_CMD -m scripts.mid_train $ARGS_SEP --run=$WANDB_RUN
+$TORCHRUN_CMD -m scripts.chat_eval $ARGS_SEP -i mid
 
 # -----------------------------------------------------------------------------
 # Supervised Finetuning (domain adaptation to each sequence all by itself per row)
 
 # train sft and re-eval right away (should see a small bump)
-$TORCHRUN_CMD -m scripts.chat_sft -- --run=$WANDB_RUN
-$TORCHRUN_CMD -m scripts.chat_eval -- -i sft
+$TORCHRUN_CMD -m scripts.chat_sft $ARGS_SEP --run=$WANDB_RUN
+$TORCHRUN_CMD -m scripts.chat_eval $ARGS_SEP -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"
@@ -151,9 +154,9 @@ $TORCHRUN_CMD -m scripts.chat_eval -- -i sft
 # (optional)
 
 # run reinforcement learning
-# $TORCHRUN_CMD -m scripts.chat_rl -- --run=$WANDB_RUN
+# $TORCHRUN_CMD -m scripts.chat_rl $ARGS_SEP --run=$WANDB_RUN
 # eval the RL model only on GSM8K
-# $TORCHRUN_CMD -m scripts.chat_eval -- -i rl -a GSM8K
+# $TORCHRUN_CMD -m scripts.chat_eval $ARGS_SEP -i rl -a GSM8K
 
 # -----------------------------------------------------------------------------
 # Generate the full report by putting together all the sections

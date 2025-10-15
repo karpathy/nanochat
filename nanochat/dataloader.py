@@ -16,7 +16,11 @@ def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokeniz
     bos_token = tokenizer.get_bos_token_id()
     # scratch buffer holds the tokens for one iteration
     token_buffer = deque() # we stream tokens on the right and pop from the left
-    scratch = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=True)
+
+    # Check if we're using MPS - it doesn't support pin_memory
+    device_type = get_device_type()
+    use_pin_memory = device_type == "cuda"  # Only pin memory for CUDA
+    scratch = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=use_pin_memory)
 
     # infinite iterator over document batches
     def document_batches():
@@ -38,13 +42,16 @@ def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokeniz
                 token_buffer.extend(tokens)
             batch_index += 1
         # Move tokens from the deque into the scratch buffer
-        for i in range(needed_tokens):
-            scratch[i] = token_buffer.popleft()
+        # Build a list first to avoid MPS compatibility issues
+        tokens_list = [token_buffer.popleft() for _ in range(needed_tokens)]
+        scratch[:] = torch.tensor(tokens_list, dtype=torch.int64)
+
         # Create the inputs/targets as 1D tensors
         inputs_cpu = scratch[:-1].to(dtype=torch.int32)
         targets_cpu = scratch[1:]
-        # Reshape to 2D and move to device async
-        device_type = get_device_type()
-        inputs = inputs_cpu.view(B, T).to(device=device_type, dtype=torch.int32, non_blocking=True)
-        targets = targets_cpu.view(B, T).to(device=device_type, dtype=torch.int64, non_blocking=True)
+        # Reshape to 2D and move to device
+        # For MPS, non_blocking doesn't apply; for CUDA it helps performance
+        non_blocking = (device_type == "cuda")
+        inputs = inputs_cpu.view(B, T).to(device=device_type, dtype=torch.int32, non_blocking=non_blocking)
+        targets = targets_cpu.view(B, T).to(device=device_type, dtype=torch.int64, non_blocking=non_blocking)
         yield inputs, targets
