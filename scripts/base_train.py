@@ -22,6 +22,12 @@ from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from scripts.base_eval import evaluate_model
+from nanochat.constants import (
+    MODEL_ASPECT_RATIO, HEAD_DIM_TARGET, DEFAULT_WARMUP_RATIO,
+    DEFAULT_WARMDOWN_RATIO, DEFAULT_FINAL_LR_FRAC, LOSS_EMA_BETA,
+    WARMUP_IGNORE_STEPS, MUON_MOMENTUM_RAMPUP_STEPS,
+    MUON_MOMENTUM_START, MUON_MOMENTUM_END
+)
 print_banner()
 
 # -----------------------------------------------------------------------------
@@ -73,8 +79,8 @@ print0(f"Vocab size: {vocab_size:,}")
 
 # Model kwargs are derived from the desired depth of the model
 num_layers = depth
-model_dim = depth * 64 # aspect ratio 64 (usually this is varied from 64 -> 128 as model size increases)
-num_heads = max(1, (model_dim + 127) // 128) # head dim 128 (the division here is ceil div)
+model_dim = depth * MODEL_ASPECT_RATIO # aspect ratio (usually this is varied from 64 -> 128 as model size increases)
+num_heads = max(1, (model_dim + HEAD_DIM_TARGET - 1) // HEAD_DIM_TARGET) # ceiling division for target head dim
 num_kv_heads = num_heads # 1:1 MQA ratio
 print0(f"num_layers: {num_layers}")
 print0(f"model_dim: {model_dim}")
@@ -142,9 +148,9 @@ x, y = next(train_loader) # kick off load of the very first batch of data
 
 # Learning rate scheduler
 # TODO: experiment with a short warmup for the AdamW params (expecting slight improvement)
-warmup_ratio = 0.0 # ratio of iterations for LR warmup
-warmdown_ratio = 0.2 # ratio of iterations for LR warmdown
-final_lr_frac = 0.0 # final LR is this fraction of the initial LR
+warmup_ratio = DEFAULT_WARMUP_RATIO # ratio of iterations for LR warmup
+warmdown_ratio = DEFAULT_WARMDOWN_RATIO # ratio of iterations for LR warmdown
+final_lr_frac = DEFAULT_FINAL_LR_FRAC # final LR is this fraction of the initial LR
 def get_lr_multiplier(it):
     warmup_iters = round(warmup_ratio * num_iterations)
     warmdown_iters = round(warmdown_ratio * num_iterations)
@@ -158,15 +164,15 @@ def get_lr_multiplier(it):
 
 # Momentum scheduler for Muon optimizer
 def get_muon_momentum(it):
-    frac = min(it / 300, 1)
-    momentum = (1 - frac) * 0.85 + frac * 0.95
+    frac = min(it / MUON_MOMENTUM_RAMPUP_STEPS, 1)
+    momentum = (1 - frac) * MUON_MOMENTUM_START + frac * MUON_MOMENTUM_END
     return momentum
 
 # -----------------------------------------------------------------------------
 # Training loop
 min_val_bpb = float("inf")
 smooth_train_loss = 0 # EMA of training loss
-ema_beta = 0.9 # EMA decay factor
+ema_beta = LOSS_EMA_BETA # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
 # note that we run +1 steps only so that we can eval and save at the end
 for step in range(num_iterations + 1):
@@ -288,7 +294,7 @@ for step in range(num_iterations + 1):
     flops_per_sec = num_flops_per_token * total_batch_size / dt
     promised_flops_per_sec_h100 = 989e12 * ddp_world_size # bfloat16 H100 SXM and without 2:4 sparsity
     mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
-    if step > 10:
+    if step > WARMUP_IGNORE_STEPS:
         total_training_time += dt # only count the time after the first 10 steps
     print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
     if step % 100 == 0:
