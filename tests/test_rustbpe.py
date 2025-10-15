@@ -84,7 +84,7 @@ class RegexTokenizer:
         return vocab
 
     def train(self, text, vocab_size, verbose=False):
-        assert vocab_size >= 256
+        assert vocab_size >= 256, f"vocab_size must be >= 256, got {vocab_size}"
         num_merges = vocab_size - 256
 
         # keep track of whether at any point during training the merge is ambiguous (counts of pairs are not unique)
@@ -215,7 +215,7 @@ class FastRegexTokenizer:
         - collapse identical chunks to just the unique ones
         - update counts more cleverly - only around the affected chunks
         """
-        assert vocab_size >= 256
+        assert vocab_size >= 256, f"vocab_size must be >= 256, got {vocab_size}"
         num_merges = vocab_size - 256
 
         # split the text up into text chunks

@@ -85,7 +85,7 @@ print0(f"num_kv_heads: {num_kv_heads}")
 # figure out the needed gradient accumulation to reach the desired total batch size
 tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration for a single rank
 world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
-assert total_batch_size % world_tokens_per_fwdbwd == 0
+assert total_batch_size % world_tokens_per_fwdbwd == 0, f"total_batch_size ({total_batch_size}) must be divisible by world_tokens_per_fwdbwd ({world_tokens_per_fwdbwd})"
 grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
 print0(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
@@ -106,7 +106,7 @@ num_flops_per_token = model.estimate_flops()
 print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
 # Calculate number of iterations. Either it is given, or from target flops, or from target data:param ratio (in that order)
-assert num_iterations > 0 or target_param_data_ratio > 0 or target_flops > 0
+assert num_iterations > 0 or target_param_data_ratio > 0 or target_flops > 0, "At least one of num_iterations, target_param_data_ratio, or target_flops must be > 0"
 if num_iterations > 0:
     print0(f"Using user-provided number of iterations: {num_iterations:,}")
 elif target_flops > 0:

@@ -37,7 +37,7 @@ class BasicTokenizer(Tokenizer):
         super().__init__()
 
     def train(self, text, vocab_size, verbose=False):
-        assert vocab_size >= 256
+        assert vocab_size >= 256, f"vocab_size must be >= 256, got {vocab_size}"
         num_merges = vocab_size - 256
 
         # input text preprocessing
@@ -179,7 +179,7 @@ for tokenizer_name in ["gpt2", "gpt4", "ours"]:
     for name, text in all_text:
         encoded = tokenizer.encode(text)
         decoded = tokenizer.decode(encoded)
-        assert decoded == text
+        assert decoded == text, f"Decode-encode roundtrip failed: decoded != original"
 
         encoded_bytes = text.encode('utf-8')
         ratio = len(encoded_bytes) / len(encoded)
