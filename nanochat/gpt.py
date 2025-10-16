@@ -9,11 +9,13 @@ Notable features:
 - no learnable params in rmsnorm
 - no bias in linear layers
 - Multi-Query Attention (MQA) support for more efficient inference
+- Hybrid architecture support (Transformer + Mamba blocks)
 """
 
 import math
 from functools import partial
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional, List
 
 import torch
 import torch.nn as nn
@@ -25,12 +27,23 @@ from nanochat.adamw import DistAdamW
 
 @dataclass
 class GPTConfig:
+    # Core architecture parameters
     sequence_len: int = 1024
     vocab_size: int = 50304
     n_layer: int = 12
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (MQA)
     n_embd: int = 768
+    
+    # Hybrid architecture parameters (for Mamba support)
+    # If block_pattern is None, defaults to all transformer blocks (backward compatible)
+    block_pattern: Optional[List[str]] = None  # e.g., ["T", "T", "M", "M"] or None
+    
+    # Mamba-specific parameters (only used if block_pattern contains "M")
+    mamba_d_state: int = 16      # State space dimension (16-64 typical)
+    mamba_d_conv: int = 4         # Convolution kernel size
+    mamba_expand: int = 2         # Expansion factor for inner dimension
+    mamba_use_mlp: bool = False   # Whether to add MLP after Mamba (usually not needed)
 
 
 def norm(x):
@@ -155,9 +168,28 @@ class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        
+        # Initialize block pattern (default to all transformer for backward compatibility)
+        if config.block_pattern is None:
+            config.block_pattern = ["T"] * config.n_layer
+        
+        # Validate block pattern
+        if len(config.block_pattern) != config.n_layer:
+            raise ValueError(
+                f"block_pattern length ({len(config.block_pattern)}) must match "
+                f"n_layer ({config.n_layer})"
+            )
+        
+        # Create blocks using factory pattern
+        from nanochat.blocks import create_block
+        blocks = [
+            create_block(config.block_pattern[i], config, i)
+            for i in range(config.n_layer)
+        ]
+        
         self.transformer = nn.ModuleDict({
             "wte": nn.Embedding(config.vocab_size, config.n_embd),
-            "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
+            "h": nn.ModuleList(blocks),
         })
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # To support meta device initialization, we init the rotary embeddings here, but it's fake
@@ -176,10 +208,14 @@ class GPT(nn.Module):
         self.apply(self._init_weights)
         # zero out classifier weights
         torch.nn.init.zeros_(self.lm_head.weight)
-        # zero out c_proj weights in all blocks
+        # zero out c_proj weights in transformer blocks
         for block in self.transformer.h:
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
-            torch.nn.init.zeros_(block.attn.c_proj.weight)
+            # Only zero out if this is a transformer block
+            if hasattr(block, 'attn'):  # TransformerBlock
+                torch.nn.init.zeros_(block.attn.c_proj.weight)
+            if hasattr(block, 'mlp') and block.mlp is not None:
+                torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            # Mamba blocks have their own initialization in mamba-ssm
         # init the rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -267,11 +303,21 @@ class GPT(nn.Module):
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
 
-        # Forward the trunk of the Transformer
+        # Forward the trunk of the model (hybrid or pure transformer/mamba)
         x = self.transformer.wte(idx)
         x = norm(x)
+        
+        # Pass through all blocks with appropriate context
         for block in self.transformer.h:
-            x = block(x, cos_sin, kv_cache)
+            # Check if this is a transformer block (needs cos_sin and kv_cache)
+            # or a Mamba block (doesn't need positional info)
+            if hasattr(block, 'attn'):  # TransformerBlock has 'attn' attribute
+                context = {"cos_sin": cos_sin, "kv_cache": kv_cache}
+            else:  # MambaBlock or other block types
+                context = {}  # Mamba doesn't need cos_sin or kv_cache
+            
+            x = block(x, context)
+        
         x = norm(x)
 
         # Forward the lm_head (compute logits)
