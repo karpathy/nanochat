@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from collections import deque
 from nanochat.common import compute_init
 from nanochat.checkpoint_manager import load_model
+from nanochat.constants import KV_CACHE_GROWTH_CHUNK, CALCULATOR_TIMEOUT_SECONDS
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
@@ -32,7 +33,7 @@ def timeout(duration, formula):
     yield
     signal.alarm(0)
 
-def eval_with_timeout(formula, max_time=3):
+def eval_with_timeout(formula, max_time=CALCULATOR_TIMEOUT_SECONDS):
     try:
         with timeout(max_time, formula):
             with warnings.catch_warnings():
@@ -107,8 +108,11 @@ class KVCache:
         t0, t1 = self.pos, self.pos + T_add
         # Dynamically grow the cache if needed
         if t1 > self.kv_cache.size(4):
-            t_needed = t1 + 1024 # as much as we need plus buffer of 1024
-            t_needed = (t_needed + 1023) & ~1023 # then round up to the nearest multiple of 1024
+            chunk = KV_CACHE_GROWTH_CHUNK
+            assert chunk > 0 and (chunk & (chunk - 1)) == 0, \
+                "KV_CACHE_GROWTH_CHUNK must be a positive power of two"
+            t_needed = t1 + chunk  # as much as we need plus buffer
+            t_needed = (t_needed + chunk - 1) & ~(chunk - 1)  # then round up to the nearest multiple
             current_shape = list(self.kv_cache.shape)
             current_shape[4] = t_needed
             self.kv_cache.resize_(current_shape)

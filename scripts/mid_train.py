@@ -27,6 +27,10 @@ from tasks.common import TaskMixture
 from tasks.gsm8k import GSM8K
 from tasks.mmlu import MMLU
 from tasks.smoltalk import SmolTalk
+from nanochat.constants import (
+    LOSS_EMA_BETA, WARMUP_IGNORE_STEPS,
+    MUON_MOMENTUM_RAMPUP_STEPS, MUON_MOMENTUM_START, MUON_MOMENTUM_END
+)
 
 # -----------------------------------------------------------------------------
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
@@ -146,8 +150,8 @@ def get_lr_multiplier(progress):
 
 # Momentum scheduler for Muon optimizer
 def get_muon_momentum(it):
-    frac = min(it / 300, 1)
-    momentum = (1 - frac) * 0.85 + frac * 0.95
+    frac = min(it / MUON_MOMENTUM_RAMPUP_STEPS, 1)
+    momentum = (1 - frac) * MUON_MOMENTUM_START + frac * MUON_MOMENTUM_END
     return momentum
 
 # -----------------------------------------------------------------------------
@@ -155,7 +159,7 @@ def get_muon_momentum(it):
 x, y = next(train_loader) # prefetch the very first batch of data
 min_val_bpb = float("inf")
 smooth_train_loss = 0 # EMA of training loss
-ema_beta = 0.9 # EMA decay factor
+ema_beta = LOSS_EMA_BETA # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
 step = 0
 while True:
@@ -252,7 +256,7 @@ while True:
     flops_per_sec = num_flops_per_token * total_batch_size / dt
     promised_flops_per_sec_h100 = 989e12 * ddp_world_size # bfloat16 H100 SXM and without 2:4 sparsity
     mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
-    if step > 10:
+    if step > WARMUP_IGNORE_STEPS:
         total_training_time += dt # only count the time after the first 10 steps
     print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
     if step % 10 == 0:
