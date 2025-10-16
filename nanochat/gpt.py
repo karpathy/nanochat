@@ -180,10 +180,6 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
-        # init the rotary embeddings
-        head_dim = self.config.n_embd // self.config.n_head
-        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.cos, self.sin = cos, sin
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
