@@ -6,6 +6,7 @@ use fancy_regex::Regex;
 use pyo3::prelude::*;
 
 use ahash::{AHashMap, AHashSet};
+use num_format::{Locale, ToFormattedString};
 use compact_str::CompactString;
 use rayon::prelude::*;
 
@@ -164,15 +165,15 @@ impl Tokenizer {
     fn train_core_incremental(&mut self, mut words: Vec<Word>, counts: Vec<i32>, vocab_size: u32) {
         assert!(vocab_size >= 256, "vocab_size must be at least 256");
         let num_merges = vocab_size - 256;
-        log::info!("Starting BPE training: {} merges to compute", num_merges);
+        log::info!("Starting BPE training: {} merges to compute", num_merges.to_formatted_string(&Locale::en));
         self.merges.clear();
 
         // ---- Initial pair_counts and where_to_update (parallel) ----
-        log::info!("Computing initial pair counts from {} unique sequences", words.len());
+        log::info!("Computing initial pair counts from {} unique sequences", words.len().to_formatted_string(&Locale::en));
         let (mut pair_counts, mut where_to_update) = count_pairs_parallel(&words, &counts);
 
         // ---- Build heap ----
-        log::info!("Building heap with {} unique pairs", pair_counts.len());
+        log::info!("Building heap with {} unique pairs", pair_counts.len().to_formatted_string(&Locale::en));
         let mut heap = OctonaryHeap::with_capacity(pair_counts.len());
         for (pair, pos) in where_to_update.drain() {
             let c = *pair_counts.get(&pair).unwrap_or(&0);
@@ -376,7 +377,7 @@ impl Tokenizer {
                 break;
             }
         }
-        log::info!("Processed {} sequences total, {} unique", total_sequences, counts.len());
+        log::info!("Processed {} sequences total, {} unique", total_sequences.to_formatted_string(&Locale::en), counts.len().to_formatted_string(&Locale::en));
 
         // Materialize words & counts
         let mut words = Vec::with_capacity(counts.len());
