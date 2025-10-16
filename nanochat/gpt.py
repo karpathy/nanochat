@@ -191,11 +191,15 @@ class GPT(nn.Module):
             fan_out = module.weight.size(0)
             fan_in = module.weight.size(1)
             std = 1.0 / math.sqrt(fan_in) * min(1.0, math.sqrt(fan_out / fan_in))
-            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+            # Initialize on CPU, then move to device
+            weight = torch.empty_like(module.weight, device='cpu').normal_(mean=0.0, std=std)
+            module.weight.data.copy_(weight)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
+            # Initialize on CPU, then move to device
+            weight = torch.empty_like(module.weight, device='cpu').normal_(mean=0.0, std=1.0)
+            module.weight.data.copy_(weight)
 
     # TODO: bump base theta more, e.g. 100K is more common more recently
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
