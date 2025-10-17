@@ -34,10 +34,12 @@ source .venv/bin/activate
 #    `wandb login`
 # 2) Set the WANDB_RUN environment variable when running this script, e.g.:
 #    `WANDB_RUN=d26 bash speedrun.sh`
-if [ -z "$WANDB_RUN" ]; then
-    # by default use "dummy" : it's handled as a special case, skips logging to wandb
-    WANDB_RUN=dummy
-fi
+# if [ -z "$WANDB_RUN" ]; then
+#     # by default use "dummy" : it's handled as a special case, skips logging to wandb
+#     WANDB_RUN=dummy
+# fi
+export WANDB_API_KEY="ec7a9c0701d404122e4fc5c7c7518ed17f5b03ca"
+export WANDB_RUN=d20
 
 # -----------------------------------------------------------------------------
 # During the course of the run, we will be writing markdown reports to the report/
