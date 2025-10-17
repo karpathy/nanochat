@@ -4,6 +4,7 @@ Implementation of Persistent Memory Logic Loop (PMLL) based on the Recursive Tra
 Integrates with nanochat's GPT implementation for memory-augmented attention and recursive processing.
 """
 
+import os
 import json
 import time
 import hashlib
@@ -23,6 +24,7 @@ BETA = 0.5
 GAMMA = 0.1
 ALPHA = 0.01
 MAX_RECURSION_DEPTH = 10
+
 
 class MemoryBlock:
     def __init__(self, content: str, source_quality: float = 0.8, volatility: float = 0.1):
@@ -68,6 +70,7 @@ class MemoryBlock:
             obj.embedding = np.array(data['embedding'])
         return obj
 
+
 class AttentionFlower(nn.Module):
     """Multi-petal attention mechanism for memory routing"""
     def __init__(self, num_petals: int = 8, hidden_dim: int = 384):
@@ -83,6 +86,7 @@ class AttentionFlower(nn.Module):
             out = torch.matmul(x, self.W[i]) + self.b[i]
             outputs.append(F.softmax(out, dim=-1))
         return torch.mean(torch.stack(outputs), dim=0)
+
 
 class PMLLLattice:
     def __init__(self, config: Dict[str, Any]):
@@ -101,7 +105,6 @@ class PMLLLattice:
         """Build a Merkle tree from leaf hashes and return root"""
         if not leaves:
             return hashlib.sha256(b'').hexdigest()
-        
         while len(leaves) & (len(leaves) - 1) != 0:
             leaves.append(leaves[-1])
 
@@ -114,7 +117,7 @@ class PMLLLattice:
                 node_hash = hashlib.sha256(combined.encode()).hexdigest()
                 next_level.append(node_hash)
             return build(next_level)
-        
+
         return build(leaves)
 
     async def verify_merkle_proof(self, mem_hash: str, root: str, proof: List[str]) -> bool:
@@ -136,25 +139,19 @@ class PMLLLattice:
         """Compute consensus score for memory block"""
         if not related:
             return await self.temporal_decay(mem)
-        
         numerator = 0.0
         denominator = 0.0
-        
         for mem_hash, similarity in related:
             other_mem = self.memory_store.get(mem_hash)
             if other_mem is None:
                 continue
-                
             other_conf = await self.temporal_decay(other_mem)
             age_factor = np.exp(-(time.time() - mem.timestamp) / 86400.0)
             weight = similarity * age_factor
-            
             other_emb = await self.get_embedding(other_mem)
             agreement = np.dot(await self.get_embedding(mem), other_emb)
-            
             numerator += weight * agreement * other_conf
             denominator += weight
-            
         if denominator > 0:
             return np.clip(numerator / denominator, 0, 1)
         else:
@@ -182,81 +179,68 @@ class PMLLLattice:
         """Recursively reconsider deferred memories with Merkle tree verification"""
         if max_depth <= 0 or len(self.deferred_queue) == 0:
             return
-
         current_memories = [mem for mem, _ in self.deferred_queue]
         current_root = self._build_merkle_tree([mem.hash for mem in current_memories])
-
         queue_size = len(self.deferred_queue)
         processed = 0
-        
         while processed < queue_size:
             mem, score = self.deferred_queue.popleft()
             new_conf, contradicts = await self.reconsider_memory(mem)
             new_score = score * new_conf
-            
             if len(contradicts) > 0 or new_score < 0.5:
                 self.deferred_queue.append((mem, new_score))
                 mem.status = 'DEFERRED'
             else:
                 mem.status = 'RESOLVED'
-                
             processed += 1
-
         await self.reconsider_deferred(max_depth - 1, prev_root=current_root)
 
     async def reconsider_memory(self, mem: MemoryBlock) -> Tuple[float, List[str]]:
         """Reconsider a single memory block"""
-        related = []  # Implement similarity search
+        related = []
         consensus = await self.compute_consensus(mem, related)
-        contradicts = []  # Implement contradiction detection
+        contradicts = []
         new_conf = consensus * np.exp(-sum(contradicts))
         return new_conf, contradicts
 
     def save_checkpoint(self, path: str) -> None:
-        """Save PMLL state to checkpoint"""
-        tensors = {}
-        for k, v in self.state.items():
-            if isinstance(v, torch.Tensor):
-                tensors[k] = v
+        """Save tensor state"""
+        tensors = {k: v for k, v in self.state.items() if isinstance(v, torch.Tensor)}
         save_file(tensors, path)
 
     def load_checkpoint(self, path: str) -> None:
-        """Load PMLL state from checkpoint"""
+        """Load tensor state"""
         with safe_open(path, framework="pt", device="cpu") as f:
             for key in f.keys():
                 self.state[key] = f.get_tensor(key)
 
     def save_state(self) -> None:
-        """Save full state including memory store"""
+        """Save full PMLL state"""
         state = {
             'deferred_queue': [
-                {**mem.to_dict(), 'score': score}
-                for mem, score in self.deferred_queue
+                {**mem.to_dict(), 'score': score} for mem, score in self.deferred_queue
             ],
-            'memory_store': {
-                k: v.to_dict() for k, v in self.memory_store.items()
-            }
+            'memory_store': {k: v.to_dict() for k, v in self.memory_store.items()}
         }
         with open('pmll_state.json', 'w') as f:
             json.dump(state, f, indent=2)
         self.save_checkpoint('pmll_tensors.safetensors')
 
     def load_state(self) -> None:
-        """Load full state including memory store"""
+        """Load PMLL state"""
+        if not os.path.isfile('pmll_state.json'):
+            return None
         try:
             with open('pmll_state.json', 'r') as f:
                 state = json.load(f)
-            
             self.deferred_queue = deque([
                 (MemoryBlock.from_dict(d), d.get('score', 0.5))
                 for d in state.get('deferred_queue', [])
             ])
-            
             self.memory_store = {
                 k: MemoryBlock.from_dict(v)
                 for k, v in state.get('memory_store', {}).items()
             }
-            
             self.load_checkpoint('pmll_tensors.safetensors')
         except FileNotFoundError:
-            pass  # Start fresh if no saved state
+            pass
