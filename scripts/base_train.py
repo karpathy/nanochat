@@ -35,7 +35,8 @@ num_iterations = -1 # explicit number of steps of the optimization (-1 = disable
 target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
 target_param_data_ratio = 20 # calculate num_iterations to maintain fixed data:param ratio (Chinchilla=20) (-1 = disable)
 # Optimization
-device_batch_size = 32 # per-device batch size (set to not OOM)
+_DEFAULT_DEVICE_BATCH_SIZE = 32
+device_batch_size = _DEFAULT_DEVICE_BATCH_SIZE # per-device batch size (set to not OOM)
 total_batch_size = 524288 # total desired batch size, in #tokens
 embedding_lr = 0.2 # learning rate for the embedding parameters (Adam)
 unembedding_lr = 0.004 # learning rate for the unembedding parameters (Adam)
@@ -54,6 +55,33 @@ model_tag = "" # optionally override the model tag for the output checkpoint dir
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
+
+# Allow environment override or auto-tuning of batch size when not explicitly set
+_device_batch_size_overridden = device_batch_size != _DEFAULT_DEVICE_BATCH_SIZE
+if not _device_batch_size_overridden:
+    env_device_batch_size = os.environ.get("NANOCHAT_DEVICE_BATCH_SIZE")
+    if env_device_batch_size:
+        device_batch_size = int(env_device_batch_size)
+        _device_batch_size_overridden = True
+
+if not _device_batch_size_overridden:
+    try:
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            total_mem_gib = props.total_memory / (1024 ** 3)
+            if total_mem_gib < 30:
+                recommended = 16
+            elif total_mem_gib < 60:
+                recommended = 24
+            else:
+                recommended = device_batch_size
+            if device_batch_size > recommended:
+                print0(f"Auto-adjusting device_batch_size from {device_batch_size} to {recommended} for {total_mem_gib:.1f} GiB GPUs")
+                device_batch_size = recommended
+    except Exception as exc:
+        print0(f"Warning: unable to auto-adjust device_batch_size ({exc})")
+
+user_config['device_batch_size'] = device_batch_size
 # -----------------------------------------------------------------------------
 
 # Compute init

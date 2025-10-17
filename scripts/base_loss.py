@@ -16,11 +16,36 @@ from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 
 # Configuration
-device_batch_size = 32
+_DEFAULT_DEVICE_BATCH_SIZE = 32
+device_batch_size = _DEFAULT_DEVICE_BATCH_SIZE
 split_tokens = 20*524288  # number of tokens to evaluate per split
 model_tag = None # optional model tag for the output directory name
 model_step = None # optional model step for the output directory name
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+
+_device_batch_size_overridden = device_batch_size != _DEFAULT_DEVICE_BATCH_SIZE
+if not _device_batch_size_overridden:
+    env_device_batch_size = os.environ.get("NANOCHAT_DEVICE_BATCH_SIZE")
+    if env_device_batch_size:
+        device_batch_size = int(env_device_batch_size)
+        _device_batch_size_overridden = True
+
+if not _device_batch_size_overridden:
+    try:
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            total_mem_gib = props.total_memory / (1024 ** 3)
+            if total_mem_gib < 30:
+                recommended = 16
+            elif total_mem_gib < 60:
+                recommended = 24
+            else:
+                recommended = device_batch_size
+            if device_batch_size > recommended:
+                print0(f"Auto-adjusting device_batch_size from {device_batch_size} to {recommended} for {total_mem_gib:.1f} GiB GPUs")
+                device_batch_size = recommended
+    except Exception as exc:
+        print0(f"Warning: unable to auto-adjust device_batch_size ({exc})")
 
 # Load the base model and the tokenizer
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()

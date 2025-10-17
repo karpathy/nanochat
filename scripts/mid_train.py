@@ -34,7 +34,8 @@ model_tag = None # model tag to load the model from (base model or midtrained mo
 step = None # step to load the model from (base model or midtrained model)
 dtype = "bfloat16"
 max_seq_len = 2048
-device_batch_size = 32
+_DEFAULT_DEVICE_BATCH_SIZE = 32
+device_batch_size = _DEFAULT_DEVICE_BATCH_SIZE
 unembedding_lr = 0.004
 embedding_lr = 0.2
 matrix_lr = 0.02
@@ -47,6 +48,32 @@ total_batch_size = 524288
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
+
+_device_batch_size_overridden = device_batch_size != _DEFAULT_DEVICE_BATCH_SIZE
+if not _device_batch_size_overridden:
+    env_device_batch_size = os.environ.get("NANOCHAT_DEVICE_BATCH_SIZE")
+    if env_device_batch_size:
+        device_batch_size = int(env_device_batch_size)
+        _device_batch_size_overridden = True
+
+if not _device_batch_size_overridden:
+    try:
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            total_mem_gib = props.total_memory / (1024 ** 3)
+            if total_mem_gib < 30:
+                recommended = 16
+            elif total_mem_gib < 60:
+                recommended = 24
+            else:
+                recommended = device_batch_size
+            if device_batch_size > recommended:
+                print0(f"Auto-adjusting device_batch_size from {device_batch_size} to {recommended} for {total_mem_gib:.1f} GiB GPUs")
+                device_batch_size = recommended
+    except Exception as exc:
+        print0(f"Warning: unable to auto-adjust device_batch_size ({exc})")
+
+user_config['device_batch_size'] = device_batch_size
 # -----------------------------------------------------------------------------
 
 # Compute init

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 # This script is the "Best ChatGPT clone that $100 can buy",
 # It is designed to run in ~4 hours on 8XH100 node at $3/GPU/hour.
 
@@ -12,8 +14,26 @@
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
-export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
-mkdir -p $NANOCHAT_BASE_DIR
+export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
+mkdir -p "$NANOCHAT_BASE_DIR"
+
+# Detect how many GPUs to use for torchrun unless the user overrides it
+if [ -z "${NPROC_PER_NODE:-}" ]; then
+    if command -v nvidia-smi &> /dev/null; then
+        gpu_count=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l | tr -d ' ')
+    else
+        gpu_count=$(python - <<'PY'
+import torch
+print(torch.cuda.device_count())
+PY
+)
+    fi
+    if [ -z "$gpu_count" ] || [ "$gpu_count" -le 0 ]; then
+        gpu_count=1
+    fi
+    export NPROC_PER_NODE="$gpu_count"
+fi
+echo "Using $NPROC_PER_NODE GPUs per node for torchrun"
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
@@ -34,7 +54,7 @@ source .venv/bin/activate
 #    `wandb login`
 # 2) Set the WANDB_RUN environment variable when running this script, e.g.:
 #    `WANDB_RUN=d26 bash speedrun.sh`
-if [ -z "$WANDB_RUN" ]; then
+if [ -z "${WANDB_RUN:-}" ]; then
     # by default use "dummy" : it's handled as a special case, skips logging to wandb
     WANDB_RUN=dummy
 fi
@@ -92,25 +112,25 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
 # evaluate the model on a larger chunk of train/val data and draw some samples
-torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss
 # evaluate the model on CORE tasks
-torchrun --standalone --nproc_per_node=8 -m scripts.base_eval
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval
 
 # -----------------------------------------------------------------------------
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
 # run midtraining and eval the model
-torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i mid
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train -- --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i mid
 
 # -----------------------------------------------------------------------------
 # Supervised Finetuning (domain adaptation to each sequence all by itself per row)
 
 # train sft and re-eval right away (should see a small bump)
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_sft -- --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"
@@ -123,9 +143,9 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 # (optional)
 
 # run reinforcement learning
-# torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=$WANDB_RUN
+# torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_rl -- --run=$WANDB_RUN
 # eval the RL model only on GSM8K
-# torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i rl -a GSM8K
+# torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i rl -a GSM8K
 
 # -----------------------------------------------------------------------------
 # Generate the full report by putting together all the sections

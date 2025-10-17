@@ -4,13 +4,13 @@ Common utilities for nanochat.
 
 import os
 import re
+import sys
 import logging
 import torch
 import torch.distributed as dist
 
 class ColoredFormatter(logging.Formatter):
-    """Custom formatter that adds colors to log messages."""
-    # ANSI color codes
+    """Custom formatter that adds colors to log messages when appropriate."""
     COLORS = {
         'DEBUG': '\033[36m',    # Cyan
         'INFO': '\033[32m',     # Green
@@ -20,16 +20,32 @@ class ColoredFormatter(logging.Formatter):
     }
     RESET = '\033[0m'
     BOLD = '\033[1m'
+
+    def __init__(self, fmt, use_color=None):
+        super().__init__(fmt)
+        if use_color is None:
+            disable_color = os.environ.get('NO_COLOR') is not None
+            env_override = os.environ.get('NANOCHAT_COLOR')
+            if env_override is not None:
+                disable_color = env_override.lower() in {"0", "false", "no", "off"}
+            stream = sys.stderr
+            self.use_color = (not disable_color) and stream.isatty()
+        else:
+            self.use_color = use_color
+
     def format(self, record):
-        # Add color to the level name
         levelname = record.levelname
+        if not self.use_color:
+            return super().format(record)
+
         if levelname in self.COLORS:
             record.levelname = f"{self.COLORS[levelname]}{self.BOLD}{levelname}{self.RESET}"
-        # Format the message
-        message = super().format(record)
-        # Add color to specific parts of the message
+        try:
+            message = super().format(record)
+        finally:
+            record.levelname = levelname
+
         if levelname == 'INFO':
-            # Highlight numbers and percentages
             message = re.sub(r'(\d+\.?\d*\s*(?:GB|MB|%|docs))', rf'{self.BOLD}\1{self.RESET}', message)
             message = re.sub(r'(Shard \d+)', rf'{self.COLORS["INFO"]}{self.BOLD}\1{self.RESET}', message)
         return message
