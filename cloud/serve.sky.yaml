@@ -1,0 +1,35 @@
+# Serve a trained nanochat model with the web UI
+#
+# Launch:
+#   sky launch -c nanochat-serve cloud/serve.sky.yaml --infra <aws|gcp|nebius|lambda|etc>
+#
+# Access the web UI:
+#   sky status --endpoint 8000 nanochat-serve
+#
+# Then open the URL in your browser to chat with your model!
+
+name: nanochat-serve
+
+resources:
+  accelerators: H100:1  # Single GPU sufficient for inference
+  ports: 8000  # Expose port 8000 for the web UI
+  disk_size: 100
+
+file_mounts:
+  /tmp/nanochat:
+    source: s3://nanochat-data
+
+workdir: .
+
+setup: |
+  uv sync
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  source "$HOME/.cargo/env"
+  source .venv/bin/activate
+  unset CONDA_PREFIX
+  uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+
+run: |
+  export NANOCHAT_BASE_DIR=/tmp/nanochat
+  source .venv/bin/activate
+  python -m scripts.chat_web --host 0.0.0.0 --port 8000
