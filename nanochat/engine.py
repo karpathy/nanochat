@@ -46,7 +46,12 @@ def eval_with_timeout(formula, max_time=3):
 def use_calculator(expr):
     """Evaluate a math expression safely."""
     expr = expr.replace(",", "")
-    if any([x not in "0123456789*+-/.() " for x in expr]): # for now disallow non-numeric chars
+    # Faster and safer check for allowed characters
+    allowed_chars = set("0123456789*+-/.() ")
+    if not all(c in allowed_chars for c in expr):
+        return None
+    # Disallow access to built-ins and other sensitive attributes
+    if "__" in expr:
         return None
     if "**" in expr: # for now disallow power operator, could be very expensive
         return None
@@ -101,7 +106,12 @@ class KVCache:
     def insert_kv(self, layer_idx, k, v):
         # Lazy initialize the cache here because we need to know the dtype/device
         if self.kv_cache is None:
+            # Pre-allocate a larger cache to avoid frequent resizing
+            self.kv_shape = list(self.kv_shape)
+            self.kv_shape[4] *= 2  # Double the sequence length for pre-allocation
             self.kv_cache = torch.empty(self.kv_shape, dtype=k.dtype, device=k.device)
+            self.kv_shape[4] //= 2 # a bit of a hack to restore the original shape for future checks
+
         # Insert new keys/values to the cache and return the full cache so far
         B, H, T_add, D = k.size()
         t0, t1 = self.pos, self.pos + T_add
