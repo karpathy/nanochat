@@ -283,6 +283,10 @@ class Report:
                     # capture bloat data for summary later (the stuff after Bloat header and until \n\n)
                     bloat_data = re.search(r"### Bloat\n(.*?)\n\n", header_content, re.DOTALL)
                     bloat_data = bloat_data.group(1) if bloat_data else ""
+            else:
+                start_time = None # will cause us to not write the total wall clock time
+                bloat_data = "[bloat data missing]"
+                print(f"Warning: {header_file} does not exist. Did you forget to run `nanochat reset`?")
             # process all the individual sections
             for file_name in EXPECTED_FILES:
                 section_file = os.path.join(report_dir, file_name)

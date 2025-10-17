@@ -169,8 +169,6 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
         self.register_buffer("sin", sin, persistent=False)
-        # Cast the embeddings from fp32 to bf16: optim can tolerate it and it saves memory: both in the model and the activations
-        self.transformer.wte.to(dtype=torch.bfloat16)
 
     def init_weights(self):
         self.apply(self._init_weights)
@@ -184,6 +182,9 @@ class GPT(nn.Module):
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
+        # Cast the embeddings from fp32 to bf16: optim can tolerate it and it saves memory: both in the model and the activations
+        if self.transformer.wte.weight.device.type == "cuda":
+            self.transformer.wte.to(dtype=torch.bfloat16)
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):

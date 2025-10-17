@@ -11,6 +11,7 @@ dependencies = [
     "numpy==1.26.4",
     "psutil>=7.1.0",
     "regex>=2025.9.1",
+    "setuptools>=80.9.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
     "torch>=2.8.0",
@@ -21,17 +22,6 @@ dependencies = [
 [build-system]
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
-
-# target torch to cuda 12.8
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cu128" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
 
 [tool.maturin]
 module-name = "rustbpe"
