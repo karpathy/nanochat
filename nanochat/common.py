@@ -126,6 +126,51 @@ def compute_cleanup():
     if is_ddp():
         dist.destroy_process_group()
 
+def get_peak_flops(device=None) -> float:
+    """
+    Get peak FLOPS for the GPU.
+    Returns peak BF16 Tensor FLOPS with FP32 accumulation (non-sparse) for the current GPU.
+    This is the metric that corresponds to PyTorch bfloat16 training performance.
+    Defaults to H100 if GPU is unknown.
+    """
+    GPU_PEAK_FLOPS = {
+        "H200": 989e12,
+        "B200": 2.25e15,
+        "H100 NVL": 835e12,
+        "H100 PCIe": 756e12,
+        "H100": 989e12,
+        "A100": 312e12,
+        "6000 Blackwell Max-Q": 438.9e12,
+        "6000 Blackwell": 503.8e12,
+        "6000 Ada": 364e12,
+        "A6000": 154.8e12,
+        "RTX 5090": 209.5e12,
+        "RTX 4090": 165.2e12,
+        "RTX 3090": 71e12,
+        "L40S": 362e12,
+    }
+    
+    try:
+        if device is None:
+            device = torch.device("cuda:0")
+        device_name = torch.cuda.get_device_name(device)
+        
+        # Match GPU by substring (case-insensitive). Sort by length to check specific names first
+        # e.g., "6000 Blackwell Max-Q" checked before "6000 Blackwell"
+        for gpu_key, flops in sorted(GPU_PEAK_FLOPS.items(), key=lambda x: len(x[0]), reverse=True):
+            if gpu_key.lower() in device_name.lower():
+                if int(os.environ.get('RANK', 0)) == 0:
+                    logger.info(f"Detected GPU: {device_name} -> using {flops/1e12:.1f} TFLOPS (BF16 Tensor)")
+                return flops
+        
+        # Unknown GPU: warn and default to H100
+        logger.warning(f"Unknown GPU '{device_name}', defaulting to H100 peak FLOPS (989e12)")
+        return 989e12
+        
+    except Exception as e:
+        logger.warning(f"Could not detect GPU, defaulting to H100: {e}")
+        return 989e12
+
 class DummyWandb:
     """Useful if we wish to not use wandb but have all the same signatures"""
     def __init__(self):

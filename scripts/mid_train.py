@@ -16,7 +16,7 @@ import time
 import wandb
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, get_peak_flops
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -76,6 +76,8 @@ print0(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tok
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 token_bytes = get_token_bytes(device=device)
+peak_flops_per_gpu = get_peak_flops(device)
+promised_flops_per_sec = peak_flops_per_gpu * ddp_world_size
 
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
 optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
@@ -250,8 +252,7 @@ while True:
     pct_done = 100 * progress
     tok_per_sec = int(world_tokens_per_fwdbwd / dt)
     flops_per_sec = num_flops_per_token * total_batch_size / dt
-    promised_flops_per_sec_h100 = 989e12 * ddp_world_size # bfloat16 H100 SXM and without 2:4 sparsity
-    mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
+    mfu = 100 * flops_per_sec / promised_flops_per_sec # in %
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
     print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
