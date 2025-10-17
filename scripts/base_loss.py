@@ -6,6 +6,7 @@ Loads a checkpoint, and:
 Example run as:
 torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
 """
+import math
 import os
 import torch
 from nanochat.checkpoint_manager import load_model
@@ -57,8 +58,16 @@ autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
 
 # Evaluate the loss on each split
 tokens_per_step = device_batch_size * sequence_len * ddp_world_size
-assert split_tokens % tokens_per_step == 0, "split_tokens must be divisible by tokens_per_step"
-steps = split_tokens // tokens_per_step
+if split_tokens % tokens_per_step != 0:
+    steps = math.ceil(split_tokens / tokens_per_step)
+    adjusted_split_tokens = steps * tokens_per_step
+    print0(
+        f"Adjusting split_tokens from {split_tokens:,} to {adjusted_split_tokens:,} "
+        "so it divides evenly across GPUs"
+    )
+    split_tokens = adjusted_split_tokens
+else:
+    steps = split_tokens // tokens_per_step
 token_bytes = get_token_bytes(device=device)
 bpb_results = {}
 for split_name in ["train", "val"]:

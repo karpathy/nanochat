@@ -10,6 +10,7 @@ torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_
 """
 
 from collections import deque
+import math
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import time
@@ -82,6 +83,21 @@ master_process = ddp_rank == 0
 dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=dtype)
 
+tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration for a single rank
+world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size
+if total_batch_size % world_tokens_per_fwdbwd != 0:
+    grad_accum_steps = math.ceil(total_batch_size / world_tokens_per_fwdbwd)
+    adjusted_total_batch_size = grad_accum_steps * world_tokens_per_fwdbwd
+    print0(
+        f"Adjusting total_batch_size from {total_batch_size:,} to {adjusted_total_batch_size:,} "
+        "so it divides evenly across GPUs"
+    )
+    total_batch_size = adjusted_total_batch_size
+else:
+    grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
+
+user_config['total_batch_size'] = total_batch_size
+
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-mid", name=run, config=user_config)
@@ -95,10 +111,6 @@ orig_model = model
 model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
-tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration for a single rank
-world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
-assert total_batch_size % world_tokens_per_fwdbwd == 0
-grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
 print0(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
