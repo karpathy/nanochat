@@ -42,12 +42,14 @@ def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data)
 def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False):
     # Load the model state
     model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
-    model_data = torch.load(model_path, map_location=device)
+    # Load to CPU first to avoid CUDA device validation issues when loading on MPS/CPU
+    map_location = 'cpu' if str(device).startswith('mps') else device
+    model_data = torch.load(model_path, map_location=map_location)
     # Load the optimizer state if requested
     optimizer_data = None
     if load_optimizer:
         optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}.pt")
-        optimizer_data = torch.load(optimizer_path, map_location=device)
+        optimizer_data = torch.load(optimizer_path, map_location=map_location)
     # Load the metadata
     meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
     with open(meta_path, "r") as f:
@@ -67,6 +69,9 @@ def build_model(checkpoint_dir, step, device, phase):
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, device, load_optimizer=False)
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
     model_data = {k.lstrip("_orig_mod."): v for k, v in model_data.items()}
+    # Move model_data tensors to target device if needed (for MPS/CPU loading CUDA checkpoints)
+    if any(v.device.type != device.type for v in model_data.values() if isinstance(v, torch.Tensor)):
+        model_data = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)
