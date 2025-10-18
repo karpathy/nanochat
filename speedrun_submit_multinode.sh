@@ -1,4 +1,14 @@
 #!/bin/bash
+#SBATCH --account nvr_lpr_llm
+#SBATCH --partition batch_short,batch_block1,backfill
+#SBATCH --job-name=nanochat_1node_fineweb_d20    
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=1
+#SBATCH --gpus-per-node=8
+#SBATCH --time=02:00:00
+#SBATCH --output=nanochat_1node_fineweb_d20-%j.out
+#SBATCH --mem=0
+#SBATCH --exclusive
 
 # This script is the "Best ChatGPT clone that $100 can buy",
 # It is designed to run in ~4 hours on 8XH100 node at $3/GPU/hour.
@@ -10,22 +20,45 @@
 # 3) Example launch with wandb logging, but see below for setting up wandb first:
 # WANDB_RUN=speedrun screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
 
+set -x  # Enable debug output
+
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
-export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
+export NANOCHAT_BASE_DIR="$HOME/nanochat_cache"
 mkdir -p $NANOCHAT_BASE_DIR
+
+# -----------------------------------------------------------------------------
+# Multi-node defaults from Slurm environment
+
+export GPUS_PER_NODE=${GPUS_PER_NODE:-${SLURM_GPUS_ON_NODE:-8}}
+export NNODES=${NNODES:-${SLURM_NNODES:-2}}
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_PORT=${MASTER_PORT:-29500}
+export RDZV_ENDPOINT=$MASTER_ADDR:$MASTER_PORT
+export NCCL_ASYNC_ERROR_HANDLING=1
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
 
-# install uv (if not already installed)
-command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-# create a .venv local virtual environment (if it doesn't exist)
-[ -d ".venv" ] || uv venv
-# install the repo dependencies
-uv sync
-# activate venv so that `python` uses the project's venv instead of system python
-source .venv/bin/activate
+# # install uv (if not already installed)
+# command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+# # create a .venv local virtual environment (if it doesn't exist)
+# [ -d "$HOME/nanochat_cache/.venv" ] || uv venv
+# # install the repo dependencies
+# uv sync
+# # activate venv so that `python` uses the project's venv instead of system python
+# source $HOME/nanochat_cache/.venv/bin/activate
+
+# 1️⃣ 创建或重建 venv（--clear 会先清空旧内容）
+uv venv "$HOME/nanochat_cache/.venv" --clear
+
+# 2️⃣ 激活虚拟环境
+source "$HOME/nanochat_cache/.venv/bin/activate"
+
+# 3️⃣ 安装依赖（uv 会自动识别项目 pyproject.toml）
+cd /lustre/fs1/portfolios/nvr/projects/nvr_lpr_llm/users/sdiao/nanochat
+uv sync --active
+
 
 # -----------------------------------------------------------------------------
 # wandb setup
@@ -39,7 +72,7 @@ source .venv/bin/activate
 #     WANDB_RUN=dummy
 # fi
 export WANDB_API_KEY="ec7a9c0701d404122e4fc5c7c7518ed17f5b03ca"
-export WANDB_RUN=fineweb_d20
+export WANDB_RUN=fineweb_d20_1node_$SLURM_JOB_ID
 
 # -----------------------------------------------------------------------------
 # During the course of the run, we will be writing markdown reports to the report/
@@ -54,8 +87,13 @@ python -m nanochat.report reset --exp_name=$WANDB_RUN
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 
+echo "VIRTUAL_ENV: $VIRTUAL_ENV"
+echo "CONDA_PREFIX: $CONDA_PREFIX"
+unset CONDA_PREFIX
+
 # Build the rustbpe Tokenizer
-uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+# uv run 
+maturin develop --release --manifest-path rustbpe/Cargo.toml
 
 # Download the first ~2B characters of pretraining dataset
 # look at dev/repackage_data_reference.py for details on how this data was prepared
@@ -93,26 +131,29 @@ fi
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
-# pretrain the d20 model
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
-# evaluate the model on a larger chunk of train/val data and draw some samples
-torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
-# evaluate the model on CORE tasks
-torchrun --standalone --nproc_per_node=8 -m scripts.base_eval
+# Warm up venv on all nodes (ensures env is available everywhere)
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; python -c "import torch; print(torch.cuda.device_count())"'
+
+# pretrain the d20 model (multi-node)
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.base_train -- --depth=20 --run=$WANDB_RUN'
+# evaluate the model on a larger chunk of train/val data and draw some samples (multi-node)
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.base_loss'
+# evaluate the model on CORE tasks (multi-node)
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.base_eval'
 
 # -----------------------------------------------------------------------------
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
-# run midtraining and eval the model
-torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i mid
+# run midtraining and eval the model (multi-node)
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.mid_train -- --run=$WANDB_RUN'
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.chat_eval -- -i mid'
 
 # -----------------------------------------------------------------------------
 # Supervised Finetuning (domain adaptation to each sequence all by itself per row)
 
-# train sft and re-eval right away (should see a small bump)
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
+# train sft and re-eval right away (should see a small bump) (multi-node)
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.chat_sft -- --run=$WANDB_RUN'
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.chat_eval -- -i sft'
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"
