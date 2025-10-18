@@ -6,7 +6,7 @@ import torch
 import torch.distributed as dist
 
 @torch.no_grad()
-def evaluate_bpb(model, batches, steps, token_bytes):
+def evaluate_bpb(model, batches, steps, token_bytes, profiler=None, profile_phase="eval_bpb"):
     """
     Instead of the naive 'mean loss', this function returns the bits per byte (bpb),
     which is a tokenization vocab size-indepedent metric, meaning you are still comparing
@@ -28,6 +28,13 @@ def evaluate_bpb(model, batches, steps, token_bytes):
     total_nats = torch.tensor(0.0, dtype=torch.float32, device=model.get_device())
     total_bytes = torch.tensor(0, dtype=torch.int64, device=model.get_device())
     batch_iter = iter(batches)
+
+    # Start profiling if profiler is provided
+    profile_ctx = None
+    if profiler is not None:
+        profile_ctx = profiler.profile_section(profile_phase, warmup=1, active=min(10, steps))
+        profile_ctx.__enter__()
+
     for _ in range(steps):
         x, y = next(batch_iter)
         loss2d = model(x, y, loss_reduction='none') # (B, T)
@@ -51,6 +58,14 @@ def evaluate_bpb(model, batches, steps, token_bytes):
             num_bytes2d = token_bytes[y]
             total_nats += (loss2d * (num_bytes2d > 0)).sum()
             total_bytes += num_bytes2d.sum()
+
+        # Step profiler if active
+        if profile_ctx is not None:
+            profile_ctx.step()
+
+    # Stop profiling if it was started
+    if profile_ctx is not None:
+        profile_ctx.__exit__(None, None, None)
     # sum reduce across all ranks
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     if world_size > 1:
