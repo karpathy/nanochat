@@ -117,6 +117,10 @@ I haven't invested too much here but some tests exist, especially for the tokeni
 python -m pytest tests/test_rustbpe.py -v -s
 ```
 
+## Profiling
+
+This project includes tools to capture PyTorch traces and CUDA memory snapshots for detailed profiling of CPU/GPU activity and memory usage. Traces show execution down to individual CUDA kernel calls, while memory snapshots visualize allocations to help debug OOM errors, memory leaks, or simply learn how GPU memory is managed. Enable with `--enable_profiling=True` in speedrun.sh, and see [PROFILING.md](PROFILING.md) for details and example visualizations.
+
 ## Contributing
 
 nanochat is nowhere finished. The goal is to improve the state of the art in micro models that are accessible to work with end to end on budgets of < $1000 dollars. Accessibility is about overall cost but also about cognitive complexity - nanochat is not an exhaustively configurable LLM "framework"; there will be no giant configuration objects, model factories, or if-then-else monsters in the code base. It is a single, cohesive, minimal, readable, hackable, maximally-forkable "strong baseline" codebase designed to run start to end and produce a concrete ChatGPT clone and its report card.
