@@ -114,7 +114,7 @@ def estimate_cost(gpu_info, runtime_hours=None):
         "estimated_total": hourly_rate * runtime_hours if runtime_hours else None
     }
 
-def generate_header():
+def generate_header(exp_name=None):
     """Generate the header for a training report."""
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -126,6 +126,8 @@ def generate_header():
     header = f"""# nanochat training report
 
 Generated: {timestamp}
+
+Experiment: {exp_name or '-'}
 
 ## Environment
 
@@ -161,7 +163,7 @@ Generated: {timestamp}
 """
 
     # bloat metrics: package all of the source code and assess its weight
-    packaged = run_command('files-to-prompt . -e py -e md -e rs -e html -e toml -e sh --ignore "*target*" --cxml')
+    packaged = run_command('files-to-prompt . -e py -e md -e rs -e html -e toml -e sh --ignore "*target*" --cxml') or ""
     num_chars = len(packaged)
     num_lines = len(packaged.split('\n'))
     num_files = len([x for x in packaged.split('\n') if x.startswith('<source>')])
@@ -232,9 +234,10 @@ def extract_timestamp(content, prefix):
 class Report:
     """Maintains a bunch of logs, generates a final markdown report."""
 
-    def __init__(self, report_dir):
+    def __init__(self, report_dir, exp_name=None):
         os.makedirs(report_dir, exist_ok=True)
         self.report_dir = report_dir
+        self.exp_name = exp_name
 
     def log(self, section, data):
         """Log a section of data to the report."""
@@ -367,7 +370,7 @@ class Report:
             os.remove(report_file)
         # Generate and write the header section with start timestamp
         header_file = os.path.join(self.report_dir, "header.md")
-        header = generate_header()
+        header = generate_header(self.exp_name)
         start_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(header_file, "w") as f:
             f.write(header)
@@ -383,13 +386,14 @@ class DummyReport:
     def reset(self, *args, **kwargs):
         pass
 
-def get_report():
+def get_report(exp_name=None):
     # just for convenience, only rank 0 logs to report
     from nanochat.common import get_base_dir, get_dist_info
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     if ddp_rank == 0:
-        report_dir = os.path.join(get_base_dir(), "report")
-        return Report(report_dir)
+        base_report_dir = os.path.join(get_base_dir(), "report")
+        report_dir = os.path.join(base_report_dir, exp_name) if exp_name else base_report_dir
+        return Report(report_dir, exp_name=exp_name)
     else:
         return DummyReport()
 
@@ -397,8 +401,9 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Generate or reset nanochat training reports.")
     parser.add_argument("command", nargs="?", default="generate", choices=["generate", "reset"], help="Operation to perform (default: generate)")
+    parser.add_argument("--exp_name", type=str, default=None, help="Experiment name to namespace reports under get_base_dir()/report/<exp_name>")
     args = parser.parse_args()
     if args.command == "generate":
-        get_report().generate()
+        get_report(exp_name=args.exp_name).generate()
     elif args.command == "reset":
-        get_report().reset()
+        get_report(exp_name=args.exp_name).reset()
