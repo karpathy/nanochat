@@ -31,6 +31,7 @@ class GPTConfig:
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (MQA)
     n_embd: int = 768
+    frozen_embd: bool = False #whether or not to use anchored embedding vectors
 
 
 def norm(x):
@@ -151,100 +152,120 @@ class Block(nn.Module):
         return x
 
 
-class FlatRollEmbed(nn.Module):
+
+def make_base(D: int, scale: str = "box", seed: int = 0,
+              dtype=torch.float32, device=None) -> torch.Tensor:
+    if dtype in (torch.float16, torch.bfloat16, torch.float32):
+        complex_dtype = torch.complex64
+        work_float = torch.float32
+    else:
+        complex_dtype = torch.complex128
+        work_float = torch.float64
+
+    g = torch.Generator()
+    g.manual_seed(seed)
+
+    X = torch.zeros(D, dtype=complex_dtype)
+    X[0] = torch.tensor(0, dtype=complex_dtype)  # DC=0
+
+    if D % 2 == 0:
+        for k in range(1, D // 2):
+            phi = torch.rand((), dtype=work_float, generator=g) * (2 * math.pi)
+            val = torch.cos(phi).to(work_float) + 1j * torch.sin(phi).to(work_float)
+            val = val.to(complex_dtype)
+            X[k] = val
+            X[D - k] = torch.conj(val)
+        X[D // 2] = (1.0 if torch.rand((), generator=g) < 0.5 else -1.0)
+    else:
+        for k in range(1, (D - 1) // 2 + 1):
+            phi = torch.rand((), dtype=work_float, generator=g) * (2 * math.pi)
+            val = torch.cos(phi).to(work_float) + 1j * torch.sin(phi).to(work_float)
+            val = val.to(complex_dtype)
+            X[k] = val
+            X[D - k] = torch.conj(val)
+
+    x = torch.fft.ifft(X).real.to(work_float)
+
+    if scale == "unit":
+        x = x / (x.norm() + 1e-12)
+    elif scale == "box":
+        x = x / (x.abs().max() + 1e-12)
+    else:
+        raise ValueError("scale must be 'unit' or 'box'")
+
+    x = x.to(dtype)
+    if device is not None:
+        x = x.to(device)
+    return x
+
+class SampledRollEmbed:
     """
-    Embedding matrix W in R^{V x D} 
-    Optimized for epistemic purposes
-    
+    V < D. Integer-shift sampling of a D-length flat-spectrum, DC=0 base,
+    then add a tower lift scaled to hit target σ_min (well-conditioned, W+S-like).
     """
+    def __init__(self, V: int, D: int, seed: int = 0, scale: str = "box",
+                 dtype=torch.float32, device=None,
+                 selection: str = "even",
+                 target_sigma_min: float = 1.0,
+                 lift_kind: str = "tower",
+                 max_scale_tries: int = 24):
+        assert V < D, "SampledRollEmbed requires V < D"
+        assert lift_kind in ("tower",), "Currently only 'tower' lift is supported"
 
-    def __init__(self, config, scale: str = "box", seed: int = 0,
-                 freeze: bool = True, dtype=None, device=None):
-        super().__init__()
-        V = int(config.vocab_size)
-        D = int(config.n_embd)
-        dtype = dtype or torch.float32
-        eps = 1e-12
+        self.V, self.D = int(V), int(D)
+        self.dtype, self.device = dtype, device
+        self.base = make_base(D, scale=scale, seed=seed, dtype=dtype, device=device)
 
-        # base vector x ∈ R^D with flat spectrum, DC=0
-        x = self._make_base(D, scale=scale, seed=seed, dtype=dtype, device=device)  # [D]
+        # Full circulant W
+        W = torch.stack([torch.roll(self.base, r) for r in range(D)], dim=0)  # (D, D)
 
-        # circulant-like rows: row r is x rolled by (r % D)
-        # (vectorized loop for clarity; can be optimized further if needed)
-        shifts = torch.arange(V, device=device)
-        rows = [torch.roll(x, shifts=int(s.item() % D), dims=0) for s in shifts]
-        W = torch.stack(rows, dim=0).to(dtype)
+        # Choose V distinct shifts
+        if selection == "even":
+            idx = torch.round(torch.linspace(0, D - 1, V)).to(torch.long)
+        elif selection == "firstV":
+            idx = torch.arange(V, dtype=torch.long)
+        else:
+            raise ValueError("selection must be 'even' or 'firstV'")
 
-        # align a single positive extremum via a "tower" S
-        M = int(torch.argmax(x))          # index of max in x
-        pm = x[M].item()
-        N = 1.0 / (pm + eps)              # safe reciprocal
+        M = W[idx]  # (V, D)
 
-        # S[r, (r + M) % D] = N
-        r_idx = torch.arange(V, device=device)
-        c_idx = (r_idx + M) % D
-        S = torch.zeros((V, D), dtype=dtype, device=device)
-        S[r_idx, c_idx] = N
+        # Tower lift: S[r, (r + Midx) % D] = γ, scale γ to meet σ_min target
+        Midx = int(torch.argmax(self.base).item())
+        r_idx = torch.arange(V, device=M.device)
+        c_idx = (r_idx + Midx) % D
+        S = torch.zeros_like(M)
+        S[r_idx, c_idx] = 1.0
 
-        mixed = W + S
-        self.embed = nn.Embedding.from_pretrained(mixed, freeze=freeze)
+        gamma = self._find_gamma(M, S, target_sigma_min, max_scale_tries)
+        self.gamma = gamma
+        mixed = (M + gamma * S).to(dtype)
+        self.embed = nn.Embedding.from_pretrained(mixed, freeze=True)
+
 
     @staticmethod
-    def _make_base(D: int, scale: str = "box", seed: int = 0,
-                   dtype=torch.float32, device=None) -> torch.Tensor:
-        """
-        Build x ∈ R^D where |FFT(x)| is flat for k=1..D-1 and DC=0.
+    def _find_gamma(M: torch.Tensor, S: torch.Tensor, target_sigma_min: float, max_tries: int) -> float:
+        # Exponential search then small binary refine
+        lo, hi = 0.0, 0.0
+        gamma = 1e-6
+        for _ in range(max_tries):
+            smin = float(torch.linalg.svdvals(M + gamma * S).min().item())
+            if smin >= target_sigma_min:
+                hi = gamma
+                break
+            lo = gamma
+            gamma *= 2.0
+        if hi == 0.0:
+            return gamma  # cap at last attempt
 
-        scale:
-          - "unit": ||x||_2 = 1
-          - "box":  max|x_i| = 1
-        """
-        # Build on CPU, then move to device at the end.
-        # Use complex64 for float/bfloat/half; complex128 otherwise.
-        if dtype in (torch.float16, torch.bfloat16, torch.float32):
-            complex_dtype = torch.complex64
-            work_float = torch.float32
-        else:
-            complex_dtype = torch.complex128
-            work_float = torch.float64
-
-        X = torch.zeros(D, dtype=complex_dtype)
-
-        # DC bin = 0
-        X[0] = torch.tensor(0, dtype=complex_dtype)
-
-        if D % 2 == 0:
-            # bins 1..D/2-1 are complex-conjugate pairs; Nyquist bin must be real
-            for k in range(1, D // 2):
-                phi = torch.rand((), dtype=work_float) * (2 * math.pi)
-                val = torch.cos(phi).to(work_float) + 1j * torch.sin(phi).to(work_float)
-                val = val.to(complex_dtype)
-                X[k] = val
-                X[D - k] = torch.conj(val)
-            # Nyquist bin (real, ±1)
-            X[D // 2] = (1.0 if torch.rand(()) < 0.5 else -1.0)
-        else:
-            for k in range(1, (D - 1) // 2 + 1):
-                phi = torch.rand((), dtype=work_float) * (2 * math.pi)
-                val = torch.cos(phi).to(work_float) + 1j * torch.sin(phi).to(work_float)
-                val = val.to(complex_dtype)
-                X[k] = val
-                X[D - k] = torch.conj(val)
-
-        x = torch.fft.ifft(X).real  # real length-D base vector (float32/64)
-        x = x.to(work_float)
-
-        if scale == "unit":
-            x = x / (x.norm() + 1e-12)
-        elif scale == "box":
-            x = x / (x.abs().max() + 1e-12)
-        else:
-            raise ValueError("scale must be 'unit' or 'box'")
-
-        x = x.to(dtype)
-        if device is not None:
-            x = x.to(device)
-        return x
+        # binary refine between lo and hi
+        for _ in range(20):
+            mid = 0.5 * (lo + hi)
+            smin = float(torch.linalg.svdvals(M + mid * S).min().item())
+            if smin >= target_sigma_min:
+                hi = mid
+            else:
+                lo = mid
+        return hi
 
     def forward(self, input_ids: torch.LongTensor):
         # (batch, seq_len, D)
@@ -255,7 +276,7 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         self.transformer = nn.ModuleDict({
-            "wte": FlatRollEmbed(config) if config.frozen_embed else nn.Embedding(config.vocab_size, config.n_embd)
+            "wte": SampledRollEmbed((config.vocab_size, config.n_embd) if config.frozen_embd else nn.Embedding(config.vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
