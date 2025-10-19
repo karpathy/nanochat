@@ -264,6 +264,7 @@ class SampledRollEmbed(nn.Module):
             else:
                 lo = mid
         return hi
+    @property
     def weight(self):
         return self.embed.weight
 
