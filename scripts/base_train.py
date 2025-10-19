@@ -29,6 +29,7 @@ print_banner()
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
 # Data
 data_dir = "" # path to directory containing parquet files with 'text' column (empty string = use default: ~/.cache/nanochat/base_data)
+tokenizer_name = "tokenizer" # name of the tokenizer subdirectory (default: tokenizer)
 # Model architecture
 depth = 20 # the depth of the Transformer model to train, rest of the kwargs are derived
 max_seq_len = 2048 # max context length
@@ -47,17 +48,17 @@ grad_clip = 1.0 # gradient clipping value (0.0 = disabled)
 # Evaluation
 eval_every = 250 # every how many steps to evaluate the model for val bpb
 eval_tokens = 20*524288 # 20*524288 # number of tokens to evaluate val loss on
-core_metric_every = 2000 # every how many steps to evaluate the core metric
+core_metric_every = 1000 # every how many steps to evaluate the core metric
 core_metric_max_per_task = 500 # examples per task in estimating the core metric
 sample_every = 2000 # every how many steps to sample from the model
 # Output
-model_tag = run # optionally override the model tag for the output checkpoint directory name
+model_tag = "" # optionally override the model tag for the output checkpoint directory name
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
-
+print(f"SHIZHE DEBUG: model_tag: {model_tag}")
 # Compute init
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
@@ -68,10 +69,11 @@ use_dummy_wandb = run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=run, config=user_config)
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
-tokenizer = get_tokenizer()
-token_bytes = get_token_bytes(device=device)
+tokenizer = get_tokenizer(tokenizer_name)
+token_bytes = get_token_bytes(tokenizer_name, device=device)
 vocab_size = tokenizer.get_vocab_size()
 print0(f"Vocab size: {vocab_size:,}")
+print0(f"Tokenizer: {tokenizer_name}")
 
 # Model kwargs are derived from the desired depth of the model
 num_layers = depth
@@ -136,8 +138,8 @@ base_dir = get_base_dir()
 tokens_dir = os.path.join(base_dir, "tokenized_data")
 # Use custom data_dir if provided, otherwise use default
 custom_data_dir = data_dir if data_dir else None
-train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", data_dir=custom_data_dir)
-build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", data_dir="/lustre/fsw/portfolios/nvr/users/sdiao/nanochat/.cache/base_data") # SHIZHE: always use the default val data dir from FineWeb by Andrej Karpathy
+train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", data_dir=custom_data_dir, tokenizer_name=tokenizer_name)
+build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", data_dir="/lustre/fsw/portfolios/nvr/users/sdiao/nanochat/.cache/base_data", tokenizer_name=tokenizer_name) # SHIZHE: always use the default val data dir from FineWeb by Andrej Karpathy
 x, y = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
@@ -246,6 +248,7 @@ for step in range(num_iterations + 1):
                 "user_config": user_config, # inputs to the training script
                 "device_batch_size": device_batch_size,
                 "max_seq_len": max_seq_len,
+                "tokenizer_name": tokenizer_name, # save tokenizer name for later loading
             }
         )
 

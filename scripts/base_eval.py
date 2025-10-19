@@ -118,6 +118,13 @@ def load_hf_model(hf_path: str, device):
 
 # -----------------------------------------------------------------------------
 def main():
+    # Configuration - must be inside main() to avoid conflicts when imported
+    model_tag = None # optional model tag for the output directory name
+    step = None # optional model step for the output directory name
+    config_keys = [k for k, v in locals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str, type(None)))]
+    exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+    print(f"SHIZHE DEBUG: model_tag: {model_tag}")
+
     assert len(sys.argv) in [1, 2], "Usage: python base_eval.py [hf_path]"
 
     # distributed / precision setup
@@ -134,9 +141,10 @@ def main():
         model_slug = hf_path.replace("/", "-") # for the output csv file
     else:
         # load a local model from the file system
-        model, tokenizer, meta = load_model("base", device, phase="eval")
+        model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=model_tag, step=step)
         model_name = f"base_model (step {meta['step']})" # just for logging
         model_slug = f"base_model_{meta['step']:06d}" # for the output csv file
+        print0(f"Loaded model with model_tag: {model_tag}")
 
     # Evaluate the model
     with autocast_ctx:
