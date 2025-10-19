@@ -123,7 +123,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--hf-path', type=str, default=None, help='HuggingFace model path to evaluate')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per task to evaluate (-1 = disable)')
+    parser.add_argument('--model-tag', type=str, default=None, help='Model tag to evaluate')
+    parser.add_argument('--step', type=int, default=None, help='Model step to evaluate')
     args = parser.parse_args()
+    model_tag = args.model_tag
+    step = args.step
 
     # distributed / precision setup
     device_type = autodetect_device_type()
@@ -140,9 +144,10 @@ def main():
         model_slug = hf_path.replace("/", "-") # for the output csv file
     else:
         # load a local model from the file system
-        model, tokenizer, meta = load_model("base", device, phase="eval")
+        model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=model_tag, step=step)
         model_name = f"base_model (step {meta['step']})" # just for logging
         model_slug = f"base_model_{meta['step']:06d}" # for the output csv file
+        print0(f"Loaded model with model_tag: {model_tag}")
 
     # Evaluate the model
     with autocast_ctx:

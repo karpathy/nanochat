@@ -6,7 +6,7 @@ from nanochat.common import get_dist_info
 from nanochat.dataset import parquets_iter_batched
 from nanochat.tokenizer import get_tokenizer
 
-def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda", data_dir=None):
+def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda", data_dir=None, tokenizer_name="tokenizer"):
     """Stream pretraining text from parquet files, tokenize, yield training batches.
 
     Args:
@@ -16,12 +16,13 @@ def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokeniz
         tokenizer_threads: number of threads for tokenization
         tokenizer_batch_size: batch size for tokenization
         data_dir: optional custom directory containing parquet files (None = use default)
+        tokenizer_name: name of the tokenizer subdirectory (default: tokenizer)
     """
     assert split in ["train", "val"], "split must be 'train' or 'val'"
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     needed_tokens = B * T + 1 # +1 is because we also need the target at the last token
     # get the tokenizer and the bos token
-    tokenizer = get_tokenizer()
+    tokenizer = get_tokenizer(tokenizer_name)
     bos_token = tokenizer.get_bos_token_id()
     # scratch buffer holds the tokens for one iteration
     token_buffer = deque() # we stream tokens on the right and pop from the left
