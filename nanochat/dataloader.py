@@ -6,8 +6,17 @@ from nanochat.common import get_dist_info
 from nanochat.dataset import parquets_iter_batched
 from nanochat.tokenizer import get_tokenizer
 
-def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda"):
-    """Stream pretraining text from parquet files, tokenize, yield training batches."""
+def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda", data_dir=None):
+    """Stream pretraining text from parquet files, tokenize, yield training batches.
+
+    Args:
+        B: batch size
+        T: sequence length
+        split: "train" or "val"
+        tokenizer_threads: number of threads for tokenization
+        tokenizer_batch_size: batch size for tokenization
+        data_dir: optional custom directory containing parquet files (None = use default)
+    """
     assert split in ["train", "val"], "split must be 'train' or 'val'"
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     needed_tokens = B * T + 1 # +1 is because we also need the target at the last token
@@ -21,7 +30,7 @@ def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokeniz
     def document_batches():
         while True:
             # batch will iterate in group size of the parquet files, usually e.g. 1024 rows
-            for batch in parquets_iter_batched(split=split, start=ddp_rank, step=ddp_world_size):
+            for batch in parquets_iter_batched(split=split, start=ddp_rank, step=ddp_world_size, data_dir=data_dir):
                 # for the tokenizer we might want to go in usually smaller batches, e.g. 128 rows
                 for i in range(0, len(batch), tokenizer_batch_size):
                     yield batch[i:i+tokenizer_batch_size]

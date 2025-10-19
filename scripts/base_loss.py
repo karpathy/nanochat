@@ -22,6 +22,7 @@ split_tokens = 20*524288  # number of tokens to evaluate per split
 model_tag = None # optional model tag for the output directory name
 model_step = None # optional model step for the output directory name
 device_type = "" # cuda|cpu|mps (empty => autodetect)
+data_dir = "" # path to directory containing parquet files with 'text' column (empty string = use default)
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 
 # Load the base model and the tokenizer
@@ -37,8 +38,9 @@ assert split_tokens % tokens_per_step == 0, "split_tokens must be divisible by t
 steps = split_tokens // tokens_per_step
 token_bytes = get_token_bytes(device=device)
 bpb_results = {}
+custom_data_dir = data_dir if data_dir else None
 for split_name in ["train", "val"]:
-    loader = tokenizing_distributed_data_loader(device_batch_size, sequence_len, split_name, device=device)
+    loader = tokenizing_distributed_data_loader(device_batch_size, sequence_len, split_name, device=device, data_dir=custom_data_dir)
     with autocast_ctx:
         bpb = evaluate_bpb(model, loader, steps, token_bytes)
     print0(f"{split_name} bpb: {bpb:.4f}")
