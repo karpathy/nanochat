@@ -31,7 +31,11 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # These functions are useful utilities to other modules, can/should be imported
 
 def list_parquet_files(data_dir=None):
-    """ Looks into a data dir and returns full paths to all parquet files. """
+    """Looks into a data dir and returns full paths to all parquet files.
+
+    Args:
+        data_dir: optional custom directory containing parquet files (None = use default DATA_DIR)
+    """
     data_dir = DATA_DIR if data_dir is None else data_dir
     parquet_files = sorted([
         f for f in os.listdir(data_dir)
@@ -40,14 +44,17 @@ def list_parquet_files(data_dir=None):
     parquet_paths = [os.path.join(data_dir, f) for f in parquet_files]
     return parquet_paths
 
-def parquets_iter_batched(split, start=0, step=1):
-    """
-    Iterate through the dataset, in batches of underlying row_groups for efficiency.
-    - split can be "train" or "val". the last parquet file will be val.
-    - start/step are useful for skipping rows in DDP. e.g. start=rank, step=world_size
+def parquets_iter_batched(split, start=0, step=1, data_dir=None):
+    """Iterate through the dataset, in batches of underlying row_groups for efficiency.
+
+    Args:
+        split: "train" or "val". the last parquet file will be val.
+        start: starting row group index (useful for DDP, e.g. start=rank)
+        step: step size for row groups (useful for DDP, e.g. step=world_size)
+        data_dir: optional custom directory containing parquet files (None = use default)
     """
     assert split in ["train", "val"], "split must be 'train' or 'val'"
-    parquet_paths = list_parquet_files()
+    parquet_paths = list_parquet_files(data_dir=data_dir)
     parquet_paths = parquet_paths[:-1] if split == "train" else parquet_paths[-1:]
     for filepath in parquet_paths:
         pf = pq.ParquetFile(filepath)
