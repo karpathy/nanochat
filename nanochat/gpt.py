@@ -264,13 +264,16 @@ class SampledRollEmbed(nn.Module):
             else:
                 lo = mid
         return hi
-    @property
-    def weight(self):
-        return self.embed.weight
+
 
     def forward(self, input_ids: torch.LongTensor):
         # (batch, seq_len, D)
         return self.embed(input_ids)
+        
+    @property
+    def weight(self) -> torch.nn.Parameter:
+        # Return the embed's weight so code expecting `.weight` will find it
+        return self.embed.weight
 
 class GPT(nn.Module):
     def __init__(self, config):
