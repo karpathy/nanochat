@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --account nvr_lpr_llm
-#SBATCH --partition batch_short,batch_block1,backfill
-#SBATCH --job-name=nanochat_1node_fineweb_d20    
-#SBATCH --nodes=2
+#SBATCH --partition interactive,batch_short,batch_block1,backfill
+#SBATCH --job-name=nanochat_multinode_d20    
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=8
-#SBATCH --time=02:00:00
-#SBATCH --output=nanochat_1node_fineweb_d20-%j.out
+#SBATCH --time=04:00:00
+#SBATCH --output=logs/nanochat_1node_d20-%j.out
 #SBATCH --mem=0
 #SBATCH --exclusive
 
@@ -21,6 +21,10 @@
 # WANDB_RUN=speedrun screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
 
 set -x  # Enable debug output
+
+DATA_NAME=climbmix
+export DATA_DIR=/lustre/fsw/portfolios/nvr/users/sdiao/nanochat/data/$DATA_NAME
+export MATRIX_LR=0.02
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
@@ -72,7 +76,7 @@ uv sync --active
 #     WANDB_RUN=dummy
 # fi
 export WANDB_API_KEY="ec7a9c0701d404122e4fc5c7c7518ed17f5b03ca"
-export WANDB_RUN=fineweb_d20_1node_$SLURM_JOB_ID
+export WANDB_RUN=${DATA_NAME}_d20_1node_matrixlr${MATRIX_LR}_${SLURM_JOB_ID}
 
 # -----------------------------------------------------------------------------
 # During the course of the run, we will be writing markdown reports to the report/
@@ -100,15 +104,17 @@ maturin develop --release --manifest-path rustbpe/Cargo.toml
 # each data shard is ~250M chars
 # so we download 2e9 / 250e6 = 8 data shards at this point
 # each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
-python -m nanochat.dataset -n 8
+python -m nanochat.dataset -n 8 --data_dir=$DATA_DIR
 # Immediately also kick off downloading more shards in the background while tokenizer trains
 # See comment below for why 240 is the right number here
-python -m nanochat.dataset -n 240 &
+python -m nanochat.dataset -n 240 --data_dir=$DATA_DIR &
 DATASET_DOWNLOAD_PID=$!
 # train the tokenizer with vocab size 2**16 = 65536 on ~2B characters of data
-python -m scripts.tok_train --max_chars=2000000000
+# Use unique tokenizer name based on dataset
+TOKENIZER_NAME="tokenizer_${DATA_NAME}"
+python -m scripts.tok_train --max_chars=2000000000 --data_dir=$DATA_DIR --tokenizer_name=$TOKENIZER_NAME
 # evaluate the tokenizer (report compression ratio etc.)
-python -m scripts.tok_eval
+python -m scripts.tok_eval --tokenizer_name=$TOKENIZER_NAME
 
 # -----------------------------------------------------------------------------
 # Base model (pretraining)
@@ -135,25 +141,25 @@ wait $DATASET_DOWNLOAD_PID
 srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; python -c "import torch; print(torch.cuda.device_count())"'
 
 # pretrain the d20 model (multi-node)
-srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.base_train -- --depth=20 --run=$WANDB_RUN'
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --rdzv_endpoint=$RDZV_ENDPOINT --rdzv_id=$SLURM_JOB_ID --node_rank=$SLURM_NODEID -m scripts.base_train -- --depth=20 --run=$WANDB_RUN --data_dir=$DATA_DIR --matrix_lr=$MATRIX_LR'
 # evaluate the model on a larger chunk of train/val data and draw some samples (multi-node)
-srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.base_loss'
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --rdzv_endpoint=$RDZV_ENDPOINT --rdzv_id=$SLURM_JOB_ID --node_rank=$SLURM_NODEID -m scripts.base_loss --data_dir=$DATA_DIR'
 # evaluate the model on CORE tasks (multi-node)
-srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.base_eval'
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --rdzv_endpoint=$RDZV_ENDPOINT --rdzv_id=$SLURM_JOB_ID --node_rank=$SLURM_NODEID -m scripts.base_eval'
 
 # -----------------------------------------------------------------------------
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
 # run midtraining and eval the model (multi-node)
-srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.mid_train -- --run=$WANDB_RUN'
-srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.chat_eval -- -i mid'
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --rdzv_endpoint=$RDZV_ENDPOINT --rdzv_id=$SLURM_JOB_ID --node_rank=$SLURM_NODEID -m scripts.mid_train -- --run=$WANDB_RUN'
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --rdzv_endpoint=$RDZV_ENDPOINT --rdzv_id=$SLURM_JOB_ID --node_rank=$SLURM_NODEID -m scripts.chat_eval -- -i mid'
 
 # -----------------------------------------------------------------------------
 # Supervised Finetuning (domain adaptation to each sequence all by itself per row)
 
 # train sft and re-eval right away (should see a small bump) (multi-node)
-srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.chat_sft -- --run=$WANDB_RUN'
-srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --node_rank=$SLURM_NODEID -m scripts.chat_eval -- -i sft'
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --rdzv_endpoint=$RDZV_ENDPOINT --rdzv_id=$SLURM_JOB_ID --node_rank=$SLURM_NODEID -m scripts.chat_sft -- --run=$WANDB_RUN'
+srun --ntasks=$NNODES --ntasks-per-node=1 bash --noprofile --norc -lc 'source $HOME/nanochat_cache/.venv/bin/activate; torchrun --nnodes=$NNODES --nproc_per_node=$GPUS_PER_NODE --rdzv_endpoint=$RDZV_ENDPOINT --rdzv_id=$SLURM_JOB_ID --node_rank=$SLURM_NODEID -m scripts.chat_eval -- -i sft'
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"

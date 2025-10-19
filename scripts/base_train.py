@@ -34,6 +34,8 @@ print_banner()
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
 # Runtime
 device_type = "" # cuda|cpu|mps (empty => autodetect good device type default, in order: CUDA > MPS > CPU)
+# Data
+data_dir = "" # path to directory containing parquet files with 'text' column (empty string = use default: ~/.cache/nanochat/base_data)
 # Model architecture
 depth = 20 # the depth of the Transformer model to train, rest of the kwargs are derived
 max_seq_len = 2048 # max context length
@@ -43,7 +45,7 @@ target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for
 target_param_data_ratio = 20 # calculate num_iterations to maintain fixed data:param ratio (Chinchilla=20) (-1 = disable)
 # Optimization
 device_batch_size = 32 # per-device batch size (set to not OOM)
-total_batch_size = 524288 # 524288 # total desired batch size, in #tokens
+total_batch_size = 524288 # 2097152 #1048576 # 524288 # total desired batch size, in #tokens
 embedding_lr = 0.2 # learning rate for the embedding parameters (Adam)
 unembedding_lr = 0.004 # learning rate for the unembedding parameters (Adam)
 weight_decay = 0.0 # weight decay for the embedding/unembedding parameters (Adam)
@@ -56,7 +58,7 @@ core_metric_every = 2000 # every how many steps to evaluate the core metric (-1 
 core_metric_max_per_task = 500 # examples per task in estimating the core metric
 sample_every = 2000 # every how many steps to sample from the model
 # Output
-model_tag = "" # optionally override the model tag for the output checkpoint directory name
+model_tag = run # optionally override the model tag for the output checkpoint directory name
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
@@ -139,12 +141,13 @@ print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
 optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
 adamw_optimizer, muon_optimizer = optimizers
-
 # Initialize the DataLoaders for train/val
 base_dir = get_base_dir()
 tokens_dir = os.path.join(base_dir, "tokenized_data")
-train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", device=device)
-build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)
+# Use custom data_dir if provided, otherwise use default
+custom_data_dir = data_dir if data_dir else None
+train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", device=device, data_dir=custom_data_dir)
+build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device, data_dir="/lustre/fsw/portfolios/nvr/users/sdiao/nanochat/.cache/base_data") # SHIZHE: always use the default val data dir from FineWeb by Andrej Karpathy
 x, y = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------

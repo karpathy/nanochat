@@ -9,6 +9,10 @@
 # screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
 # 3) Example launch with wandb logging, but see below for setting up wandb first:
 # WANDB_RUN=speedrun screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
+set -x
+
+DATA_NAME=smollm
+DATA_DIR=/lustre/fsw/portfolios/nvr/users/sdiao/nanochat/data/$DATA_NAME
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
@@ -39,7 +43,7 @@ source .venv/bin/activate
 #     WANDB_RUN=dummy
 # fi
 export WANDB_API_KEY="ec7a9c0701d404122e4fc5c7c7518ed17f5b03ca"
-export WANDB_RUN=fineweb_d20
+export WANDB_RUN=fineweb_d20_test
 
 # -----------------------------------------------------------------------------
 # During the course of the run, we will be writing markdown reports to the report/
@@ -94,9 +98,9 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN  --data_dir=$DATA_DIR
 # evaluate the model on a larger chunk of train/val data and draw some samples
-torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
+torchrun --standalone --nproc_per_node=8 -m scripts.base_loss  --data_dir=$DATA_DIR
 # evaluate the model on CORE tasks
 torchrun --standalone --nproc_per_node=8 -m scripts.base_eval
 
