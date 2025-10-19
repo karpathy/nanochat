@@ -199,10 +199,6 @@ def make_base(D: int, scale: str = "box", seed: int = 0,
     return x
 
 class SampledRollEmbed(nn.Module):
-    """
-    V < D. Integer-shift sampling of a D-length flat-spectrum, DC=0 base,
-    then add a tower lift scaled to hit target σ_min (well-conditioned, W+S-like).
-    """
     def __init__(self, V: int, D: int, seed: int = 0, scale: str = "box",
                  dtype=torch.float32, device=None,
                  selection: str = "even",
@@ -277,7 +273,7 @@ class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        if config.frozen_embd:
+        if config.frozen_embd == True:
             wte = SampledRollEmbed(config.vocab_size, config.n_embd)
         else:
             wte = nn.Embedding(config.vocab_size, config.n_embd)
