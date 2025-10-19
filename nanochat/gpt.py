@@ -198,7 +198,7 @@ def make_base(D: int, scale: str = "box", seed: int = 0,
         x = x.to(device)
     return x
 
-class SampledRollEmbed:
+class SampledRollEmbed(nn.Module):
     """
     V < D. Integer-shift sampling of a D-length flat-spectrum, DC=0 base,
     then add a tower lift scaled to hit target σ_min (well-conditioned, W+S-like).
