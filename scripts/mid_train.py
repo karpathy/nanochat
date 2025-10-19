@@ -28,6 +28,7 @@ from tasks.gsm8k import GSM8K
 from tasks.mmlu import MMLU
 from tasks.smoltalk import SmolTalk
 from tasks.customjson import CustomJSON
+from tasks.nemotron import Nemotron
 
 # -----------------------------------------------------------------------------
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
@@ -47,6 +48,7 @@ eval_every = 150 # -1 = disable
 eval_tokens = 20*524288
 total_batch_size = 524288
 dry_run = 0 # dry_run=1 is for experiments: we will log to wandb but we won't write checkpoints or report
+dataset_choice = "smoltalk" # dataset choice: "smoltalk" or "nemotron"
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
@@ -80,7 +82,10 @@ grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
 print0(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
-token_bytes = get_token_bytes(device=device)
+# Load tokenizer_name from checkpoint metadata
+tokenizer_name = meta.get("tokenizer_name", "tokenizer")
+print0(f"Using tokenizer: {tokenizer_name}")
+token_bytes = get_token_bytes(tokenizer_name, device=device)
 
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
 optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
@@ -93,19 +98,49 @@ for opt in optimizers:
 
 # Midtraining data mixture and DataLoader
 base_dir = get_base_dir()
+
+# Select dataset based on dataset_choice parameter
+print0(f"Using dataset: {dataset_choice}")
 identity_conversations_filepath = os.path.join(base_dir, "identity_conversations.jsonl")
-train_dataset = TaskMixture([
-    SmolTalk(split="train"), # 460K rows of general conversations
-    MMLU(subset="auxiliary_train", split="train"), # 100K rows of multiple choice problems drawn from ARC, MC_TEST, OBQA, RACE
-    GSM8K(subset="main", split="train"), # 8K rows teaching simple math and (calculator) tool use
-    CustomJSON(filepath=identity_conversations_filepath), # 1000 rows of synthetic identity conversations
-    CustomJSON(filepath=identity_conversations_filepath), # let's do 2 epochs of these
-]) # total: 460K + 100K + 8K = 568K rows
-val_dataset = TaskMixture([
-    SmolTalk(split="test"), # 24K rows in test set
-    MMLU(subset="all", split="test", stop=5200), # 14K rows in test set, use only 5.2K to match the train ratios
-    GSM8K(subset="main", split="test", stop=420), # 1.32K rows in test set, use only 420 to match the train ratios
-]) # total: 24K + 14K + 1.32K ~= 39K rows
+if dataset_choice == "smoltalk":
+    # Original: SmolTalk + MMLU + GSM8K
+    train_dataset = TaskMixture([
+        SmolTalk(split="train"), # 460K rows of general conversations
+        MMLU(subset="auxiliary_train", split="train"), # 100K rows of multiple choice problems
+        GSM8K(subset="main", split="train"), # 8K rows teaching simple math
+        CustomJSON(filepath=identity_conversations_filepath), # 1000 rows of synthetic identity conversations
+        CustomJSON(filepath=identity_conversations_filepath), # let's do 2 epochs of these
+    ]) # total: 460K + 100K + 8K = 568K rows
+    val_dataset = TaskMixture([
+        SmolTalk(split="test"), # 24K rows in test set
+        MMLU(subset="all", split="test", stop=5200), # 5.2K rows to match train ratios
+        GSM8K(subset="main", split="test", stop=420), # 420 rows to match train ratios
+    ]) # total: ~29.6K rows
+elif dataset_choice == "nemotron":
+    # Ablation: Nemotron with stem, math, chat, code (sampled to match SmolTalk 460K) + MMLU + GSM8K
+    # Original Nemotron distribution: stem(355K/25.4%), math(239K/17.1%), chat(628K/44.9%), code(175K/12.5%)
+    # Proportionally sampled to 460K total, then add MMLU + GSM8K to match SmolTalk structure
+    train_dataset = TaskMixture([
+        Nemotron(categories=["stem"], split="train", stop=117000),  # 25.4% of 460K = 117K
+        Nemotron(categories=["math"], split="train", stop=79000),   # 17.1% of 460K = 79K
+        Nemotron(categories=["chat"], split="train", stop=207000),  # 44.9% of 460K = 207K
+        Nemotron(categories=["code"], split="train", stop=57000),   # 12.5% of 460K = 57K
+        MMLU(subset="auxiliary_train", split="train"), # 100K rows of multiple choice problems
+        GSM8K(subset="main", split="train"), # 8K rows teaching simple math and (calculator) tool use
+        CustomJSON(filepath=identity_conversations_filepath), # 1000 rows of synthetic identity conversations
+        CustomJSON(filepath=identity_conversations_filepath), # let's do 2 epochs of these
+    ]) # total: 117K + 79K + 207K + 57K + 100K + 8K = 568K rows (same as SmolTalk)
+    # For validation, match SmolTalk validation set structure
+    val_dataset = TaskMixture([
+        Nemotron(categories=["stem"], split="train", start=117000, stop=124500),  # 7.5K
+        Nemotron(categories=["math"], split="train", start=79000, stop=84000),    # 5K
+        Nemotron(categories=["chat"], split="train", start=207000, stop=220500),  # 13.5K
+        Nemotron(categories=["code"], split="train", start=57000, stop=61000),    # 4K
+        MMLU(subset="all", split="test", stop=5200), # 5.2K rows to match train ratios
+        GSM8K(subset="main", split="test", stop=420), # 420 rows to match train ratios
+    ]) # total: 7.5K + 5K + 13.5K + 4K + 5.2K + 0.42K = 35.6K rows
+else:
+    raise ValueError(f"Unknown dataset_choice: {dataset_choice}. Must be 'smoltalk' or 'nemotron'")
 # DataLoader is defined here, it emits inputs, targets : 2D tensors of shape (device_batch_size, max_seq_len)
 # A big problem is that we don't know the final num_iterations in advance. So we create
 # these two global variables and update them from within the data generator.
@@ -204,8 +239,9 @@ while True:
 
     # save checkpoint at the end of the run (only on master process)
     if master_process and last_step and not dry_run:
-        output_dirname = f"d{depth}" # e.g. d12
-        checkpoint_dir = os.path.join(base_dir, "mid_checkpoints", output_dirname)
+        # Use model_tag from config if provided, otherwise default to d{depth}
+        # output_dirname = model_tag if model_tag else f"d{depth}" # e.g. d12
+        checkpoint_dir = os.path.join(base_dir, "mid_checkpoints", run)
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -222,7 +258,8 @@ while True:
                     "n_kv_head": model.config.n_kv_head,
                     "n_embd": model.config.n_embd,
                 },
-                "user_config": user_config, # inputs to the training script
+                "user_config": user_config, # inputs to the training script,
+                "tokenizer_name": tokenizer_name, # save tokenizer name for later loading
             }
         )
 

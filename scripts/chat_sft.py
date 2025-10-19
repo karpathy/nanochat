@@ -27,7 +27,9 @@ from tasks.common import TaskMixture
 from tasks.arc import ARC
 from tasks.gsm8k import GSM8K
 from tasks.smoltalk import SmolTalk
+
 from tasks.customjson import CustomJSON
+from tasks.nemotron import Nemotron
 
 # -----------------------------------------------------------------------------
 # SFT Hyperparameters
@@ -54,6 +56,7 @@ eval_every = 100
 eval_steps = 100
 eval_metrics_every = 200
 eval_metrics_max_problems = 1024
+dataset_choice = "smoltalk" # dataset choice: "smoltalk" or "nemotron"
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
@@ -79,15 +82,42 @@ engine = Engine(model, tokenizer) # will be used for inline model evaluation onl
 
 # -----------------------------------------------------------------------------
 # Task data mixture we'll train on
+# Select dataset based on dataset_choice parameter
+print0(f"SFT using dataset: {dataset_choice}")
 identity_conversations_filepath = os.path.join(get_base_dir(), "identity_conversations.jsonl")
-train_ds = TaskMixture([
-    ARC(subset="ARC-Easy", split="train"), # 2.3K rows
-    ARC(subset="ARC-Challenge", split="train"), # 1.1K rows
-    GSM8K(subset="main", split="train"), # 8K rows
-    SmolTalk(split="train", stop=10_000), # 10K rows of smoltalk
-    CustomJSON(filepath=identity_conversations_filepath), # 1K rows of synthetic identity conversations
-]) # 2.3K + 1.1K + 8K + 10K + 1K = 22.4K rows
-val_ds = SmolTalk(split="test") # general conversations, 24K rows (though we don't actually use all of it)
+if dataset_choice == "smoltalk":
+    # Original: SmolTalk + ARC + GSM8K
+    train_ds = TaskMixture([
+        ARC(subset="ARC-Easy", split="train"), # 2.3K rows
+        ARC(subset="ARC-Challenge", split="train"), # 1.1K rows
+        GSM8K(subset="main", split="train"), # 8K rows
+        SmolTalk(split="train", stop=10_000), # 10K rows of smoltalk
+        CustomJSON(filepath=identity_conversations_filepath), # 1K rows of synthetic identity conversations
+    ]) # total: 2.3K + 1.1K + 8K + 10K = 21.4K rows
+    val_ds = SmolTalk(split="test") # general conversations, 24K rows
+elif dataset_choice == "nemotron":
+    # Ablation: Nemotron (sampled to match SmolTalk 10K) + ARC + GSM8K
+    # SmolTalk has 10K samples, we sample Nemotron proportionally to match
+    # Original Nemotron distribution: stem(25.4%), math(17.1%), chat(44.9%), code(12.5%)
+    train_ds = TaskMixture([
+        ARC(subset="ARC-Easy", split="train"), # 2.3K rows
+        ARC(subset="ARC-Challenge", split="train"), # 1.1K rows
+        GSM8K(subset="main", split="train"), # 8K rows
+        Nemotron(categories=["stem"], split="train", stop=2540),  # 25.4% of 10K = 2.54K
+        Nemotron(categories=["math"], split="train", stop=1710),  # 17.1% of 10K = 1.71K
+        Nemotron(categories=["chat"], split="train", stop=4490),  # 44.9% of 10K = 4.49K
+        Nemotron(categories=["code"], split="train", stop=1250),  # 12.5% of 10K = 1.25K
+        CustomJSON(filepath=identity_conversations_filepath), # 1K rows of synthetic identity conversations
+    ]) # total: 2.3K + 1.1K + 8K + (2.54K + 1.71K + 4.49K + 1.25K) = 21.4K rows (same as SmolTalk)
+    # For validation, use a small subset of Nemotron mixed categories
+    val_ds = TaskMixture([
+        Nemotron(categories=["stem"], split="train", start=2540, stop=2790),    # 250 samples
+        Nemotron(categories=["math"], split="train", start=1710, stop=1960),    # 250 samples
+        Nemotron(categories=["chat"], split="train", start=4490, stop=5240),    # 750 samples
+        Nemotron(categories=["code"], split="train", start=1250, stop=1500),    # 250 samples
+    ]) # total: 1500 samples for validation
+else:
+    raise ValueError(f"Unknown dataset_choice: {dataset_choice}. Must be 'smoltalk' or 'nemotron'")
 
 # -----------------------------------------------------------------------------
 # DataLoader
@@ -248,8 +278,9 @@ for step in range(num_iterations):
 if master_process:
     base_dir = get_base_dir()
     depth = model.config.n_layer
-    model_tag = f"d{depth}" # base the model tag on the depth of the base model
-    checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", model_tag)
+    # Use model_tag from config if provided, otherwise default to d{depth}
+    output_dirname = model_tag if model_tag else f"d{depth}" # base the model tag on the depth of the base model
+    checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", run)
     model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
     save_checkpoint(
         checkpoint_dir,
