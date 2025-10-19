@@ -209,6 +209,8 @@ class SampledRollEmbed(nn.Module):
                  target_sigma_min: float = 1.0,
                  lift_kind: str = "tower",
                  max_scale_tries: int = 24):
+        super().__init__()
+
         assert V < D, "SampledRollEmbed requires V < D"
         assert lift_kind in ("tower",), "Currently only 'tower' lift is supported"
 
