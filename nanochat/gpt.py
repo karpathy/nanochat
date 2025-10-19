@@ -278,15 +278,13 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         if config.frozen_embd:
-           wte = SampledRollEmbed(config.vocab_size, config.n_embd)   # <-- INSTANCE
+            wte = SampledRollEmbed(config.vocab_size, config.n_embd)
         else:
-           wte = nn.Embedding(config.vocab_size, config.n_embd)       # <-- INSTANCE
-        self.transformer = nn.ModuleDict({
-            
+            wte = nn.Embedding(config.vocab_size, config.n_embd)
 
-            "wte": wte,
-            "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
-        })
+        h = nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)])
+
+        self.transformer = nn.ModuleDict([("wte", wte), ("h", h)])
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # To support meta device initialization, we init the rotary embeddings here, but it's fake
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
