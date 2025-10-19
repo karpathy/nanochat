@@ -298,7 +298,8 @@ class GPT(nn.Module):
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
         self.register_buffer("sin", sin, persistent=False)
         # Cast the embeddings from fp32 to bf16: optim can tolerate it and it saves memory: both in the model and the activations
-        self.transformer.wte.to(dtype=torch.bfloat16)
+        #except it will bitch deeper down so no, im sorry, you vcant do this unless you're gonna handle it in attention
+        #self.transformer.wte.to(dtype=torch.bfloat16)
 
     def init_weights(self):
         self.apply(self._init_weights)
