@@ -219,16 +219,15 @@ for step in range(num_iterations + 1):
             "My favorite color is",
             "If 5*x + 3 = 13, then x is",
         ]
-        engine = Engine(model, tokenizer)
+        engine = Engine(orig_model, tokenizer) # use orig_model to avoid recompilation
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
             with autocast_ctx:
                 sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
             print0(tokenizer.decode(sample[0]))
         model.train()
-
-    # save checkpoint at the end of the run (only on master process)
-    if master_process and last_step:
+        
+        # save checkpoint whenever we sample and at the end of the run (only on master process)
         output_dirname = model_tag if model_tag else f"d{depth}" # e.g. d12
         checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
         save_checkpoint(
@@ -238,13 +237,14 @@ for step in range(num_iterations + 1):
             [opt.state_dict() for opt in optimizers], # TODO: make sure saving across ranks is done correctly
             {
                 "step": step,
-                "val_bpb": val_bpb, # loss at last step
+                "val_bpb": val_bpb if 'val_bpb' in locals() else float('inf'), # loss at last eval
                 "model_config": model_config_kwargs,
                 "user_config": user_config, # inputs to the training script
                 "device_batch_size": device_batch_size,
                 "max_seq_len": max_seq_len,
             }
         )
+        print0(f"Checkpoint saved at step {step}")
 
     if last_step:
         break
