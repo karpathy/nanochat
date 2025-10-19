@@ -264,6 +264,8 @@ class SampledRollEmbed(nn.Module):
             else:
                 lo = mid
         return hi
+    delf weight(self):
+        return self.embed.weight
 
     def forward(self, input_ids: torch.LongTensor):
         # (batch, seq_len, D)
