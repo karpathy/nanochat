@@ -2,8 +2,17 @@
 Evaluate compression ratio of the tokenizer.
 """
 
+import argparse
 from nanochat.tokenizer import get_tokenizer, RustBPETokenizer
 from nanochat.dataset import parquets_iter_batched
+
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Evaluate tokenizer compression')
+parser.add_argument('--tokenizer_name', type=str, default='tokenizer', help='Name of the tokenizer subdirectory (default: tokenizer)')
+parser.add_argument('--data_dir', type=str, default=None, help='Custom dataset directory (default: None, uses default dataset)')
+args = parser.parse_args()
+print(f"tokenizer_name: {args.tokenizer_name}")
+print(f"data_dir: {args.data_dir}")
 
 # Random text I got from a random website this morning
 news_text = r"""
@@ -144,9 +153,9 @@ Photosynthesis is a photochemical energy transduction process in which light-har
 """.strip()
 
 # The tokenizer was trained on data from earlier shards, so it has seen this data
-train_docs = next(parquets_iter_batched(split="train"))
+train_docs = next(parquets_iter_batched(split="train", data_dir=args.data_dir))
 train_text = "\n".join(train_docs)
-val_docs = next(parquets_iter_batched(split="val"))
+val_docs = next(parquets_iter_batched(split="val", data_dir=args.data_dir))
 val_text = "\n".join(val_docs)
 
 all_text = [
@@ -171,7 +180,7 @@ for tokenizer_name in ["gpt2", "gpt4", "ours"]:
     elif tokenizer_name == "gpt4":
         tokenizer = RustBPETokenizer.from_pretrained("cl100k_base") # gpt-4 base model tokenizer
     else:
-        tokenizer = get_tokenizer()
+        tokenizer = get_tokenizer(args.tokenizer_name)
 
     vocab_sizes[tokenizer_name] = tokenizer.get_vocab_size()
     tokenizer_results[tokenizer_name] = {}
