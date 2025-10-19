@@ -276,7 +276,7 @@ class GPT(nn.Module):
         super().__init__()
         self.config = config
         self.transformer = nn.ModuleDict({
-            "wte": SampledRollEmbed((config.vocab_size, config.n_embd) if config.frozen_embd else nn.Embedding(config.vocab_size, config.n_embd),
+            "wte": SampledRollEmbed(config.vocab_size, config.n_embd) if config.frozen_embd else nn.Embedding(config.vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
