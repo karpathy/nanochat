@@ -22,7 +22,7 @@
 
 set -x  # Enable debug output
 
-DATA_NAME=smollm
+DATA_NAME=climbmix
 export DATA_DIR=/lustre/fsw/portfolios/nvr/users/sdiao/nanochat/data/$DATA_NAME
 export MATRIX_LR=0.02
 
@@ -54,7 +54,7 @@ export NCCL_ASYNC_ERROR_HANDLING=1
 # source $HOME/nanochat_cache/.venv/bin/activate
 
 # 1️⃣ 创建或重建 venv（--clear 会先清空旧内容）
-uv venv "$HOME/nanochat_cache/.venv" --clear
+[ -d ".venv" ] || uv venv "$HOME/nanochat_cache/.venv" # --clear
 
 # 2️⃣ 激活虚拟环境
 source "$HOME/nanochat_cache/.venv/bin/activate"
