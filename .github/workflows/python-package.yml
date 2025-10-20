@@ -41,22 +41,9 @@ jobs:
       run: |
         echo "PYTHONPATH=$(pwd):$PYTHONPATH" >> $GITHUB_ENV
 
-    - name: Run small test
-      env:
-        TEST_MODE: "true"
+    - name: Run pytest
       run: |
-        python scripts/base_eval.py --test-mode
-
-    - name: Force CPU mode for tests
-      env:
-        CUDA_VISIBLE_DEVICES: ""
-      run: |
-        python scripts/base_eval.py --test-mode
-
-    - name: Run speedrun.sh
-      run: |
-        chmod +x speedrun.sh
-        ./speedrun.sh
+        python -m pytest tests/ --maxfail=5 --disable-warnings
 
     - name: Cache pip dependencies
       uses: actions/cache@v3
