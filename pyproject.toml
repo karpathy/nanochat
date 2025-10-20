@@ -13,7 +13,7 @@ dependencies = [
     "regex>=2025.9.1",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
-    "torch>=2.8.0",
+    "torch>=2.0.0",
     "transformers>=4.0.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
@@ -23,15 +23,15 @@ dependencies = [
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
-# target torch to cuda 12.8
+# target torch to cpu/mps for macOS
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu128" },
+    { index = "pytorch-cpu" },
 ]
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.maturin]
