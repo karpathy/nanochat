@@ -36,6 +36,7 @@ jobs:
 
     - name: Install dependencies with uv
       run: |
+        uv pip install transformers>=4.0.0
         uv pip install . --system
 
     - name: Add nanochat to PYTHONPATH
