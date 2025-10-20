@@ -49,18 +49,6 @@ def apply_rotary_emb(x, cos, sin):
     return out
 
 
-def repeat_kv(x, n_rep):
-    """torch.repeat_interleave(x, dim=1, repeats=n_rep)"""
-    if n_rep == 1:
-        return x
-    bs, n_kv_heads, slen, head_dim = x.shape
-    return (
-        x[:, :, None, :, :]
-        .expand(bs, n_kv_heads, n_rep, slen, head_dim)
-        .reshape(bs, n_kv_heads * n_rep, slen, head_dim)
-    )
-
-
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
@@ -96,19 +84,15 @@ class CausalSelfAttention(nn.Module):
         Tq = q.size(2) # number of queries in this forward pass
         Tk = k.size(2) # number of keys/values in total (in the cache + current forward pass)
 
-        # Apply MQA: replicate the key/value heads for each query head
-        nrep = self.n_head // self.n_kv_head
-        k, v = repeat_kv(k, nrep), repeat_kv(v, nrep)
-
         # Attention: queries attend to keys/values autoregressively. A few cases to handle:
         if kv_cache is None or Tq == Tk:
             # During training (no KV cache), attend as usual with causal attention
             # And even if there is KV cache, we can still use this simple version when Tq == Tk
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True) # enable_gqa=True for GQA or MQA
         elif Tq == 1:
             # During inference but with a single query in this forward pass:
             # The query has to attend to all the keys/values in the cache
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=False, enable_gqa=True) # enable_gqa=True for GQA or MQA
         else:
             # During inference AND we have a chunk of queries in this forward pass:
             # First, each query attends to all the cached keys/values (i.e. full prefix)
@@ -118,7 +102,7 @@ class CausalSelfAttention(nn.Module):
                 attn_mask[:, :prefix_len] = True
             # Then, causal attention within this chunk
             attn_mask[:, prefix_len:] = torch.tril(torch.ones((Tq, Tq), dtype=torch.bool, device=q.device))
-            y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, enable_gqa=True) # enable_gqa=True for GQA or MQA
 
         # Re-assemble the heads side by side and project back to residual stream
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
