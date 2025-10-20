@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from cut_cross_entropy import linear_cross_entropy
 
 from nanochat.common import get_dist_info, print0
 from nanochat.muon import Muon, DistMuon
@@ -31,6 +32,7 @@ class GPTConfig:
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (MQA)
     n_embd: int = 768
+    use_chunked_ce: bool = False # uses cut_cross_entropy (https://arxiv.org/pdf/2411.09009)
 
 
 def norm(x):
@@ -278,11 +280,13 @@ class GPT(nn.Module):
         softcap = 15
         if targets is not None:
             # training mode: compute and return the loss
-            # TODO: experiment with Liger Kernels / chunked cross-entropy etc.
-            logits = self.lm_head(x)
-            logits = softcap * torch.tanh(logits / softcap) # logits softcap
-            logits = logits.float() # use tf32/fp32 for logits
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+            if (self.config.use_chunked_ce):
+                loss = linear_cross_entropy(x, self.lm_head.weight, targets=targets, softcap=softcap, ignore_index=-1, reduction=loss_reduction).view(-1)
+            else:
+                logits = self.lm_head(x)
+                logits = softcap * torch.tanh(logits / softcap) # logits softcap
+                logits = logits.float() # use tf32/fp32 for logits        
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
             return loss
         else:
             # inference mode: compute and return the logits

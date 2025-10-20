@@ -16,6 +16,7 @@ dependencies = [
     "torch>=2.8.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
+    "cut-cross-entropy>=25.1.1",
 ]
 
 [build-system]
