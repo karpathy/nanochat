@@ -47,6 +47,12 @@ jobs:
       run: |
         python scripts/base_eval.py --test-mode
 
+    - name: Force CPU mode for tests
+      env:
+        CUDA_VISIBLE_DEVICES: ""
+      run: |
+        python scripts/base_eval.py --test-mode
+
     - name: Run speedrun.sh
       run: |
         chmod +x speedrun.sh
