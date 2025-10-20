@@ -1,3 +1,4 @@
+[![Test](https://github.com/SermetPekin/nanochat/actions/workflows/python-package.yml/badge.svg)](https://github.com/SermetPekin/nanochat/actions/workflows/python-package.yml)
 # nanochat
 
 ![nanochat logo](dev/nanochat.png)
