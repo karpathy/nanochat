@@ -1,0 +1,58 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install uv
+      run: |
+        python -m pip install uv
+
+    - name: Create virtual environment with uv
+      run: |
+        uv venv .venv
+
+    - name: Activate virtual environment
+      run: |
+        source .venv/bin/activate
+
+    - name: Install dependencies with uv
+      run: |
+        uv pip install . --system
+
+    - name: Add nanochat to PYTHONPATH
+      run: |
+        echo "PYTHONPATH=$(pwd):$PYTHONPATH" >> $GITHUB_ENV
+
+    - name: Install pytest
+      run: |
+        python -m pip install pytest
+
+    - name: Run pytest
+      run: |
+        python -m pytest tests/ --maxfail=5 --disable-warnings
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
