@@ -36,18 +36,30 @@ jobs:
       run: |
         uv venv .venv
 
-    - name: Activate virtual environment
+    - name: Activate virtual environment (Unix)
+      if: runner.os != 'Windows'
       run: |
         source .venv/bin/activate
+
+    - name: Activate virtual environment (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        .venv\Scripts\activate
 
     - name: Install dependencies with uv
       run: |
         uv pip install transformers>=4.0.0
         uv pip install . --system
 
-    - name: Add nanochat to PYTHONPATH
+    - name: Add nanochat to PYTHONPATH (Unix)
+      if: runner.os != 'Windows'
       run: |
         echo "PYTHONPATH=$(pwd):$PYTHONPATH" >> $GITHUB_ENV
+
+    - name: Add nanochat to PYTHONPATH (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        echo "PYTHONPATH=$PWD;$env:PYTHONPATH" >> $env:GITHUB_ENV
 
     - name: Install pytest
       run: |
