@@ -37,6 +37,10 @@ jobs:
       run: |
         uv pip install . --system
 
+    - name: Add nanochat to PYTHONPATH
+      run: |
+        echo "PYTHONPATH=$(pwd):$PYTHONPATH" >> $GITHUB_ENV
+
     - name: Run small test
       env:
         TEST_MODE: "true"
