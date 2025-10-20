@@ -5,6 +5,7 @@ Common utilities for nanochat.
 import os
 import re
 import logging
+from typing import Tuple, Optional
 import torch
 import torch.distributed as dist
 
@@ -45,7 +46,12 @@ def setup_default_logging():
 setup_default_logging()
 logger = logging.getLogger(__name__)
 
-def get_base_dir():
+def get_base_dir() -> str:
+    """Get the base directory for nanochat cache and intermediate files.
+    
+    Returns:
+        Path to the base directory
+    """
     # co-locate nanochat intermediates with other cached data in ~/.cache (by default)
     if os.environ.get("NANOCHAT_BASE_DIR"):
         nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR")
@@ -76,10 +82,15 @@ def print_banner():
     print0(banner)
 
 def is_ddp():
-    # TODO is there a proper way
-    return int(os.environ.get('RANK', -1)) != -1
+    """Check if we're running in a distributed data parallel environment."""
+    return 'RANK' in os.environ and 'WORLD_SIZE' in os.environ and 'LOCAL_RANK' in os.environ
 
-def get_dist_info():
+def get_dist_info() -> Tuple[bool, int, int, int]:
+    """Get distributed training information.
+    
+    Returns:
+        Tuple of (is_distributed, rank, local_rank, world_size)
+    """
     if is_ddp():
         assert all(var in os.environ for var in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE'])
         ddp_rank = int(os.environ['RANK'])
@@ -92,29 +103,26 @@ def get_dist_info():
 def compute_init():
     """Basic initialization that we keep doing over and over, so make common."""
 
-    # CUDA is currently required
-    assert torch.cuda.is_available(), "CUDA is needed for a distributed run atm"
-
-    # Reproducibility
-    torch.manual_seed(42)
-    torch.cuda.manual_seed(42)
-    # skipping full reproducibility for now, possibly investigate slowdown later
-    # torch.use_deterministic_algorithms(True)
-    # torch.backends.cudnn.deterministic = True
-    # torch.backends.cudnn.benchmark = False
+    # Check if CUDA is available, otherwise fall back to CPU
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        torch.manual_seed(42)
+        torch.cuda.manual_seed(42)
+    else:
+        device = torch.device("cpu")
+        torch.manual_seed(42)
+        logger.warning("CUDA is not available. Falling back to CPU.")
 
     # Precision
     torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
 
     # Distributed setup: Distributed Data Parallel (DDP), optional
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
-    if ddp:
+    if ddp and torch.cuda.is_available():
         device = torch.device("cuda", ddp_local_rank)
         torch.cuda.set_device(device) # make "cuda" default to this device
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
-    else:
-        device = torch.device("cuda")
 
     if ddp_rank == 0:
         logger.info(f"Distributed world size: {ddp_world_size}")
