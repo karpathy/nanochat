@@ -19,7 +19,11 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.9'
+        python-version: '3.10'
+
+    - name: Install uv
+      run: |
+        python -m pip install uv
 
     - name: Install dependencies with uv
       run: |
@@ -36,3 +40,4 @@ jobs:
       run: |
         chmod +x speedrun.sh
         ./speedrun.sh
+
