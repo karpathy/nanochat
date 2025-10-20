@@ -82,7 +82,7 @@ def build_model(checkpoint_dir, step, device, phase):
     else:
         model.train()
     # Load the Tokenizer
-    tokenizer_name = meta_data["tokenizer_name"]
+    tokenizer_name = meta_data["tokenizer_name"] if "tokenizer_name" in meta_data else "tokenizer"
     print(f"Loading tokenizer: {tokenizer_name}")
     tokenizer = get_tokenizer(tokenizer_name)
     # Sanity check: compatibility between model and tokenizer
