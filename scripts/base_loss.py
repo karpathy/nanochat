@@ -70,7 +70,7 @@ if ddp_rank == 0:
 
 # Log to report
 from nanochat.report import get_report
-get_report().log(section="Base model loss", data=[
+get_report(exp_name=model_tag).log(section="Base model loss", data=[
     {
         "train bpb": bpb_results["train"],
         "val bpb": bpb_results["val"],
