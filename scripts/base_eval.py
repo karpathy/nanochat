@@ -177,7 +177,7 @@ def main():
 
     # Log to report
     from nanochat.report import get_report
-    get_report().log(section="Base model evaluation", data=[
+    get_report(exp_name=model_tag).log(section="Base model evaluation", data=[
         {
             "Model": model_name,
             "CORE metric": core_metric,
