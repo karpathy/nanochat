@@ -25,10 +25,17 @@ jobs:
       run: |
         python -m pip install uv
 
+    - name: Create virtual environment with uv
+      run: |
+        uv venv .venv
+
+    - name: Activate virtual environment
+      run: |
+        source .venv/bin/activate
+
     - name: Install dependencies with uv
       run: |
-        python -m pip install --upgrade pip
-        uv pip install .
+        uv pip install . --system
 
     - name: Run small test
       env:
@@ -40,4 +47,3 @@ jobs:
       run: |
         chmod +x speedrun.sh
         ./speedrun.sh
-
