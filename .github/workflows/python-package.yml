@@ -57,3 +57,11 @@ jobs:
       run: |
         chmod +x speedrun.sh
         ./speedrun.sh
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
