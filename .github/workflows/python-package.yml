@@ -41,6 +41,10 @@ jobs:
       run: |
         echo "PYTHONPATH=$(pwd):$PYTHONPATH" >> $GITHUB_ENV
 
+    - name: Install pytest
+      run: |
+        python -m pip install pytest
+
     - name: Run pytest
       run: |
         python -m pytest tests/ --maxfail=5 --disable-warnings
