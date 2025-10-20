@@ -109,6 +109,29 @@ This includes all py, rs, html, toml, sh files, excludes the `rustbpe/target` fo
 
 Alternatively, I recommend using [DeepWiki](https://deepwiki.com/) from Devin/Cognition to ask questions of this repo. In the URL of this repo, simply change github.com to deepwiki.com, and you're off.
 
+## Installation
+
+To install nanochat for development or experimentation:
+
+```bash
+# Clone the repository
+git clone https://github.com/karpathy/nanochat.git
+cd nanochat
+
+# Install dependencies (requires uv)
+uv pip install .
+```
+
+**For GPU users:** The default installation includes CPU-only PyTorch. If you want GPU acceleration, install the appropriate PyTorch version after installation:
+
+```bash
+# For CUDA (Linux/Windows)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+# For ROCm (AMD GPUs)
+uv pip install torch --index-url https://download.pytorch.org/whl/rocm6.0
+```
+
 ## Tests
 
 I haven't invested too much here but some tests exist, especially for the tokenizer. Run e.g. as:

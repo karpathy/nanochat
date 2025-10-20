@@ -14,7 +14,6 @@ dependencies = [
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
     "torch>=2.0.0",
-    "transformers>=4.0.0",   
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
 ]
@@ -22,17 +21,6 @@ dependencies = [
 [build-system]
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
-
-# target torch to cpu/mps for macOS
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cpu" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
 
 [tool.maturin]
 module-name = "rustbpe"
