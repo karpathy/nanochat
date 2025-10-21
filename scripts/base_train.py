@@ -21,6 +21,7 @@ from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
+from nanochat.schedules import compute_lr_multiplier, apply_lr_multiplier
 from scripts.base_eval import evaluate_model
 print_banner()
 
@@ -142,19 +143,12 @@ x, y = next(train_loader) # kick off load of the very first batch of data
 
 # Learning rate scheduler
 # TODO: experiment with a short warmup for the AdamW params (expecting slight improvement)
-warmup_ratio = 0.0 # ratio of iterations for LR warmup
+adamw_use_lr_warmup = False
+adamw_warmup_ratio = 0.0
+muon_use_lr_warmup = False
+muon_warmup_ratio = 0.0
 warmdown_ratio = 0.2 # ratio of iterations for LR warmdown
 final_lr_frac = 0.0 # final LR is this fraction of the initial LR
-def get_lr_multiplier(it):
-    warmup_iters = round(warmup_ratio * num_iterations)
-    warmdown_iters = round(warmdown_ratio * num_iterations)
-    if it < warmup_iters:
-        return (it + 1) / warmup_iters
-    elif it <= num_iterations - warmdown_iters:
-        return 1.0
-    else:
-        progress = (num_iterations - it) / warmdown_iters
-        return progress * 1.0 + (1 - progress) * final_lr_frac
 
 # Momentum scheduler for Muon optimizer
 def get_muon_momentum(it):
@@ -265,10 +259,22 @@ for step in range(num_iterations + 1):
     if grad_clip > 0.0:
         torch.nn.utils.clip_grad_norm_(orig_model.parameters(), grad_clip)
     # step the optimizers
-    lrm = get_lr_multiplier(step)
-    for opt in optimizers:
-        for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * lrm
+    adamw_lrm = compute_lr_multiplier(
+        step,
+        num_iterations,
+        warmup_ratio=adamw_warmup_ratio if adamw_use_lr_warmup else 0.0,
+        warmdown_ratio=warmdown_ratio,
+        final_lr_frac=final_lr_frac,
+    )
+    muon_lrm = compute_lr_multiplier(
+        step,
+        num_iterations,
+        warmup_ratio=muon_warmup_ratio if muon_use_lr_warmup else 0.0,
+        warmdown_ratio=warmdown_ratio,
+        final_lr_frac=final_lr_frac,
+    )
+    apply_lr_multiplier(adamw_optimizer, adamw_lrm)
+    apply_lr_multiplier(muon_optimizer, muon_lrm)
     muon_momentum = get_muon_momentum(step)
     for group in muon_optimizer.param_groups:
         group["momentum"] = muon_momentum
@@ -290,14 +296,15 @@ for step in range(num_iterations + 1):
     mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
-    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm_adamw: {adamw_lrm:.2f} | lrm_muon: {muon_lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
     if step % 100 == 0:
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
             "train/loss": debiased_smooth_loss,
-            "train/lrm": lrm,
+            "train/adamw_lrm": adamw_lrm,
+            "train/muon_lrm": muon_lrm,
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,
             "train/mfu": mfu,
