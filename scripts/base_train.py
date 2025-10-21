@@ -59,7 +59,7 @@ user_config = {k: globals()[k] for k in config_keys} # will be useful for loggin
 # Compute init
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+autocast_ctx = torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16)
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
@@ -96,7 +96,7 @@ model_config_kwargs = dict(sequence_len=max_seq_len, vocab_size=vocab_size, n_la
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
     model = GPT(model_config)
-model.to_empty(device="cuda")
+model.to_empty(device=device)
 model.init_weights()
 orig_model = model # original, uncompiled model, for saving raw model state_dict
 model = torch.compile(model, dynamic=False) # TODO: dynamic True/False think through
@@ -133,8 +133,8 @@ adamw_optimizer, muon_optimizer = optimizers
 # Initialize the DataLoaders for train/val
 base_dir = get_base_dir()
 tokens_dir = os.path.join(base_dir, "tokenized_data")
-train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train")
-build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val")
+train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", device=device)
+build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)
 x, y = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
@@ -252,7 +252,7 @@ for step in range(num_iterations + 1):
     # -------------------------------------------------------------------------
     # single training step
     # evaluate the gradient
-    torch.cuda.synchronize()
+    if device.type != 'cpu': torch.cuda.synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
@@ -275,7 +275,7 @@ for step in range(num_iterations + 1):
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
-    torch.cuda.synchronize()
+    if device.type != 'cpu': torch.cuda.synchronize()
     t1 = time.time()
     dt = t1 - t0
     # -------------------------------------------------------------------------
@@ -304,7 +304,8 @@ for step in range(num_iterations + 1):
         })
 
 # print a few more stats
-print0(f"Peak memory usage: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MiB")
+if device.type != 'cpu':
+    print0(f"Peak memory usage: {torch.cuda.max_memory_allocated(device=device) / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 

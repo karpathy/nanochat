@@ -23,19 +23,24 @@ def print0(s="",**kwargs):
     if ddp_rank == 0:
         print(s, **kwargs)
 
-for arg in sys.argv[1:]:
+for i, arg in enumerate(sys.argv[1:]):
     if '=' not in arg:
-        # assume it's the name of a config file
-        assert not arg.startswith('--')
-        config_file = arg
-        print0(f"Overriding config with {config_file}:")
-        with open(config_file) as f:
-            print0(f.read())
-        exec(open(config_file).read())
+        # assume it's the name of a config file, unless it's a flag-like argument
+        if not arg.startswith('-'):
+            config_file = arg
+            print0(f"Overriding config with {config_file}:")
+            with open(config_file) as f:
+                print0(f.read())
+            exec(open(config_file).read())
+        else:
+            # it's a flag-like argument, e.g. -i mid or --task-name MMLU
+            # we will assume it is handled by argparse and skip it
+            pass
     else:
         # assume it's a --key=value argument
-        assert arg.startswith('--')
-        key, val = arg.split('=')
+        if not arg.startswith('--'):
+            continue # ignore
+        key, val = arg.split('=', 1)
         key = key[2:]
         if key in globals():
             try:
@@ -48,9 +53,10 @@ for arg in sys.argv[1:]:
             if globals()[key] is not None:
                 attempt_type = type(attempt)
                 default_type = type(globals()[key])
-                assert attempt_type == default_type, f"Type mismatch: {attempt_type} != {default_type}"
+                if attempt_type != default_type:
+                    print0(f"Warning: type mismatch for {key}. Overriding {default_type} with {attempt_type}")
             # cross fingers
             print0(f"Overriding: {key} = {attempt}")
             globals()[key] = attempt
         else:
-            raise ValueError(f"Unknown config key: {key}")
+            print0(f"Warning: unknown config key: {key}")
