@@ -174,7 +174,7 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
 
     # Sample few-shot examples (excluding current item)
     fewshot_examples = []
-    if num_fewshot > 0:
+    if num_fewshot > 0 and len(data) > num_fewshot:
         rng = random.Random(1234 + idx)
         available_indices = [i for i in range(len(data)) if i != idx]
         fewshot_indices = rng.sample(available_indices, num_fewshot)
