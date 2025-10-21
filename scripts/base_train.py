@@ -21,6 +21,7 @@ from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
+from nanochat.mfu import get_promised_flops_per_gpu
 from scripts.base_eval import evaluate_model
 print_banner()
 
@@ -124,6 +125,10 @@ total_tokens = total_batch_size * num_iterations
 print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params:.2f}") # Chinchilla is ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
+
+device_name, promised_flops_per_gpu, promised_is_estimated = get_promised_flops_per_gpu()
+promised_flops_per_sec = promised_flops_per_gpu * ddp_world_size
+print0(f"Detected GPU: {device_name} | peak BF16 TFLOPs (per GPU): {promised_flops_per_gpu / 1e12:.1f}{'*' if promised_is_estimated else ''}")
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
@@ -286,11 +291,10 @@ for step in range(num_iterations + 1):
     pct_done = 100 * step / num_iterations
     tok_per_sec = int(world_tokens_per_fwdbwd / dt)
     flops_per_sec = num_flops_per_token * total_batch_size / dt
-    promised_flops_per_sec_h100 = 989e12 * ddp_world_size # bfloat16 H100 SXM and without 2:4 sparsity
-    mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
+    mfu = 100 * flops_per_sec / promised_flops_per_sec # in %
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
-    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f}{'*' if promised_is_estimated else ''} | total time: {total_training_time/60:.2f}m")
     if step % 100 == 0:
         wandb_run.log({
             "step": step,
@@ -327,7 +331,7 @@ get_report().log(section="Base model training", data=[
         "Minimum validation bpb": min_val_bpb,
         "Final validation bpb": val_bpb,
         "CORE metric estimate": results["core_metric"],
-        "MFU %": f"{mfu:.2f}%",
+        "MFU %": f"{mfu:.2f}{'*' if promised_is_estimated else ''}%",
         "Total training flops": f"{flops_so_far:e}",
         "Total training time": f"{total_training_time/60:.2f}m",
         "Peak memory usage": f"{torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MiB",
