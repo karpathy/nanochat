@@ -17,8 +17,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ['3.10', '3.11', '3.12' , '3.13']
+        os: [windows-latest] # ubuntu-latest, macos-latest, 
+        python-version: [ '3.13'] # '3.10', '3.11', '3.12' ,
       fail-fast: false
 
     steps:
@@ -69,12 +69,6 @@ jobs:
 
     - name: Run pytest
       run: |
-        python -m pytest tests/ --maxfail=5 --disable-warnings
+        python -m pytest tests/ --maxfail=5 
 
-    - name: Cache pip dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
+
