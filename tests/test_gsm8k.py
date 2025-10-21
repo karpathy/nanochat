@@ -1,6 +1,13 @@
+import sys
+from pathlib import Path
+
 import pytest
 
-from tasks.gsm8k import DATASET_CONFIGS, GSM8K
+# Ensure the repository root (which contains the ``nanochat`` package) is on sys.path
+if "nanochat" not in sys.modules:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from nanochat.tasks.gsm8k import DATASET_CONFIGS, GSM8K
 
 # Simple test to check we are getting the correct rows from the gsm8k datasets.
 # It does not verify the actual content of the dataset itself.
