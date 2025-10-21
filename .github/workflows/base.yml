@@ -7,6 +7,7 @@ on:
       - dev
       - mac
       - gh-wf
+      - gh-wf-wintest
       - cpu-mps-dev
   pull_request:
     branches:
