@@ -1,11 +1,21 @@
 """
-Evlauate the CORE metric for a given model.
+Evaluate the CORE metric for a given model.
 
-Run on a single GPU:
-python base_eval.py
+Examples:
+
+Run on a single GPU to evaluate a local nanoChat model:
+python base_eval.py --model_tag=my_run
 
 Run with torchrun on e.g. 8 GPUs:
-torchrun --nproc_per_node=8 base_eval.py
+torchrun --nproc_per_node=8 base_eval.py --model_tag=my_run
+
+Evaluate a HuggingFace model:
+python base_eval.py --hf_path=openai-community/gpt2
+
+Configuration parameters:
+- model_tag: Model tag for local nanoChat model (optional)
+- step: Specific checkpoint step to evaluate (optional)
+- hf_path: Path to HuggingFace model (if set, loads from HF instead of local)
 
 The script will print the CORE metric to the console.
 """
@@ -24,6 +34,14 @@ from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir,
 from nanochat.tokenizer import HuggingFaceTokenizer
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
+
+# -----------------------------------------------------------------------------
+# Configuration
+model_tag = None # optional model tag for the output directory name
+step = None # optional model step for the output directory name
+hf_path = None # optional HuggingFace model path (if set, will load from HF instead of local)
+config_keys = [k for k, v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str, type(None)))]
+exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 
 # -----------------------------------------------------------------------------
 # nanoChat specific function dealing with I/O etc.
@@ -139,15 +157,16 @@ def main():
         # atm assume that if a path is given, it's a huggingface model path
         hf_path = args.hf_path
         print0(f"Loading huggingface model from: {hf_path}")
+
         model, tokenizer = load_hf_model(hf_path, device)
         model_name = hf_path # just for logging
         model_slug = hf_path.replace("/", "-") # for the output csv file
     else:
-        # load a local model from the file system
+        # Load a local nanoChat model from the file system
         model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=model_tag, step=step)
         model_name = f"base_model (step {meta['step']})" # just for logging
         model_slug = f"base_model_{meta['step']:06d}" # for the output csv file
-        print0(f"Loaded model with model_tag: {model_tag}")
+        print0(f"Loaded model with model_tag: {model_tag}, step: {meta['step']}")
 
     # Evaluate the model
     with autocast_ctx:
