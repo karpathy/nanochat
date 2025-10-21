@@ -22,7 +22,7 @@
 
 set -x  # Enable debug output
 
-DATA_NAME=climbmix
+DATA_NAME=climbmix_1_9
 export DATA_DIR=/lustre/fsw/portfolios/nvr/users/sdiao/nanochat/data/$DATA_NAME
 export MATRIX_LR=0.02
 
