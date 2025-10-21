@@ -1,0 +1,79 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - master
+      - dev
+      - mac
+      - gh-wf
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.9' , '3.10', '3.11', '3.12' , '3.13']
+      fail-fast: false
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install uv
+      run: |
+        python -m pip install uv
+
+    - name: Create virtual environment with uv
+      run: |
+        uv venv .venv
+
+    - name: Activate virtual environment (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        source .venv/bin/activate
+
+    - name: Activate virtual environment (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        .venv\Scripts\activate
+
+    - name: Install dependencies with uv
+      run: |
+        uv pip install transformers>=4.0.0
+        uv pip install . --system
+
+    - name: Add nanochat to PYTHONPATH (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        echo "PYTHONPATH=$(pwd):$PYTHONPATH" >> $GITHUB_ENV
+
+    - name: Add nanochat to PYTHONPATH (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        echo "PYTHONPATH=$PWD;$env:PYTHONPATH" >> $env:GITHUB_ENV
+
+    - name: Install pytest
+      run: |
+        python -m pip install pytest
+
+    - name: Run pytest
+      run: |
+        python -m pytest tests/ --maxfail=5 --disable-warnings
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
