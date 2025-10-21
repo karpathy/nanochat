@@ -21,6 +21,7 @@ from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
+from nanochat.profiling import ProfilingManager
 from scripts.base_eval import evaluate_model
 print_banner()
 
@@ -48,6 +49,9 @@ eval_tokens = 20*524288 # number of tokens to evaluate val loss on
 core_metric_every = 2000 # every how many steps to evaluate the core metric
 core_metric_max_per_task = 500 # examples per task in estimating the core metric
 sample_every = 2000 # every how many steps to sample from the model
+# Profiling configuration (output files will be placed in ~/.cache/nanochat/profile_traces/<timestamp>/ by default)
+# Master switch: enables both PyTorch profiler (traces) and CUDA memory profiler (snapshots)
+enable_profiling = False
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
 # now allow CLI to override the settings via the configurator lol
@@ -60,6 +64,18 @@ user_config = {k: globals()[k] for k in config_keys} # will be useful for loggin
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+
+# Get base directory early for profiling setup
+base_dir = get_base_dir()
+
+# Initialize profiling manager
+profiler = ProfilingManager(
+    base_dir=base_dir,
+    ddp_local_rank=ddp_local_rank,
+    master_process=master_process,
+    enable_profiling=enable_profiling,
+    print_fn=print0,
+)
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
@@ -93,6 +109,10 @@ print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {
 # -----------------------------------------------------------------------------
 # Initialize the Model
 model_config_kwargs = dict(sequence_len=max_seq_len, vocab_size=vocab_size, n_layer=num_layers, n_head=num_heads, n_kv_head=num_kv_heads, n_embd=model_dim)
+# Start profiling model initialization
+if enable_profiling:
+    profiler.start_cuda_memory_recording("model_init")
+    profiler.start_torch_profiler("model_init", warmup=0, active=1)
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
     model = GPT(model_config)
@@ -100,6 +120,10 @@ model.to_empty(device="cuda")
 model.init_weights()
 orig_model = model # original, uncompiled model, for saving raw model state_dict
 model = torch.compile(model, dynamic=False) # TODO: dynamic True/False think through
+# Complete profiling model initialization
+if enable_profiling:
+    profiler.step_torch_profiler()
+    profiler.dump_cuda_memory_snapshot("model_init")
 num_params = sum(p.numel() for p in model.parameters())
 print0(f"Number of parameters: {num_params:,}")
 num_flops_per_token = model.estimate_flops()
@@ -131,7 +155,6 @@ optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=
 adamw_optimizer, muon_optimizer = optimizers
 
 # Initialize the DataLoaders for train/val
-base_dir = get_base_dir()
 tokens_dir = os.path.join(base_dir, "tokenized_data")
 train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train")
 build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val")
@@ -179,7 +202,9 @@ for step in range(num_iterations + 1):
         val_loader = build_val_loader()
         eval_steps = eval_tokens // (device_batch_size * max_seq_len * ddp_world_size)
         with autocast_ctx:
-            val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
+            # Pass profiler for first evaluation if profiling is enabled
+            prof_arg = profiler if (enable_profiling and step == 0) else None
+            val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes, profiler=prof_arg)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
@@ -254,6 +279,13 @@ for step in range(num_iterations + 1):
     # evaluate the gradient
     torch.cuda.synchronize()
     t0 = time.time()
+    
+    # Profile micro-steps if enabled (only for first 10 steps)
+    profile_ctx = None
+    if enable_profiling and step == 0:
+        profile_ctx = profiler.profile_section("training_microsteps", warmup=1, active=10)
+        profile_ctx.__enter__()
+    
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
             loss = model(x, y)
@@ -261,6 +293,19 @@ for step in range(num_iterations + 1):
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         loss.backward()
         x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+        if profile_ctx is not None:
+            profile_ctx.step()
+
+    # Close profiling context if it was opened
+    if profile_ctx is not None:
+        profile_ctx.__exit__(None, None, None)
+
+    # Start optimizer step profiling if enabled
+    optimizer_profile_ctx = None
+    if enable_profiling and step == 0:
+        optimizer_profile_ctx = profiler.profile_section("optimizer_step", warmup=0, active=1)
+        optimizer_profile_ctx.__enter__()
+
     # gradient clipping (TODO possibly expertiment with)
     if grad_clip > 0.0:
         torch.nn.utils.clip_grad_norm_(orig_model.parameters(), grad_clip)
@@ -276,6 +321,11 @@ for step in range(num_iterations + 1):
         opt.step()
     model.zero_grad(set_to_none=True)
     torch.cuda.synchronize()
+    
+    # Step and close optimizer profiling if active
+    if optimizer_profile_ctx is not None:
+        optimizer_profile_ctx.step()
+        optimizer_profile_ctx.__exit__(None, None, None)
     t1 = time.time()
     dt = t1 - t0
     # -------------------------------------------------------------------------
