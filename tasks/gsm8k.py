@@ -1,6 +1,7 @@
 """
 GSM8K evaluation.
 https://huggingface.co/datasets/openai/gsm8k
+https://huggingface.co/datasets/madrylab/gsm8k-platinum
 
 Example problem instance:
 
@@ -20,6 +21,24 @@ from tasks.common import Task
 
 
 GSM_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
+DATASET_CONFIGS = {
+    "main": {
+        "path": "openai/gsm8k",
+        "name": "main",
+        "splits": {"train", "test"},
+    },
+    "socratic": {
+        "path": "openai/gsm8k",
+        "name": "socratic",
+        "splits": {"train", "test"},
+    },
+    "platinum": {
+        "path": "madrylab/gsm8k-platinum",
+        "name": "main",
+        "splits": {"test"},
+    },
+}
+
 def extract_answer(completion):
     """
     Extract the numerical answer after #### marker.
@@ -38,9 +57,10 @@ class GSM8K(Task):
 
     def __init__(self, subset, split, **kwargs):
         super().__init__(**kwargs)
-        assert subset in ["main", "socratic"], "GSM8K subset must be main|socratic"
-        assert split in ["train", "test"], "GSM8K split must be train|test"
-        self.ds = load_dataset("openai/gsm8k", subset, split=split).shuffle(seed=42)
+        assert subset in DATASET_CONFIGS, f"GSM8K subset must be one of {sorted(DATASET_CONFIGS)}"
+        config = DATASET_CONFIGS[subset]
+        assert split in config["splits"], f"GSM8K subset '{subset}' does not support split '{split}'"
+        self.ds = load_dataset(config["path"], config["name"], split=split).shuffle(seed=42)
 
     @property
     def eval_type(self):
