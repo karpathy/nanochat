@@ -13,8 +13,8 @@
 
 set -x  # Enable debug output
 
-export DATA_NAME=nemotron # nemotron # smoltalk
-export BASE_NAME=smollm_d20_1node_matrixlr0.02_2298373 # fineweb_d20_1node # climbmix_d20_1node_matrixlr0.02_2298334 # nemotron-cc-hq_d20_1node_matrixlr0.02_2298371 # smollm_d20_1node_matrixlr0.02_2298373
+export DATA_NAME=smoltalk # nemotron # smoltalk
+export BASE_NAME=climbmix_d20_1node_matrixlr0.02_2298334 # fineweb_d20_1node # climbmix_d20_1node_matrixlr0.02_2298334 # nemotron-cc-hq_d20_1node_matrixlr0.02_2298371 # smollm_d20_1node_matrixlr0.02_2298373
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1

@@ -113,22 +113,22 @@ elif dataset_choice == "nemotron":
     # Original Nemotron distribution: stem(355K/25.4%), math(239K/17.1%), chat(628K/44.9%), code(175K/12.5%)
     # Proportionally sampled to 460K total, then add MMLU + GSM8K to match SmolTalk structure
     train_dataset = TaskMixture([
-        Nemotron(categories=["stem"], split="train", stop=117000),  # 25.4% of 460K = 117K
-        Nemotron(categories=["math"], split="train", stop=79000),   # 17.1% of 460K = 79K
-        Nemotron(categories=["chat"], split="train", stop=207000),  # 44.9% of 460K = 207K
-        Nemotron(categories=["code"], split="train", stop=57000),   # 12.5% of 460K = 57K
+        Nemotron(categories=["stem"], split="train", stop=151800),
+        Nemotron(categories=["math"], split="train", stop=151800),
+        Nemotron(categories=["chat"], split="train", stop=4600),
+        Nemotron(categories=["code"], split="train", stop=151800),
         MMLU(subset="auxiliary_train", split="train"), # 100K rows of multiple choice problems
         GSM8K(subset="main", split="train"), # 8K rows teaching simple math and (calculator) tool use
-    ]) # total: 117K + 79K + 207K + 57K + 100K + 8K = 568K rows (same as SmolTalk)
+    ]) # total: 110K + 110K + 110K + 110K + 100K + 8K = 548K rows (similar to SmolTalk)
     # For validation, match SmolTalk validation set structure
     val_dataset = TaskMixture([
-        Nemotron(categories=["stem"], split="train", start=117000, stop=124500),  # 7.5K
-        Nemotron(categories=["math"], split="train", start=79000, stop=84000),    # 5K
-        Nemotron(categories=["chat"], split="train", start=207000, stop=220500),  # 13.5K
-        Nemotron(categories=["code"], split="train", start=57000, stop=61000),    # 4K
+        Nemotron(categories=["stem"], split="train", start=151800, stop=155000),
+        Nemotron(categories=["math"], split="train", start=151800, stop=155000),
+        Nemotron(categories=["chat"], split="train", start=4600, stop=10000),
+        Nemotron(categories=["code"], split="train", start=151800, stop=155000),
         MMLU(subset="all", split="test", stop=5200), # 5.2K rows to match train ratios
         GSM8K(subset="main", split="test", stop=420), # 420 rows to match train ratios
-    ]) # total: 7.5K + 5K + 13.5K + 4K + 5.2K + 0.42K = 35.6K rows
+    ]) # total: 6.0K + 4.0K + 10.8K + 3.2K + 5.2K + 0.42K = 30.6K rows (similar to SmolTalk)
 else:
     raise ValueError(f"Unknown dataset_choice: {dataset_choice}. Must be 'smoltalk' or 'nemotron'")
 # DataLoader is defined here, it emits inputs, targets : 2D tensors of shape (device_batch_size, max_seq_len)
@@ -310,7 +310,7 @@ print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 # Log to report
 if not dry_run:
     from nanochat.report import get_report
-    get_report().log(section="Midtraining", data=[
+    get_report(exp_name=run).log(section="Midtraining", data=[
         user_config, # CLI args
         { # stats about the training setup
             "Number of iterations": step,

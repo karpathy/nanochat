@@ -73,7 +73,8 @@ model, tokenizer, meta = load_model(source, device, phase="train", model_tag=mod
 orig_model = model # original, uncompiled model
 # model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs
 engine = Engine(model, tokenizer) # will be used for inline model evaluation only
-
+tokenizer_name = meta.get("tokenizer_name", "tokenizer")
+print0(f"Using tokenizer: {tokenizer_name}")
 # -----------------------------------------------------------------------------
 # Task data mixture we'll train on
 
@@ -96,18 +97,18 @@ elif dataset_choice == "nemotron":
         ARC(subset="ARC-Easy", split="train"), # 2.3K rows
         ARC(subset="ARC-Challenge", split="train"), # 1.1K rows
         GSM8K(subset="main", split="train"), # 8K rows
-        Nemotron(categories=["stem"], split="train", stop=2540),  # 25.4% of 10K = 2.54K
-        Nemotron(categories=["math"], split="train", stop=1710),  # 17.1% of 10K = 1.71K
-        Nemotron(categories=["chat"], split="train", stop=4490),  # 44.9% of 10K = 4.49K
-        Nemotron(categories=["code"], split="train", stop=1250),  # 12.5% of 10K = 1.25K
-    ]) # total: 2.3K + 1.1K + 8K + (2.54K + 1.71K + 4.49K + 1.25K) = 21.4K rows (same as SmolTalk)
+        Nemotron(categories=["stem"], split="train", stop=3000),
+        Nemotron(categories=["math"], split="train", stop=3000),
+        Nemotron(categories=["chat"], split="train", stop=1000),
+        Nemotron(categories=["code"], split="train", stop=3000),
+    ]) # total: 2.3K + 1.1K + 8K + (3.0K + 3.0K + 1.0K + 3.0K) = 18.4K rows (similar to SmolTalk)
     # For validation, use a small subset of Nemotron mixed categories
     val_ds = TaskMixture([
-        Nemotron(categories=["stem"], split="train", start=2540, stop=2790),    # 250 samples
-        Nemotron(categories=["math"], split="train", start=1710, stop=1960),    # 250 samples
-        Nemotron(categories=["chat"], split="train", start=4490, stop=5240),    # 750 samples
-        Nemotron(categories=["code"], split="train", start=1250, stop=1500),    # 250 samples
-    ]) # total: 1500 samples for validation
+        Nemotron(categories=["stem"], split="train", start=3000, stop=3300),    # 300 samples
+        Nemotron(categories=["math"], split="train", start=3000, stop=3300),    # 300 samples
+        Nemotron(categories=["chat"], split="train", start=1000, stop=1100),    # 100 samples
+        Nemotron(categories=["code"], split="train", start=3000, stop=3300),    # 300 samples
+    ]) # total: 1000 samples for validation
 else:
     raise ValueError(f"Unknown dataset_choice: {dataset_choice}. Must be 'smoltalk' or 'nemotron'")
 
@@ -284,13 +285,14 @@ if master_process:
             "val_loss": val_loss,
             **metrics,
             "model_config": model_config_kwargs,
+            "tokenizer_name": tokenizer_name,
         }
     )
     print(f"✅ Saved model checkpoint to {checkpoint_dir}")
 
 # Log to report
 from nanochat.report import get_report
-get_report().log(section="Chat SFT", data=[
+get_report(exp_name=run).log(section="Chat SFT", data=[
     user_config, # CLI args
     {
         "Training rows": len(train_ds),
