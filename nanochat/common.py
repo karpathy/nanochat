@@ -56,10 +56,17 @@ def get_base_dir():
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
-def print0(s="",**kwargs):
-    ddp_rank = int(os.environ.get('RANK', 0))
-    if ddp_rank == 0:
+# Determine at import time which function to use
+_ddp_rank = int(os.environ.get('RANK', 0))
+
+if _ddp_rank == 0:
+    # On rank 0: print0 is just print
+    def print0(s="", **kwargs):
         print(s, **kwargs)
+else:
+    # On other ranks: print0 is a no-op
+    def print0(s="", **kwargs):
+        pass
 
 def print_banner():
     # Cool DOS Rebel font ASCII banner made with https://manytools.org/hacker-tools/ascii-banner/
