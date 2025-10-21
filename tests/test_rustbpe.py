@@ -451,19 +451,18 @@ def enwik8_path():
         print(f"Using existing enwik8 at {enwik8_local_path}")
     return enwik8_local_path
 
-
 @pytest.fixture(scope="module")
 def enwik8_small(enwik8_path):
     """Fixture providing 100KB of enwik8 for quick tests."""
-    with open(enwik8_path, "r") as f:
+    with open(enwik8_path, "r", encoding="utf-8") as f:
         return f.read(100_000)
 
 @pytest.fixture(scope="module")
 def enwik8_large(enwik8_path):
     """Fixture providing 10MB of enwik8 for performance tests."""
-    with open(enwik8_path, "r") as f:
+    with open(enwik8_path, "r", encoding="utf-8") as f:
         return f.read(10**7)
-
+        
 def time_function(func, *args, **kwargs):
     """Time a function call and return the result and elapsed time"""
     start_time = time.time()
