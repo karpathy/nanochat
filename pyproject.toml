@@ -14,7 +14,7 @@ dependencies = [
     "setuptools>=80.9.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
-    "torch>=2.0.0,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*",
+    "torch>=2.0.0,!=2.3.*,!=2.4.*,!=2.5.*,!=2.6.*,!=2.7.*,!=2.8.*,!=2.9.*",  # Excludes versions without macOS arm64 wheels
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
 ]
@@ -44,5 +44,6 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-# Note: PyTorch configuration removed for macOS compatibility
-# On Linux with CUDA, you may need to reinstall from pytorch.org/whl/cu128
+# PyTorch installation: Uses PyPI defaults for macOS/Windows, CUDA index removed for compatibility
+# macOS gets latest available version with arm64 wheels (currently 2.2.2)
+# Linux users: For CUDA support, manually install from https://pytorch.org/get-started/locally/

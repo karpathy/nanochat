@@ -95,7 +95,38 @@ And a bit more about computing environments that will run nanochat:
 
 ## Running on CPU / MPS
 
-nanochat cn be run on CPU or on MPS (if you're on Macbook), and will automatically try to detect what device is best to run on. You're not going to get too far without GPUs, but at least you'll be able to run the code paths and maybe train a tiny LLM with some patience. For an example of how to make all the run commands much smaller (feel free to tune!), you can refer to [dev/runcpu.sh](dev/runcpu.sh) file. You'll see that I'm essentially restricting all scripts to train smaller models, to run for shorter number of iterations, etc. This functionality is new, slightly gnarly (touched a lot of code), and was merged in this [CPU|MPS PR](https://github.com/karpathy/nanochat/pull/88) on Oct 21, 2025.
+nanochat can run on CPU or MPS (Apple Silicon Macs) and will auto-detect the best device. While you won't get far without GPUs, you can run the code paths and train tiny LLMs.
+
+**For macOS:** Scripts now auto-detect system memory and optimize batch sizes accordingly. A 128GB Mac can train ~16× faster using `device_batch_size=16` vs the default `device_batch_size=1`.
+
+**Memory-optimized profiles:**
+- 128GB: batch_size=16, total_batch=16384 (16× faster)
+- 64GB: batch_size=8, total_batch=8192 (8× faster)
+- 32GB: batch_size=4, total_batch=4096 (4× faster)
+- <32GB: batch_size=1, total_batch=1024 (baseline)
+
+**Quick start on Mac:**
+```bash
+bash dev/runcpu.sh              # Quick test (~15-30 min on 128GB Mac)
+bash dev/runmac_overnight.sh    # Better quality (~2-3 hours on 128GB Mac)
+bash dev/continue_training.sh   # Resume interrupted training
+```
+
+**Override memory detection:**
+```bash
+MEMORY_SIZE=64 bash dev/runcpu.sh              # Use 64GB profile
+DEPTH=8 BASE_ITERATIONS=1000 bash dev/runmac_overnight.sh  # Custom config
+```
+
+**Important for Mac users:** Ensure you're using native ARM64 Python (not x86_64 via Rosetta 2) for best performance. Check with `file .venv/bin/python` - should show `arm64`. If it shows `x86_64`, recreate your venv:
+```bash
+rm -rf .venv
+uv venv --python /opt/homebrew/opt/python@3.10/bin/python3.10
+uv sync
+maturin develop --release
+```
+
+All MPS-specific changes (bfloat16→float32, torch.compile disabled, etc.) are automatic and backward compatible with CUDA.
 
 ## Customization
 
