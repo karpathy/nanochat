@@ -6,7 +6,6 @@ import torch
 from torch import Tensor
 import torch.distributed as dist
 
-@torch.compile
 def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
     """
     Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
@@ -19,7 +18,11 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
     """
     assert G.ndim >= 2 # batched Muon implementation by @scottjmaddox, and put into practice in the record by @YouJiacheng
     a, b, c = (3.4445, -4.7750,  2.0315)
-    X = G.bfloat16()
+    # Use bfloat16 on CUDA for speed, float32 on MPS/CPU (MPS doesn't support bfloat16)
+    if G.device.type == "cuda":
+        X = G.bfloat16()
+    else:
+        X = G.float()
     if G.size(-2) > G.size(-1):
         X = X.mT
 
@@ -34,6 +37,10 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
     if G.size(-2) > G.size(-1):
         X = X.mT
     return X
+
+# Compile the function for CUDA; use eager mode for MPS/CPU
+# We check at runtime in the optimizer which version to use
+_zeropower_compiled = torch.compile(zeropower_via_newtonschulz5)
 
 class Muon(torch.optim.Optimizer):
     """
@@ -65,6 +72,11 @@ class Muon(torch.optim.Optimizer):
             group = dict(params=[p for p in params if p.numel() == size])
             param_groups.append(group)
         super().__init__(param_groups, defaults)
+        # Determine which zeropower function to use based on device
+        # Check the first parameter to determine device
+        first_param = next(iter(params))
+        self._use_compiled = first_param.device.type == "cuda"
+        self._zeropower_fn = _zeropower_compiled if self._use_compiled else zeropower_via_newtonschulz5
 
     @torch.no_grad()
     def step(self):
@@ -79,7 +91,7 @@ class Muon(torch.optim.Optimizer):
                 buf: Tensor = state["momentum_buffer"]
                 buf.lerp_(g, 1 - group["momentum"])
                 g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
-                g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"])
+                g = self._zeropower_fn(g, steps=group["ns_steps"])
                 p.add_(g, alpha=-group["lr"] * max(1, p.size(-2) / p.size(-1))**0.5)
 
 
@@ -122,6 +134,10 @@ class DistMuon(torch.optim.Optimizer):
                 print(f"Muon: Grouping {len(group_params)} params of shape {shape}, device {device}, dtype {dtype}")
             param_groups.append(dict(params=group_params, zero_buffer=torch.zeros_like(group_params[0])))
         super().__init__(param_groups, defaults)
+        # Determine which zeropower function to use based on device
+        first_param = params[0]
+        self._use_compiled = first_param.device.type == "cuda"
+        self._zeropower_fn = _zeropower_compiled if self._use_compiled else zeropower_via_newtonschulz5
 
     @torch.no_grad()
     def step(self):
@@ -173,7 +189,7 @@ class DistMuon(torch.optim.Optimizer):
                     buf: Tensor = state["momentum_buffer"]
                     buf.lerp_(g, 1.0 - group["momentum"])
                     g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
-                    g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"])
+                    g = self._zeropower_fn(g, steps=group["ns_steps"])
                     scale = (max(1.0, p.size(-2) / p.size(-1)) ** 0.5)
                     p.add_(g, alpha=-group["lr"] * scale)
                 # Replicate updated parameters to all ranks

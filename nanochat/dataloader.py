@@ -16,6 +16,9 @@ def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokeniz
     bos_token = tokenizer.get_bos_token_id()
     # scratch buffer holds the tokens for one iteration
     token_buffer = deque() # we stream tokens on the right and pop from the left
+    # pin_memory and non_blocking only work on CUDA
+    device_type = device if isinstance(device, str) else device.type
+    use_cuda_optimizations = device_type == "cuda"
 
     # infinite iterator over document batches
     def document_batches():
@@ -38,11 +41,11 @@ def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokeniz
             batch_index += 1
         # Move tokens from the deque into the scratch buffer
         tokens = [token_buffer.popleft() for _ in range(needed_tokens)]
-        scratch = torch.tensor(tokens, dtype=torch.int64, pin_memory=True)
+        scratch = torch.tensor(tokens, dtype=torch.int64, pin_memory=use_cuda_optimizations)
         # Create the inputs/targets as 1D tensors
         inputs_cpu = scratch[:-1].to(dtype=torch.int32)
         targets_cpu = scratch[1:]
-        # Reshape to 2D and move to GPU async
-        inputs = inputs_cpu.view(B, T).to(device=device, dtype=torch.int32, non_blocking=True)
-        targets = targets_cpu.view(B, T).to(device=device, dtype=torch.int64, non_blocking=True)
+        # Reshape to 2D and move to device (async on CUDA)
+        inputs = inputs_cpu.view(B, T).to(device=device, dtype=torch.int32, non_blocking=use_cuda_optimizations)
+        targets = targets_cpu.view(B, T).to(device=device, dtype=torch.int64, non_blocking=use_cuda_optimizations)
         yield inputs, targets

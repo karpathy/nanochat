@@ -35,7 +35,13 @@ class GPTConfig:
 
 def norm(x):
     # Purely functional rmsnorm with no learnable params
-    return F.rms_norm(x, (x.size(-1),))
+    # Fallback for older PyTorch versions that don't have F.rms_norm
+    if hasattr(F, 'rms_norm'):
+        return F.rms_norm(x, (x.size(-1),))
+    else:
+        # Manual RMS norm implementation
+        variance = x.pow(2).mean(-1, keepdim=True)
+        return x * torch.rsqrt(variance + 1e-6)
 
 
 def apply_rotary_emb(x, cos, sin):
@@ -211,7 +217,9 @@ class GPT(nn.Module):
         # calculate the rotation frequencies at each (time, channel) pair
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16() # keep them in bfloat16
+        # Use bfloat16 on CUDA, float32 on MPS/CPU (MPS doesn't support bfloat16)
+        if device.type == "cuda":
+            cos, sin = cos.bfloat16(), sin.bfloat16()
         cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
         return cos, sin
 
@@ -244,7 +252,10 @@ class GPT(nn.Module):
             dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
         ]
         adamw_kwargs = dict(betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay)
-        AdamWFactory = DistAdamW if ddp else partial(torch.optim.AdamW, fused=True)
+        # fused=True only works on CUDA, not MPS or CPU
+        device_type = self.get_device().type
+        use_fused = device_type == "cuda"
+        AdamWFactory = DistAdamW if ddp else partial(torch.optim.AdamW, fused=use_fused)
         adamw_optimizer = AdamWFactory(adam_groups, **adamw_kwargs)
         # Create the Muon optimizer for the linear layers
         muon_kwargs = dict(lr=matrix_lr, momentum=0.95)
@@ -263,7 +274,9 @@ class GPT(nn.Module):
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
-        assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
+        # Rotary embeddings are bfloat16 on CUDA, float32 on MPS/CPU
+        expected_dtype = torch.bfloat16 if self.cos.device.type == "cuda" else torch.float32
+        assert self.cos.dtype == expected_dtype, f"Rotary embeddings dtype mismatch: expected {expected_dtype}, got {self.cos.dtype}"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
