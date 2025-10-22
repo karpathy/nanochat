@@ -41,7 +41,7 @@ def norm(x):
     else:
         # Manual RMS norm implementation
         variance = x.pow(2).mean(-1, keepdim=True)
-        return x * torch.rsqrt(variance + 1e-5)
+        return x * torch.rsqrt(variance + 1e-6)
 
 
 def apply_rotary_emb(x, cos, sin):
