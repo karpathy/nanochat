@@ -122,7 +122,7 @@ python -m scripts.base_train \
 # Evaluate base model
 echo ""
 echo "Evaluating base model..."
-python -m scripts.base_loss --split_tokens=$SPLIT_TOKENS
+python -m scripts.base_loss --device_batch_size=$DEVICE_BATCH_SIZE --split_tokens=$SPLIT_TOKENS
 python -m scripts.base_eval
 
 # Midtraining
