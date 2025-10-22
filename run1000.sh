@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # The $1000 tier of nanochat
 # Designed to run end-to-end for $1000/24 ~= 41.6 hours on an 8XH100 node
 # A bit sparser on comments, see speedrun.sh for more detail
@@ -24,6 +26,7 @@ if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
     rm eval_bundle.zip
     mv eval_bundle $NANOCHAT_BASE_DIR
 fi
+curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
 # train tokenizer on ~4B characters and kick off download of the rest for pretraining
 python -m nanochat.dataset -n 16
