@@ -15,6 +15,9 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
 import torch
+# Disable torch.compile's dynamo on MPS (not supported)
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
 from contextlib import nullcontext
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type
 from nanochat.tokenizer import get_token_bytes
@@ -70,7 +73,9 @@ pretrain_batch_size = meta.get("device_batch_size", None)
 if pretrain_batch_size is not None and device_batch_size > pretrain_batch_size:
     print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device_batch_size to this script?")
 orig_model = model
-model = torch.compile(model, dynamic=False)
+# torch.compile only works well on CUDA; skip on MPS/CPU
+if device_type == "cuda":
+    model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration for a single rank
@@ -119,7 +124,9 @@ def mid_data_generator(split):
     assert dataset_size > 0
     needed_tokens = device_batch_size * max_seq_len + 1 # to form one training batch of inputs,targets
     token_buffer = deque()
-    scratch = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=True)
+    # pin_memory only works on CUDA
+    use_pin_memory = device_type == "cuda"
+    scratch = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=use_pin_memory)
     cursor = ddp_rank # increments by ddp_world_size each time, so each rank processes unique documents
     it = 0 # iteration counter
     while True:
@@ -142,8 +149,9 @@ def mid_data_generator(split):
             scratch[i] = token_buffer.popleft()
         inputs_cpu = scratch[:-1].to(dtype=torch.int32)
         targets_cpu = scratch[1:]
-        inputs = inputs_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int32, non_blocking=True)
-        targets = targets_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int64, non_blocking=True)
+        # non_blocking only works on CUDA
+        inputs = inputs_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int32, non_blocking=use_pin_memory)
+        targets = targets_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int64, non_blocking=use_pin_memory)
         if split == "train":
             if num_iterations > 0:
                 approx_progress = it / num_iterations # calculate progress from the max number of iterations
