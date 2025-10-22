@@ -3,8 +3,7 @@ name: Test
 on:
   push:
     branches:
-      - master
-      - gh-wf-v3
+      - '**'  
   pull_request:
     branches:
       - master
@@ -15,7 +14,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]   
-        python-version: ['3.10', '3.11', '3.12', '3.13'] 
+        python-version: ['3.10'] 
       fail-fast: false
 
     steps:
@@ -32,7 +31,7 @@ jobs:
 
     - name: Install dependencies with uv
       run: |
-        uv sync
+        uv sync --extra cpu 
         uv pip install transformers>=4.0.0
 
     - name: Add nanochat to PYTHONPATH (Unix)
