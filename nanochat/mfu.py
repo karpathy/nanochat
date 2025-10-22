@@ -4,7 +4,6 @@ import torch
 def get_promised_flops_per_gpu():
     """
     Return best-effort dense BF16 Tensor/Matrix peak FLOPs for the active GPU.
-
     Returns:
         tuple[str, float, bool]: (device_name, flops_per_gpu, is_estimated)
             device_name is the CUDA-reported name for the active device.
@@ -23,29 +22,29 @@ def get_promised_flops_per_gpu():
         return any(k in name for k in keywords)
 
     # --- NVIDIA Blackwell ---
-    if has("gb200", "grace blackwell", "b200"):
-        return result(2.25e15, False)  # B200 dense BF16 ≈ 2.25 PFLOPS. (4.5 PFLOPS sparse)
+    if has("gb200", "grace blackwell"):
+        return result(2.5e15, False)       # GB200 dense BF16 ≈ 2.5 PFLOPS (5.0 PFLOPS sparse)
+    if has("b200"):
+        return result(2.25e15, False)      # B200 dense BF16 ≈ 2.25 PFLOPS (4.5 PFLOPS sparse)
     if has("b100"):
-        return result(1.8e15, False)   # B100 dense BF16 ≈ 1.8 PFLOPS. (3.5 PFLOPS sparse)
+        return result(1.8e15, False)       # B100 dense BF16 ≈ 1.8 PFLOPS (3.5 PFLOPS sparse)
 
     # --- NVIDIA Hopper (H100/H200/H800) ---
     if has("h200"):
-        # SXM ~= H100 SXM for compute; NVL/PCIe is lower clock
         if has("nvl", "pcie"):
             return result(836e12, False)   # H200 NVL/PCIe dense BF16 ≈ 836 TFLOPS
         return result(989e12, False)       # H200 SXM dense BF16 ≈ 989 TFLOPS
 
     if has("h100"):
-        if has("nvl"):                     # H100 NVL (per GPU)
-            return result(835e12, False)   # 1671 TFLOPS (sparse) ⇒ ~835 dense
+        if has("nvl"):
+            return result(835e12, False)   # H100 NVL dense BF16 ≈ 835 TFLOPS
         if has("pcie"):
             return result(756e12, False)   # H100 PCIe dense BF16 ≈ 756 TFLOPS
         return result(989e12, False)       # H100 SXM dense BF16 ≈ 989 TFLOPS
 
     if has("h800"):
-        # China-optimized Hopper; NVLink configs often quoted at H100-SXM-like numbers
         if has("nvl"):
-            return result(989e12, False)   # H800 NVLink dense BF16 ≈ 989 TFLOPS (vendor configs)
+            return result(989e12, False)   # H800 NVLink dense BF16 ≈ 989 TFLOPS
         return result(756e12, False)       # H800 PCIe dense BF16 ≈ 756 TFLOPS
 
     # --- NVIDIA Ampere data center / export variants ---
