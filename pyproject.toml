@@ -17,6 +17,7 @@ dependencies = [
     "torch>=2.8.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
+    "hf-transfer>=0.1.9",
 ]
 
 [build-system]
