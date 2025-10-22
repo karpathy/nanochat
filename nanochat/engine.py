@@ -83,7 +83,7 @@ class KVCache:
         for ix, (dim1, dim2) in enumerate(zip(self.kv_shape, other.kv_shape)):
             if ix in [0, 1, 3, 5]:
                 # num_layers, batch_size, num_heads, head_dim must match
-                assert dim1 == dim2, f"Batch dim mismatch: {dim1} != {dim2}"
+                assert dim1 == dim2, f"Dim {ix} mismatch: {dim1} != {dim2}"
             elif ix == 2:
                 # batch_size can be expanded
                 assert dim1 == dim2 or dim2 == 1, f"Batch dim mismatch: {dim1} != {dim2}"
