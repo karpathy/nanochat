@@ -140,21 +140,134 @@ bash dev/runmac_overnight.sh
 DEPTH=8 BASE_ITERATIONS=1000 bash dev/runmac_overnight.sh
 ```
 
+## Continuing Training After Interruption
+
+### Use `continue_training.sh` (Recommended)
+
+If training was interrupted or you want to continue from existing checkpoints:
+
+```bash
+bash dev/continue_training.sh
+```
+
+**What it does:**
+- ✅ Checks for existing base/mid/sft checkpoints
+- ✅ Automatically continues from where you left off
+- ✅ Skips completed stages
+- ✅ Matches model tags (d4, d6, d8) correctly
+- ✅ Uses memory-optimized batch sizes
+
+**Example scenarios:**
+
+1. **Base training completed, but mid/sft interrupted:**
+   ```
+   Status:
+     ✓ Base model: d8/step_001000
+     ✗ Midtraining: Not found
+
+   → Will run: Midtraining → SFT
+   ```
+
+2. **Base and mid complete, only need SFT:**
+   ```
+   Status:
+     ✓ Base model: d8/step_001000
+     ✓ Midtraining: d8/step_000150
+     ✗ SFT: Not found
+
+   → Will run: SFT only
+   ```
+
+3. **Everything complete:**
+   ```
+   Status:
+     ✓ Base model: d8/step_001000
+     ✓ Midtraining: d8/step_000150
+     ✓ SFT: d8/step_000150
+
+   🎉 All training stages complete!
+   → Ready to chat!
+   ```
+
+### Manual Continuation
+
+If you prefer manual control:
+
+```bash
+source .venv/bin/activate
+
+# Continue midtraining from existing base model
+python -m scripts.mid_train \
+  --num_iterations=150 \
+  --device_batch_size=16
+
+# Continue SFT from existing mid model
+python -m scripts.chat_sft \
+  --num_iterations=150 \
+  --device_batch_size=16
+
+# Chat with the result
+python -m scripts.chat_cli -i sft
+```
+
 ## Troubleshooting
+
+### Training Won't Start
+
+**Error: `AssertionError: total_batch_size must be divisible by...`**
+
+Fix: Ensure `total_batch_size` is divisible by `device_batch_size × max_seq_len`
+```bash
+# For max_seq_len=1024:
+# device_batch_size=16 → total_batch_size=16384 (16 × 1024)
+# device_batch_size=8  → total_batch_size=8192  (8 × 1024)
+```
+
+**Error: `split_tokens must be divisible by tokens_per_step`**
+
+Fix: Pass `--device_batch_size` to base_loss:
+```bash
+python -m scripts.base_loss --device_batch_size=16 --split_tokens=16384
+```
+
+### Architecture Issues
+
+**Running x86_64 Python on ARM64 Mac (Rosetta 2)**
+
+Check your Python architecture:
+```bash
+file .venv/bin/python
+# Should show: Mach-O 64-bit executable arm64
+# Bad: Mach-O 64-bit executable x86_64
+```
+
+Fix: Recreate venv with native ARM64 Python:
+```bash
+rm -rf .venv
+uv venv --python /opt/homebrew/opt/python@3.10/bin/python3.10
+uv sync
+maturin develop --release
+```
+
+**Performance impact:** Native ARM64 is ~2-3× faster than Rosetta 2!
+
+### Memory & Performance Issues
 
 **Script fails with memory errors:**
 - Reduce `MEMORY_SIZE=64` or `DEVICE_BATCH_SIZE=8`
 - Reduce `DEPTH=4`
+- Close other applications
 
 **Training is slow:**
-- Check memory profile is correct: `sysctl hw.memsize`
-- Ensure MPS is being used: Check logs for "Autodetected device type: mps"
-- Close other applications
+- Check memory profile: `sysctl hw.memsize`
+- Verify MPS: Check logs for "Autodetected device type: mps"
+- Verify ARM64: `file .venv/bin/python` should show `arm64`
+- Check CPU usage: Should be 80-100% on one core
 
 **Chat responses are still poor:**
 - Increase iterations: `BASE_ITERATIONS=1000 MID_ITERATIONS=300 SFT_ITERATIONS=300`
 - Download more data: `DATA_SHARDS=100`
-- Increase model size: `DEPTH=8` (warning: needs more memory)
+- Increase model size: `DEPTH=8` (needs more memory)
 
 ## Running in Background
 
