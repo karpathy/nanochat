@@ -36,12 +36,6 @@ from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
 
 # -----------------------------------------------------------------------------
-# Configuration
-model_tag = None # optional model tag for the output directory name
-step = None # optional model step for the output directory name
-hf_path = None # optional HuggingFace model path (if set, will load from HF instead of local)
-
-# -----------------------------------------------------------------------------
 # nanoChat specific function dealing with I/O etc.
 
 def evaluate_model(model, tokenizer, device, max_per_task=-1):
