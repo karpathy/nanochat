@@ -1,23 +1,24 @@
 #!/bin/bash
 
-# This script is the "Best ChatGPT clone that $100 can buy",
+# This script is based on the "Best ChatGPT clone that $100 can buy" and modified for the nemotron datasets.
 # It is designed to run in ~4 hours on 8XH100 node at $3/GPU/hour.
 
 # 1) Example launch (simplest):
-# bash speedrun.sh
+# bash speedrun_nemotron.sh
 # 2) Example launch in a screen session (because the run takes ~4 hours):
-# screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
+# screen -L -Logfile speedrun_nemotron.log -S speedrun_nemotron bash speedrun_nemotron.sh
 # 3) Example launch with wandb logging, but see below for setting up wandb first:
-# WANDB_RUN=speedrun screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
+# WANDB_RUN=speedrun_nemotron screen -L -Logfile speedrun_nemotron.log -S speedrun_nemotron bash speedrun_nemotron.sh
 set -x
 
-DATA_NAME=climbmix_small
-DATA_DIR=/lustre/fsw/portfolios/nvr/users/sdiao/nanochat/data/$DATA_NAME
+PRE_TRAINING_DATA_NAME=nemotron_climbmix
 POST_TRAINING_DATA_NAME=nemotron
+TOKENIZER_NAME="tokenizer_${PRE_TRAINING_DATA_NAME}"
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
-export NANOCHAT_BASE_DIR="/lustre/fsw/portfolios/nvr/users/sdiao/nanochat/.cache"
+export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
+export PRE_TRAINING_DATA_DIR="$NANOCHAT_BASE_DIR/${PRE_TRAINING_DATA_NAME}"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # -----------------------------------------------------------------------------
@@ -28,7 +29,7 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
 # install the repo dependencies
-uv sync
+uv sync --extra gpu
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
 
@@ -38,13 +39,11 @@ source .venv/bin/activate
 # 1) Make sure to first log in to wandb, e.g. run:
 #    `wandb login`
 # 2) Set the WANDB_RUN environment variable when running this script, e.g.:
-#    `WANDB_RUN=d26 bash speedrun.sh`
-# if [ -z "$WANDB_RUN" ]; then
-#     # by default use "dummy" : it's handled as a special case, skips logging to wandb
-#     WANDB_RUN=dummy
-# fi
-export WANDB_API_KEY="ec7a9c0701d404122e4fc5c7c7518ed17f5b03ca"
-export WANDB_RUN=${DATA_NAME}_d20_1node
+#    `WANDB_RUN=d26 bash speedrun_nemotron.sh`
+if [ -z "$WANDB_RUN" ]; then
+    # by default use "dummy" : it's handled as a special case, skips logging to wandb
+    WANDB_RUN=dummy
+fi
 
 # -----------------------------------------------------------------------------
 # During the course of the run, we will be writing markdown reports to the report/
@@ -62,19 +61,10 @@ source "$HOME/.cargo/env"
 # Build the rustbpe Tokenizer
 uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 
-# # Download the first ~2B characters of pretraining dataset
-# # look at dev/repackage_data_reference.py for details on how this data was prepared
-# # each data shard is ~250M chars
-# # so we download 2e9 / 250e6 = 8 data shards at this point
-# # each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
-# python -m nanochat.dataset -n 8
-# # Immediately also kick off downloading more shards in the background while tokenizer trains
-# # See comment below for why 240 is the right number here
-# python -m nanochat.dataset -n 240 &
-# DATASET_DOWNLOAD_PID=$!
-# train the tokenizer with vocab size 2**16 = 65536 on ~2B characters of data
-export TOKENIZER_NAME="tokenizer_${DATA_NAME}"
-python -m scripts.tok_train --max_chars=2000000000 --data_dir=$DATA_DIR --tokenizer_name=$TOKENIZER_NAME
+# download and process the nemotron_climbmix data
+python data/nemotron_climbmix/process_climbmix.py --data_dir=$PRE_TRAINING_DATA_DIR
+
+python -m scripts.tok_train --max_chars=2000000000 --data_dir=$PRE_TRAINING_DATA_DIR --tokenizer_name=$TOKENIZER_NAME
 # evaluate the tokenizer (report compression ratio etc.)
 python -m scripts.tok_eval --tokenizer_name=$TOKENIZER_NAME
 
@@ -100,9 +90,9 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN  --data_dir=$DATA_DIR  --tokenizer_name=$TOKENIZER_NAME --model_tag=$WANDB_RUN
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN  --data_dir=$PRE_TRAINING_DATA_DIR  --tokenizer_name=$TOKENIZER_NAME --model_tag=$WANDB_RUN
 # evaluate the model on a larger chunk of train/val data and draw some samples
-torchrun --standalone --nproc_per_node=8 -m scripts.base_loss  --data_dir=$DATA_DIR --tokenizer_name=$TOKENIZER_NAME --model_tag=$WANDB_RUN
+torchrun --standalone --nproc_per_node=8 -m scripts.base_loss  --data_dir=$PRE_TRAINING_DATA_DIR --tokenizer_name=$TOKENIZER_NAME --model_tag=$WANDB_RUN
 # evaluate the model on CORE tasks
 torchrun --standalone --nproc_per_node=8 -m scripts.base_eval --model_tag=$WANDB_RUN
 
