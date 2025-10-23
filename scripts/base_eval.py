@@ -40,8 +40,6 @@ from nanochat.core_eval import evaluate_task
 model_tag = None # optional model tag for the output directory name
 step = None # optional model step for the output directory name
 hf_path = None # optional HuggingFace model path (if set, will load from HF instead of local)
-config_keys = [k for k, v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str, type(None)))]
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 
 # -----------------------------------------------------------------------------
 # nanoChat specific function dealing with I/O etc.
