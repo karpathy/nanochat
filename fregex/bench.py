@@ -1,15 +1,3 @@
-"""
-Benchmarker for comparing tok.c tokenize_fast() vs rust split_text()
-Measures speed WITHOUT subprocess overhead - direct function calls only.
-
-Usage:
-    cd pytok
-    source ../.venv/bin/activate
-    python3 bench.py                          # Run synthetic data benchmarks
-    python3 bench.py /path/to/file.txt        # Benchmark a specific file
-    python3 bench.py file1.txt file2.txt ...  # Benchmark multiple files
-"""
-
 import sys
 import ctypes
 import random

@@ -119,7 +119,6 @@ def compare_one(path: Path) -> int:
         p_offs = byte_offsets(p_parsed)
         r_offs = byte_offsets(r_parsed)
 
-        # Load original input bytes so we can show precise substrings and code points
         data_bytes = Path(path).read_bytes()
 
         def print_unicode_debug(label, offs_list, idx):
