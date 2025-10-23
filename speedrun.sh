@@ -9,10 +9,6 @@
 # screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
 # 3) Example launch with wandb logging, but see below for setting up wandb first:
 # WANDB_RUN=speedrun screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
-set -x
-
-DATA_NAME=smollm
-DATA_DIR=/lustre/fsw/portfolios/nvr/users/sdiao/nanochat/data/$DATA_NAME
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
@@ -38,18 +34,16 @@ source .venv/bin/activate
 #    `wandb login`
 # 2) Set the WANDB_RUN environment variable when running this script, e.g.:
 #    `WANDB_RUN=d26 bash speedrun.sh`
-# if [ -z "$WANDB_RUN" ]; then
-#     # by default use "dummy" : it's handled as a special case, skips logging to wandb
-#     WANDB_RUN=dummy
-# fi
-export WANDB_API_KEY="ec7a9c0701d404122e4fc5c7c7518ed17f5b03ca"
-export WANDB_RUN=fineweb_d20_test
+if [ -z "$WANDB_RUN" ]; then
+    # by default use "dummy" : it's handled as a special case, skips logging to wandb
+    WANDB_RUN=dummy
+fi
 
 # -----------------------------------------------------------------------------
 # During the course of the run, we will be writing markdown reports to the report/
 # directory in the base dir. This command clears it out and writes a header section
 # with a bunch of system info and a timestamp that marks the start of the run.
-python -m nanochat.report reset --exp_name=$WANDB_RUN
+python -m nanochat.report reset
 
 # -----------------------------------------------------------------------------
 # Tokenizer
@@ -98,9 +92,9 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # pretrain the d20 model
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN  --data_dir=$DATA_DIR
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
 # evaluate the model on a larger chunk of train/val data and draw some samples
-torchrun --standalone --nproc_per_node=8 -m scripts.base_loss  --data_dir=$DATA_DIR
+torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
 # evaluate the model on CORE tasks
 torchrun --standalone --nproc_per_node=8 -m scripts.base_eval
 
@@ -140,4 +134,4 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 # -----------------------------------------------------------------------------
 # Generate the full report by putting together all the sections
 # report.md is the output and will be copied to current directory for convenience
-python -m nanochat.report generate --exp_name=$WANDB_RUN
+python -m nanochat.report generate
