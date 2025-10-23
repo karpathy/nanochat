@@ -4,6 +4,7 @@ use std::collections::HashMap as StdHashMap;
 use dary_heap::OctonaryHeap;
 use fancy_regex::Regex;
 use pyo3::prelude::*;
+use pyo3::wrap_pyfunction;
 
 use ahash::{AHashMap, AHashSet};
 use compact_str::CompactString;
@@ -467,9 +468,23 @@ impl Tokenizer {
     }
 }
 
+#[pyfunction]
+pub fn split_text(pattern: String, text: String) -> PyResult<Vec<String>> {
+    let re = Regex::new(&pattern)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e)))?;
+    let mut out: Vec<String> = Vec::new();
+    for m in re.find_iter(&text) {
+        let m = m
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Regex match failed: {}", e)))?;
+        out.push(m.as_str().to_string());
+    }
+    Ok(out)
+}
+
 #[pymodule]
 fn rustbpe(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pyo3_log::init(); // forwards Rust `log` to Python's `logging`
     m.add_class::<Tokenizer>()?;
+    m.add_function(wrap_pyfunction!(split_text, m)?)?;
     Ok(())
 }
