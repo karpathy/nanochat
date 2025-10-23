@@ -97,9 +97,7 @@ if dataset_choice == "smoltalk":
     ]) # 2.3K + 1.1K + 8K + 10K + 1K = 22.4K rows
     val_ds = SmolTalk(split="test") # general conversations, 24K rows
 elif dataset_choice == "nemotron":
-    # Ablation: Nemotron (sampled to match SmolTalk 10K) + ARC + GSM8K
-    # SmolTalk has 10K samples, we sample Nemotron proportionally to match
-    # Original Nemotron distribution: stem(25.4%), math(17.1%), chat(44.9%), code(12.5%)
+    # Nemotron + ARC + GSM8K + synthetic identity conversations
     train_ds = TaskMixture([
         ARC(subset="ARC-Easy", split="train"), # 2.3K rows
         ARC(subset="ARC-Challenge", split="train"), # 1.1K rows

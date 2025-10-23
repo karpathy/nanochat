@@ -117,9 +117,7 @@ if dataset_choice == "smoltalk":
         GSM8K(subset="main", split="test", stop=420), # 420 rows to match train ratios
     ]) # total: ~29.6K rows
 elif dataset_choice == "nemotron":
-    # Ablation: Nemotron with stem, math, chat, code (sampled to match SmolTalk 460K) + MMLU + GSM8K
-    # Original Nemotron distribution: stem(355K/25.4%), math(239K/17.1%), chat(628K/44.9%), code(175K/12.5%)
-    # Proportionally sampled to 460K total, then add MMLU + GSM8K to match SmolTalk structure
+    # Nemotron with stem, math, chat, code + MMLU + GSM8K + synthetic identity conversations
     train_dataset = TaskMixture([
         Nemotron(categories=["stem"], split="train", stop=151800), # 151800 samples
         Nemotron(categories=["math"], split="train", stop=151800), # 151800 samples
