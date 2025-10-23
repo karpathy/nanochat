@@ -40,7 +40,7 @@ def norm(x):
 
 def apply_rotary_emb(x, cos, sin):
     assert x.ndim == 4  # multihead attention
-    d = x.shape[3] // 2
+    d = x.shape[-1] // 2 #always refers to the last dimension.
     x1, x2 = x[..., :d], x[..., d:] # split up last time into two halves
     y1 = x1 * cos + x2 * sin # rotate pairs of dims
     y2 = x1 * (-sin) + x2 * cos
