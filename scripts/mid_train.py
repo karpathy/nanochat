@@ -121,25 +121,25 @@ elif dataset_choice == "nemotron":
     # Original Nemotron distribution: stem(355K/25.4%), math(239K/17.1%), chat(628K/44.9%), code(175K/12.5%)
     # Proportionally sampled to 460K total, then add MMLU + GSM8K to match SmolTalk structure
     train_dataset = TaskMixture([
-        Nemotron(categories=["stem"], split="train", stop=151800),
-        Nemotron(categories=["math"], split="train", stop=151800),
-        Nemotron(categories=["chat"], split="train", stop=4600),
-        Nemotron(categories=["code"], split="train", stop=151800),
+        Nemotron(categories=["stem"], split="train", stop=151800), # 151800 samples
+        Nemotron(categories=["math"], split="train", stop=151800), # 151800 samples
+        Nemotron(categories=["chat"], split="train", stop=4600), # 4600 samples
+        Nemotron(categories=["code"], split="train", stop=151800), # 151800 samples
         MMLU(subset="auxiliary_train", split="train"), # 100K rows of multiple choice problems
         GSM8K(subset="main", split="train"), # 8K rows teaching simple math and (calculator) tool use
         CustomJSON(filepath=identity_conversations_filepath), # 1000 rows of synthetic identity conversations
         CustomJSON(filepath=identity_conversations_filepath), # let's do 2 epochs of these
-    ]) # total: 117K + 79K + 207K + 57K + 100K + 8K = 568K rows (same as SmolTalk)
+    ]) # 151800 + 151800 + 4600 + 151800 + 100000 + 8000 + 1000 + 1000 = 568K rows (same as SmolTalk)
 
     # For validation, match SmolTalk validation set structure
     val_dataset = TaskMixture([
-        Nemotron(categories=["stem"], split="train", start=151800, stop=155000),
-        Nemotron(categories=["math"], split="train", start=151800, stop=155000),
-        Nemotron(categories=["chat"], split="train", start=4600, stop=10000),
-        Nemotron(categories=["code"], split="train", start=151800, stop=155000),
+        Nemotron(categories=["stem"], split="train", start=151800, stop=155000), # 3200 samples
+        Nemotron(categories=["math"], split="train", start=151800, stop=155000), # 3200 samples
+        Nemotron(categories=["chat"], split="train", start=4600, stop=10000), # 5400 samples
+        Nemotron(categories=["code"], split="train", start=151800, stop=155000), # 3200 samples
         MMLU(subset="all", split="test", stop=5200), # 5.2K rows to match train ratios
         GSM8K(subset="main", split="test", stop=420), # 420 rows to match train ratios
-    ]) # total: 6.0K + 4.0K + 10.8K + 3.2K + 5.2K + 0.42K = 30.6K rows (similar to SmolTalk)
+    ]) # 3200 + 3200 + 5400 + 3200 + 5200 + 420 = 20.6K rows (similar to SmolTalk)
 else:
     raise ValueError(f"Unknown dataset_choice: {dataset_choice}. Must be 'smoltalk' or 'nemotron'")
 # DataLoader is defined here, it emits inputs, targets : 2D tensors of shape (device_batch_size, max_seq_len)

@@ -94,7 +94,7 @@ if dataset_choice == "smoltalk":
         GSM8K(subset="main", split="train"), # 8K rows
         SmolTalk(split="train", stop=10_000), # 10K rows of smoltalk
         CustomJSON(filepath=identity_conversations_filepath), # 1K rows of synthetic identity conversations
-    ]) # total: 2.3K + 1.1K + 8K + 10K = 21.4K rows
+    ]) # 2.3K + 1.1K + 8K + 10K + 1K = 22.4K rows
     val_ds = SmolTalk(split="test") # general conversations, 24K rows
 elif dataset_choice == "nemotron":
     # Ablation: Nemotron (sampled to match SmolTalk 10K) + ARC + GSM8K
@@ -104,18 +104,18 @@ elif dataset_choice == "nemotron":
         ARC(subset="ARC-Easy", split="train"), # 2.3K rows
         ARC(subset="ARC-Challenge", split="train"), # 1.1K rows
         GSM8K(subset="main", split="train"), # 8K rows
-        Nemotron(categories=["stem"], split="train", stop=3000),
-        Nemotron(categories=["math"], split="train", stop=3000),
-        Nemotron(categories=["chat"], split="train", stop=1000),
-        Nemotron(categories=["code"], split="train", stop=3000),
-    ]) # total: 2.3K + 1.1K + 8K + (3.0K + 3.0K + 1.0K + 3.0K) = 18.4K rows (similar to SmolTalk)
+        Nemotron(categories=["stem"], split="train", stop=3000), # 3K samples
+        Nemotron(categories=["math"], split="train", stop=3000), # 3K samples
+        Nemotron(categories=["chat"], split="train", stop=1000), # 1K samples
+        Nemotron(categories=["code"], split="train", stop=3000), # 3K samples
+    ]) # total: 2.3K + 1.1K + 8K + (3.0K + 3.0K + 1.0K + 3.0K) + 1K = 22.4K rows (similar to SmolTalk)
     # For validation, use a small subset of Nemotron mixed categories
     val_ds = TaskMixture([
-        Nemotron(categories=["stem"], split="train", start=3000, stop=3300),    # 300 samples
-        Nemotron(categories=["math"], split="train", start=3000, stop=3300),    # 300 samples
-        Nemotron(categories=["chat"], split="train", start=1000, stop=1100),    # 100 samples
-        Nemotron(categories=["code"], split="train", start=3000, stop=3300),    # 300 samples
-    ]) # total: 1000 samples for validation
+        Nemotron(categories=["stem"], split="train", start=3000, stop=3300), # 300 samples
+        Nemotron(categories=["math"], split="train", start=3000, stop=3300), # 300 samples
+        Nemotron(categories=["chat"], split="train", start=1000, stop=1100), # 100 samples
+        Nemotron(categories=["code"], split="train", start=3000, stop=3300), # 300 samples
+    ]) # 300 + 300 + 100 + 300 = 1K samples for validation
 else:
     raise ValueError(f"Unknown dataset_choice: {dataset_choice}. Must be 'smoltalk' or 'nemotron'")
 
