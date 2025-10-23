@@ -34,6 +34,9 @@ print_banner()
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
 # Runtime
 device_type = "" # cuda|cpu|mps (empty => autodetect good device type default, in order: CUDA > MPS > CPU)
+# Data
+data_dir = "" # path to directory containing parquet files with 'text' column (empty string = use default: ~/.cache/nanochat/base_data)
+tokenizer_name = "tokenizer" # name of the tokenizer subdirectory (default: tokenizer)
 # Model architecture
 depth = 20 # the depth of the Transformer model to train, rest of the kwargs are derived
 max_seq_len = 2048 # max context length
@@ -76,10 +79,11 @@ use_dummy_wandb = run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=run, config=user_config)
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
-tokenizer = get_tokenizer()
-token_bytes = get_token_bytes(device=device)
+tokenizer = get_tokenizer(tokenizer_name)
+token_bytes = get_token_bytes(tokenizer_name, device=device)
 vocab_size = tokenizer.get_vocab_size()
 print0(f"Vocab size: {vocab_size:,}")
+print0(f"Tokenizer: {tokenizer_name}")
 
 # Model kwargs are derived from the desired depth of the model
 num_layers = depth
@@ -139,12 +143,13 @@ print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
 optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
 adamw_optimizer, muon_optimizer = optimizers
-
 # Initialize the DataLoaders for train/val
 base_dir = get_base_dir()
 tokens_dir = os.path.join(base_dir, "tokenized_data")
-train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", device=device)
-build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)
+# Use custom data_dir if provided, otherwise use default
+custom_data_dir = data_dir if data_dir else None
+train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", device=device, data_dir=custom_data_dir, tokenizer_name=tokenizer_name)
+build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device, data_dir=None, tokenizer_name=tokenizer_name) # set data_dir to None to always use the default val data dir from FineWeb
 x, y = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
@@ -254,6 +259,7 @@ for step in range(num_iterations + 1):
                 "user_config": user_config, # inputs to the training script
                 "device_batch_size": device_batch_size,
                 "max_seq_len": max_seq_len,
+                "tokenizer_name": tokenizer_name, # save tokenizer name for later loading
             }
         )
 
@@ -321,7 +327,7 @@ print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
 # Log to report
 from nanochat.report import get_report
-get_report().log(section="Base model training", data=[
+get_report(exp_name=run).log(section="Base model training", data=[
     user_config, # CLI args
     { # stats about the training setup
         "Number of parameters": num_params,

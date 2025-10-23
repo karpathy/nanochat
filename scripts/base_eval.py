@@ -1,11 +1,21 @@
 """
-Evlauate the CORE metric for a given model.
+Evaluate the CORE metric for a given model.
 
-Run on a single GPU:
-python base_eval.py
+Examples:
+
+Run on a single GPU to evaluate a local nanoChat model:
+python base_eval.py --model_tag=my_run
 
 Run with torchrun on e.g. 8 GPUs:
-torchrun --nproc_per_node=8 base_eval.py
+torchrun --nproc_per_node=8 base_eval.py --model_tag=my_run
+
+Evaluate a HuggingFace model:
+python base_eval.py --hf_path=openai-community/gpt2
+
+Configuration parameters:
+- model_tag: Model tag for local nanoChat model (optional)
+- step: Specific checkpoint step to evaluate (optional)
+- hf_path: Path to HuggingFace model (if set, loads from HF instead of local)
 
 The script will print the CORE metric to the console.
 """
@@ -123,7 +133,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--hf-path', type=str, default=None, help='HuggingFace model path to evaluate')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per task to evaluate (-1 = disable)')
+    parser.add_argument('--model-tag', type=str, default=None, help='Model tag to evaluate')
+    parser.add_argument('--step', type=int, default=None, help='Model step to evaluate')
     args = parser.parse_args()
+    model_tag = args.model_tag
+    step = args.step
 
     # distributed / precision setup
     device_type = autodetect_device_type()
@@ -135,14 +149,16 @@ def main():
         # atm assume that if a path is given, it's a huggingface model path
         hf_path = args.hf_path
         print0(f"Loading huggingface model from: {hf_path}")
+
         model, tokenizer = load_hf_model(hf_path, device)
         model_name = hf_path # just for logging
         model_slug = hf_path.replace("/", "-") # for the output csv file
     else:
-        # load a local model from the file system
-        model, tokenizer, meta = load_model("base", device, phase="eval")
+        # Load a local model from the file system
+        model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=model_tag, step=step)
         model_name = f"base_model (step {meta['step']})" # just for logging
         model_slug = f"base_model_{meta['step']:06d}" # for the output csv file
+        print0(f"Loaded model with model_tag: {model_tag}, step: {meta['step']}")
 
     # Evaluate the model
     with autocast_ctx:
@@ -172,7 +188,7 @@ def main():
 
     # Log to report
     from nanochat.report import get_report
-    get_report().log(section="Base model evaluation", data=[
+    get_report(exp_name=model_tag).log(section="Base model evaluation", data=[
         {
             "Model": model_name,
             "CORE metric": core_metric,

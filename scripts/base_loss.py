@@ -22,6 +22,8 @@ split_tokens = 20*524288  # number of tokens to evaluate per split
 model_tag = None # optional model tag for the output directory name
 model_step = None # optional model step for the output directory name
 device_type = "" # cuda|cpu|mps (empty => autodetect)
+data_dir = "" # path to directory containing parquet files with 'text' column (empty string = use default)
+tokenizer_name = "tokenizer" # name of the tokenizer subdirectory (default: tokenizer)
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 
 # Load the base model and the tokenizer
@@ -35,10 +37,12 @@ autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16)
 tokens_per_step = device_batch_size * sequence_len * ddp_world_size
 assert split_tokens % tokens_per_step == 0, "split_tokens must be divisible by tokens_per_step"
 steps = split_tokens // tokens_per_step
-token_bytes = get_token_bytes(device=device)
+token_bytes = get_token_bytes(tokenizer_name, device=device)
+print0(f"Using tokenizer: {tokenizer_name}")
 bpb_results = {}
+custom_data_dir = data_dir if data_dir else None
 for split_name in ["train", "val"]:
-    loader = tokenizing_distributed_data_loader(device_batch_size, sequence_len, split_name, device=device)
+    loader = tokenizing_distributed_data_loader(device_batch_size, sequence_len, split_name, device=device, data_dir=custom_data_dir)
     with autocast_ctx:
         bpb = evaluate_bpb(model, loader, steps, token_bytes)
     print0(f"{split_name} bpb: {bpb:.4f}")
@@ -67,7 +71,7 @@ if ddp_rank == 0:
 
 # Log to report
 from nanochat.report import get_report
-get_report().log(section="Base model loss", data=[
+get_report(exp_name=model_tag).log(section="Base model loss", data=[
     {
         "train bpb": bpb_results["train"],
         "val bpb": bpb_results["val"],
