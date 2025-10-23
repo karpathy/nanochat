@@ -149,7 +149,7 @@ tokens_dir = os.path.join(base_dir, "tokenized_data")
 # Use custom data_dir if provided, otherwise use default
 custom_data_dir = data_dir if data_dir else None
 train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", device=device, data_dir=custom_data_dir, tokenizer_name=tokenizer_name)
-build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device, data_dir="/lustre/fsw/portfolios/nvr/users/sdiao/nanochat/.cache/base_data", tokenizer_name=tokenizer_name) # SHIZHE: always use the default val data dir from FineWeb by Andrej Karpathy
+build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device, data_dir=None, tokenizer_name=tokenizer_name) # set data_dir to None to always use the default val data dir from FineWeb
 x, y = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------

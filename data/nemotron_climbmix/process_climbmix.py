@@ -7,6 +7,20 @@ import tiktoken
 import tqdm
 import concurrent.futures
 import pandas as pd
+from huggingface_hub import snapshot_download
+
+def download_data(input_folder):
+    """
+    Download the data from huggingface
+    """
+    snapshot_download(
+        repo_id="nvidia/ClimbMix",
+        repo_type="dataset",
+        allow_patterns=["climbmix_small/*.parquet"],
+        local_dir=input_folder,
+        max_workers=16
+    )
+
 def process_file(input_file, output_folder):
     """
     Process a single Parquet file:
@@ -83,10 +97,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Parallel processing using openai/tiktoken to detokenize tokens in tokenized parquet files, tracking progress and token count"
     )
-    parser.add_argument("--input_folder", type=str, help="Path to folder containing tokenized parquet files")
-    parser.add_argument("--output_folder", type=str, help="Path to output folder for detokenized parquet files")
+    parser.add_argument("--data_dir", type=str, default="./climbmix_small", help="Path to folder containing tokenized parquet files")
     parser.add_argument(
         "--num_workers", type=int, default=os.cpu_count(), help="Number of parallel processing workers, defaults to CPU core count"
     )
     args = parser.parse_args()
-    process_folder_parallel(args.input_folder, args.output_folder, args.num_workers)
+    input_folder = os.path.join(args.data_dir, "climbmix_small")
+    output_folder = args.data_dir
+    # download the data from huggingface
+    print(f"Downloading data from huggingface to {args.data_dir}")
+    download_data(args.data_dir)
+    print(f"Processing data from {input_folder} to {output_folder}")
+    process_folder_parallel(input_folder, output_folder, args.num_workers)
+    print(f"Removing input folder {input_folder}")
+    os.system(f"rm -rf {input_folder}")
+    print(f"Done processing data")
