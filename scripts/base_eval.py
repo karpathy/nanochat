@@ -65,7 +65,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
             data = [json.loads(line.strip()) for line in f]
 
         # shuffle the data because in many cases it appears ordered but we want
-        # the abillity to only run a subset of the data for debugging purposes etc.
+        # the ability to only run a subset of the data for debugging purposes etc.
         shuffle_rng = random.Random(1337)
         shuffle_rng.shuffle(data)
         if max_per_task > 0:
