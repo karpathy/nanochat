@@ -3,37 +3,45 @@ import ctypes
 import random
 import time
 import statistics
+import os
+import gc
 from pathlib import Path
 
 from nanochat.tokenizer import SPLIT_PATTERN
+
+os.environ.update({
+    'OMP_NUM_THREADS': '1',
+    'OPENBLAS_NUM_THREADS': '1',
+    'MKL_NUM_THREADS': '1',
+    'VECLIB_MAXIMUM_THREADS': '1',
+    'NUMEXPR_NUM_THREADS': '1',
+    'RAYON_NUM_THREADS': '1',
+})
+
+os.setpriority(os.PRIO_PROCESS, 0, -10)
+
 from rustbpe import split_text as rust_split_text
 from fregex.fuzz import gen_valid_unicode_string, compare_pair_text
 from fregex.cload import *
 
-def bench_c_regex(data: bytes, iterations: int) -> list:
-    times = []
-    for _ in range(iterations):
-        token_list = TokenList()
-        c_lib.tokenlist_init(ctypes.byref(token_list))
-        
-        start = time.perf_counter()
-        c_lib.tokenize_fast(data, len(data), ctypes.byref(token_list))
-        elapsed = time.perf_counter() - start
-        
-        c_lib.tokenlist_free(ctypes.byref(token_list))
-        times.append(elapsed * 1000)
-    
-    return times
+PyBytes_AsString = ctypes.pythonapi.PyBytes_AsString
+PyBytes_AsString.restype = ctypes.c_void_p
+PyBytes_AsString.argtypes = [ctypes.py_object]
 
-def bench_rust_regex(text: str, iterations: int) -> list:
-    times = []
-    for _ in range(iterations):
-        start = time.perf_counter()
-        rust_split_text(SPLIT_PATTERN, text)
-        elapsed = time.perf_counter() - start
-        times.append(elapsed * 1000)
-    
-    return times
+def _run_once_c(data: bytes) -> float:
+    token_list = TokenList()
+    c_lib.tokenlist_init(ctypes.byref(token_list))
+    base_ptr = PyBytes_AsString(data)
+    t0 = time.perf_counter_ns()
+    c_lib.tokenize_fast(base_ptr, len(data), ctypes.byref(token_list))
+    dt_ms = (time.perf_counter_ns() - t0) / 1e6
+    c_lib.tokenlist_free(ctypes.byref(token_list))
+    return dt_ms
+
+def _run_once_rust(text: str) -> float:
+    t0 = time.perf_counter_ns()
+    rust_split_text(SPLIT_PATTERN, text)
+    return (time.perf_counter_ns() - t0) / 1e6
 
 def stats_summary(times: list) -> dict:
     """Compute statistics from timing list."""
@@ -65,11 +73,33 @@ def benchmark_dataset(name: str, data_bytes: bytes, iterations: int) -> None:
     
     print(f"\n--- Dataset: {name} ({len(data_bytes)} bytes, {iterations} iterations) ---")
     print()
-    
-    c_times = bench_c_regex(data_bytes, iterations)
+
+    # Pre-touch data to avoid first-touch/page-fault skew
+    if data_bytes:
+        _ = data_bytes[0]
+        for i in range(0, len(data_bytes), 4096):
+            _ = data_bytes[i]
+
+    # Warm-up
+    for _ in range(20):
+        _run_once_c(data_bytes)
+        _run_once_rust(test_text)
+
+    # Disable GC during timed section
+    gc_was_enabled = gc.isenabled()
+    if gc_was_enabled:
+        gc.disable()
+
+    c_times = []
+    rust_times = []
+    for _ in range(iterations):
+        c_times.append(_run_once_c(data_bytes))
+        rust_times.append(_run_once_rust(test_text))
+
+    if gc_was_enabled:
+        gc.enable()
+
     print(format_stats("C tokenizer", len(data_bytes), c_times), end='')
-    
-    rust_times = bench_rust_regex(test_text, iterations)
     print(format_stats("Rust split", len(data_bytes), rust_times), end='')
     
     if c_times and rust_times:
@@ -115,7 +145,7 @@ def main():
             
             try:
                 data = path.read_bytes()                
-                benchmark_dataset(path.name, data, 10_000)
+                benchmark_dataset(path.name, data, 1_000)
             except Exception as e:
                 print(f"❌ Error reading {file_path}: {e}")
     else:
@@ -124,8 +154,8 @@ def main():
             ("tiny", 100, 1000),
             ("small", 1024, 500),
             ("medium", 10 * 1024, 100),
-            ("large", 100 * 1024, 30),
-            ("xlarge", 1024 * 1024, 10),
+            ("large", 100 * 1024, 100),
+            ("xlarge", 1024 * 1024, 100),
         ]
         
         for name, size_bytes, iterations in configs:
@@ -139,7 +169,6 @@ def main():
             benchmark_dataset(name, test_bytes, iterations)
     
     print("=" * 140)
-
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,4 @@
-#include "fregex.h"
+#include "fregex-2.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -136,34 +136,29 @@ static char *xmemdup(const char *src, size_t len) {
 }
 
 void tokenlist_init(TokenList *list) {
-	list->tokens = NULL;
-	list->lengths = NULL;
+	list->splits = NULL;
 	list->count = 0;
 	list->capacity = 0;
 }
 
 void tokenlist_free(TokenList *list) {
-	if (!list) 
+	if (!list)
         return;
-	for (size_t i = 0; i < list->count; ++i) 
-        free(list->tokens[i]);
-	free(list->tokens);
-	free(list->lengths);
-	list->tokens = NULL;
-	list->lengths = NULL;
-	list->count = 0;
+    free(list->splits);
+    list->splits = NULL;
+    list->count = 0;
 	list->capacity = 0;
 }
 
 static void tokenlist_push(TokenList *list, const char *start, size_t len) {
 	if (list->count == list->capacity) {
-		const size_t new_cap = list->capacity ? (list->capacity * 2) : 64;
-		list->tokens = (char**)xrealloc(list->tokens, new_cap * sizeof(char*));
-		list->lengths = (size_t*)xrealloc(list->lengths, new_cap * sizeof(size_t));
+        const size_t new_cap = list->capacity ? (list->capacity * 2) : 128;
+		list->splits = (TokenPos*)xrealloc(list->splits, new_cap * sizeof(TokenPos));
 		list->capacity = new_cap;
 	}
-	list->tokens[list->count] = xmemdup(start, len);
-	list->lengths[list->count] = len;
+    /* Write the start / end position of string */
+	list->splits[list->count].start = (size_t)start;
+    list->splits[list->count].end = (size_t)(start + len); // len - 1 ?
 	list->count++;
 }
 
@@ -182,20 +177,6 @@ static void fput_escaped_char(unsigned char c, FILE *out) {
 			} else {
 				fputc(c, out);
 			}
-	}
-}
-
-void print_token_escaped(const char *s, size_t len, FILE *out) {
-	fprintf(out, "%zu\t", len);
-	for (size_t i = 0; i < len; ++i) fput_escaped_char((unsigned char)s[i], out);
-	fputc('\n', out);
-}
-
-void print_tokens_escaped(const TokenList *list, FILE *out) {
-	for (size_t i = 0; i < list->count; ++i) {
-		const char *tok = list->tokens[i];
-		size_t len = list->lengths[i];
-		print_token_escaped(tok, len, out);
 	}
 }
 
@@ -470,7 +451,7 @@ static size_t match_ws_run(const char *p, const char *end) {
 
 void tokenize_fast(const char *input, size_t input_len, TokenList *out) {
 	if (!input) {
-		out->tokens = NULL;
+        out->splits = NULL;
 		out->count = 0;
 		out->capacity = 0;
 		return;

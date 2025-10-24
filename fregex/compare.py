@@ -33,21 +33,6 @@ def escape_bytes(b: bytes) -> str:
 def dump_tokens(tokens: list[bytes]) -> str:
     return "\n".join(f"{len(b)}\t{escape_bytes(b)}" for b in tokens)
 
-def tokenize_c_bytes(data: bytes) -> list[bytes]:
-    tl = TokenList()
-    c_lib.tokenlist_init(ctypes.byref(tl))
-    try:
-        c_lib.tokenize_fast(data, len(data), ctypes.byref(tl))
-        out: list[bytes] = []
-        count = int(tl.count)
-        for i in range(count):
-            ptr = tl.tokens[i]
-            ln = int(tl.lengths[i])
-            out.append(ctypes.string_at(ptr, ln))
-        return out
-    finally:
-        c_lib.tokenlist_free(ctypes.byref(tl))
-
 def tokenize_py_bytes(data: bytes) -> list[bytes]:
     text = data.decode('utf-8', errors='surrogatepass')
     toks = py_tokenize_str(text)
