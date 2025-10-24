@@ -116,7 +116,8 @@ def print_banner():
     print0(banner)
 
 def is_ddp():
-    # TODO is there a proper way
+    if dist.is_initialized():
+        return True
     return int(os.environ.get('RANK', -1)) != -1
 
 def get_dist_info():
