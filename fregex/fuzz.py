@@ -65,8 +65,6 @@ def gen_valid_unicode_string(rng: random.Random, max_len: int) -> str:
                 continue
             return cp
 
-    MAX_WS_RUN = 255
-
     def is_ws_char(ch: str) -> bool:
         cp = ord(ch)
         return ch.isspace() or (cp in ws_cps)
@@ -78,10 +76,10 @@ def gen_valid_unicode_string(rng: random.Random, max_len: int) -> str:
             seqs = ["\n", "\r", "\r\n"]
             unit = rng.choice(seqs)
             unit_len = len(unit)
-            max_reps = max(1, min(max_run // unit_len, MAX_WS_RUN // unit_len))
+            max_reps = max(1, max_run // unit_len)
             seg = unit * rng.randint(1, max_reps)
             return seg
-        run = rng.randint(1, min(MAX_WS_RUN, max(1, max_run)))
+        run = rng.randint(1, max(1, max_run))
         buf = []
         for _ in range(run):
             cp = rng.choice(ws_cps)
@@ -177,7 +175,6 @@ def gen_valid_unicode_string(rng: random.Random, max_len: int) -> str:
 
     buf: list[str] = []
     curr_len = 0
-    curr_ws_run = 0
     # Build by segments until target_len
     while curr_len < target_len:
         remain = target_len - curr_len
@@ -201,50 +198,32 @@ def gen_valid_unicode_string(rng: random.Random, max_len: int) -> str:
         if not seg:
             continue
         # Trim if needed
-        # Append with whitespace-run capping
+        # Append
         for ch in seg:
             if curr_len >= target_len:
                 break
             if is_ws_char(ch):
-                if curr_ws_run >= MAX_WS_RUN:
-                    # insert a non-whitespace breaker
-                    breaker = '.'
-                    buf.append(breaker)
-                    curr_len += 1
-                    curr_ws_run = 0
-                    if curr_len >= target_len:
-                        break
                 buf.append(ch)
                 curr_len += 1
-                curr_ws_run += 1
             else:
                 buf.append(ch)
                 curr_len += 1
-                curr_ws_run = 0
 
     # Occasionally end with trailing spaces to stress \s+(?!\S)
     if curr_len < max_len and rng.random() < 0.3:
         trail = gen_ws_segment(max_len - curr_len)
         if rng.random() < 0.7:
             trail = (' ' if rng.random() < 0.6 else '\t') * rng.randint(1, min(8, max_len - curr_len))
-        # Append trailing with cap as well
+        # Append trailing
         for ch in trail:
             if curr_len >= max_len:
                 break
             if is_ws_char(ch):
-                if curr_ws_run >= MAX_WS_RUN:
-                    buf.append('.')
-                    curr_len += 1
-                    curr_ws_run = 0
-                    if curr_len >= max_len:
-                        break
                 buf.append(ch)
                 curr_len += 1
-                curr_ws_run += 1
             else:
                 buf.append(ch)
                 curr_len += 1
-                curr_ws_run = 0
 
     return ''.join(buf)
 

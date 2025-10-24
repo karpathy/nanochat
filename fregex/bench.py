@@ -115,7 +115,7 @@ def main():
             
             try:
                 data = path.read_bytes()                
-                benchmark_dataset(path.name, data, 10)
+                benchmark_dataset(path.name, data, 10_000)
             except Exception as e:
                 print(f"❌ Error reading {file_path}: {e}")
     else:

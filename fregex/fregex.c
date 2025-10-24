@@ -48,6 +48,10 @@ static inline size_t utf8_decode_cp(
     return (size_t)ret;
 }
 
+static inline bool is_utf8_cont_byte(unsigned char b) { 
+    return (b & 0xC0) == 0x80; 
+}
+
 static inline bool is_cr_or_lf(unsigned int cp) { 
     return cp == UNICODE_LF || cp == UNICODE_CR; 
 }
@@ -312,7 +316,6 @@ static size_t match_short_number(const char *p, const char *end) {
 }
 
 /* D) ?[^\s\p{L}\p{N}]++[\r\n]* */
-// Optional single ASCII space, then 1+ of (not whitespace, not letter, not number),
 static size_t match_punct_run(const char *p, const char *end) {
     const char *q = p;
 
@@ -365,92 +368,82 @@ static size_t match_punct_run(const char *p, const char *end) {
 /* E) \s*[\r\n] */
 static size_t match_ws_then_linebreak(const char *p, const char *end) {
     const char *q = p;
+    const char *best = NULL;
 
-    // Collect all positions while consuming whitespace
-    // TODO: ? Could we hit the limit
-    const char *positions[256]; 
-    int pos_count = 0;
-    
-    // Store initial position (zero whitespace consumed)
-    positions[pos_count++] = q;
-
-    while (q < end && pos_count < 255) {
-        unsigned int cp;
-        size_t n = utf8_decode_cp(q, end, &cp);
-        if (n == 0 || !is_space(cp)) 
-            break;
-        q += n;
-        positions[pos_count++] = q;
-    }
-
-    // Try positions from longest to shortest (backtracking)
-    // We need to find a position where the next character is a linebreak
-    for (int i = pos_count - 1; i >= 0; i--) {
-        q = positions[i];
-        
-        // Check if next character is a linebreak
-        if (q < end) {
-            unsigned int br;
-            size_t nb = utf8_decode_cp(q, end, &br);
-            if (nb > 0 && is_cr_or_lf(br)) {
-                // Found a linebreak, include it and return
-                return (size_t)(q + nb - p);
-            }
-        } else {
-            // EOF reached, rule requires a linebreak so fail
-            continue;
+    // Check boundary before consuming any whitespace, too (zero-length \s*)
+    if (q < end) {
+        unsigned int nx; 
+        size_t nn = utf8_decode_cp(q, end, &nx);
+        if (nn > 0 && is_cr_or_lf(nx)) {
+            best = q;  // \s* = 0, [\r\n] = this char
         }
     }
 
-    // No position found where next char is a linebreak
-    return 0;
+    // Scan whitespace; at each boundary, test the next cp
+    while (q < end) {
+        unsigned int cp; 
+        size_t n = utf8_decode_cp(q, end, &cp);
+        if (n == 0 || !is_space(cp)) 
+            break;
+        q += n; // we consumed one whitespace cp; boundary is at q now
+
+        if (q < end) {
+            unsigned int nx; 
+            size_t nn = utf8_decode_cp(q, end, &nx);
+            if (nn > 0 && is_cr_or_lf(nx)) {
+                best = q;  // prefer the rightmost usable boundary
+            }
+        }
+    }
+
+    if (!best) return 0;
+
+    // At 'best' the next cp is the CR/LF to include
+    unsigned int br; 
+    size_t nb = utf8_decode_cp(best, end, &br);
+    return (size_t)((best + nb) - p);
 }
 
 /* F) \s+(?!\S) */
 static size_t match_trailing_ws(const char *p, const char *end) {
-    if (p >= end) return 0;
+    if (p >= end) 
+        return 0;
 
-    /* Must start with at least one whitespace */
-    const char *q = p;
-    unsigned int cp;
-    size_t n = utf8_decode_cp(q, end, &cp);
+    // First cp must be whitespace
+    unsigned int cp; 
+    size_t n = utf8_decode_cp(p, end, &cp);
     if (n == 0 || !is_space(cp)) 
         return 0;
 
-    /* Collect all whitespace positions */
-    // TODO: ? Could we hit the limit
-    const char *positions[256];  
-    positions[0] = q + n;  // Position after first whitespace
-    int pos_count = 1;
-    
-    q += n;
-
-    while (q < end && pos_count < 255) {
-        size_t m = utf8_decode_cp(q, end, &cp);
+    // Consume full whitespace run [p, r)
+    const char *r = p + n;
+    while (r < end) {
+        size_t m = utf8_decode_cp(r, end, &cp);
         if (m == 0 || !is_space(cp)) 
             break;
-        q += m;
-        positions[pos_count++] = q;
+        r += m;
     }
 
-    /* Try positions from longest to shortest (backtracking) */
-    for (int i = pos_count - 1; i >= 0; i--) {
-        q = positions[i];
-        
-        /* Check negative lookahead: (?!\S) at this position */
-        if (q < end) {
-            size_t k = utf8_decode_cp(q, end, &cp);
-            if (k > 0 && !is_space(cp)) {
-                continue;  /* Next char is non-space, try shorter match */
-            }
-        }
-        
-        /* Lookahead succeeded at this position */
-        return (size_t)(q - p);
+    if (r == end) {
+        // Only whitespace to EOF -> take all of it
+        return (size_t)(r - p);
     }
-    
-    /* All positions failed lookahead */
-    return 0;
+
+    // Backtrack by exactly one whitespace cp 
+    // If the run length is only 1 cp, F must fail.
+    // Find the start of the last whitespace cp in [p, r)
+    const char *t = r;
+    // step back to beginning of previous UTF-8 cp
+    do { 
+        --t; 
+    } while (t > p && is_utf8_cont_byte(*t));
+
+    if (t == p) {
+        // run had length 1 cp -> cannot backtrack to keep \s+ >= 1
+        return 0;
+    }
+    // Now [p, t) is k-1 whitespace cps
+    return (size_t)(t - p);
 }
 
 /* G) \s+ */
