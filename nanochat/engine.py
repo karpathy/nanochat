@@ -37,7 +37,7 @@ def eval_with_timeout(formula, max_time=3):
         with timeout(max_time, formula):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
-                return eval(formula)
+                return eval(formula, {"__builtins__": {}}, {})
     except Exception as e:
         signal.alarm(0)
         # print(f"Warning: Failed to eval {formula}, exception: {e}") # it's ok ignore wrong calculator usage
