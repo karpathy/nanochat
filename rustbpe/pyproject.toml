@@ -1,0 +1,17 @@
+[project]
+name = "rustbpe"
+version = "0.1.0"
+description = "A very lightweight Rust library for training a GPT tokenizer"
+readme = "README.md"
+requires-python = ">=3.10"
+
+# when uv/pip invoke maturin through the PEP 517 interface, it always builds in release mode by default.
+[build-system]
+requires = ["maturin>=1.9.6,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "rustbpe"
+bindings = "pyo3"
+manifest-path = "Cargo.toml"
+features = ["pyo3/extension-module"]
