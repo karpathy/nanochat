@@ -6,8 +6,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "datasets>=4.0.0",
+    "dotenv>=0.9.9",
     "fastapi>=0.117.1",
     "files-to-prompt>=0.6",
+    "modal>=1.2.1",
     "numpy==1.26.4",
     "psutil>=7.1.0",
     "regex>=2025.9.1",
@@ -31,6 +33,7 @@ manifest-path = "rustbpe/Cargo.toml"
 
 [dependency-groups]
 dev = [
+    "dotenv>=0.9.9",
     "maturin>=1.9.4",
     "pytest>=8.0.0",
 ]
