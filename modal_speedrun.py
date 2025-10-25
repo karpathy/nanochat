@@ -6,6 +6,54 @@ import modal
 APP_NAME = "nanochat-svilupp"
 VOLUME_NAME = "nanochat-data"        # change if you like
 
+# -----------------------------------------------------------------------------
+# Batch Size Configuration
+#
+# Adjust GPU_VRAM_GB based on your GPU type:
+#   - B200: 192GB (default)
+#   - H100: 80GB
+#   - A100: 80GB
+#
+# All batch sizes are calculated automatically based on VRAM to maximize
+# throughput while avoiding OOM. The script uses 90% of theoretical capacity
+# to leave headroom for memory spikes during checkpointing.
+# -----------------------------------------------------------------------------
+GPU_VRAM_GB = 192                    # VRAM per GPU in GB (B200=192, H100=80)
+NUM_GPUS = 8                         # number of GPUs (match your torchrun --nproc_per_node)
+MAX_SEQ_LEN = 2048                   # sequence length (from base_train.py default)
+
+# Reference batch size for H100 (80GB)
+DEVICE_BATCH_SIZE_H100 = 32
+H100_VRAM_GB = 80
+
+# HArdcode to 80!
+DEVICE_BATCH_SIZE = 80 # int(DEVICE_BATCH_SIZE_H100 * (GPU_VRAM_GB / H100_VRAM_GB) * 0.9)
+
+# Calculate total_batch_size: must be a multiple of (device_batch_size * max_seq_len * num_gpus)
+# This ensures no remainder in gradient accumulation calculation
+WORLD_TOKENS_PER_STEP = DEVICE_BATCH_SIZE * MAX_SEQ_LEN * NUM_GPUS
+TOTAL_BATCH_SIZE = WORLD_TOKENS_PER_STEP * 1  # 1x for no gradient accumulation
+
+# For SFT: 
+TARGET_EXAMPLES_PER_STEP = DEVICE_BATCH_SIZE  # Target equals device batch size
+# Calculate device_batch_size_sft so that: target % (device_batch_size_sft * num_gpus) == 0
+DEVICE_BATCH_SIZE_SFT = TARGET_EXAMPLES_PER_STEP // NUM_GPUS  # e.g., 80 / 8 = 10
+
+print(f"Batch Size Configuration:")
+print(f"  GPU VRAM: {GPU_VRAM_GB}GB ({(GPU_VRAM_GB/H100_VRAM_GB):.1f}x H100)")
+print(f"  Sequence length: {MAX_SEQ_LEN}")
+print(f"\n  Base/Mid Training:")
+print(f"    Device batch size: {DEVICE_BATCH_SIZE} (H100 baseline: {DEVICE_BATCH_SIZE_H100})")
+print(f"    World tokens per step: {WORLD_TOKENS_PER_STEP:,}")
+print(f"    Total batch size: {TOTAL_BATCH_SIZE:,}")
+print(f"    Gradient accumulation: {TOTAL_BATCH_SIZE // WORLD_TOKENS_PER_STEP}")
+print(f"\n  SFT Training:")
+print(f"    Device batch size: {DEVICE_BATCH_SIZE_SFT}")
+print(f"    Target examples per step: {TARGET_EXAMPLES_PER_STEP}")
+print(f"    Examples per step: {DEVICE_BATCH_SIZE_SFT * NUM_GPUS}")
+print(f"    Gradient accumulation: {TARGET_EXAMPLES_PER_STEP // (DEVICE_BATCH_SIZE_SFT * NUM_GPUS)}")
+# -----------------------------------------------------------------------------
+
 app = modal.App(APP_NAME)
 
 # Persisted volume to inspect results later
@@ -56,7 +104,7 @@ def _bash(cmd: str, *, cwd: str | None = None, env: dict | None = None):
     volumes={"/data": vol},
     timeout=60 * 60 * 5,                 # 5 hours for full speedrun
     max_inputs=1,
-    gpu="B200:8",                        # 8xH100 for speedrun
+    gpu=f"B200:{NUM_GPUS}",                        
     secrets=[modal.Secret.from_dotenv()],
 )
 def speedrun(wandb_run: str = "modal-speedrun", depth: int = 20):
@@ -158,10 +206,10 @@ def speedrun(wandb_run: str = "modal-speedrun", depth: int = 20):
         vol.commit()
 
     # Pretrain the model
-    # B200 has 192GB VRAM vs H100's 80GB, so we can double the batch size from 32 to 64
-    print(f"\n🚂 Pretraining d{depth} model (561M params) with 2x batch size for B200...")
+    print(f"\n🚂 Pretraining d{depth} model (561M params)...")
+    print(f"    Batch config: device_batch_size={DEVICE_BATCH_SIZE}, total_batch_size={TOTAL_BATCH_SIZE}")
     _bash(
-        f"uv run torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth={depth} --device_batch_size=64 --run={wandb_run}",
+        f"uv run torchrun --standalone --nproc_per_node={NUM_GPUS} -m scripts.base_train -- --depth={depth} --device_batch_size={DEVICE_BATCH_SIZE} --total_batch_size={TOTAL_BATCH_SIZE} --run={wandb_run}",
         cwd=str(RUN_DIR),
         env=env
     )
@@ -169,8 +217,8 @@ def speedrun(wandb_run: str = "modal-speedrun", depth: int = 20):
 
     # Evaluate base model
     print("\n📊 Evaluating base model...")
-    _bash("uv run torchrun --standalone --nproc_per_node=8 -m scripts.base_loss", cwd=str(RUN_DIR), env=env)
-    _bash("uv run torchrun --standalone --nproc_per_node=8 -m scripts.base_eval", cwd=str(RUN_DIR), env=env)
+    _bash(f"uv run torchrun --standalone --nproc_per_node={NUM_GPUS} -m scripts.base_loss", cwd=str(RUN_DIR), env=env)
+    _bash(f"uv run torchrun --standalone --nproc_per_node={NUM_GPUS} -m scripts.base_eval", cwd=str(RUN_DIR), env=env)
     vol.commit()
 
     # -----------------------------------------------------------------------------
@@ -189,24 +237,30 @@ def speedrun(wandb_run: str = "modal-speedrun", depth: int = 20):
         vol.commit()
 
     # Run midtraining
-    print("\n🎓 Running midtraining with 2x batch size for B200...")
+    print("\n🎓 Running midtraining...")
+    print(f"    Batch config: device_batch_size={DEVICE_BATCH_SIZE}, total_batch_size={TOTAL_BATCH_SIZE}")
     _bash(
-        f"uv run torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_size=64 --run={wandb_run}",
+        f"uv run torchrun --standalone --nproc_per_node={NUM_GPUS} -m scripts.mid_train -- --device_batch_size={DEVICE_BATCH_SIZE} --total_batch_size={TOTAL_BATCH_SIZE} --run={wandb_run}",
         cwd=str(RUN_DIR),
         env=env
     )
-    _bash("uv run torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i mid", cwd=str(RUN_DIR), env=env)
+    _bash(f"uv run torchrun --standalone --nproc_per_node={NUM_GPUS} -m scripts.chat_eval -- -i mid", cwd=str(RUN_DIR), env=env)
     vol.commit()
 
     # -----------------------------------------------------------------------------
     # Supervised Finetuning
-    print("\n✨ Step 5: Supervised Finetuning with 2x batch size for B200...")
+    # Note: chat_sft.py doesn't use total_batch_size, but uses target_examples_per_step
+    # We load from "mid" checkpoint (midtraining) by default
+    # Use smaller batch size for SFT due to variable sequence lengths
+    print("\n✨ Step 5: Supervised Finetuning...")
+    print(f"    Batch config: device_batch_size={DEVICE_BATCH_SIZE_SFT}, target_examples_per_step={TARGET_EXAMPLES_PER_STEP}")
+    print(f"    Source checkpoint: mid")
     _bash(
-        f"uv run torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --device_batch_size=64 --run={wandb_run}",
+        f"uv run torchrun --standalone --nproc_per_node={NUM_GPUS} -m scripts.chat_sft -- --device_batch_size={DEVICE_BATCH_SIZE_SFT} --target_examples_per_step={TARGET_EXAMPLES_PER_STEP} --source=mid --run={wandb_run}",
         cwd=str(RUN_DIR),
         env=env
     )
-    _bash("uv run torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft", cwd=str(RUN_DIR), env=env)
+    _bash(f"uv run torchrun --standalone --nproc_per_node={NUM_GPUS} -m scripts.chat_eval -- -i sft", cwd=str(RUN_DIR), env=env)
     vol.commit()
 
     # -----------------------------------------------------------------------------
@@ -255,18 +309,125 @@ Models and checkpoints live under:
     print("\n✅ All artifacts persisted to volume. Speedrun complete!")
 
 
-# Convenience local entrypoint
-@app.local_entrypoint()
-def main(wandb_run: str = "modal-speedrun", depth: int = 20):
+@app.function(
+    image=image,
+    volumes={"/data": vol},
+    timeout=60 * 60 * 1,                 # 1 hour should be enough for SFT
+    max_inputs=1,
+    gpu="B200:8",
+    secrets=[modal.Secret.from_dotenv()],
+)
+def sft_only(wandb_run: str = "modal-sft", checkpoint: str = "mid"):
     """
-    Run the full speedrun on Modal.
+    Run only the Supervised Finetuning stage.
+
+    This is useful for iterating on SFT after completing the full speedrun,
+    or for resuming from a midtraining checkpoint.
 
     Args:
-        wandb_run: Name for the wandb run (default: "modal-speedrun")
-        depth: Model depth, e.g., 20 for d20 (default: 20)
+        wandb_run: Name for wandb run (default: "modal-sft")
+        checkpoint: Which checkpoint to start from: "mid" or "base" (default: "mid")
 
-    Example:
+    Requirements:
+        - Tokenizer must be trained (in volume)
+        - Checkpoint must exist (either mid_model.pt or base_model.pt)
+    """
+    DATA = Path("/data")
+    RUN_DIR = Path("/nanochat")
+    BASE_DIR = DATA / ".cache" / "nanochat"
+    LOGS = DATA / "logs"
+    for p in (BASE_DIR, LOGS):
+        p.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "NANOCHAT_BASE_DIR": str(BASE_DIR),
+            "OMP_NUM_THREADS": "1",
+        }
+    )
+
+    # Print wandb status
+    if "WANDB_API_KEY" in os.environ:
+        print("✓ WANDB_API_KEY found in environment")
+    if "WANDB_ENTITY" in os.environ:
+        print(f"✓ WANDB_ENTITY: {os.environ.get('WANDB_ENTITY')}")
+    if "WANDB_PROJECT" in os.environ:
+        print(f"✓ WANDB_PROJECT: {os.environ.get('WANDB_PROJECT')}")
+
+    print("\n" + "="*80)
+    print(f"🚀 Running SFT-only from checkpoint source: {checkpoint}")
+    print("="*80 + "\n")
+
+    # Note: We don't need to validate the checkpoint here.
+    # The load_model() function in chat_sft.py will automatically:
+    # 1. Find the checkpoint directory (e.g., mid_checkpoints/)
+    # 2. Find the largest model tag (e.g., d20)
+    # 3. Find the latest checkpoint step (e.g., model_000323.pt)
+    # If anything is missing, it will fail with a clear error message.
+
+    # Run SFT
+    print("\n✨ Running Supervised Finetuning...")
+    print(f"    Batch config: device_batch_size={DEVICE_BATCH_SIZE_SFT}, target_examples_per_step={TARGET_EXAMPLES_PER_STEP}")
+    print(f"    Source checkpoint: {checkpoint}")
+    _bash(
+        f"uv run torchrun --standalone --nproc_per_node={NUM_GPUS} -m scripts.chat_sft -- --device_batch_size={DEVICE_BATCH_SIZE_SFT} --target_examples_per_step={TARGET_EXAMPLES_PER_STEP} --source={checkpoint} --run={wandb_run}",
+        cwd=str(RUN_DIR),
+        env=env
+    )
+
+    # Evaluate
+    print("\n📊 Evaluating SFT model...")
+    _bash(f"uv run torchrun --standalone --nproc_per_node={NUM_GPUS} -m scripts.chat_eval -- -i sft", cwd=str(RUN_DIR), env=env)
+    vol.commit()
+
+    # Generate report
+    print("\n📝 Generating report...")
+    _bash("uv run python -m nanochat.report generate", cwd=str(RUN_DIR), env=env)
+    vol.commit()
+
+    print("\n" + "="*80)
+    print(f"✅ SFT complete! Check wandb run: {wandb_run}")
+    print(f"   Project: {os.environ.get('WANDB_PROJECT', 'not set')}")
+    print(f"   Entity: {os.environ.get('WANDB_ENTITY', 'not set')}")
+    print("="*80 + "\n")
+
+    with open(LOGS / "SFT_COMPLETE.txt", "w") as f:
+        f.write(f"SFT run complete: {wandb_run}\nCheckpoint: {checkpoint}\n")
+    vol.commit()
+
+
+# Convenience local entrypoint
+@app.local_entrypoint()
+def main(
+    mode: str = "full",
+    wandb_run: str = "",
+    depth: int = 20,
+    checkpoint: str = "mid"
+):
+    """
+    Run training on Modal.
+
+    Args:
+        mode: "full" for complete speedrun, "sft" for SFT-only (default: "full")
+        wandb_run: Name for wandb run (auto-generated if not specified)
+        depth: Model depth for full run, e.g., 20 for d20 (default: 20)
+        checkpoint: For SFT mode, which checkpoint to use: "mid" or "base" (default: "mid")
+
+    Examples:
+        # Full speedrun
         modal run modal_speedrun.py
         modal run modal_speedrun.py --wandb-run my-experiment --depth 26
+
+        # SFT only (must have existing checkpoint in volume)
+        modal run modal_speedrun.py --mode sft
+        modal run modal_speedrun.py --mode sft --wandb-run my-sft-v2 --checkpoint base
     """
-    speedrun.remote(wandb_run=wandb_run, depth=depth)
+    if mode == "full":
+        run_name = wandb_run if wandb_run else "modal-speedrun"
+        speedrun.remote(wandb_run=run_name, depth=depth)
+    elif mode == "sft":
+        run_name = wandb_run if wandb_run else "modal-sft"
+        sft_only.remote(wandb_run=run_name, checkpoint=checkpoint)
+    else:
+        raise ValueError(f"Invalid mode: {mode}. Must be 'full' or 'sft'")
