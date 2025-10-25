@@ -16,21 +16,15 @@ dependencies = [
     "torch>=2.8.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
+    "rustbpe==0.1.0"
 ]
 
 [build-system]
-requires = ["maturin>=1.7,<2.0"]
-build-backend = "maturin"
-
-[tool.maturin]
-module-name = "rustbpe"
-bindings = "pyo3"
-python-source = "."
-manifest-path = "rustbpe/Cargo.toml"
+requires = ["uv_build>=0.9.5,<0.10.0"]
+build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "maturin>=1.9.4",
     "pytest>=8.0.0",
 ]
 
@@ -45,33 +39,39 @@ python_functions = ["test_*"]
 
 # target torch to cuda 12.8 or CPU
 [tool.uv.sources]
-torch = [  
-    { index = "pytorch-cpu", extra = "cpu" },  
-    { index = "pytorch-cu128", extra = "gpu" },  
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "gpu" },
 ]
+rustbpe = { workspace = true }
 
-[[tool.uv.index]]  
-name = "pytorch-cpu"  
-url = "https://download.pytorch.org/whl/cpu"  
-explicit = true  
-  
-[[tool.uv.index]]  
-name = "pytorch-cu128"  
-url = "https://download.pytorch.org/whl/cu128"  
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
-[project.optional-dependencies]  
-cpu = [  
-    "torch>=2.8.0",  
-]  
-gpu = [  
-    "torch>=2.8.0",  
-]  
-  
-[tool.uv]  
-conflicts = [  
-    [  
-        { extra = "cpu" },  
-        { extra = "gpu" },  
-    ],  
-]  
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[project.optional-dependencies]
+cpu = [
+    "torch>=2.8.0",
+]
+gpu = [
+    "torch>=2.8.0",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "gpu" },
+    ],
+]
+# rebuild if rustbpe is modified
+cache-keys = [{ file = "pyproject.toml" }, {file = "rustbpe/**"}]
+
+[tool.uv.workspace]
+members = ["rustbpe"]

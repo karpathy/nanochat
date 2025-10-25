@@ -15,6 +15,10 @@ export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
+# Install Rust / Cargo -- dependencies of rustbpe
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
 
@@ -47,14 +51,6 @@ python -m nanochat.report reset
 
 # -----------------------------------------------------------------------------
 # Tokenizer
-
-# Install Rust / Cargo
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-
-# Build the rustbpe Tokenizer
-uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
-
 # Download the first ~2B characters of pretraining dataset
 # look at dev/repackage_data_reference.py for details on how this data was prepared
 # each data shard is ~250M chars
