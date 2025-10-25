@@ -206,7 +206,7 @@ def get_lr_multiplier(it):
     lrm = 1.0 - it / num_steps
     return lrm
 
-# Calculate the number of examples each rank handles to achive the desired examples_per_step
+# Calculate the number of examples each rank handles to achieve the desired examples_per_step
 print0(f"Total sequences per step: {examples_per_step * num_samples}") # total batch size in sequences/step
 assert examples_per_step % ddp_world_size == 0, "Desired examples per step must be divisible by the number of ranks"
 examples_per_rank = examples_per_step // ddp_world_size # per GPU
