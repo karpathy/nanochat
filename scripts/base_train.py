@@ -50,6 +50,9 @@ weight_decay = 0.0 # weight decay for the embedding/unembedding parameters (Adam
 matrix_lr = 0.02 # learning rate for the matrix parameters (Muon)
 agc_clip = 0.0 # adaptive gradient clipping threshold (0.0 = disabled)
 grad_clip = 1.0 # gradient clipping value (0.0 = disabled)
+warmup_ratio = 0.0 # ratio of iterations for LR warmup
+warmdown_ratio = 0.2 # ratio of iterations for LR warmdown
+final_lr_frac = 0.0 # final LR is this fraction of the initial LR
 # Evaluation
 eval_every = 250 # every how many steps to evaluate the model for val bpb
 eval_tokens = 20*524288 # number of tokens to evaluate val loss on
@@ -152,10 +155,6 @@ x, y = next(train_loader) # kick off load of the very first batch of data
 # Set up hyperparameter schedulers
 
 # Learning rate scheduler
-# TODO: experiment with a short warmup for the AdamW params (expecting slight improvement)
-warmup_ratio = 0.0 # ratio of iterations for LR warmup
-warmdown_ratio = 0.2 # ratio of iterations for LR warmdown
-final_lr_frac = 0.0 # final LR is this fraction of the initial LR
 def get_lr_multiplier(it):
     warmup_iters = round(warmup_ratio * num_iterations)
     warmdown_iters = round(warmdown_ratio * num_iterations)
