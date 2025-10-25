@@ -2,10 +2,10 @@
 Short and crappy script to demonstrate synthetic data generation for
 customizing your LLM's identity, or any other aspect really.
 
-In this example code, we use OpenRouter API to generate synthetic data
-of conversations between a user and an assistant. We use "Structured Output"
+In this example code, we use the OpenRouter API to generate synthetic data
+of conversations between a user and an assistant. We use the "Structured Output"
 feature to get back JSON data from the API instead of raw text. The conversations
-are saved simply to a .jsonl file in base directory and later loaded and
+are saved simply to a .jsonl file in the base directory and later loaded and
 trained on in midtraining or SFT, using the CustomJSON task.
 
 This specific example shows a humorous attempt to teach nanochat about
@@ -17,7 +17,7 @@ prompt:
 2. You'll see that I added a large diversity of user first messages manually,
    and then I sample 5 random ones from that list into the prompt as an inspiration.
    This is really important to do because DIVERSITY CONTROL is key. If you don't
-   manually inject diversity, the LLM might generate extrremely similar and repeptitive
+   manually inject diversity, the LLM might generate extremely similar and repetitive
    conversations and things won't work well. Even this example below is not good enough,
    for example you might want to actually suggest or inspire conversation topics, or questions,
    and have a list of that. Basically, this is the KEY creative part to get right. Make sure you
