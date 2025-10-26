@@ -29,6 +29,7 @@ from tasks.gsm8k import GSM8K
 from tasks.smoltalk import SmolTalk
 from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
+from tasks.spellingbee_digits import SimpleSpellingDigits, SpellingBeeDigits
 
 # -----------------------------------------------------------------------------
 # SFT Hyperparameters
@@ -89,6 +90,8 @@ train_ds = TaskMixture([
     CustomJSON(filepath=identity_conversations_filepath), # 1K rows of synthetic identity conversations
     SimpleSpelling(size=300, split="train"), # 300 rows of Simple Spelling (e.g. spell the word 'apple')
     SpellingBee(size=300, split="train"), # 300 rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
+    SimpleSpellingDigits(size=300, split="train"), # 300 rows of Spelling Bee for digits (e.g. spell out '0' in '27384920'?)
+    SpellingBeeDigits(size=300, split="train"), # 300 rows of Spelling Bee for digits (e.g. how many '0' in '38284090'?)
 ]) # 2.3K + 1.1K + 8K + 10K + 1K + 0.3K + 0.3K = 23K rows
 val_ds = SmolTalk(split="test") # general conversations, 24K rows (though we don't actually use all of it)
 
