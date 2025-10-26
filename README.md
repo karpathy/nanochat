@@ -4,6 +4,16 @@
 
 > The best ChatGPT that $100 can buy.
 
+## Fork Highlights
+
+This is a fork of [Andrej Karpathy's incredible nanochat project](https://github.com/karpathy/nanochat). We've added:
+
+- **Modal deployment support**: Scripts to deploy and run training on Modal with 8xB200 GPUs (completing the full training pipeline in under 2 hours). See [MODAL_DEPLOY.md](MODAL_DEPLOY.md) for details.
+- **Synthetic data pipeline**: A flexible pipeline for generating synthetic training data to experiment with the SFT (Supervised Fine-Tuning) stage. See `synth-data-pipeline/` directory.
+- **Auto-generated documentation**: Quick overview of the system architecture and components in [DOCS.md](DOCS.md).
+
+---
+
 This repo is a full-stack implementation of an LLM like ChatGPT in a single, clean, minimal, hackable, dependency-lite codebase. nanochat is designed to run on a single 8XH100 node via scripts like [speedrun.sh](speedrun.sh), that run the entire pipeline start to end. This includes tokenization, pretraining, finetuning, evaluation, inference, and web serving over a simple UI so that you can talk to your own LLM just like ChatGPT. nanochat will become the capstone project of the course LLM101n being developed by Eureka Labs.
 
 ## Talk to it

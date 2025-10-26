@@ -1,0 +1,47 @@
+---
+title = "Conversation Quality Judging"
+version = "1.0.0"
+description = "Judge the quality of generated conversations"
+---
+You are an expert evaluator of training data quality for language models.
+
+Evaluate the following conversation about SWAP Commerce:
+
+{conversation}
+
+SOURCE Q&A PAIRS (use these to verify factual accuracy):
+{source_qa}
+
+Evaluate the conversation using these CLEAR YES/NO criteria:
+
+1. FACTUALLY_ACCURATE (bool):
+   PASS = All facts match SOURCE Q&A PAIRS above
+   PASS = No hallucinations or invented details
+   FAIL = Any fact contradicts source OR is made up
+
+   Important: Facts in the source Q&A are CORRECT - use them to verify claims
+
+2. NATURAL_CONVERSATION (bool):
+   PASS = Sounds like real human conversation
+   PASS = Messages flow smoothly, natural transitions
+   FAIL = Robotic, awkward, or unrealistic dialogue
+
+3. ON_TOPIC (bool):
+   PASS = Relevant to SWAP Commerce
+   PASS = Would be useful for training a SWAP Commerce assistant
+   FAIL = Off-topic or irrelevant content
+
+4. ADDS_VALUE (bool):
+   PASS = Covers topic in specific, interesting, or unique way
+   PASS = Not just generic questions with simple answers
+   FAIL = Generic, repetitive, or adds no unique insight
+
+OVERALL_PASS (bool):
+   TRUE = ALL four criteria above are TRUE
+   FALSE = ANY criterion is FALSE
+
+Provide:
+- Brief feedback (1-2 sentences) explaining your judgment
+- List specific issues found (if any)
+
+Return the structured output with fields: factually_accurate, natural_conversation, on_topic, adds_value, overall_pass, feedback, issues.

@@ -1,0 +1,52 @@
+---
+title = "Q&A Pair Validation"
+version = "1.0.0"
+description = "Validate extracted Q&A pairs for quality and accuracy"
+---
+You are an expert validator ensuring high-quality training data.
+
+Validate the following Q&A pair about SWAP Commerce:
+
+**Question:** {question}
+
+**Answer:** {answer}
+
+**Source Text:** {source_text}
+
+**Context Before:** {context_before}
+
+**Context After:** {context_after}
+
+Evaluate this Q&A pair on THREE critical criteria:
+
+1. **uses_source_fact** (bool):
+   - Does the answer CORRECTLY use facts from the source text?
+   - Are there any hallucinations or made-up information?
+   - Is all information grounded in the provided source?
+   - Return TRUE only if the answer is 100% factually accurate based on the source
+   - Return FALSE if there are ANY hallucinations, incorrect facts, or unsupported claims
+
+2. **realistic_question** (bool):
+   - Would a real person actually ask this question?
+   - Is it natural and human-like?
+   - Is it specific enough to be useful (not too vague)?
+   - Is it too generic or templated?
+   - Return TRUE if this feels like a genuine user query
+   - Return FALSE if it's awkward, too formal, or clearly AI-generated
+
+3. **sensible_answer** (bool):
+   - Is the answer appropriate for the question asked?
+   - Does it actually answer what was asked?
+   - Is the answer complete (not cut off or incomplete)?
+   - Is the level of detail appropriate?
+   - Return TRUE if the answer properly addresses the question
+   - Return FALSE if it's off-topic, incomplete, or inappropriate
+
+**Overall Pass/Fail:**
+- Set `passed = true` ONLY if ALL THREE booleans are true
+- Set `passed = false` if ANY criterion fails
+
+**Feedback:**
+Provide a brief (1-2 sentence) explanation of your validation decision. If failed, specify which criterion/criteria failed and why.
+
+Return the structured output with fields: uses_source_fact, realistic_question, sensible_answer, passed, feedback.

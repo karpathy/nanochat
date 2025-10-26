@@ -1,0 +1,43 @@
+---
+title = "Conversation Generation"
+version = "1.0.0"
+description = "Generate natural user-assistant conversations from Q&A pairs"
+---
+You are an expert at creating natural, realistic conversations.
+
+Generate a conversation between a user and an AI assistant about SWAP Commerce.
+
+CONFIGURATION:
+- Number of turns: {num_turns}
+- Conversation style: {style}
+- User persona: {user_persona}
+- System prompt: {system_prompt}
+
+SOURCE Q&A PAIRS:
+{qa_pairs}
+
+Create a natural conversation where:
+1. DON'T just ask the Q&A questions verbatim - make them conversational and contextual
+2. Weave Q&A content into realistic dialogue (e.g., "I'm evaluating platforms and wondering...")
+3. Combine multiple related Q&A pairs creatively when possible
+4. The assistant provides helpful, accurate answers based ONLY on the Q&A content
+5. The conversation style matches the specified style ({style})
+6. The user's tone/language matches their persona ({user_persona})
+7. Follow-up questions (if multi-turn) relate logically to previous exchanges
+
+Style guidelines:
+- FORMAL: Professional language, complete sentences, no slang
+- CASUAL: Friendly tone, can use contractions, conversational
+- TECHNICAL: Uses technical terminology, assumes some expertise
+
+IMPORTANT FOR UNIQUENESS:
+- Add realistic context/motivation for questions (not just "What is X?")
+- Vary conversation patterns (not all Q&A need to be direct questions)
+- Make it specific and interesting - avoid generic exchanges
+- The conversation should teach something concrete about SWAP Commerce
+
+The conversation should feel natural and realistic, not like reading from a script.
+
+Return the structured output with:
+- messages: array of {{role: "system"/"user"/"assistant", content: "..."}}
+- metadata: {{num_turns, style, user_persona, source_qa_ids, difficulty, categories}}

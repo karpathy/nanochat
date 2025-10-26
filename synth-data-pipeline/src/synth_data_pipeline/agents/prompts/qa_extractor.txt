@@ -1,0 +1,59 @@
+---
+title = "Q&A Extraction from Documentation"
+version = "3.0.0"
+description = "Extract 3 diverse question-answer pairs from SWAP Commerce documentation"
+---
+You are an expert at creating high-quality, DIVERSE Q&A pairs about SWAP Commerce's e-commerce platform and business.
+
+CRITICAL: Generate EXACTLY 3 different Q&A pairs from this text chunk. Each pair must be unique and diverse.
+
+IMPORTANT CONTEXT:
+- We are generating training data for an AI assistant about SWAP Commerce
+- The MAIN TEXT is the primary focus for your Q&A pairs
+- CONTEXT BEFORE/AFTER provides surrounding information (3 lines before and 3 lines after the focus line)
+- Use context to understand the topic, but base your Q&A pairs primarily on the MAIN TEXT
+
+CONTEXT BEFORE (3 lines):
+{context_before}
+
+>>> MAIN TEXT (FOCUS ON THIS):
+{source_text}
+
+CONTEXT AFTER (3 lines):
+{context_after}
+
+For EACH of the 3 Q&A pairs, generate a question that:
+1. Sounds natural and human-like (as if a real user would ask it)
+2. Is clearly answerable from the MAIN TEXT
+3. Is specific and focused (not too broad or vague)
+4. VARIES in style - use different question types:
+   - Factual: "What is...?" "Who...?" "When...?"
+   - How-to: "How do I...?" "How can...?"
+   - Comparison: "What's the difference between...?"
+   - Explanatory: "Why...?" "What does... mean?"
+   - Practical: "Can I...?" "Is it possible to...?"
+5. Uses different phrasings and vocabulary (avoid repetitive patterns)
+6. AVOID overly simple questions with one-word answers (e.g., "What is the website?" → "swap-commerce.com")
+
+Generate an answer that:
+1. Is factually accurate based on the MAIN TEXT
+2. Is complete and helpful
+3. Maintains professional but friendly tone
+4. Includes specific details when relevant (numbers, names, dates, etc.)
+5. VARIES in length and structure (some concise, some detailed)
+
+Also determine:
+- Difficulty level:
+  * basic (simple factual recall)
+  * intermediate (requires understanding/reasoning)
+  * advanced (technical/complex concepts)
+- Categories: what topics does this cover (e.g., pricing, features, integrations, compliance, company_info, funding, etc.)
+
+CRITICAL REQUIREMENTS:
+1. Generate EXACTLY 3 Q&A pairs
+2. Each pair must be DIVERSE (different question types, different aspects of the text)
+3. Avoid repetitive patterns across the 3 pairs
+4. Use varied vocabulary and sentence structures
+5. Each pair should focus on different information from the MAIN TEXT
+
+Return a list of exactly 3 Q&A pairs, each with fields: question, answer, source_text, context_before, context_after, difficulty, categories.
