@@ -103,6 +103,22 @@ To customize your nanochat, see [Guide: infusing identity to your nanochat](http
 
 Additionally, to add new abilities to nanochat, see [Guide: counting r in strawberry (and how to add abilities generally)](https://github.com/karpathy/nanochat/discussions/164).
 
+## Multilingual Support
+
+nanochat supports adding multilingual training data using any HuggingFace dataset:
+
+```python
+from tasks.multilingual import MultilingualTask
+
+train_ds = TaskMixture([
+    # ... existing tasks ...
+    MultilingualTask("HuggingFaceTB/smol-talk-lt", split="train"),  # Lithuanian
+    MultilingualTask("tatsu-lab/alpaca", split="train"),  # Example
+])
+```
+
+The `MultilingualTask` class works with any HuggingFace dataset that has a `messages` field with conversation format. See `docs/multilingual_proposal.md` for full details.
+
 ## Questions
 
 nanochat is designed to be short and sweet. One big advantage of this is that we can package up all of the files together and copy paste them to your favorite LLM to ask arbitrary questions. As an example, I like to package up the repo using the [files-to-prompt](https://github.com/simonw/files-to-prompt) utility like so:
@@ -181,6 +197,7 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── gsm8k.py                    # 8K Grade School Math questions
 │   ├── humaneval.py                # Misnomer; Simple Python coding task
 │   ├── mmlu.py                     # Multiple choice questions, broad topics
+│   ├── multilingual.py             # Generic task for any HF conversation dataset
 │   ├── smoltalk.py                 # Conglomarate dataset of SmolTalk from HF
 │   └── spellingbee.py              # Task teaching model to spell/count letters
 ├── tests

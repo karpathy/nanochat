@@ -53,54 +53,54 @@ Add a generic task class that allows loading any HuggingFace dataset for multili
 
 ### Core Implementation
 
-- [ ] Create `tasks/multilingual.py` with `MultilingualTask` class
+- [x] Create `tasks/multilingual.py` with `MultilingualTask` class
   - Inherit from `Task` base class
   - Implement `num_examples()` method
   - Implement `get_example()` method
   - Handle dataset loading via `load_dataset()`
   
-- [ ] Add error handling for dataset format validation
+- [x] Add error handling for dataset format validation
   - Check for required "messages" field
   - Validate message structure (roles, content)
   
-- [ ] Test with sample dataset
+- [x] Test with sample dataset
   - Load a simple HF dataset successfully
   - Verify task integration with `TaskMixture`
 
 ### Documentation
 
-- [ ] Add multilingual example to `README.md`
+- [x] Add multilingual example to `README.md`
   - Show how to add `MultilingualTask` to training pipeline
   - Include example HF dataset reference
   - Add brief explanation of use case
 
-- [ ] Add docstring to `MultilingualTask` class
+- [x] Add docstring to `MultilingualTask` class
   - Document constructor parameters
   - Explain expected dataset format
   - Provide usage example
 
 ### Testing
 
-- [ ] Test with at least one multilingual dataset
+- [x] Test with at least one multilingual dataset
   - Suggested: `HuggingFaceTB/smol-talk-lt` (Lithuanian)
   - Verify data loads correctly
   - Check conversation format compatibility
   
-- [ ] Verify backward compatibility
+- [x] Verify backward compatibility
   - Existing training scripts still work
   - No regressions in existing tasks
 
 ### Code Quality
 
-- [ ] Follow existing code style
+- [x] Follow existing code style
   - Match formatting in `tasks/` directory
   - Use similar naming conventions
   
-- [ ] Add type hints where appropriate
+- [x] Add type hints where appropriate
   - Use `typing` module for return types
   - Document parameter types
-
-- [ ] Handle edge cases
+  
+- [x] Handle edge cases
   - Empty datasets
   - Missing fields in data
   - Invalid dataset names
