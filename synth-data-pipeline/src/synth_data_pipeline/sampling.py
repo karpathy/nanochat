@@ -11,11 +11,8 @@ from .config import (
     SYSTEM_PROMPT_TEMPLATES,
     CONVERSATION_STYLES,
     DEFAULT_TURN_DISTRIBUTION,
-    USER_EMOTIONS,
     USER_EMOTION_DISTRIBUTION,
-    INPUT_MODALITIES,
     INPUT_MODALITY_DISTRIBUTION,
-    TEXT_VARIATIONS,
     TEXT_VARIATION_DISTRIBUTION,
     Persona,
     SystemPromptTemplate,
@@ -137,10 +134,7 @@ def sample_system_prompt_by_use_case(use_case: str) -> SystemPromptTemplate:
     Returns:
         A SystemPromptTemplate with matching use case
     """
-    matching = [
-        s for s in SYSTEM_PROMPT_TEMPLATES.values()
-        if s.use_case == use_case
-    ]
+    matching = [s for s in SYSTEM_PROMPT_TEMPLATES.values() if s.use_case == use_case]
     return random.choice(matching) if matching else sample_system_prompt()
 
 
@@ -172,7 +166,9 @@ def sample_balanced_config(
 
     # Sample persona
     if prefer_technical:
-        persona = PERSONAS.get("developer") if random.random() < 0.5 else sample_persona()
+        persona = (
+            PERSONAS.get("developer") if random.random() < 0.5 else sample_persona()
+        )
     else:
         persona = sample_persona()
 
@@ -193,7 +189,9 @@ def sample_balanced_config(
     }
 
 
-def load_system_prompts_from_files(prompts_dir: str = "src/synth_data_pipeline/prompts/system_prompts") -> Dict[str, str]:
+def load_system_prompts_from_files(
+    prompts_dir: str = "src/synth_data_pipeline/prompts/system_prompts",
+) -> Dict[str, str]:
     """
     Load system prompt templates from text files.
 
@@ -208,13 +206,15 @@ def load_system_prompts_from_files(prompts_dir: str = "src/synth_data_pipeline/p
 
     for prompt_file in prompts_path.glob("*.txt"):
         name = prompt_file.stem
-        with open(prompt_file, 'r', encoding='utf-8') as f:
+        with open(prompt_file, "r", encoding="utf-8") as f:
             system_prompts[name] = f.read().strip()
 
     return system_prompts
 
 
-def load_personas_from_files(personas_dir: str = "src/synth_data_pipeline/prompts/personas") -> Dict[str, str]:
+def load_personas_from_files(
+    personas_dir: str = "src/synth_data_pipeline/prompts/personas",
+) -> Dict[str, str]:
     """
     Load persona descriptions from text files.
 
@@ -229,7 +229,7 @@ def load_personas_from_files(personas_dir: str = "src/synth_data_pipeline/prompt
 
     for persona_file in personas_path.glob("*.txt"):
         name = persona_file.stem
-        with open(persona_file, 'r', encoding='utf-8') as f:
+        with open(persona_file, "r", encoding="utf-8") as f:
             personas[name] = f.read().strip()
 
     return personas
@@ -272,10 +272,8 @@ def sample_multiple_configs(
 # Sampling Strategies
 # ============================================================================
 
-def stratified_sample_configs(
-    n: int,
-    ensure_coverage: bool = True
-) -> List[Dict]:
+
+def stratified_sample_configs(n: int, ensure_coverage: bool = True) -> List[Dict]:
     """
     Sample configurations with stratified sampling to ensure diversity.
 
@@ -292,15 +290,17 @@ def stratified_sample_configs(
         # First, ensure we have at least one of each persona-style combination
         for persona in PERSONAS.values():
             for style in CONVERSATION_STYLES:
-                configs.append({
-                    "num_turns": sample_num_turns(),
-                    "style": style,
-                    "persona": persona,
-                    "system_prompt": sample_system_prompt(),
-                    "user_emotion": sample_emotion(),
-                    "input_modality": sample_input_modality(),
-                    "text_variation": sample_text_variation(),
-                })
+                configs.append(
+                    {
+                        "num_turns": sample_num_turns(),
+                        "style": style,
+                        "persona": persona,
+                        "system_prompt": sample_system_prompt(),
+                        "user_emotion": sample_emotion(),
+                        "input_modality": sample_input_modality(),
+                        "text_variation": sample_text_variation(),
+                    }
+                )
 
         # Fill remaining with random samples
         remaining = n - len(configs)

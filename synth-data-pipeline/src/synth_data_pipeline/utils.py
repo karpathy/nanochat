@@ -10,15 +10,15 @@ from typing import List, TypeVar, Callable, Awaitable
 import logfire
 from tqdm.asyncio import tqdm_asyncio
 
-T = TypeVar('T')
-R = TypeVar('R')
+T = TypeVar("T")
+R = TypeVar("R")
 
 
 async def process_with_concurrency(
     items: List[T],
     process_fn: Callable[[T], Awaitable[R]],
     max_concurrent: int = 10,
-    desc: str = "Processing"
+    desc: str = "Processing",
 ) -> List[R]:
     """
     Process items concurrently with a semaphore to limit concurrency.
@@ -61,12 +61,12 @@ def save_jsonl(items: List, output_path: str | Path):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path, 'w', encoding='utf-8') as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         for item in items:
-            if hasattr(item, 'model_dump_json'):
-                f.write(item.model_dump_json() + '\n')
+            if hasattr(item, "model_dump_json"):
+                f.write(item.model_dump_json() + "\n")
             else:
-                f.write(json.dumps(item) + '\n')
+                f.write(json.dumps(item) + "\n")
 
     logfire.info(f"Saved {len(items)} items to {output_path}")
 
@@ -83,7 +83,7 @@ def load_jsonl(file_path: str | Path, model_class=None) -> List:
         List of items
     """
     items = []
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         for line in f:
             if model_class:
                 items.append(model_class.model_validate_json(line))
@@ -92,10 +92,7 @@ def load_jsonl(file_path: str | Path, model_class=None) -> List:
     return items
 
 
-def parse_markdown_chunks(
-    file_path: str | Path,
-    context_lines: int = 3
-) -> List[dict]:
+def parse_markdown_chunks(file_path: str | Path, context_lines: int = 3) -> List[dict]:
     """
     Parse markdown file and create chunks with context.
 
@@ -106,7 +103,7 @@ def parse_markdown_chunks(
     Returns:
         List of dicts with 'source_text', 'context_before', 'context_after'
     """
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
     chunks = []
@@ -116,28 +113,30 @@ def parse_markdown_chunks(
         line = lines[i].strip()
 
         # Skip empty lines and metadata
-        if not line or line.startswith('---') or line.startswith('**As of:**'):
+        if not line or line.startswith("---") or line.startswith("**As of:**"):
             i += 1
             continue
 
         # Process bullets and significant lines
-        if line.startswith('*') or line.startswith('#') or len(line) > 50:
+        if line.startswith("*") or line.startswith("#") or len(line) > 50:
             # Get context before
             context_start = max(0, i - context_lines)
-            context_before = ''.join(lines[context_start:i]).strip()
+            context_before = "".join(lines[context_start:i]).strip()
 
             # Get the main text (current line)
             source_text = line
 
             # Get context after
             context_end = min(len(lines), i + context_lines + 1)
-            context_after = ''.join(lines[i + 1:context_end]).strip()
+            context_after = "".join(lines[i + 1 : context_end]).strip()
 
-            chunks.append({
-                'source_text': source_text,
-                'context_before': context_before,
-                'context_after': context_after,
-            })
+            chunks.append(
+                {
+                    "source_text": source_text,
+                    "context_before": context_before,
+                    "context_after": context_after,
+                }
+            )
 
         i += 1
 
@@ -149,7 +148,7 @@ def calculate_overall_score(
     naturalness: float,
     relevance: float,
     diversity: float,
-    weights: dict = None
+    weights: dict = None,
 ) -> float:
     """
     Calculate overall quality score from individual metrics.
@@ -166,13 +165,14 @@ def calculate_overall_score(
     """
     if weights is None:
         from .config import QUALITY_WEIGHTS
+
         weights = QUALITY_WEIGHTS
 
     overall = (
-        factual_accuracy * weights.get("factual_accuracy", 0.35) +
-        naturalness * weights.get("naturalness", 0.25) +
-        relevance * weights.get("relevance", 0.25) +
-        diversity * weights.get("diversity", 0.15)
+        factual_accuracy * weights.get("factual_accuracy", 0.35)
+        + naturalness * weights.get("naturalness", 0.25)
+        + relevance * weights.get("relevance", 0.25)
+        + diversity * weights.get("diversity", 0.15)
     )
 
     return round(overall, 2)
@@ -186,11 +186,11 @@ def print_sample(item, title: str = "SAMPLE"):
         item: Item to print (conversation, Q&A, etc.)
         title: Title for the sample section
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print(title)
-    print("="*80)
+    print("=" * 80)
 
-    if hasattr(item, 'model_dump'):
+    if hasattr(item, "model_dump"):
         # Pydantic model
         print(json.dumps(item.model_dump(), indent=2))
     elif isinstance(item, dict):
@@ -198,7 +198,7 @@ def print_sample(item, title: str = "SAMPLE"):
     else:
         print(item)
 
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
 
 def print_statistics(scores: List[float], metric_name: str = "Score"):

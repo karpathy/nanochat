@@ -20,7 +20,7 @@ async def batch_embed(
     model: str = "text-embedding-3-small",
     dimensions: int = 1024,
     batch_size: int = 100,
-    max_concurrent: int = 20
+    max_concurrent: int = 20,
 ) -> List[np.ndarray]:
     """
     Generate embeddings for a list of texts using OpenAI API.
@@ -39,7 +39,7 @@ async def batch_embed(
     logfire.info(f"Embedding {len(texts)} texts in batches of {batch_size}")
 
     # Split into batches
-    batches = [texts[i:i + batch_size] for i in range(0, len(texts), batch_size)]
+    batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
 
     # Semaphore for rate limiting
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -49,9 +49,7 @@ async def batch_embed(
         async with semaphore:
             try:
                 response = await client.embeddings.create(
-                    model=model,
-                    input=batch,
-                    dimensions=dimensions
+                    model=model, input=batch, dimensions=dimensions
                 )
                 return [item.embedding for item in response.data]
             except Exception as e:
@@ -112,7 +110,7 @@ def compute_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
 def greedy_deduplicate(
     embeddings: List[np.ndarray],
     scores: List[float],
-    similarity_threshold: float = 0.95
+    similarity_threshold: float = 0.95,
 ) -> List[int]:
     """
     Greedy deduplication: keep highest-scoring items, remove similar duplicates.
@@ -170,8 +168,8 @@ def conversation_to_text(messages: List[dict], max_chars: int = 24000) -> str:
     """
     parts = []
     for msg in messages:
-        role = msg.get('role', 'unknown').upper()
-        content = msg.get('content', '')
+        role = msg.get("role", "unknown").upper()
+        content = msg.get("content", "")
         parts.append(f"{role}: {content}")
 
     full_text = "\n\n".join(parts)

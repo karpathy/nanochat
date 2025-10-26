@@ -17,26 +17,18 @@ class QAPair(BaseModel):
     question: str = Field(
         description="A natural question that could be asked about this topic"
     )
-    answer: str = Field(
-        description="The accurate answer grounded in the source text"
-    )
+    answer: str = Field(description="The accurate answer grounded in the source text")
     source_text: str = Field(
         description="The specific text chunk this Q&A was generated from"
     )
-    context_before: str = Field(
-        default="",
-        description="Preceding lines for context"
-    )
-    context_after: str = Field(
-        default="",
-        description="Following lines for context"
-    )
+    context_before: str = Field(default="", description="Preceding lines for context")
+    context_after: str = Field(default="", description="Following lines for context")
     difficulty: Literal["basic", "intermediate", "advanced"] = Field(
         description="The difficulty level of this question"
     )
     categories: list[str] = Field(
         default_factory=list,
-        description="Topic categories (e.g., 'pricing', 'features', 'integrations')"
+        description="Topic categories (e.g., 'pricing', 'features', 'integrations')",
     )
 
 
@@ -65,23 +57,15 @@ class QAValidation(BaseModel):
     sensible_answer: bool = Field(
         description="Is the answer appropriate and sensible for the question?"
     )
-    passed: bool = Field(
-        description="Overall pass (all three bools must be True)"
-    )
-    feedback: str = Field(
-        description="Brief explanation of validation result"
-    )
+    passed: bool = Field(description="Overall pass (all three bools must be True)")
+    feedback: str = Field(description="Brief explanation of validation result")
 
 
 class ValidatedQAPair(BaseModel):
     """A Q&A pair with its validation result."""
 
-    qa_pair: QAPair = Field(
-        description="The Q&A pair being validated"
-    )
-    validation: QAValidation = Field(
-        description="The validation result"
-    )
+    qa_pair: QAPair = Field(description="The Q&A pair being validated")
+    validation: QAValidation = Field(description="The validation result")
 
 
 # ============================================================================
@@ -95,9 +79,7 @@ class Message(BaseModel):
     role: Literal["system", "user", "assistant"] = Field(
         description="The role of the message sender"
     )
-    content: str = Field(
-        description="The message content"
-    )
+    content: str = Field(description="The message content")
 
 
 class ConversationMetadata(BaseModel):
@@ -112,28 +94,24 @@ class ConversationMetadata(BaseModel):
     user_persona: str = Field(
         description="The persona/role of the user (e.g., 'developer', 'business owner')"
     )
-    user_emotion: Literal["professional", "happy", "frustrated", "impatient", "confused"] = Field(
-        default="professional",
-        description="The emotional state of the user"
-    )
+    user_emotion: Literal[
+        "professional", "happy", "frustrated", "impatient", "confused"
+    ] = Field(default="professional", description="The emotional state of the user")
     input_modality: Literal["standard", "typed_on_phone", "voice_dictated"] = Field(
-        default="standard",
-        description="How the user is inputting their messages"
+        default="standard", description="How the user is inputting their messages"
     )
     text_variation: Literal["standard", "all_lowercase", "no_punctuation"] = Field(
         default="standard",
-        description="Text formatting variation applied to user messages"
+        description="Text formatting variation applied to user messages",
     )
     source_qa_ids: list[int] = Field(
         default_factory=list,
-        description="Indices of Q&A pairs used to generate this conversation"
+        description="Indices of Q&A pairs used to generate this conversation",
     )
-    difficulty: str = Field(
-        description="Overall difficulty level"
-    )
+    difficulty: str = Field(description="Overall difficulty level")
     categories: list[str] = Field(
         default_factory=list,
-        description="Topic categories covered in this conversation"
+        description="Topic categories covered in this conversation",
     )
 
 
@@ -148,7 +126,7 @@ class Conversation(BaseModel):
     )
     source_qa_pairs: list[QAPair] = Field(
         default_factory=list,
-        description="The Q&A pairs used to generate this conversation (for fact-checking)"
+        description="The Q&A pairs used to generate this conversation (for fact-checking)",
     )
 
 
@@ -175,24 +153,17 @@ class JudgmentScore(BaseModel):
     overall_pass: bool = Field(
         description="TRUE only if ALL four criteria above are TRUE"
     )
-    feedback: str = Field(
-        description="Brief explanation of judgment (1-2 sentences)"
-    )
+    feedback: str = Field(description="Brief explanation of judgment (1-2 sentences)")
     issues: list[str] = Field(
-        default_factory=list,
-        description="Specific problems found (if any)"
+        default_factory=list, description="Specific problems found (if any)"
     )
 
 
 class JudgedConversation(BaseModel):
     """A conversation with its quality judgment."""
 
-    conversation: Conversation = Field(
-        description="The conversation being judged"
-    )
-    judgment: JudgmentScore = Field(
-        description="The quality judgment scores"
-    )
+    conversation: Conversation = Field(description="The conversation being judged")
+    judgment: JudgmentScore = Field(description="The quality judgment scores")
 
 
 # ============================================================================
@@ -203,18 +174,12 @@ class JudgedConversation(BaseModel):
 class EmbeddedConversation(BaseModel):
     """A judged conversation with its embedding."""
 
-    conversation: Conversation = Field(
-        description="The conversation"
-    )
-    judgment: JudgmentScore = Field(
-        description="The quality judgment"
-    )
+    conversation: Conversation = Field(description="The conversation")
+    judgment: JudgmentScore = Field(description="The quality judgment")
     embedding: list[float] = Field(
         description="Conversation embedding (1024 dimensions)"
     )
-    text_preview: str = Field(
-        description="First 200 characters for debugging"
-    )
+    text_preview: str = Field(description="First 200 characters for debugging")
 
 
 # ============================================================================
@@ -225,12 +190,8 @@ class EmbeddedConversation(BaseModel):
 class UniqueConversation(BaseModel):
     """A conversation marked as unique after deduplication."""
 
-    conversation: Conversation = Field(
-        description="The conversation"
-    )
-    judgment: JudgmentScore = Field(
-        description="The quality judgment"
-    )
+    conversation: Conversation = Field(description="The conversation")
+    judgment: JudgmentScore = Field(description="The quality judgment")
     # Note: embedding removed to save space after dedup
 
 

@@ -18,7 +18,7 @@ DIFFICULTY_LEVELS = ["basic", "intermediate", "advanced"]
 DIFFICULTY_DESCRIPTIONS = {
     "basic": "Simple factual questions requiring basic recall",
     "intermediate": "Questions requiring understanding and reasoning",
-    "advanced": "Complex technical or multi-faceted questions"
+    "advanced": "Complex technical or multi-faceted questions",
 }
 
 
@@ -31,7 +31,7 @@ CONVERSATION_STYLES = ["formal", "casual", "technical"]
 STYLE_DESCRIPTIONS = {
     "formal": "Professional language, complete sentences, no slang",
     "casual": "Friendly tone, can use contractions, conversational",
-    "technical": "Uses technical terminology, assumes some expertise"
+    "technical": "Uses technical terminology, assumes some expertise",
 }
 
 
@@ -39,9 +39,11 @@ STYLE_DESCRIPTIONS = {
 # User Personas
 # ============================================================================
 
+
 @dataclass
 class Persona:
     """Definition of a user persona."""
+
     name: str
     description: str
     typical_questions: List[str] = field(default_factory=list)
@@ -56,9 +58,9 @@ PERSONAS = {
             "API integration details",
             "Technical specifications",
             "SDK usage",
-            "Error handling"
+            "Error handling",
         ],
-        formality="technical"
+        formality="technical",
     ),
     "product_manager": Persona(
         name="product_manager",
@@ -67,9 +69,9 @@ PERSONAS = {
             "Feature comparisons",
             "Roadmap questions",
             "Use cases",
-            "ROI analysis"
+            "ROI analysis",
         ],
-        formality="formal"
+        formality="formal",
     ),
     "cs_agent": Persona(
         name="cs_agent",
@@ -78,9 +80,9 @@ PERSONAS = {
             "Setup instructions",
             "Troubleshooting",
             "Configuration options",
-            "Best practices"
+            "Best practices",
         ],
-        formality="neutral"
+        formality="neutral",
     ),
     "executive": Persona(
         name="executive",
@@ -89,9 +91,9 @@ PERSONAS = {
             "Business value",
             "Competitive advantages",
             "Pricing strategy",
-            "Scalability"
+            "Scalability",
         ],
-        formality="formal"
+        formality="formal",
     ),
     "operations": Persona(
         name="operations",
@@ -100,9 +102,9 @@ PERSONAS = {
             "Integration capabilities",
             "Workflow automation",
             "Performance metrics",
-            "SLA guarantees"
+            "SLA guarantees",
         ],
-        formality="neutral"
+        formality="neutral",
     ),
     "finance": Persona(
         name="finance",
@@ -111,9 +113,9 @@ PERSONAS = {
             "Tax compliance",
             "Financial reporting",
             "Audit trails",
-            "Cost structure"
+            "Cost structure",
         ],
-        formality="formal"
+        formality="formal",
     ),
 }
 
@@ -122,9 +124,11 @@ PERSONAS = {
 # System Prompt Templates
 # ============================================================================
 
+
 @dataclass
 class SystemPromptTemplate:
     """Definition of a system prompt template."""
+
     name: str
     description: str
     template: str
@@ -138,35 +142,35 @@ SYSTEM_PROMPT_TEMPLATES = {
         description="Helpful and friendly assistant",
         template="You are a helpful AI assistant with expertise in SWAP Commerce's e-commerce platform and services. You provide accurate, friendly, and detailed answers to questions about SWAP Commerce's products, features, integrations, and pricing.",
         verbosity="detailed",
-        use_case="general"
+        use_case="general",
     ),
     "concise": SystemPromptTemplate(
         name="concise",
         description="Brief and to-the-point responses",
         template="You are a SWAP Commerce expert providing clear, concise answers. Focus on key information without unnecessary detail.",
         verbosity="concise",
-        use_case="quick_reference"
+        use_case="quick_reference",
     ),
     "technical": SystemPromptTemplate(
         name="technical",
         description="Technical expert for developers",
         template="You are a technical expert on SWAP Commerce's platform. You provide detailed technical information about APIs, integrations, implementation, and system architecture. You assume the user has technical knowledge.",
         verbosity="detailed",
-        use_case="developer"
+        use_case="developer",
     ),
     "detailed": SystemPromptTemplate(
         name="detailed",
         description="Comprehensive explanations",
         template="You are a comprehensive SWAP Commerce expert who provides thorough, well-explained answers with examples, context, and relevant details. You ensure users fully understand the topic.",
         verbosity="detailed",
-        use_case="learning"
+        use_case="learning",
     ),
     "sales": SystemPromptTemplate(
         name="sales",
         description="Sales and solutions focused",
         template="You are a SWAP Commerce solutions consultant helping potential customers understand how SWAP Commerce can solve their e-commerce challenges. You're knowledgeable about features, benefits, and competitive advantages.",
         verbosity="balanced",
-        use_case="sales"
+        use_case="sales",
     ),
 }
 
@@ -211,7 +215,7 @@ DEFAULT_TURN_DISTRIBUTION = {
 TURN_DISTRIBUTIONS = {
     "default": DEFAULT_TURN_DISTRIBUTION,
     "short": {1: 0.6, 2: 0.3, 3: 0.1},  # Mostly short conversations
-    "long": {2: 0.2, 3: 0.4, 4: 0.4},   # Longer conversations
+    "long": {2: 0.2, 3: 0.4, 4: 0.4},  # Longer conversations
     "balanced": {1: 0.25, 2: 0.25, 3: 0.25, 4: 0.25},  # Equal distribution
 }
 
@@ -224,10 +228,10 @@ USER_EMOTIONS = ["professional", "happy", "frustrated", "impatient", "confused"]
 
 USER_EMOTION_DISTRIBUTION = {
     "professional": 0.50,  # Most common - neutral, business-like
-    "happy": 0.15,         # Positive, enthusiastic
-    "frustrated": 0.15,    # Having issues, needs help
-    "impatient": 0.10,     # Wants quick answers
-    "confused": 0.10,      # Unclear about something
+    "happy": 0.15,  # Positive, enthusiastic
+    "frustrated": 0.15,  # Having issues, needs help
+    "impatient": 0.10,  # Wants quick answers
+    "confused": 0.10,  # Unclear about something
 }
 
 EMOTION_DESCRIPTIONS = {
@@ -235,7 +239,7 @@ EMOTION_DESCRIPTIONS = {
     "happy": "Positive, enthusiastic. May express excitement about features or capabilities.",
     "frustrated": "Experiencing issues or challenges. May express mild annoyance or urgency.",
     "impatient": "Wants quick, direct answers. Brief messages, may skip pleasantries.",
-    "confused": "Unclear about concepts or features. May ask for clarification or examples."
+    "confused": "Unclear about concepts or features. May ask for clarification or examples.",
 }
 
 
@@ -246,15 +250,15 @@ EMOTION_DESCRIPTIONS = {
 INPUT_MODALITIES = ["standard", "typed_on_phone", "voice_dictated"]
 
 INPUT_MODALITY_DISTRIBUTION = {
-    "standard": 0.70,         # Normal typing on computer
-    "typed_on_phone": 0.20,   # Mobile typing - autocorrect errors, brevity
-    "voice_dictated": 0.10,   # Voice-to-text - filler words, natural speech
+    "standard": 0.70,  # Normal typing on computer
+    "typed_on_phone": 0.20,  # Mobile typing - autocorrect errors, brevity
+    "voice_dictated": 0.10,  # Voice-to-text - filler words, natural speech
 }
 
 MODALITY_DESCRIPTIONS = {
     "standard": "Standard computer typing. Clean text, proper formatting.",
     "typed_on_phone": "Mobile device typing. May have autocorrect errors, abbreviations, shorter messages.",
-    "voice_dictated": "Voice-to-text transcription. May include 'um', 'uh', natural speech patterns, occasional transcription errors."
+    "voice_dictated": "Voice-to-text transcription. May include 'um', 'uh', natural speech patterns, occasional transcription errors.",
 }
 
 
@@ -265,15 +269,15 @@ MODALITY_DESCRIPTIONS = {
 TEXT_VARIATIONS = ["standard", "all_lowercase", "no_punctuation"]
 
 TEXT_VARIATION_DISTRIBUTION = {
-    "standard": 0.80,           # Normal capitalization and punctuation
-    "all_lowercase": 0.15,      # all lowercase (casual/mobile)
-    "no_punctuation": 0.05,     # missing punctuation (rushed/mobile)
+    "standard": 0.80,  # Normal capitalization and punctuation
+    "all_lowercase": 0.15,  # all lowercase (casual/mobile)
+    "no_punctuation": 0.05,  # missing punctuation (rushed/mobile)
 }
 
 VARIATION_DESCRIPTIONS = {
     "standard": "Standard capitalization and punctuation.",
     "all_lowercase": "All lowercase letters (common in casual or mobile communication).",
-    "no_punctuation": "Missing or minimal punctuation (rushed typing or informal style)."
+    "no_punctuation": "Missing or minimal punctuation (rushed typing or informal style).",
 }
 
 
@@ -293,9 +297,11 @@ QUALITY_WEIGHTS = {
 # API Configuration
 # ============================================================================
 
+
 @dataclass
 class APIConfig:
     """Configuration for API calls."""
+
     model: str = "gemini-2.5-flash-lite"
     max_concurrent: int = 10
     temperature: float = 0.9  # Higher for generation, lower for judging
@@ -337,9 +343,11 @@ STAGE_CONFIGS = {
 # File Paths
 # ============================================================================
 
+
 @dataclass
 class FilePaths:
     """Standard file paths for the pipeline."""
+
     data_dir: str = "data"
     prompts_dir: str = "prompts"
     output_dir: str = "output"
@@ -374,6 +382,7 @@ PATHS = FilePaths()
 # Pipeline Parameters
 # ============================================================================
 
+
 @dataclass
 class PipelineParams:
     """Parameters for the full pipeline run."""
@@ -389,10 +398,18 @@ class PipelineParams:
     # Stage 3: Conversation Generation
     num_conversations: int = 2000
     conversations_per_qa: int = 10
-    turn_distribution: Dict[int, float] = field(default_factory=lambda: DEFAULT_TURN_DISTRIBUTION)
-    emotion_distribution: Dict[str, float] = field(default_factory=lambda: USER_EMOTION_DISTRIBUTION)
-    modality_distribution: Dict[str, float] = field(default_factory=lambda: INPUT_MODALITY_DISTRIBUTION)
-    variation_distribution: Dict[str, float] = field(default_factory=lambda: TEXT_VARIATION_DISTRIBUTION)
+    turn_distribution: Dict[int, float] = field(
+        default_factory=lambda: DEFAULT_TURN_DISTRIBUTION
+    )
+    emotion_distribution: Dict[str, float] = field(
+        default_factory=lambda: USER_EMOTION_DISTRIBUTION
+    )
+    modality_distribution: Dict[str, float] = field(
+        default_factory=lambda: INPUT_MODALITY_DISTRIBUTION
+    )
+    variation_distribution: Dict[str, float] = field(
+        default_factory=lambda: TEXT_VARIATION_DISTRIBUTION
+    )
 
     # Stage 4: Judging
     min_quality_score: float = 5.0  # Minimum acceptable score

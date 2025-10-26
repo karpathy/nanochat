@@ -5,7 +5,9 @@ from src.synth_data_pipeline.config import APIConfig
 from src.synth_data_pipeline.models import JudgmentScore
 
 PROMPT_NAME = "conversation_judge"
-SYSTEM_PROMPT = "You are an expert evaluator of training data quality for language models."
+SYSTEM_PROMPT = (
+    "You are an expert evaluator of training data quality for language models."
+)
 
 
 def build_agent(config: APIConfig, *, api_key: str | None = None):
