@@ -139,6 +139,7 @@ class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        self.gradient_checkpointing = False  # Flag for gradient checkpointing
         self.transformer = nn.ModuleDict({
             "wte": nn.Embedding(config.vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
@@ -202,6 +203,17 @@ class GPT(nn.Module):
     def get_device(self):
         return self.transformer.wte.weight.device
 
+    def gradient_checkpointing_enable(self):
+        """
+        Enable gradient checkpointing to reduce memory usage during training.
+        This trades compute for memory by not storing intermediate activations.
+        """
+        self.gradient_checkpointing = True
+
+    def gradient_checkpointing_disable(self):
+        """Disable gradient checkpointing."""
+        self.gradient_checkpointing = False
+
     def estimate_flops(self):
         """ Return the estimated FLOPs per token for the model. Ref: https://arxiv.org/abs/2204.02311 """
         nparams = sum(p.numel() for p in self.parameters())
@@ -255,8 +267,23 @@ class GPT(nn.Module):
         # Forward the trunk of the Transformer
         x = self.transformer.wte(idx)
         x = norm(x)
-        for block in self.transformer.h:
-            x = block(x, cos_sin, kv_cache)
+        # Use gradient checkpointing if enabled and in training mode
+        if self.gradient_checkpointing and self.training:
+            # Create a wrapper function for checkpointing
+            def create_custom_forward(module):
+                def custom_forward(*inputs):
+                    return module(*inputs)
+                return custom_forward
+
+            for block in self.transformer.h:
+                x = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    x, cos_sin, kv_cache,
+                    use_reentrant=False
+                )
+        else:
+            for block in self.transformer.h:
+                x = block(x, cos_sin, kv_cache)
         x = norm(x)
 
         # Forward the lm_head (compute logits)

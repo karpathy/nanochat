@@ -39,9 +39,9 @@ max_seq_len = 1024 # 减少序列长度以节省显存 (原来2048)
 num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
 target_flops = -1.0 # calculate num_iterations to reach target_flops
 target_param_data_ratio = 20 # calculate num_iterations to maintain fixed data:param ratio (Chinchilla=20)
-# Optimization - 针对T4优化
-device_batch_size = 4 # 大幅减少批次大小以适应T4的16GB显存 (原来32)
-total_batch_size = 131072 # 减少总批次大小 (原来524288)
+# Optimization - 针对T4优化 (进一步减少以适应14.56GB显存限制)
+device_batch_size = 2 # 进一步减少批次大小以适应14.56GB显存 (原来4)
+total_batch_size = 65536 # 相应减少总批次大小 (原来131072)
 embedding_lr = 0.2
 unembedding_lr = 0.004
 weight_decay = 0.0
@@ -114,6 +114,9 @@ with torch.device("meta"):
     model = GPT(model_config)
 model.to_empty(device=device)
 model.init_weights()
+# Enable gradient checkpointing to save memory (trades compute for memory)
+model.gradient_checkpointing_enable()
+print0("Gradient checkpointing enabled for memory savings")
 orig_model = model # original, uncompiled model, for saving raw model state_dict
 model = torch.compile(model, dynamic=False)
 num_params = sum(p.numel() for p in model.parameters())
@@ -270,6 +273,9 @@ for step in range(num_iterations + 1):
         loss = loss / grad_accum_steps
         loss.backward()
         x, y = next(train_loader)
+        # Clear CUDA cache periodically to reduce fragmentation
+        if micro_step % 4 == 0 and device_type == "cuda":
+            torch.cuda.empty_cache()
     
     # gradient clipping
     if grad_clip > 0.0:

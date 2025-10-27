@@ -71,6 +71,9 @@ model, tokenizer, meta = load_model("base", device, phase="train", model_tag=mod
 pretrain_batch_size = meta.get("device_batch_size", None)
 if pretrain_batch_size is not None and device_batch_size > pretrain_batch_size:
     print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device_batch_size to this script?")
+# Enable gradient checkpointing to save memory (trades compute for memory)
+model.gradient_checkpointing_enable()
+print0("Gradient checkpointing enabled for memory savings")
 orig_model = model
 model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
@@ -247,6 +250,9 @@ while True:
         loss.backward()
         x, y = next(train_loader)
         progress = max(progress, approx_progress)
+        # Clear CUDA cache periodically to reduce fragmentation
+        if micro_step % 4 == 0 and device_type == "cuda":
+            torch.cuda.empty_cache()
     
     # step the optimizers
     lrm = get_lr_multiplier(progress)

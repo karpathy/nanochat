@@ -74,6 +74,9 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-t4
 
 # Load the model and tokenizer
 model, tokenizer, meta = load_model(source, device, phase="train", model_tag=model_tag, step=step)
+# Enable gradient checkpointing to save memory (trades compute for memory)
+model.gradient_checkpointing_enable()
+print0("Gradient checkpointing enabled for memory savings")
 orig_model = model # original, uncompiled model
 # model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs
 engine = Engine(model, tokenizer) # will be used for inline model evaluation only
@@ -226,6 +229,9 @@ for step in range(num_iterations):
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         loss.backward() # accumulate the gradient
         num_tokens += (train_targets >= 0).sum()
+        # Clear CUDA cache periodically to reduce fragmentation
+        if micro_step % 4 == 0 and device_type == "cuda":
+            torch.cuda.empty_cache()
     if ddp:
         dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM) # sum over ranks
 
