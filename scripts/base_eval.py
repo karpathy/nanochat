@@ -15,9 +15,9 @@ import time
 import json
 import random
 import yaml
+import csv
 from contextlib import nullcontext
 
-import pandas as pd
 import torch
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type
@@ -32,7 +32,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     """
     Evaluate a base model on the CORE benchmark.
     - max_per_task: crop the data to this many examples per task for testing (-1 = disable)
-    TODO: clean up this function, delete the need for all the files, for pandas dependency, etc.
+    TODO: clean up this function, delete the need for all the files, etc.
     """
     # Load config and task metadata
     base_dir = get_base_dir()
@@ -43,7 +43,21 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     tasks = config['icl_tasks']
-    eval_metadata = pd.read_csv(eval_meta_data)
+
+    random_baseline_map = {}
+    with open(eval_meta_data, newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        # Expect columns: "Eval Task", "Random baseline"
+        for row in reader:
+            task_label = (row.get("Eval Task") or "").strip()
+            rb = row.get("Random baseline")
+            if not task_label or rb is None:
+                continue
+            try:
+                random_baseline_map[task_label] = float(rb)
+            except ValueError:
+                # skip rows where the baseline isn't a number
+                continue
 
     # Evaluate each task
     results = {}
@@ -75,8 +89,12 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
         accuracy = evaluate_task(model, tokenizer, data, device, task_meta)
 
         results[label] = accuracy
-        row = eval_metadata[eval_metadata["Eval Task"] == label]
-        random_baseline = row["Random baseline"].values[0]
+        if label not in random_baseline_map:
+            raise KeyError(
+                f"Task '{label}' not found in {eval_meta_data}. "
+                "Ensure the 'Eval Task' column contains this label."
+            )
+        random_baseline = random_baseline_map[label]
         centered_result = (accuracy - 0.01 * random_baseline) / (1.0 - 0.01 * random_baseline)
         centered_results[label] = centered_result
         end_time = time.time()
