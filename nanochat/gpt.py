@@ -23,7 +23,6 @@ from nanochat.common import get_dist_info
 from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
 
-
 @dataclass
 class GPTConfig:
     sequence_len: int = 1024
@@ -48,7 +47,6 @@ def apply_rotary_emb(x, cos, sin):
     out = torch.cat([y1, y2], 3) # re-assemble
     out = out.to(x.dtype) # ensure input/output dtypes match
     return out
-
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
