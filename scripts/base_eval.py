@@ -17,7 +17,7 @@ import random
 import yaml
 from contextlib import nullcontext
 
-import pandas as pd
+import csv
 import torch
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type
@@ -39,11 +39,20 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
     config_path = os.path.join(eval_bundle_dir, "core.yaml")
     data_base_path = os.path.join(eval_bundle_dir, "eval_data")
-    eval_meta_data = os.path.join(eval_bundle_dir, "eval_meta_data.csv")
+    eval_meta_data_path = os.path.join(eval_bundle_dir, "eval_meta_data.csv")
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     tasks = config['icl_tasks']
-    eval_metadata = pd.read_csv(eval_meta_data)
+
+    # Load eval metadata
+    eval_metadata = {}
+    with open(eval_meta_data_path, 'r') as f:
+        reader = csv.reader(f)
+        header = next(reader) # Skip header
+        for row in reader:
+            task_name = row[0]
+            random_baseline = float(row[1])
+            eval_metadata[task_name] = {"Random baseline": random_baseline}
 
     # Evaluate each task
     results = {}
@@ -75,8 +84,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
         accuracy = evaluate_task(model, tokenizer, data, device, task_meta)
 
         results[label] = accuracy
-        row = eval_metadata[eval_metadata["Eval Task"] == label]
-        random_baseline = row["Random baseline"].values[0]
+        random_baseline = eval_metadata[label]["Random baseline"]
         centered_result = (accuracy - 0.01 * random_baseline) / (1.0 - 0.01 * random_baseline)
         centered_results[label] = centered_result
         end_time = time.time()
