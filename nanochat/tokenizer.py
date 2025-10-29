@@ -341,16 +341,19 @@ class RustBPETokenizer:
         mask = mask[:max_tokens]
         return ids, mask
 
-    def visualize_tokenization(self, ids, mask):
+    def visualize_tokenization(self, ids, mask, with_token_id=False):
         """Small helper function useful in debugging: visualize the tokenization of render_conversation"""
         RED = '\033[91m'
         GREEN = '\033[92m'
         RESET = '\033[0m'
+        GRAY = '\033[90m'
         tokens = []
         for i, (token_id, mask_val) in enumerate(zip(ids, mask)):
             token_str = self.decode([token_id])
             color = GREEN if mask_val == 1 else RED
             tokens.append(f"{color}{token_str}{RESET}")
+            if with_token_id:
+                tokens.append(f"{GRAY}({token_id}){RESET}")
         return '|'.join(tokens)
 
     def render_for_completion(self, conversation):
