@@ -29,6 +29,7 @@ python -m tasks.spellingbee
 import re
 import random
 from tasks.common import Task
+from datasets import load_dataset
 
 MAX_NUM = 9999999
 # Letters of the alphabet
@@ -120,6 +121,7 @@ class SpellingBeeDigits(Task):
         assert split in ["train", "test"], "SpellingBee split must be train|test"
         self.size = size
         self.split = split
+        self.ds = load_dataset("HuggingFaceH4/ultrachat_200k", split=split)
 
     @property
     def eval_type(self):
@@ -195,10 +197,13 @@ Then count the occurrences of '{letter}':
         assistant_parts.append({"type": "text", "text": f"\n\nPython gives us {count}.\n\nMy final answer is:\n\n#### {count}"})
 
         # return the full conversation
-        messages = [
+        row = self.ds[index]
+        ds_messages = row["messages"]
+
+        messages = ds_messages.extend([
             {"role": "user", "content": user_msg},
             {"role": "assistant", "content": assistant_parts}
-        ]
+        ])
         conversation = {
             "messages": messages,
         }
@@ -238,6 +243,7 @@ class SimpleSpellingDigits(Task):
         assert split in ["train", "test"], "SpellingBee split must be train|test"
         self.size = size
         self.split = split
+        self.ds = load_dataset("HuggingFaceH4/ultrachat_200k", split=split)
 
     @property
     def eval_type(self):
@@ -253,10 +259,13 @@ class SimpleSpellingDigits(Task):
         word = str(rng.randint(0, MAX_NUM))
         word_letters = ",".join(list(word))
         # return the full conversation
-        messages = [
+        row = self.ds[index]
+        ds_messages = row["messages"]
+
+        messages = ds_messages.extend([
             {"role": "user", "content": f"Spell the word: {word}"},
             {"role": "assistant", "content": f"{word}:{word_letters}"}
-        ]
+        ])
         conversation = {
             "messages": messages,
         }
