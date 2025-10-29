@@ -44,8 +44,8 @@ from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, AsyncGenerator
 from dataclasses import dataclass
-
-from nanochat.common import compute_init
+from contextlib import nullcontext
+from nanochat.common import compute_init, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
 
@@ -69,6 +69,8 @@ parser.add_argument('-m', '--max-tokens', type=int, default=512, help='Default m
 parser.add_argument('-g', '--model-tag', type=str, default=None, help='Model tag to load')
 parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
 parser.add_argument('-p', '--port', type=int, default=8000, help='Port to run the server on')
+parser.add_argument('-d', '--dtype', type=str, default='bfloat16', choices=['float32', 'bfloat16'])
+parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
 parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind the server to')
 args = parser.parse_args()
 
@@ -80,7 +82,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
+device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+ptdtype = torch.float32 if args.dtype == 'float32' else torch.bfloat16
 
 @dataclass
 class Worker:
@@ -95,21 +99,33 @@ class WorkerPool:
     """Pool of workers, each with a model replica on a different GPU."""
 
     def __init__(self, num_gpus: Optional[int] = None):
-        self.num_gpus = num_gpus if num_gpus is not None else torch.cuda.device_count()
+        if num_gpus is None:
+            if device_type == "cuda":
+                num_gpus = torch.cuda.device_count()
+            else:
+                num_gpus = 1 # e.g. cpu|mps
+        self.num_gpus = num_gpus
         self.workers: List[Worker] = []
         self.available_workers: asyncio.Queue = asyncio.Queue()
 
     async def initialize(self, source: str, model_tag: Optional[str] = None, step: Optional[int] = None):
         """Load model on each GPU."""
         print(f"Initializing worker pool with {self.num_gpus} GPUs...")
+        if self.num_gpus > 1:
+            assert device_type == "cuda", "Only CUDA supports multiple workers/GPUs. cpu|mps does not."
 
         for gpu_id in range(self.num_gpus):
-            device = torch.device(f"cuda:{gpu_id}")
-            print(f"Loading model on GPU {gpu_id}...")
+
+            if device_type == "cuda":
+                device = torch.device(f"cuda:{gpu_id}")
+                print(f"Loading model on GPU {gpu_id}...")
+            else:
+                device = torch.device(device_type) # e.g. cpu|mps
+                print(f"Loading model on {device_type}...")
 
             model, tokenizer, _ = load_model(source, device, phase="eval", model_tag=model_tag, step=step)
             engine = Engine(model, tokenizer)
-            autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+            autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
 
             worker = Worker(
                 gpu_id=gpu_id,

@@ -15,8 +15,9 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import wandb
 import torch
 import torch.distributed as dist
+from contextlib import nullcontext
 
-from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb
+from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.engine import Engine
@@ -26,6 +27,8 @@ from tasks.common import TaskMixture
 from tasks.arc import ARC
 from tasks.gsm8k import GSM8K
 from tasks.smoltalk import SmolTalk
+from tasks.customjson import CustomJSON
+from tasks.spellingbee import SimpleSpelling, SpellingBee
 
 # -----------------------------------------------------------------------------
 # SFT Hyperparameters
@@ -35,11 +38,12 @@ source = "mid" # base|mid , which checkpoint to load the model from (base model 
 model_tag = None # model tag to load the model from (base model or midtrained model)
 step = None # step to load the model from (base model or midtrained model)
 # compute/precision
+device_type = "" # cuda|cpu|mps (empty => autodetect)
 dtype = "bfloat16"
 device_batch_size = 4 # max to avoid OOM
 # optimization
 num_epochs = 1
-max_iterations = -1 # override number of iterations (-1 = use num_epochs * num_iterations)
+num_iterations = -1 # override number of iterations (-1 = disable, use num_epochs to derive it)
 target_examples_per_step = 32
 unembedding_lr = 0.004
 embedding_lr = 0.2
@@ -50,6 +54,7 @@ init_lr_frac = 0.02
 eval_every = 100
 eval_steps = 100
 eval_metrics_every = 200
+eval_metrics_max_problems = 1024
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
@@ -57,10 +62,11 @@ user_config = {k: globals()[k] for k in config_keys} # possibly useful for loggi
 # -----------------------------------------------------------------------------
 
 # Compute init
-ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
+device_type = autodetect_device_type() if device_type == "" else device_type
+ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0
-dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=dtype)
+ptdtype = torch.float32 if dtype == 'float32' else torch.bfloat16
+autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
@@ -74,13 +80,16 @@ engine = Engine(model, tokenizer) # will be used for inline model evaluation onl
 
 # -----------------------------------------------------------------------------
 # Task data mixture we'll train on
-
+identity_conversations_filepath = os.path.join(get_base_dir(), "identity_conversations.jsonl")
 train_ds = TaskMixture([
     ARC(subset="ARC-Easy", split="train"), # 2.3K rows
     ARC(subset="ARC-Challenge", split="train"), # 1.1K rows
     GSM8K(subset="main", split="train"), # 8K rows
     SmolTalk(split="train", stop=10_000), # 10K rows of smoltalk
-]) # 2.3K + 1.1K + 8K + 10K = 21.4K rows
+    CustomJSON(filepath=identity_conversations_filepath), # 1K rows of synthetic identity conversations
+    SimpleSpelling(size=300, split="train"), # 300 rows of Simple Spelling (e.g. spell the word 'apple')
+    SpellingBee(size=300, split="train"), # 300 rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
+]) # 2.3K + 1.1K + 8K + 10K + 1K + 0.3K + 0.3K = 23K rows
 val_ds = SmolTalk(split="test") # general conversations, 24K rows (though we don't actually use all of it)
 
 # -----------------------------------------------------------------------------
@@ -126,10 +135,10 @@ assert target_examples_per_step % examples_per_step == 0, "Target examples per s
 grad_accum_steps = target_examples_per_step // examples_per_step
 print0(f"=> Setting grad accum steps: {grad_accum_steps}")
 
-num_iterations = (len(train_ds) // target_examples_per_step) * num_epochs
-if max_iterations >= 0 and num_iterations > max_iterations:
-    print0(f"Number of iterations is too high: {num_iterations}, capping to {max_iterations}")
-    num_iterations = max_iterations
+if num_iterations == -1:
+    # derive num_iterations from num_epochs and the size of the dataset
+    assert num_epochs > 0, "num_epochs must be positive if num_iterations is -1"
+    num_iterations = (len(train_ds) // target_examples_per_step) * num_epochs
 train_loader = sft_data_generator(train_ds, batch_size=device_batch_size)
 build_val_loader = lambda: sft_data_generator(val_ds, batch_size=device_batch_size)
 
@@ -189,8 +198,8 @@ for step in range(num_iterations):
         metrics = {}
         with torch.no_grad(), autocast_ctx:
             # note that because these are inside no_grad, we can usually afford to at least ~2X the batch size
-            metrics["mmlu_acc"] = run_chat_eval("MMLU", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
-            metrics["arc_easy_acc"] = run_chat_eval("ARC-Easy", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
+            metrics["mmlu_acc"] = run_chat_eval("MMLU", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=eval_metrics_max_problems)
+            metrics["arc_easy_acc"] = run_chat_eval("ARC-Easy", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=eval_metrics_max_problems)
         metrics_str = ', '.join(f'{k}: {v:.6f}' for k, v in metrics.items())
         print0(f"Step {step:05d} | {metrics_str}")
         wandb_run.log({

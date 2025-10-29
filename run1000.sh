@@ -1,14 +1,16 @@
+#!/bin/bash
+
 # The $1000 tier of nanochat
 # Designed to run end-to-end for $1000/24 ~= 41.6 hours on an 8XH100 node
 # A bit sparser on comments, see speedrun.sh for more detail
 
 # all the setup stuff
 export OMP_NUM_THREADS=1
-NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
+export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
-uv sync
+uv sync --extra gpu
 source .venv/bin/activate
 if [ -z "$WANDB_RUN" ]; then
     WANDB_RUN=dummy
@@ -24,6 +26,7 @@ if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
     rm eval_bundle.zip
     mv eval_bundle $NANOCHAT_BASE_DIR
 fi
+curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
 # train tokenizer on ~4B characters and kick off download of the rest for pretraining
 python -m nanochat.dataset -n 16

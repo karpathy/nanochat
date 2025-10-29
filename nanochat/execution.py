@@ -146,13 +146,12 @@ def reliability_guard(maximum_memory_bytes: Optional[int] = None):
     with caution.
     """
 
-    if maximum_memory_bytes is not None:
+    if platform.uname().system != "Darwin":
+        # These resource limit calls seem to fail on macOS (Darwin), skip?
         import resource
-
         resource.setrlimit(resource.RLIMIT_AS, (maximum_memory_bytes, maximum_memory_bytes))
         resource.setrlimit(resource.RLIMIT_DATA, (maximum_memory_bytes, maximum_memory_bytes))
-        if not platform.uname().system == "Darwin":
-            resource.setrlimit(resource.RLIMIT_STACK, (maximum_memory_bytes, maximum_memory_bytes))
+        resource.setrlimit(resource.RLIMIT_STACK, (maximum_memory_bytes, maximum_memory_bytes))
 
     faulthandler.disable()
 
@@ -225,6 +224,7 @@ def _unsafe_execute(code: str, timeout: float, maximum_memory_bytes: Optional[in
         rmtree = shutil.rmtree
         rmdir = os.rmdir
         chdir = os.chdir
+        unlink = os.unlink
 
         # Disable functionalities that can make destructive changes to the test.
         reliability_guard(maximum_memory_bytes=maximum_memory_bytes)
@@ -282,6 +282,7 @@ def _unsafe_execute(code: str, timeout: float, maximum_memory_bytes: Optional[in
         shutil.rmtree = rmtree
         os.rmdir = rmdir
         os.chdir = chdir
+        os.unlink = unlink
 
 
 def execute_code(

@@ -5,6 +5,8 @@ Common utilities for nanochat.
 import os
 import re
 import logging
+import fcntl
+import urllib.request
 import torch
 import torch.distributed as dist
 
@@ -56,6 +58,44 @@ def get_base_dir():
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
+def download_file_with_lock(url, filename):
+    """
+    Downloads a file from a URL to a local path in the base directory.
+    Uses a lock file to prevent concurrent downloads among multiple ranks.
+    """
+    base_dir = get_base_dir()
+    file_path = os.path.join(base_dir, filename)
+    lock_path = file_path + ".lock"
+
+    if os.path.exists(file_path):
+        return file_path
+
+    with open(lock_path, 'w') as lock_file:
+
+        # Only a single rank can acquire this lock
+        # All other ranks block until it is released
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+        if os.path.exists(file_path):
+            return file_path
+
+        print(f"Downloading {url}...")
+        with urllib.request.urlopen(url) as response:
+            content = response.read().decode('utf-8')
+
+        with open(file_path, 'w') as f:
+            f.write(content)
+
+        print(f"Downloaded to {file_path}")
+
+    # Clean up the lock file after the lock is released
+    try:
+        os.remove(lock_path)
+    except OSError:
+        pass  # Ignore if already removed by another process
+
+    return file_path
+
 def print0(s="",**kwargs):
     ddp_rank = int(os.environ.get('RANK', 0))
     if ddp_rank == 0:
@@ -89,32 +129,46 @@ def get_dist_info():
     else:
         return False, 0, 0, 1
 
-def compute_init():
+def autodetect_device_type():
+    # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
+    if torch.cuda.is_available():
+        device_type = "cuda"
+    elif torch.backends.mps.is_available():
+        device_type = "mps"
+    else:
+        device_type = "cpu"
+    print0(f"Autodetected device type: {device_type}")
+    return device_type
+
+def compute_init(device_type="cuda"): # cuda|cpu|mps
     """Basic initialization that we keep doing over and over, so make common."""
 
-    # CUDA is currently required
-    assert torch.cuda.is_available(), "CUDA is needed for a distributed run atm"
+    assert device_type in ["cuda", "mps", "cpu"], "Invalid device type atm"
+    if device_type == "cuda":
+        assert torch.cuda.is_available(), "Your PyTorch installation is not configured for CUDA but device_type is 'cuda'"
+    if device_type == "mps":
+        assert torch.backends.mps.is_available(), "Your PyTorch installation is not configured for MPS but device_type is 'mps'"
 
     # Reproducibility
     torch.manual_seed(42)
-    torch.cuda.manual_seed(42)
+    if device_type == "cuda":
+        torch.cuda.manual_seed(42)
     # skipping full reproducibility for now, possibly investigate slowdown later
     # torch.use_deterministic_algorithms(True)
-    # torch.backends.cudnn.deterministic = True
-    # torch.backends.cudnn.benchmark = False
 
     # Precision
-    torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
+    if device_type == "cuda":
+        torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
 
-    # Distributed setup: Distributed Data Parallel (DDP), optional
+    # Distributed setup: Distributed Data Parallel (DDP), optional, and requires CUDA
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
-    if ddp:
+    if ddp and device_type == "cuda":
         device = torch.device("cuda", ddp_local_rank)
         torch.cuda.set_device(device) # make "cuda" default to this device
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
     else:
-        device = torch.device("cuda")
+        device = torch.device(device_type) # mps|cpu
 
     if ddp_rank == 0:
         logger.info(f"Distributed world size: {ddp_world_size}")
