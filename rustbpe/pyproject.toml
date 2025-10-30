@@ -15,3 +15,11 @@ module-name = "rustbpe"
 bindings = "pyo3"
 manifest-path = "Cargo.toml"
 features = ["pyo3/extension-module"]
+
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "src/**/*.rs" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" }
+]

@@ -70,8 +70,6 @@ conflicts = [
         { extra = "gpu" },
     ],
 ]
-# rebuild if rustbpe is modified
-cache-keys = [{ file = "pyproject.toml" }, {file = "rustbpe/**"}]
 
 [tool.uv.workspace]
 members = ["rustbpe"]
