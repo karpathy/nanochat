@@ -23,7 +23,7 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
-module-name = "rustbpe"
+module-name = "nanochat.rustbpe"
 bindings = "pyo3"
 python-source = "."
 manifest-path = "rustbpe/Cargo.toml"
@@ -67,9 +67,15 @@ cpu = [
 gpu = [  
     "torch>=2.8.0",  
 ]  
-  
-[tool.uv]  
-conflicts = [  
+
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "rustbpe/src/**/*.rs" },
+    { file = "rustbpe/Cargo.toml" },
+    { file = "rustbpe/Cargo.lock" }
+]
+conflicts = [
     [  
         { extra = "cpu" },  
         { extra = "gpu" },  

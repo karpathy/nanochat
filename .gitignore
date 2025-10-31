@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+*.so
 rustbpe/target/
 dev-ignore/
 report.md
