@@ -40,4 +40,4 @@ jobs:
 
     - name: Run pytest
       run: |
-        uv run pytest tests/ --maxfail=5 
+        uv run pytest tests/
