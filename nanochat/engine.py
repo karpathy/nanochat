@@ -11,7 +11,9 @@ Notes:
 The whole thing is made as efficient as possible.
 """
 
+import math
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import signal
 import warnings
@@ -19,6 +21,15 @@ from contextlib import contextmanager
 from collections import deque
 from nanochat.common import compute_init
 from nanochat.checkpoint_manager import load_model
+from nanochat.gpt import GPT
+from nanochat.kv_cache import KVCache
+from nanochat.hypercube import HypercubeTopology, HypercubeEmbeddingLayer, LongTermMemory # Import HypercubeTopology
+from nanochat.abacus_encoder import AbacusEncoder
+from nanochat.self_model import InternalSelfModel
+from nanochat.abacus_state_memory import AbacusStateMemory
+from nanochat.memetic_learning import MemeticLearningLayer
+from nanochat.conscious_integration import ConsciousIntegrationLayer
+from nanochat.gpt import GPT, PsycheController
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
@@ -151,76 +162,302 @@ class KVCache:
             self.pos = t1
         return key_view, value_view
 
+    def retrieve_episode(self, start_pos, end_pos):
+        """
+        Retrieves a slice of the KV cache representing an 'episode' or a specific attention span.
+        """
+        assert self.kv_cache is not None, "KV cache is empty, cannot retrieve episode."
+        assert start_pos >= 0 and end_pos <= self.pos, "Invalid start or end position for episode retrieval."
+        assert start_pos < end_pos, "Start position must be less than end position."
+
+        # Return a view of the relevant part of the cache
+        # kv_cache shape: (num_layers, 2, batch_size, num_heads, seq_len, head_dim)
+        # We want to retrieve for all layers, and both k and v
+        episode_k = self.kv_cache[:, 0, :, :, start_pos:end_pos, :]
+        episode_v = self.kv_cache[:, 1, :, :, start_pos:end_pos, :]
+        return episode_k, episode_v
+
 
 # -----------------------------------------------------------------------------
 @torch.inference_mode()
-def sample_next_token(logits, rng, temperature=1.0, top_k=None):
-    """Sample a single next token from given logits of shape (B, vocab_size). Returns (B, 1)."""
+def sample_from_logits(logits, rng, temperature, top_k):
+    """Sample a single next concept ID from given logits of shape (B, num_concept_ids). Returns (B, 1)."""
     assert temperature >= 0.0, "temperature must be non-negative"
     if temperature == 0.0:
         return torch.argmax(logits, dim=-1, keepdim=True)
+
     if top_k is not None:
-        k = min(top_k, logits.size(-1))
-        vals, idx = torch.topk(logits, k, dim=-1)
-        vals = vals / temperature
-        probs = F.softmax(vals, dim=-1)
-        choice = torch.multinomial(probs, num_samples=1, generator=rng)
-        return idx.gather(1, choice)
-    else:
-        logits = logits / temperature
-        probs = F.softmax(logits, dim=-1)
-        return torch.multinomial(probs, num_samples=1, generator=rng)
+        v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+        logits[logits < v[:, [-1]]] = -float('Inf')
 
-# -----------------------------------------------------------------------------
+    logits = logits / temperature
+    probs = F.softmax(logits, dim=-1)
+    idx_next = torch.multinomial(probs, num_samples=1, generator=rng)
+    return idx_next
 
-class RowState:
-    # Per-row state tracking during generation
-    def __init__(self, current_tokens=None):
-        self.current_tokens = current_tokens or [] # Current token sequence for this row
-        self.forced_tokens = deque() # Queue of tokens to force inject
-        self.in_python_block = False # Whether we are inside a python block
-        self.python_expr_tokens = [] # Tokens of the current python expression
-        self.completed = False # Whether this row has completed generation
 
 class Engine:
 
-    def __init__(self, model, tokenizer):
-        self.model = model
-        self.tokenizer = tokenizer # needed for tool use
+    def __init__(self, config: GPTConfig):
+        self.config = config
+        self.model = GPT(config)
+        self.model.eval()
+        self.model.init_weights()
 
-    @torch.inference_mode()
-    def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
-        """Same as generate, but does single prefill and then clones the KV cache."""
-        assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
-        device = self.model.get_device()
-        rng = torch.Generator(device=device)
-        rng.manual_seed(seed)
+        # Initialize HypercubeEmbeddingLayer
+        self.concept_embedding_layer = HypercubeEmbeddingLayer(
+            num_raw_concepts=config.num_concept_ids,
+            embedding_dim=config.n_embd,
+            hypercube_topology=self.hypercube_topology
+        )
 
-        # Get the special tokens we need to coordinate the tool use state machine
-        get_special = lambda s: self.tokenizer.encode_special(s)
-        python_start = get_special("<|python_start|>")
-        python_end = get_special("<|python_end|>")
-        output_start = get_special("<|output_start|>")
-        output_end = get_special("<|output_end|>")
-        assistant_end = get_special("<|assistant_end|>") # if sampled, ends row
-        bos = self.tokenizer.get_bos_token_id() # if sampled, ends row
+        # Initialize AbacusEncoder
+        self.abacus_encoder = AbacusEncoder(
+            input_dim=config.abacus_input_dim,
+            embedding_dim=config.n_embd
+        )
+        nn.init.normal_(self.concept_embedding_layer.weight, mean=0.0, std=1.0)
 
-        # 1) Run a batch 1 prefill of the prompt tokens
+        # Initialize HypercubeTopology
+        n_hypercube_dim = int(math.log2(config.num_concept_ids))
+        if not (2**n_hypercube_dim == config.num_concept_ids):
+            raise ValueError("config.num_concept_ids must be a power of 2 for hypercube topology.")
+        self.hypercube_topology = HypercubeTopology(n_hypercube_dim)
+
+        # Initialize LongTermMemory
+        self.long_term_memory = LongTermMemory(
+            embedding_dim=config.n_embd,
+            max_memory_size=1000, # Default max memory size
+            top_k_retrieval=5     # Default top-k retrieval
+        )
+
+        # Initialize InternalSelfModel
+        self.internal_self_model = InternalSelfModel(
+            embedding_dim=config.n_embd,
+            num_concepts=config.num_concept_ids
+        )
+
+        # Initialize AbacusStateMemory
+        self.abacus_state_memory = AbacusStateMemory(
+            max_memory_size=100, # Default max memory size
+            abacus_input_dim=config.abacus_input_dim
+        )
+
+        # Initialize MemeticLearningLayer
+        self.memetic_learning_layer = MemeticLearningLayer(
+            config=config,
+            abacus_encoder=self.abacus_encoder,
+            internal_self_model=self.internal_self_model
+        )
+
+        # Initialize PsycheController
+        self.psyche_controller = PsycheController(
+            config=config
+        )
+
+        # Initialize ConsciousIntegrationLayer
+        self.conscious_integration_layer = ConsciousIntegrationLayer(
+            config=config,
+            abacus_encoder=self.abacus_encoder
+        )
+
+        self._concept_encoder_placeholder = None # This will be set later
+        self._concept_attention_fusion_placeholder = nn.Linear(config.n_embd * 2, config.n_embd)
+
+        # Placeholder for concept encoder
+        self.concept_encoder = self._concept_encoder_placeholder
+
+    def _concept_encoder_placeholder(self, concept_list: list[int] | dict) -> torch.Tensor:
+        """
+        Placeholder for a more sophisticated concept encoder.
+        For now, it assumes concept_list directly contains integer concept IDs or a dict with 'abacus_pattern'.
+        """
+        if isinstance(concept_list, dict) and "abacus_pattern" in concept_list:
+            # If an abacus pattern is provided, encode it using the AbacusEncoder
+            abacus_pattern = concept_list["abacus_pattern"]
+            # Ensure abacus_pattern is a tensor and has the correct shape
+            if not isinstance(abacus_pattern, torch.Tensor):
+                abacus_pattern = torch.tensor(abacus_pattern, dtype=torch.float32)
+            # Add batch dimension if missing
+            if abacus_pattern.dim() == 1:
+                abacus_pattern = abacus_pattern.unsqueeze(0)
+            return self.abacus_encoder(abacus_pattern)
+        elif isinstance(concept_list, list):
+            # Otherwise, assume it's a list of integer concept IDs
+            return torch.tensor(concept_list, dtype=torch.long, device=self.gpt.get_device())
+        else:
+            raise ValueError("concept_list must be a list of integers or a dict with 'abacus_pattern'.")
+
+    def _concept_memory_retrieve_placeholder(self, current_embedding: torch.Tensor) -> torch.Tensor:
+        # Placeholder for concept memory retrieval logic
+        # This would typically involve searching a memory bank for relevant concepts
+        # based on the current_embedding and returning their embeddings.
+        # For now, it returns a zero tensor of appropriate shape.
+        return torch.zeros_like(current_embedding)
+
+    def _concept_attention_fusion_placeholder(self, transformer_output: torch.Tensor, retrieved_concepts: torch.Tensor) -> torch.Tensor:
+        # Placeholder for concept attention fusion logic
+        # This would combine the transformer's output with the retrieved concept embeddings
+        # using some attention mechanism.
+        # For now, it just returns the transformer_output unchanged.
+        return transformer_output
+
+    def sample_from_logits(self, concept_logits: torch.Tensor, temperature: float = 1.0, top_k: int = None) -> torch.Tensor:
+        # Apply temperature
+        if temperature == 0.0:
+            next_concept_id = torch.argmax(concept_logits, dim=-1)
+        else:
+            concept_logits = concept_logits / temperature
+            # Apply top-k filtering
+            if top_k is not None:
+                v, _ = torch.topk(concept_logits, min(top_k, concept_logits.size(-1)))
+                concept_logits[concept_logits < v[:, [-1]]] = -float('Inf')
+            probs = torch.softmax(concept_logits, dim=-1)
+            next_concept_id = torch.multinomial(probs, num_samples=1).squeeze(-1)
+        return next_concept_id
+
+    @torch.no_grad()
+    def generate(self, input_embeddings: torch.Tensor, max_new_concepts: int = 20, temperature: float = 1.0, abacus_embedding: torch.Tensor | None = None, working_memory_window: int = 0) -> list[int]:
+        B, T, C = input_embeddings.size()
+        generated_embeddings = []
+
+        if abacus_embedding is None:
+            abacus_embedding = torch.zeros(B, 1, self.config.abacus_input_dim, device=input_embeddings.device)
+
+        # Long-Term Memory retrieval for prefill
+        prefill_long_term_memory_embeddings = self.long_term_memory.retrieve(input_embeddings[:, -1, :].squeeze(0))
+
+        # Get psyche weights from PsycheController for prefill
+        prefill_psyche_weights = self.psyche_controller(input_embeddings[:, -1, :])
+
+        # Prefill the model with input_embeddings
+        concept_logits, kv_cache, x_id_prefill, x_ego_prefill, x_superego_prefill = self.model.forward_prefill(
+            input_embeddings,
+            abacus_embedding=abacus_embedding,
+            long_term_memory_embeddings=prefill_long_term_memory_embeddings,
+            psyche_weights=prefill_psyche_weights
+        )
+
+        # Conscious Integration Layer for prefill
+        synthesized_state_prefill = self.conscious_integration_layer.forward(
+            id_output=x_id_prefill,
+            ego_output=x_ego_prefill,
+            superego_output=x_superego_prefill,
+            long_term_memory_embeddings=prefill_long_term_memory_embeddings,
+            memetic_fitness=None, # Memetic fitness is not available during prefill
+            abacus_state=abacus_embedding
+        )
+
+        # Combine concept_logits from GPT and synthesized_state_prefill
+        concept_logits = concept_logits + synthesized_state_prefill
+
+        # Sample the first concept ID from the last token's logits
+        next_concept_id = self.sample_from_logits(concept_logits[:, -1, :], temperature)
+        next_embedding = self.concept_embedding_layer(next_concept_id)
+        generated_embeddings.append(next_embedding)
+        self.long_term_memory.store(next_embedding.squeeze(0)) # Store the generated embedding
+
+        # Abacus State Memory and Encoder integration for the first step
+        abacus_pattern = self.abacus_encoder(next_embedding)
+        self.abacus_state_memory.store(abacus_pattern)
+        abacus_embedding = self.abacus_state_memory.retrieve()
+
+        for _ in range(max_new_concepts - 1):
+            # Working Memory retrieval
+            episodic_kv = None
+            if working_memory_window > 0 and kv_cache.get_pos() > working_memory_window:
+                start_pos = kv_cache.get_pos() - working_memory_window
+                end_pos = kv_cache.get_pos()
+                episodic_kv = kv_cache.retrieve_episode(start_pos, end_pos)
+
+            # Long-Term Memory retrieval
+            long_term_memory_embeddings = self.long_term_memory.retrieve(next_embedding.squeeze(0))
+
+            # Get psyche weights from PsycheController
+            psyche_weights = self.psyche_controller(next_embedding)
+
+            concept_logits, kv_cache, x_id_step, x_ego_step, x_superego_step = self.model.forward_step(
+                next_embedding,
+                kv_cache,
+                abacus_embedding=abacus_embedding,
+                episodic_kv=episodic_kv,
+                long_term_memory_embeddings=long_term_memory_embeddings,
+                psyche_weights=psyche_weights
+            )
+
+            # Memetic Learning Layer integration
+            memetic_fitness = self.memetic_learning_layer.forward(next_embedding, abacus_pattern)
+
+            # Conscious Integration Layer for step
+            synthesized_state_step = self.conscious_integration_layer.forward(
+                id_output=x_id_step,
+                ego_output=x_ego_step,
+                superego_output=x_superego_step,
+                long_term_memory_embeddings=long_term_memory_embeddings,
+                memetic_fitness=memetic_fitness,
+                abacus_state=abacus_embedding
+            )
+
+            # Combine concept_logits from GPT and synthesized_state_step
+            concept_logits = concept_logits + synthesized_state_step.squeeze(1) # Squeeze to match dimensions
+
+            next_concept_id = self.sample_from_logits(concept_logits, temperature)
+            next_embedding = self.concept_embedding_layer(next_concept_id)
+            generated_embeddings.append(next_embedding)
+            self.long_term_memory.store(next_embedding.squeeze(0)) # Store the generated embedding
+
+            # Abacus State Memory and Encoder integration for subsequent steps
+            abacus_pattern = self.abacus_encoder(next_embedding)
+            self.abacus_state_memory.store(abacus_pattern)
+            abacus_embedding = self.abacus_state_memory.retrieve() # Update abacus_embedding for the next step
+
+            # Memetic Learning Layer integration
+            memetic_fitness = self.memetic_learning_layer.forward(next_embedding, abacus_pattern)
+
+        return torch.stack(generated_embeddings, dim=1)
+
+    def generate_from_concepts(self, concept_list: list[int] | dict, max_new_concepts: int = 20, temperature: float = 1.0) -> list[int]:
+        # Encode the concept_list into initial input embeddings
+        encoded_concepts = self.concept_encoder(concept_list)
+
+        if encoded_concepts.dtype == torch.long:
+            # If it's concept IDs, get embeddings from the concept_embedding_layer
+            input_embeddings = self.concept_embedding_layer(encoded_concepts)
+            abacus_embedding = None # No abacus embedding in this case
+        elif encoded_concepts.dtype == torch.float:
+            # If it's an abacus embedding, use it directly and set abacus_embedding
+            input_embeddings = encoded_concepts
+            abacus_embedding = encoded_concepts # The abacus embedding is the input embedding itself
+        else:
+            raise TypeError("Unexpected return type from concept_encoder.")
+
+        # Call the main generate method
+        return self.generate(input_embeddings, max_new_concepts, temperature, abacus_embedding=abacus_embedding)
+
+
+        # Special tokens are no longer directly used with concept embeddings.
+        # The tool use logic will need to be re-evaluated or removed if not applicable.
+        # get_special = lambda s: self.tokenizer.encode_special(s)
+        # python_start = get_special("<|python_start|>")
+        # python_end = get_special("<|python_end|>")
+        # output_start = get_special("<|output_start|>")
+        # output_end = get_special("<|output_end|>")
+        # assistant_end = get_special("<|assistant_end|>") # if sampled, ends row
+        # bos = self.tokenizer.get_bos_token_id() # if sampled, ends row
+
+        # 1) Run a batch 1 prefill of the prompt embeddings
         m = self.model.config
         kv_model_kwargs = {"num_heads": m.n_kv_head, "head_dim": m.n_embd // m.n_head, "num_layers": m.n_layer}
         kv_cache_prefill = KVCache(
-            batch_size=1,
-            seq_len=len(tokens),
+            batch_size=input_embeddings.size(0),
+            seq_len=input_embeddings.size(1),
             **kv_model_kwargs,
         )
-        ids = torch.tensor([tokens], dtype=torch.long, device=device)
-        logits = self.model.forward(ids, kv_cache=kv_cache_prefill)
-        logits = logits[:, -1, :]
-        next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
-        sampled_tokens = next_ids[:, 0].tolist()
+        logits = self.model.forward(input_embeddings, kv_cache=kv_cache_prefill)
+        # Removed token-based sampling logic (replace with embedding generation logic later)
 
         # 2) Replicate the KV cache for each sample/row
-        kv_length_hint = (len(tokens) + max_tokens) if max_tokens is not None else self.model.config.sequence_len
+        kv_length_hint = (input_embeddings.size(1) + max_tokens) if max_tokens is not None else self.model.config.sequence_len
         kv_cache_decode = KVCache(
             batch_size=num_samples,
             seq_len=kv_length_hint,
@@ -230,7 +467,7 @@ class Engine:
         del kv_cache_prefill # no need to keep this memory around
 
         # 3) Initialize states for each sample
-        row_states = [RowState(tokens.copy()) for _ in range(num_samples)]
+        row_states = [RowState(input_embeddings[i].tolist()) for i in range(num_samples)] # Assuming input_embeddings is (B, T, C)
 
         # 4) Main generation loop
         num_generated = 0
