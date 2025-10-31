@@ -35,7 +35,6 @@ jobs:
         uv pip install transformers>=4.0.0
 
     - name: Add nanochat to PYTHONPATH (Unix)
-      if: runner.os != 'Windows'
       run: |
         echo "PYTHONPATH=$(pwd):$PYTHONPATH" >> $GITHUB_ENV
 
