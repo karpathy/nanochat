@@ -38,11 +38,6 @@ jobs:
       run: |
         echo "PYTHONPATH=$(pwd):$PYTHONPATH" >> $GITHUB_ENV
 
-    - name: Add nanochat to PYTHONPATH (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        echo "PYTHONPATH=$PWD;$env:PYTHONPATH" >> $env:GITHUB_ENV
-
     - name: Run pytest
       run: |
         uv run pytest tests/ --maxfail=5 
