@@ -1,0 +1,42 @@
+<svg width="800" height="500" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="100%" height="100%" fill="#f8f9fa"/>
+  <!-- Title -->
+  <text x="400" y="30" font-family="Arial" font-size="20" text-anchor="middle" fill="#2d3748">LLM Cognitive Architecture Connections</text>
+  <!-- Nodes -->
+  <rect x="50" y="100" width="120" height="50" rx="5" fill="#4299e1"/>
+  <text x="110" y="130" font-family="Arial" font-size="14" text-anchor="middle" fill="white">Input Embeddings</text>
+  <rect x="220" y="80" width="120" height="90" rx="5" fill="#ed64a6"/>
+  <text x="280" y="120" font-family="Arial" font-size="14" text-anchor="middle" fill="white">GPT (Id/Ego/Superego)</text>
+  <rect x="220" y="200" width="120" height="50" rx="5" fill="#9f7aea"/>
+  <text x="280" y="230" font-family="Arial" font-size="14" text-anchor="middle" fill="white">PsycheController</text>
+  <rect x="390" y="80" width="120" height="50" rx="5" fill="#38b2ac"/>
+  <text x="450" y="110" font-family="Arial" font-size="14" text-anchor="middle" fill="white">LongTermMemory</text>
+  <rect x="390" y="150" width="120" height="50" rx="5" fill="#38b2ac"/>
+  <text x="450" y="180" font-family="Arial" font-size="14" text-anchor="middle" fill="white">AbacusEncoder</text>
+  <rect x="390" y="220" width="120" height="50" rx="5" fill="#38b2ac"/>
+  <text x="450" y="250" font-family="Arial" font-size="14" text-anchor="middle" fill="white">MemeticLearning</text>
+  <rect x="560" y="100" width="150" height="90" rx="5" fill="#f6ad55"/>
+  <text x="635" y="140" font-family="Arial" font-size="14" text-anchor="middle" fill="white">ConsciousIntegrationLayer</text>
+  <rect x="740" y="120" width="120" height="50" rx="5" fill="#48bb78"/>
+  <text x="800" y="150" font-family="Arial" font-size="14" text-anchor="middle" fill="white">Concept Logits (Output)</text>
+  <rect x="50" y="180" width="120" height="50" rx="5" fill="#4299e1"/>
+  <text x="110" y="210" font-family="Arial" font-size="14" text-anchor="middle" fill="white">HypercubeEmbedding</text>
+  <!-- Connections -->
+  <line x1="170" y1="125" x2="220" y2="125" stroke="#2d3748" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="170" y1="205" x2="220" y2="125" stroke="#2d3748" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="340" y1="125" x2="390" y2="105" stroke="#2d3748" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="340" y1="125" x2="390" y2="175" stroke="#2d3748" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="340" y1="125" x2="390" y2="245" stroke="#2d3748" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="340" y1="225" x2="390" y2="125" stroke="#2d3748" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="510" y1="105" x2="560" y2="125" stroke="#2d3748" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="510" y1="175" x2="560" y2="125" stroke="#2d3748" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="510" y1="245" x2="560" y2="125" stroke="#2d3748" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <line x1="710" y1="145" x2="740" y2="145" stroke="#2d3748" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <!-- Arrowhead Marker -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2d3748"/>
+    </marker>
+  </defs>
+</svg>

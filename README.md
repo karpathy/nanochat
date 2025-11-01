@@ -1,4 +1,28 @@
 # nanochat
+## Extended LLM Cognitive Framework
+This document outlines the new cognitive layers and features added to the nanochat LLM, along with their architectural connections.
+
+### Key Added Features
+1. **PsycheController** (in `engine.py`): Dynamically generates blending weights for the Id/Ego/Superego layers based on input context
+2. **GPT Id/Ego/Superego Layers** (in `gpt.py`): Three distinct cognitive processing layers with specialized focuses (instinctual, practical, moral reasoning)
+3. **HypercubeEmbeddingLayer** (in `hypercube.py`): Maps concept IDs to embeddings within a hypercube structure, enabling semantic relationships.
+4. **LongTermMemory** (in `engine.py`): Stores and retrieves embeddings to preserve long-term context across generations
+5. **AbacusEncoder & AbacusStateMemory** (in `abacus_encoder.py`/`abacus_state_memory.py`): Ensures logical consistency of internal reasoning through structured pattern storage
+6. **MemeticLearningLayer** (in `memetic_learning.py`): Evaluates the fitness of generated embeddings for knowledge retention
+7. **ConsciousIntegrationLayer** (in `conscious_integration.py`): Synthesizes outputs from all lower layers into a unified conceptual state that directly influences model output
+
+### Architecture Flow
+1. Input embeddings are processed through GPT's Id/Ego/Superego layers
+2. PsycheController provides dynamic blending weights
+3. LongTermMemory retrieves relevant context embeddings
+4. AbacusEncoder ensures logical consistency of intermediate states
+5. MemeticLearningLayer evaluates generated embedding fitness
+6. ConsciousIntegrationLayer synthesizes all inputs into a unified state
+7. Synthesized state modulates concept_logits for final output
+
+### Architecture Visualization
+See the vectorized diagram below for direct connections:
+![LLM Cognitive Architecture](nanochat/architecture.svg)
 
 ![nanochat logo](dev/nanochat.png)
 
