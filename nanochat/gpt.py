@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from nanochat.common import get_dist_info, print0
+from nanochat.common import get_dist_info
 from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
 
@@ -58,24 +58,31 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
-        self.c_q = nn.Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
-        self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
-        self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+        self.c_qkv = nn.Linear(
+            self.n_embd,
+            (self.n_head + 2 * self.n_kv_head) * self.head_dim,
+            bias=False,
+        )
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
 
     def forward(self, x, cos_sin, kv_cache):
-        B, T, C = x.size()
+        B, T, _ = x.size()
 
         # Project the input to get queries, keys, and values
-        q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
-        k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
-        v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
+        qk, v = (
+            self.c_qkv(x)
+            .view(B, T, self.n_head + 2 * self.n_kv_head, self.head_dim)
+            .split([self.n_head + self.n_kv_head, self.n_kv_head], dim=2)
+        )
 
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
         cos, sin = cos_sin
-        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin) # QK rotary embedding
-        q, k = norm(q), norm(k) # QK norm
-        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2) # make head be batch dim, i.e. (B, T, H, D) -> (B, H, T, D)
+        qk = apply_rotary_emb(qk, cos, sin)
+        qk = norm(qk)
+
+        # make head be batch dim, i.e. (B, T, H, D) -> (B, H, T, D)
+        q, k = qk.transpose(1, 2).split([self.n_head, self.n_kv_head], dim=1)
+        v = v.transpose(1, 2)
 
         # Apply KV cache: insert current k,v into cache, get the full view so far
         if kv_cache is not None:
@@ -212,7 +219,7 @@ class GPT(nn.Module):
 
     def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0):
         model_dim = self.config.n_embd
-        ddp, rank, local_rank, world_size = get_dist_info()
+        ddp, rank, _, _ = get_dist_info()
         # Separate out all parameters into 3 groups (matrix, embedding, lm_head)
         matrix_params = list(self.transformer.h.parameters())
         embedding_params = list(self.transformer.wte.parameters())
@@ -242,7 +249,7 @@ class GPT(nn.Module):
         return optimizers
 
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
-        B, T = idx.size()
+        _, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
