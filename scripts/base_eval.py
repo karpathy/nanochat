@@ -1,49 +1,76 @@
 """
-Evlauate the CORE metric for a given model.
+Evaluate the CORE metric for a given model.
 
 Run on a single GPU:
-python base_eval.py
+python -m scripts.base_eval
 
 Run with torchrun on e.g. 8 GPUs:
-torchrun --nproc_per_node=8 base_eval.py
+torchrun --nproc_per_node=8 -m scripts.base_eval
 
 The script will print the CORE metric to the console.
 """
 import os
-import sys
+import csv
 import time
 import json
-import random
 import yaml
+import shutil
+import random
+import zipfile
+import tempfile
 from contextlib import nullcontext
 
-import pandas as pd
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type
+from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
 from nanochat.tokenizer import HuggingFaceTokenizer
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
 
 # -----------------------------------------------------------------------------
-# nanoChat specific function dealing with I/O etc.
+# nanochat specific function dealing with I/O etc.
+
+# ~162MB of data needed to evaluate the CORE metric
+EVAL_BUNDLE_URL = "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip"
+
+def place_eval_bundle(file_path):
+    # here file_path is the path to the eval_bundle.zip file
+    # we need to unzip it and place it in the base directory
+    base_dir = get_base_dir()
+    eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with zipfile.ZipFile(file_path, 'r') as zip_ref:
+            zip_ref.extractall(tmpdir)
+        extracted_bundle_dir = os.path.join(tmpdir, "eval_bundle")
+        shutil.move(extracted_bundle_dir, eval_bundle_dir)
+    print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
 def evaluate_model(model, tokenizer, device, max_per_task=-1):
     """
     Evaluate a base model on the CORE benchmark.
     - max_per_task: crop the data to this many examples per task for testing (-1 = disable)
-    TODO: clean up this function, delete the need for all the files, for pandas dependency, etc.
     """
     # Load config and task metadata
     base_dir = get_base_dir()
     eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
+    # Download the eval bundle to disk (and unzip if needed)
+    if not os.path.exists(eval_bundle_dir):
+        download_file_with_lock(EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=place_eval_bundle)
     config_path = os.path.join(eval_bundle_dir, "core.yaml")
     data_base_path = os.path.join(eval_bundle_dir, "eval_data")
     eval_meta_data = os.path.join(eval_bundle_dir, "eval_meta_data.csv")
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     tasks = config['icl_tasks']
-    eval_metadata = pd.read_csv(eval_meta_data)
+
+    # Load random baseline values from eval metadata
+    random_baselines = {}
+    with open(eval_meta_data, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            task_name = row['Eval Task']
+            random_baseline = row['Random baseline']
+            random_baselines[task_name] = float(random_baseline)
 
     # Evaluate each task
     results = {}
@@ -75,8 +102,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
         accuracy = evaluate_task(model, tokenizer, data, device, task_meta)
 
         results[label] = accuracy
-        row = eval_metadata[eval_metadata["Eval Task"] == label]
-        random_baseline = row["Random baseline"].values[0]
+        random_baseline = random_baselines[label]
         centered_result = (accuracy - 0.01 * random_baseline) / (1.0 - 0.01 * random_baseline)
         centered_results[label] = centered_result
         end_time = time.time()

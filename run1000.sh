@@ -19,13 +19,6 @@ python -m nanochat.report reset
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
-EVAL_BUNDLE_URL=https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip
-if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
-    curl -L -o eval_bundle.zip $EVAL_BUNDLE_URL
-    unzip -q eval_bundle.zip
-    rm eval_bundle.zip
-    mv eval_bundle $NANOCHAT_BASE_DIR
-fi
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
 # train tokenizer on ~4B characters and kick off download of the rest for pretraining

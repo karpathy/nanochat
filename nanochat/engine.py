@@ -37,7 +37,7 @@ def eval_with_timeout(formula, max_time=3):
         with timeout(max_time, formula):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
-                return eval(formula)
+                return eval(formula, {"__builtins__": {}}, {})
     except Exception as e:
         signal.alarm(0)
         # print(f"Warning: Failed to eval {formula}, exception: {e}") # it's ok ignore wrong calculator usage
@@ -109,7 +109,7 @@ class KVCache:
         for ix, (dim1, dim2) in enumerate(zip(self.kv_shape, other.kv_shape)):
             if ix in [0, 1, 3, 5]:
                 # num_layers, batch_size, num_heads, head_dim must match
-                assert dim1 == dim2, f"Batch dim mismatch: {dim1} != {dim2}"
+                assert dim1 == dim2, f"Dim {ix} mismatch: {dim1} != {dim2}"
             elif ix == 2:
                 # batch_size can be expanded
                 assert dim1 == dim2 or dim2 == 1, f"Batch dim mismatch: {dim1} != {dim2}"
