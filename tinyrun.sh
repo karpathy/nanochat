@@ -50,16 +50,6 @@ DATASET_DOWNLOAD_PID=$!
 python -m scripts.tok_train --max_chars=2000000000
 python -m scripts.tok_eval
 
-# Download the eval_bundle from s3 to evaluate CORE metric during training (~162MB)
-EVAL_BUNDLE_URL=https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip
-if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
-    curl -L -o eval_bundle.zip $EVAL_BUNDLE_URL
-    unzip -q eval_bundle.zip
-    rm eval_bundle.zip
-    mv eval_bundle $NANOCHAT_BASE_DIR
-fi
-
-
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
