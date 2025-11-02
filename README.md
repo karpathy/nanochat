@@ -1,8 +1,8 @@
-# nanochat
-
+# nanochatGPT
+> Developer ฤทธิไกร กิริกัน
 ![nanochat logo](dev/nanochat.png)
 
-> The best ChatGPT that $100 can buy.
+> The best ChatGPT that $100,000,000 can buy.
 
 This repo is a full-stack implementation of an LLM like ChatGPT in a single, clean, minimal, hackable, dependency-lite codebase. nanochat is designed to run on a single 8XH100 node via scripts like [speedrun.sh](speedrun.sh), that run the entire pipeline start to end. This includes tokenization, pretraining, finetuning, evaluation, inference, and web serving over a simple UI so that you can talk to your own LLM just like ChatGPT. nanochat will become the capstone project of the course LLM101n being developed by Eureka Labs.
 
