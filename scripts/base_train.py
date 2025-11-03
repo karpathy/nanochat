@@ -112,7 +112,9 @@ with torch.device("meta"):
 model.to_empty(device=device)
 model.init_weights()
 orig_model = model # original, uncompiled model, for saving raw model state_dict
-model = torch.compile(model, dynamic=False) # TODO: dynamic True/False think through
+eval_model = model
+eval_model = torch.compile(eval_model, fullgraph=True, dynamic=True)
+model = torch.compile(model, fullgraph=True, dynamic=False) # TODO: dynamic True/False think through
 num_params = sum(p.numel() for p in model.parameters())
 print0(f"Number of parameters: {num_params:,}")
 num_flops_per_token = model.estimate_flops()
@@ -206,8 +208,9 @@ for step in range(num_iterations + 1):
     if core_metric_every > 0 and (last_step or (step > 0 and step % core_metric_every == 0)):
         model.eval()
         with autocast_ctx:
-            results = evaluate_model(orig_model, tokenizer, device, max_per_task=core_metric_max_per_task)
-        print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
+            results = evaluate_model(eval_model, tokenizer, device, max_per_task=core_metric_max_per_task)
+        print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f} Eval time: {results['dt']:.4f}s")
+        
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -229,7 +232,7 @@ for step in range(num_iterations + 1):
             "My favorite color is",
             "If 5*x + 3 = 13, then x is",
         ]
-        engine = Engine(orig_model, tokenizer) # use orig_model to avoid recompilation
+        engine = Engine(eval_model, tokenizer) # use eval_model to avoid recompilation
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
             with autocast_ctx:

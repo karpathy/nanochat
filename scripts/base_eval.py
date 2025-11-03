@@ -75,6 +75,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     # Evaluate each task
     results = {}
     centered_results = {}
+    task_times = []
     for task in tasks:
         start_time = time.time()
         label = task['label']
@@ -106,13 +107,20 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
         centered_result = (accuracy - 0.01 * random_baseline) / (1.0 - 0.01 * random_baseline)
         centered_results[label] = centered_result
         end_time = time.time()
+        task_times.append(end_time - start_time)
         print0(f"accuracy: {accuracy:.4f} | centered: {centered_result:.4f} | time: {end_time - start_time:.2f}s")
 
     core_metric = sum(centered_results.values()) / len(centered_results)
+    total_time = sum(task_times)
+    print0(f"Task timing stats: total={total_time:.2f}s"
+           f"| avg={total_time/len(task_times):.2f}s |"
+           "+ min={min(task_times):.2f}s | max={max(task_times):.2f}s")
     out = {
         "results": results,
         "centered_results": centered_results,
-        "core_metric": core_metric
+        "core_metric": core_metric,
+        "dt": total_time
+        
     }
     return out
 
@@ -169,7 +177,8 @@ def main():
         model, tokenizer, meta = load_model("base", device, phase="eval")
         model_name = f"base_model (step {meta['step']})" # just for logging
         model_slug = f"base_model_{meta['step']:06d}" # for the output csv file
-
+    
+    model = torch.compile(model)
     # Evaluate the model
     with autocast_ctx:
         out = evaluate_model(model, tokenizer, device, max_per_task=args.max_per_task)
