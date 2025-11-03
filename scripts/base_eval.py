@@ -175,7 +175,7 @@ def main():
         model_name = f"base_model (step {meta['step']})" # just for logging
         model_slug = f"base_model_{meta['step']:06d}" # for the output csv file
     
-    model = torch.compile(model)
+    #model = torch.compile(model)
     # Evaluate the model
     with autocast_ctx:
         out = evaluate_model(model, tokenizer, device, max_per_task=args.max_per_task)
@@ -198,6 +198,7 @@ def main():
         # Print the content of the csv file to console too
         print0("="*80)
         print0(f"Model: {model_name}")
+        print0(f"Eval time: {out['dt']:.4f}s")
         print0("="*80)
         with open(output_csv_path, 'r') as f:
             print0(f.read())
