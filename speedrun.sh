@@ -16,7 +16,7 @@ export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # Number of processes per node for distributed training
-NPROC_PER_NODE=8
+NPROC_PER_NODE=4
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
@@ -95,6 +95,10 @@ torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval
 
 # -----------------------------------------------------------------------------
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
+
+# download 2.3MB of synthetic identity conversations to impart a personality to nanochat
+# see dev/gen_sft_data.py for details on how this data was prepared and to get a sense of how you can easily tune it
+curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
 # run midtraining and eval the model
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train -- --run=$WANDB_RUN
