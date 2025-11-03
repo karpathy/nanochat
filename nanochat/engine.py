@@ -246,14 +246,15 @@ class Engine:
             # Get sampled tokens - either from prefill or from forward pass
             if first_iteration:
                 # Use the tokens we already sampled from prefill
+                current_logits = logits # from the prefill step
                 sampled_tokens = [sampled_tokens[0]] * num_samples  # Broadcast first token to all rows
                 # TODO: we should sample a token for each row instead of broadcasting
                 first_iteration = False
             else:
                 # Forward the model and get the next token for each row
-                logits = self.model.forward(ids, kv_cache=kv_cache_decode)  # (B, T, vocab_size)
-                logits = logits[:, -1, :]  # (B, vocab_size) at last time step
-                next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
+                logits_all_steps = self.model.forward(ids, kv_cache=kv_cache_decode)  # (B, T, vocab_size)
+                current_logits = logits_all_steps[:, -1, :]  # (B, vocab_size) at last time step
+                next_ids = sample_next_token(current_logits, rng, temperature, top_k)  # (B, 1)
                 sampled_tokens = next_ids[:, 0].tolist()
 
             # Process each row: choose the next token, update state, optional tool use
@@ -288,8 +289,8 @@ class Engine:
                 elif state.in_python_block:
                     state.python_expr_tokens.append(next_token)
 
-            # Yield the token column
-            yield token_column, token_masks
+            # Yield the token column, masks, and the logits that produced the sampled token
+            yield token_column, token_masks, current_logits
             num_generated += 1
             # Prepare ids for next iteration
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
@@ -305,7 +306,7 @@ class Engine:
         results = [tokens.copy() for _ in range(num_samples)]
         masks = [[0] * len(tokens) for _ in range(num_samples)]
         completed = [False] * num_samples
-        for token_column, token_masks in self.generate(tokens, num_samples, **kwargs):
+        for token_column, token_masks, _ in self.generate(tokens, num_samples, **kwargs):
             for i, (token, mask) in enumerate(zip(token_column, token_masks)):
                 if not completed[i]:
                     if token == assistant_end or token == bos:
@@ -354,7 +355,7 @@ if __name__ == "__main__":
     stream = engine.generate(prompt_tokens, num_samples=1, **kwargs) # note: runs in fp32
     torch.cuda.synchronize()
     t0 = time.time()
-    for token_column, token_masks in stream:
+    for token_column, token_masks, _ in stream:
         token = token_column[0] # only print out the first row
         generated_tokens.append(token)
         chunk = tokenizer.decode([token])
