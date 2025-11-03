@@ -93,6 +93,28 @@ And a bit more about computing environments that will run nanochat:
 - If your GPU(s) have less than 80GB, you'll have to tune some of the hyperparameters or you will OOM / run out of VRAM. Look for `--device_batch_size` in the scripts and reduce it until things fit. E.g. from 32 (default) to 16, 8, 4, 2, or even 1. Less than that you'll have to know a bit more what you're doing and get more creative.
 - Most of the code is fairly vanilla PyTorch so it should run on anything that supports that - xpu, mps, or etc, but I haven't implemented this out of the box so it might take a bit of tinkering.
 
+### Adjusting for different GPU counts
+
+When working with a different number of GPUs (fewer or more), you need to adjust the `NPROC_PER_NODE` variable in the training scripts. This variable controls the number of processes spawned for distributed training (one per GPU). For example, in [speedrun.sh](speedrun.sh):
+
+```bash
+# Set this to match your number of GPUs
+NPROC_PER_NODE=4  # change to 2 for 2 GPUs, 8 for 8 GPUs, etc.
+```
+
+Or when running `torchrun` directly:
+
+```bash
+# For 4 GPUs:
+torchrun --standalone --nproc_per_node=4 -m scripts.base_train
+# For 2 GPUs:
+torchrun --standalone --nproc_per_node=2 -m scripts.base_train
+# For 8 GPUs:
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train
+```
+
+**Important**: The total batch size must be divisible by the number of GPUs. The training scripts calculate the effective batch size as `device_batch_size × number_of_gpus`. If you change the GPU count and encounter batch size errors, you may need to adjust `--device_batch_size` to ensure divisibility. For example, if using a total batch size configuration that expects 8 GPUs but you only have 4, you might need to double the `device_batch_size` to maintain the same effective total batch size (assuming you have enough VRAM).
+
 ## Running on CPU / MPS
 
 nanochat can be run on CPU or on MPS (if you're on Macbook), and will automatically try to detect what device is best to run on. You're not going to get too far without GPUs, but at least you'll be able to run the code paths and maybe train a tiny LLM with some patience. For an example of how to make all the run commands much smaller (feel free to tune!), you can refer to [dev/runcpu.sh](dev/runcpu.sh) file. You'll see that I'm essentially restricting all scripts to train smaller models, to run for shorter number of iterations, etc. This functionality is new, slightly gnarly (touched a lot of code), and was merged in this [CPU|MPS PR](https://github.com/karpathy/nanochat/pull/88) on Oct 21, 2025.
