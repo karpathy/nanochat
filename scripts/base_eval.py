@@ -175,7 +175,7 @@ def main():
         model_name = f"base_model (step {meta['step']})" # just for logging
         model_slug = f"base_model_{meta['step']:06d}" # for the output csv file
     
-    #model = torch.compile(model)
+    model = torch.compile(model)
     # Evaluate the model
     with autocast_ctx:
         out = evaluate_model(model, tokenizer, device, max_per_task=args.max_per_task)
