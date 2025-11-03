@@ -16,7 +16,7 @@ export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # Number of processes per node for distributed training
-NPROC_PER_NODE=4
+NPROC_PER_NODE=8
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv

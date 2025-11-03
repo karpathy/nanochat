@@ -95,25 +95,23 @@ And a bit more about computing environments that will run nanochat:
 
 ### Adjusting for different GPU counts
 
-When working with a different number of GPUs (fewer or more), you need to adjust the `NPROC_PER_NODE` variable in the training scripts. This variable controls the number of processes spawned for distributed training (one per GPU). For example, in [speedrun.sh](speedrun.sh):
+When working with a different number of GPUs (fewer or more), you need to adjust the `NPROC_PER_NODE` variable in speedrun.sh. This variable controls the number of worlds the training script expects. The default value is set to 8.
 
 ```bash
 # Set this to match your number of GPUs
 NPROC_PER_NODE=4  # change to 2 for 2 GPUs, 8 for 8 GPUs, etc.
 ```
 
-Or when running `torchrun` directly:
+If running `torchrun` directly:
 
 ```bash
 # For 4 GPUs:
 torchrun --standalone --nproc_per_node=4 -m scripts.base_train
 # For 2 GPUs:
 torchrun --standalone --nproc_per_node=2 -m scripts.base_train
-# For 8 GPUs:
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train
 ```
 
-**Important**: The total batch size must be divisible by the number of GPUs. The training scripts calculate the effective batch size as `device_batch_size × number_of_gpus`. If you change the GPU count and encounter batch size errors, you may need to adjust `--device_batch_size` to ensure divisibility. For example, if using a total batch size configuration that expects 8 GPUs but you only have 4, you might need to double the `device_batch_size` to maintain the same effective total batch size (assuming you have enough VRAM).
+**Important**: The total batch size must be divisible by the number of GPUs. The training scripts calculate the effective batch size as `device_batch_size × number_of_gpus`. If you change the GPU count and encounter batch size errors, you may need to adjust `--device_batch_size` to ensure divisibility. For example, if using a total batch size configuration that expects 8 GPUs but you only have 4, you might need to double the `device_batch_size` to maintain the same effective total batch size (assuming you have enough VRAM). 
 
 ## Running on CPU / MPS
 
