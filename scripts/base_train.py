@@ -202,8 +202,8 @@ for step in range(num_iterations + 1):
         model.train()
 
     # once in a while: estimate the CORE metric (all ranks participate)  
-    # use the eval-compiled model which as the training-compiled model
-    # has been specialized for a fixed input shape
+    # use the eval-compiled model as the training-compiled model has
+    #  been specialized for a fixed input shape
     results = {}
     if core_metric_every > 0 and (last_step or (step > 0 and step % core_metric_every == 0)):
         model.eval()
@@ -220,8 +220,8 @@ for step in range(num_iterations + 1):
         model.train()
 
     # once in a while: sample from the model (only on master process)
-    # use the eval-compiled model which as the training-compiled model
-    # has been specialized for a fixed input shape
+    # use the eval-compiled model as the training-compiled model has
+    # been specialized for a fixed input shape
     if master_process and (last_step or (step > 0 and step % sample_every == 0)):
         model.eval()
         prompts = [
