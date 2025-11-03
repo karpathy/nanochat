@@ -112,9 +112,6 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
 
     core_metric = sum(centered_results.values()) / len(centered_results)
     total_time = sum(task_times)
-    print0(f"Task timing stats: total={total_time:.2f}s"
-           f"| avg={total_time/len(task_times):.2f}s |"
-           "+ min={min(task_times):.2f}s | max={max(task_times):.2f}s")
     out = {
         "results": results,
         "centered_results": centered_results,
