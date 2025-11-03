@@ -29,6 +29,15 @@ Herald Korea Times
 **모든 쟁점에 대해 ‘무엇이 쟁점인지’, ‘누가 무엇을 주장하는지’, ‘사실은 무엇인지’**를 명확히 전달하는 데 집중합니다.
 """.strip()
 
+# Turkish text about Atatürk
+turkish_text = """Mustafa Kemal Atatürk[d] (1881,[e] Selanik - 10 Kasım 1938, İstanbul), Türk mareşal, devlet adamı, yazar, Türk Kurtuluş Savaşı'nın başkomutanı, Türkiye Cumhuriyeti'nin kurucusu ve ilk cumhurbaşkanıdır. Türkiye'yi laik, sanayileşen bir ulusa dönüştüren kapsamlı ilerici reformlar üstlenmiştir.[6] İdeolojik olarak sekülarist ve milliyetçi politikaları ve sosyo-politik teorileri Kemalizm olarak tanınmıştır.[6]
+
+I. Dünya Savaşı sırasında Osmanlı ordusunda görev yapan Atatürk, Çanakkale Cephesi'nde miralaylığa, Sina ve Filistin Cephesi'nde ise Yıldırım Ordular Grubu komutanlığına atandı. Savaşın sonunda, Osmanlı İmparatorluğu'nun yenilgisini izleyen Kurtuluş Savaşı ile simgelenen Anadolu Hareketi'ne öncülük ve önderlik etti. Türk Kurtuluş Savaşı sürecinde Ankara Hükûmeti'ni kurdu, Türk Orduları Başkomutanı olarak Sakarya Meydan Muharebesi'ndeki başarısından dolayı 19 Eylül 1921 tarihinde "gazi" sanını aldı ve mareşallik rütbesine yükseldi. Askerî ve siyasal eylemleriyle İtilaf Devletleri ve destekçilerine karşı yengi kazandı. Savaşın ardından Cumhuriyet Halk Partisini "Halk Fırkası" adıyla kurdu ve ilk genel başkanı oldu. 29 Ekim 1923'te cumhuriyetin ilan edilmesinin ardından cumhurbaşkanı seçildi. 1938'deki ölümüne dek dört dönem bu görevi yürütmüş olup günümüze kadar Türkiye'de en uzun süre cumhurbaşkanlığı yapmış kişidir.[7]
+
+Atatürk; çağdaş, ilerici ve laik bir ulus devlet kurmak için siyasal, ekonomik ve kültürel alanlarda sekülarist ve milliyetçi nitelikte yenilikler gerçekleştirdi. Yabancılara tanınan ekonomik ayrıcalıklar kaldırıldı ve onlara ait üretim araçları ve demir yolları millîleştirildi. Tevhîd-i Tedrîsât Kanunu ile eğitim, Türk hükûmetinin denetimine girdi. Seküler ve bilimsel eğitim esas alındı. Binlerce yeni okul yapıldı. İlköğretim ücretsiz ve zorunlu duruma getirildi. Yabancı okullar devlet denetimine alındı. Köylülerin sırtına yüklenen ağır vergiler azaltıldı. Erkeklerin serpuşlarında ve giysilerinde bazı değişiklikler yapıldı. Takvim, saat ve ölçülerde değişikliklere gidildi. Mecelle kaldırılarak yerine seküler Türk Kanunu Medenisi yürürlüğe konuldu. Kadınların sivil ve siyasal hakları pek çok Batı ülkesinden önce tanındı. Çok eşlilik yasaklandı. Kadınların tanıklığı ve miras hakkı, erkeklerinkiyle eşit duruma getirildi. Benzer olarak, dünyanın çoğu ülkesinden önce olarak Türkiye'de kadınlara ilkin yerel seçimlerde (1930), sonra genel seçimlerde (1934) seçme ve seçilme hakkı tanındı. Ceza ve borçlar hukukunda seküler yasalar yürürlüğe konuldu. Sanayi Teşvik Kanunu kabul edildi. Toprak reformu için çabalandı. Arap harfleri temelli Osmanlı alfabesinin yerine Latin harfleri temelli yeni Türk alfabesi kabul edildi. Halkı okuryazar kılmak için eğitim seferberliği başlatıldı. Üniversite Reformu gerçekleştirildi. Birinci Beş Yıllık Sanayi Planı yürürlüğe konuldu. Sınıf ve durum ayrımı gözeten lakap ve unvanlar kaldırıldı ve soyadları yürürlüğe konuldu. Bağdaşık ve birleşmiş bir ulus yaratılması için Türkleştirme siyaseti yürütüldü.
+""".strip()
+
+
 # Random piece of code
 code_text = r"""
 class BasicTokenizer(Tokenizer):
@@ -152,6 +161,7 @@ val_text = "\n".join(val_docs)
 all_text = [
     ("news", news_text),
     ("korean", korean_text),
+    ("turkish", turkish_text),
     ("code", code_text),
     ("math", math_text),
     ("science", science_text),
