@@ -36,7 +36,7 @@ model_tag = None # model tag to load the model from (base model or midtrained mo
 step = None # step to load the model from (base model or midtrained model)
 # compute/precision
 dtype = "bfloat16"
-device_batch_size = 4 # max to avoid OOM
+device_batch_size = 2 # max to avoid OOM
 # optimization
 num_epochs = 1
 max_iterations = -1 # override number of iterations (-1 = use num_epochs * num_iterations)
