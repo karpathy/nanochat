@@ -89,15 +89,16 @@ def get_dist_info():
     else:
         return False, 0, 0, 1
 
-def compute_init():
+def compute_init(device_type="cuda"): # cuda|cpu
     """Basic initialization that we keep doing over and over, so make common."""
 
     # CUDA is currently required
-    assert torch.cuda.is_available(), "CUDA is needed for a distributed run atm"
+    # assert torch.cuda.is_available(), "CUDA is needed for a distributed run atm"
 
     # Reproducibility
     torch.manual_seed(42)
-    torch.cuda.manual_seed(42)
+    if device_type == "cuda":
+        torch.cuda.manual_seed(42)
     # skipping full reproducibility for now, possibly investigate slowdown later
     # torch.use_deterministic_algorithms(True)
     # torch.backends.cudnn.deterministic = True
@@ -106,15 +107,15 @@ def compute_init():
     # Precision
     torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
 
-    # Distributed setup: Distributed Data Parallel (DDP), optional
+    # Distributed setup: Distributed Data Parallel (DDP), optional, and requires CUDA
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
-    if ddp:
+    if ddp and device_type == "cuda":
         device = torch.device("cuda", ddp_local_rank)
         torch.cuda.set_device(device) # make "cuda" default to this device
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
     else:
-        device = torch.device("cuda")
+        device = torch.device(device_type) # cuda|cpu
 
     if ddp_rank == 0:
         logger.info(f"Distributed world size: {ddp_world_size}")

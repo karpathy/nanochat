@@ -6,6 +6,45 @@
 
 This repo is a full-stack implementation of an LLM like ChatGPT in a single, clean, minimal, hackable, dependency-lite codebase. nanochat is designed to run on a single 8XH100 node via scripts like [speedrun.sh](speedrun.sh), that run the entire pipeline start to end. This includes tokenization, pretraining, finetuning, evaluation, inference, and web serving over a simple UI so that you can talk to your own LLM just like ChatGPT. nanochat will become the capstone project of the course LLM101n being developed by Eureka Labs.
 
+## Running on 24GB VRAM GPUs (3090/4090)
+
+**New!** If you have a consumer GPU with 24GB VRAM (like RTX 3090 or 4090), you can now train nanochat on a single GPU using the optimized [speedrun_1x3090.sh](speedrun_1x3090.sh) script:
+
+```bash
+bash speedrun_1x3090.sh
+```
+
+Changes in source code to fit within 24GB VRAM:
+- **Reduced batch sizes**: `device_batch_size` reduced from 32 → 4 in base training and midtraining, 4 → 2 in SFT
+- **Separate validation batch size**: `device_batch_size_val = 1` for memory-intensive validation passes
+- **Fixed throughput reporting**: Corrected tokens/sec calculation to account for gradient accumulation
+- **Streamlined sampling**: Model sampling only at final training step to save time and memory
+
+Training with a single 3090 will take approximately 55x longer than the 8XH100 setup (~220 hours instead of 4), but produces similar results thanks to automatic gradient accumulation that maintains the same effective `total_batch_size` of 524288 tokens.
+
+3090 merics:
+
+| Metric          | BASE     | MID      | SFT      | RL       |
+|-----------------|----------|----------|----------|----------|
+| CORE            | 0.1863   | -        | -        | -        |
+| ARC-Challenge   | -        | 0.3072   | 0.3055   | -        |
+| ARC-Easy        | -        | 0.3674   | 0.3927   | -        |
+| GSM8K           | -        | 0.0273   | 0.0538   | 0.0895   |
+| HumanEval       | -        | 0.0854   | 0.0732   | -        |
+| MMLU            | -        | 0.3145   | 0.3110   | -        |
+| ChatCORE        | -        | 0.0863   | 0.0945   | -        |
+
+[8*H100 metrics](https://github.com/karpathy/nanochat/discussions/1) by Andrej Karpathy:
+
+| Metric          | BASE     | MID      | SFT      | RL       |
+|-----------------|----------|----------|----------|----------|
+| CORE            | 0.2219   | -        | -        | -        |
+| ARC-Challenge   | -        | 0.2875   | 0.2807   | -        |
+| ARC-Easy        | -        | 0.3561   | 0.3876   | -        |
+| GSM8K           | -        | 0.0250   | 0.0455   | 0.0758   |
+| HumanEval       | -        | 0.0671   | 0.0854   | -        |
+| MMLU            | -        | 0.3111   | 0.3151   | -        |
+| ChatCORE        | -        | 0.0730   | 0.0884   | -        |
 ## Talk to it
 
 To get a sense of the endpoint of this repo, you can currently find [nanochat d32](https://github.com/karpathy/nanochat/discussions/8) hosted on [nanochat.karpathy.ai](https://nanochat.karpathy.ai/). "d32" means that this model has 32 layers in the Transformer neural network. This model has 1.9 billion parameters, it was trained on 38 billion tokens by simply running the single script [run1000.sh](run1000.sh), and the total cost of training was ~$800 (about 33 hours training time on 8XH100 GPU node). While today this is enough to outperform GPT-2 of 2019, it falls dramatically short of moden Large Language Models like GPT-5. When talking to these micro models, you'll see that they make a lot of mistakes, they are a little bit naive and silly and they hallucinate a ton, a bit like children. It's kind of amusing. But what makes nanochat unique is that it is fully yours - fully configurable, tweakable, hackable, and trained by you from start to end. To train and talk to your own, we turn to...

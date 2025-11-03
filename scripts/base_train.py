@@ -6,6 +6,9 @@ python base_train.py
 or distributed as:
 
 torchrun --nproc_per_node=8 base_train.py
+
+If you just want to see it run on CPU (you won't get far but it should run), try something like:
+python -m scripts.base_train --depth=4 --max_seq_len=512 --device_batch_size=1 --device_type=cpu --eval_tokens=512 --total_batch_size=512 --num_iterations=1000
 """
 
 import os
@@ -27,6 +30,8 @@ print_banner()
 # -----------------------------------------------------------------------------
 # User settings
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
+# Runtime
+device_type = "cuda" # cuda|cpu
 # Model architecture
 depth = 20 # the depth of the Transformer model to train, rest of the kwargs are derived
 max_seq_len = 2048 # max context length
@@ -58,9 +63,11 @@ user_config = {k: globals()[k] for k in config_keys} # will be useful for loggin
 # -----------------------------------------------------------------------------
 
 # Compute init
-ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
+ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16)
+synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
+get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
@@ -97,7 +104,7 @@ model_config_kwargs = dict(sequence_len=max_seq_len, vocab_size=vocab_size, n_la
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
     model = GPT(model_config)
-model.to_empty(device="cuda")
+model.to_empty(device=device)
 model.init_weights()
 orig_model = model # original, uncompiled model, for saving raw model state_dict
 model = torch.compile(model, dynamic=False) # TODO: dynamic True/False think through
@@ -134,8 +141,13 @@ adamw_optimizer, muon_optimizer = optimizers
 # Initialize the DataLoaders for train/val
 base_dir = get_base_dir()
 tokens_dir = os.path.join(base_dir, "tokenized_data")
+<<<<<<< HEAD
 train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train")
 build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size_val, max_seq_len, split="val")
+=======
+train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", device=device)
+build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)
+>>>>>>> 722da4f... trying to add basic cpu support, will try mps too
 x, y = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
@@ -254,7 +266,7 @@ for step in range(num_iterations + 1):
     # -------------------------------------------------------------------------
     # single training step
     # evaluate the gradient
-    torch.cuda.synchronize()
+    synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
@@ -277,7 +289,7 @@ for step in range(num_iterations + 1):
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
-    torch.cuda.synchronize()
+    synchronize()
     t1 = time.time()
     dt = t1 - t0
     # -------------------------------------------------------------------------
@@ -306,7 +318,7 @@ for step in range(num_iterations + 1):
         })
 
 # print a few more stats
-print0(f"Peak memory usage: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MiB")
+print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
@@ -332,7 +344,7 @@ get_report().log(section="Base model training", data=[
         "MFU %": f"{mfu:.2f}%",
         "Total training flops": f"{flops_so_far:e}",
         "Total training time": f"{total_training_time/60:.2f}m",
-        "Peak memory usage": f"{torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MiB",
+        "Peak memory usage": f"{get_max_memory() / 1024 / 1024:.2f}MiB",
     }
 ])
 
