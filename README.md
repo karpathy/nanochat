@@ -220,9 +220,9 @@ If you find nano.sh helpful in your research cite simply as:
 
 MIT
 
-## Running on Vertex AI Pipelines
+## Running on Vertex AI with Cloud Build
 
-This project can also be run on Vertex AI Pipelines, which allows for a more robust and scalable execution environment. The following steps will guide you through the process of setting up and running the nanochat pipeline on Vertex AI.
+This project can be run on Vertex AI Pipelines using Cloud Build to automate the Docker image creation process.
 
 ### Prerequisites
 
@@ -231,48 +231,27 @@ Before you begin, you will need the following:
 *   A Google Cloud Platform (GCP) project.
 *   A Google Cloud Storage (GCS) bucket.
 *   The `gcloud` command-line tool installed and configured.
-*   Docker installed and configured to push to Google Container Registry (GCR).
-
-### Building and Pushing the Docker Image
-
-The first step is to build the Docker image that will be used to run the pipeline components. This image contains all of the necessary dependencies, including Python, `uv`, Rust, and the `nanochat` source code.
-
-1.  **Set your GCP Project ID:**
-
-    ```bash
-    export GCP_PROJECT=$(gcloud config get-value project)
-    ```
-
-2.  **Authenticate with GCR:**
-
-    ```bash
-    gcloud auth configure-docker
-    ```
-
-3.  **Build the Docker image:**
-
-    ```bash
-    docker build -t gcr.io/${GCP_PROJECT}/nanochat:latest -f vertex_pipelines/Dockerfile .
-    ```
-
-4.  **Push the Docker image to GCR:**
-
-    ```bash
-    docker push gcr.io/${GCP_PROJECT}/nanochat:latest
-    ```
+*   The Cloud Build API enabled in your GCP project.
 
 ### Running the Pipeline
 
-Once the Docker image has been pushed to GCR, you can run the pipeline using the `vertex_pipelines/pipeline.py` script. This script will compile the pipeline and submit it to Vertex AI for execution.
+The `run_pipeline.sh` script automates the process of building the Docker image with Cloud Build and submitting the pipeline to Vertex AI.
 
-```bash
-python vertex_pipelines/pipeline.py \
-    --gcp-project ${GCP_PROJECT} \
-    --gcs-bucket gs://YOUR_GCS_BUCKET \
-    --pipeline-root gs://YOUR_GCS_BUCKET/pipeline-root \
-    --docker-image-uri gcr.io/${GCP_PROJECT}/nanochat:latest
-```
+1.  **Make the script executable:**
 
-Replace `gs://YOUR_GCS_BUCKET` with your GCS bucket. The `pipeline-root` is a path in your GCS bucket where the pipeline artifacts will be stored.
+    ```bash
+    chmod +x vertex_pipelines/run_pipeline.sh
+    ```
 
-The pipeline will then start running on Vertex AI, and you can monitor its progress in the GCP console.
+2.  **Run the script:**
+
+    ```bash
+    ./vertex_pipelines/run_pipeline.sh gs://YOUR_GCS_BUCKET
+    ```
+
+    Replace `gs://YOUR_GCS_BUCKET` with the path to your GCS bucket. The script will:
+    *   Submit a build to Google Cloud Build using the `vertex_pipelines/cloudbuild.yaml` configuration.
+    *   Once the build is complete, it will retrieve the URI of the newly created Docker image.
+    *   Submit the pipeline to Vertex AI, passing the image URI and GCS bucket path as parameters.
+
+You can monitor the progress of both the Cloud Build job and the Vertex AI Pipeline run in the GCP console.
