@@ -204,7 +204,7 @@ Current LLM policy: disclosure. When submitting a PR, please declare any parts t
 
 ## Cite
 
-If you find nanochat helpful in your research cite simply as:
+If you find nano.sh helpful in your research cite simply as:
 
 ```bibtex
 @misc{nanochat,
@@ -219,3 +219,60 @@ If you find nanochat helpful in your research cite simply as:
 ## License
 
 MIT
+
+## Running on Vertex AI Pipelines
+
+This project can also be run on Vertex AI Pipelines, which allows for a more robust and scalable execution environment. The following steps will guide you through the process of setting up and running the nanochat pipeline on Vertex AI.
+
+### Prerequisites
+
+Before you begin, you will need the following:
+
+*   A Google Cloud Platform (GCP) project.
+*   A Google Cloud Storage (GCS) bucket.
+*   The `gcloud` command-line tool installed and configured.
+*   Docker installed and configured to push to Google Container Registry (GCR).
+
+### Building and Pushing the Docker Image
+
+The first step is to build the Docker image that will be used to run the pipeline components. This image contains all of the necessary dependencies, including Python, `uv`, Rust, and the `nanochat` source code.
+
+1.  **Set your GCP Project ID:**
+
+    ```bash
+    export GCP_PROJECT=$(gcloud config get-value project)
+    ```
+
+2.  **Authenticate with GCR:**
+
+    ```bash
+    gcloud auth configure-docker
+    ```
+
+3.  **Build the Docker image:**
+
+    ```bash
+    docker build -t gcr.io/${GCP_PROJECT}/nanochat:latest -f vertex_pipelines/Dockerfile .
+    ```
+
+4.  **Push the Docker image to GCR:**
+
+    ```bash
+    docker push gcr.io/${GCP_PROJECT}/nanochat:latest
+    ```
+
+### Running the Pipeline
+
+Once the Docker image has been pushed to GCR, you can run the pipeline using the `vertex_pipelines/pipeline.py` script. This script will compile the pipeline and submit it to Vertex AI for execution.
+
+```bash
+python vertex_pipelines/pipeline.py \
+    --gcp-project ${GCP_PROJECT} \
+    --gcs-bucket gs://YOUR_GCS_BUCKET \
+    --pipeline-root gs://YOUR_GCS_BUCKET/pipeline-root \
+    --docker-image-uri gcr.io/${GCP_PROJECT}/nanochat:latest
+```
+
+Replace `gs://YOUR_GCS_BUCKET` with your GCS bucket. The `pipeline-root` is a path in your GCS bucket where the pipeline artifacts will be stored.
+
+The pipeline will then start running on Vertex AI, and you can monitor its progress in the GCP console.

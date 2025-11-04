@@ -7,6 +7,8 @@ import glob
 import json
 import logging
 import torch
+import io
+from google.cloud import storage
 
 from nanochat.common import get_base_dir
 from nanochat.gpt import GPT, GPTConfig
@@ -22,36 +24,88 @@ def log0(message):
 
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data):
     assert int(os.environ.get('RANK', 0)) == 0 # prevent footguns for now
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    # Save the model state (parameters)
-    model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
-    torch.save(model_data, model_path)
-    log0(f"Saved model file to: {model_path}")
-    # Save the optimizer state (useful for SFT or any other fine-tuning)
-    if optimizer_data is not None:
-        optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}.pt")
-        torch.save(optimizer_data, optimizer_path)
-        log0(f"Saved optimizer file to: {optimizer_path}")
-    # Save the metadata dict as json
-    meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
-    with open(meta_path, "w") as f:
-        json.dump(meta_data, f, indent=2)
-    log0(f"Saved metadata file to: {meta_path}")
+    if checkpoint_dir.startswith("gs://"):
+        storage_client = storage.Client()
+        bucket_name, prefix = checkpoint_dir[5:].split("/", 1)
+        bucket = storage_client.bucket(bucket_name)
+
+        # Save model data
+        model_blob = bucket.blob(f"{prefix}/model_{step:06d}.pt")
+        with io.BytesIO() as buffer:
+            torch.save(model_data, buffer)
+            buffer.seek(0)
+            model_blob.upload_from_file(buffer)
+        log0(f"Saved model file to: gs://{bucket_name}/{prefix}/model_{step:06d}.pt")
+
+        # Save optimizer data
+        if optimizer_data is not None:
+            optimizer_blob = bucket.blob(f"{prefix}/optim_{step:06d}.pt")
+            with io.BytesIO() as buffer:
+                torch.save(optimizer_data, buffer)
+                buffer.seek(0)
+                optimizer_blob.upload_from_file(buffer)
+            log0(f"Saved optimizer file to: gs://{bucket_name}/{prefix}/optim_{step:06d}.pt")
+
+        # Save metadata
+        meta_blob = bucket.blob(f"{prefix}/meta_{step:06d}.json")
+        meta_blob.upload_from_string(json.dumps(meta_data, indent=2))
+        log0(f"Saved metadata file to: gs://{bucket_name}/{prefix}/meta_{step:06d}.json")
+    else:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        # Save the model state (parameters)
+        model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
+        torch.save(model_data, model_path)
+        log0(f"Saved model file to: {model_path}")
+        # Save the optimizer state (useful for SFT or any other fine-tuning)
+        if optimizer_data is not None:
+            optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}.pt")
+            torch.save(optimizer_data, optimizer_path)
+            log0(f"Saved optimizer file to: {optimizer_path}")
+        # Save the metadata dict as json
+        meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
+        with open(meta_path, "w") as f:
+            json.dump(meta_data, f, indent=2)
+        log0(f"Saved metadata file to: {meta_path}")
 
 
 def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False):
-    # Load the model state
-    model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
-    model_data = torch.load(model_path, map_location=device)
-    # Load the optimizer state if requested
-    optimizer_data = None
-    if load_optimizer:
-        optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}.pt")
-        optimizer_data = torch.load(optimizer_path, map_location=device)
-    # Load the metadata
-    meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
-    with open(meta_path, "r") as f:
-        meta_data = json.load(f)
+    if checkpoint_dir.startswith("gs://"):
+        storage_client = storage.Client()
+        bucket_name, prefix = checkpoint_dir[5:].split("/", 1)
+        bucket = storage_client.bucket(bucket_name)
+
+        # Load model data
+        model_blob = bucket.blob(f"{prefix}/model_{step:06d}.pt")
+        with io.BytesIO() as buffer:
+            model_blob.download_to_file(buffer)
+            buffer.seek(0)
+            model_data = torch.load(buffer, map_location=device)
+
+        # Load optimizer data
+        optimizer_data = None
+        if load_optimizer:
+            optimizer_blob = bucket.blob(f"{prefix}/optim_{step:06d}.pt")
+            with io.BytesIO() as buffer:
+                optimizer_blob.download_to_file(buffer)
+                buffer.seek(0)
+                optimizer_data = torch.load(buffer, map_location=device)
+
+        # Load metadata
+        meta_blob = bucket.blob(f"{prefix}/meta_{step:06d}.json")
+        meta_data = json.loads(meta_blob.download_as_string())
+    else:
+        # Load the model state
+        model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
+        model_data = torch.load(model_path, map_location=device)
+        # Load the optimizer state if requested
+        optimizer_data = None
+        if load_optimizer:
+            optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}.pt")
+            optimizer_data = torch.load(optimizer_path, map_location=device)
+        # Load the metadata
+        meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
+        with open(meta_path, "r") as f:
+            meta_data = json.load(f)
     return model_data, optimizer_data, meta_data
 
 
@@ -95,8 +149,16 @@ def build_model(checkpoint_dir, step, device, phase):
 
 
 def find_largest_model(checkpoint_dir):
-    # attempt to guess the model tag: take the biggest model available
-    model_tags = [f for f in os.listdir(checkpoint_dir) if os.path.isdir(os.path.join(checkpoint_dir, f))]
+    if checkpoint_dir.startswith("gs://"):
+        storage_client = storage.Client()
+        bucket_name, prefix = checkpoint_dir[5:].split("/", 1)
+        bucket = storage_client.bucket(bucket_name)
+        blobs = bucket.list_blobs(prefix=prefix, delimiter='/')
+        model_tags = [b.name.split('/')[-2] for b in blobs.prefixes]
+    else:
+        # attempt to guess the model tag: take the biggest model available
+        model_tags = [f for f in os.listdir(checkpoint_dir) if os.path.isdir(os.path.join(checkpoint_dir, f))]
+
     if not model_tags:
         raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
     # 1) normally all model tags are of the form d<number>, try that first:
@@ -110,13 +172,22 @@ def find_largest_model(checkpoint_dir):
         candidates.sort(key=lambda x: x[0], reverse=True)
         return candidates[0][1]
     # 2) if that failed, take the most recently updated model:
-    model_tags.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)), reverse=True)
+    if not checkpoint_dir.startswith("gs://"):
+        model_tags.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)), reverse=True)
     return model_tags[0]
 
 
 def find_last_step(checkpoint_dir):
-    # Look into checkpoint_dir and find model_<step>.pt with the highest step
-    checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "model_*.pt"))
+    if checkpoint_dir.startswith("gs://"):
+        storage_client = storage.Client()
+        bucket_name, prefix = checkpoint_dir[5:].split("/", 1)
+        bucket = storage_client.bucket(bucket_name)
+        blobs = bucket.list_blobs(prefix=f"{prefix}/model_")
+        checkpoint_files = [blob.name for blob in blobs]
+    else:
+        # Look into checkpoint_dir and find model_<step>.pt with the highest step
+        checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "model_*.pt"))
+
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
     last_step = int(max(os.path.basename(f).split("_")[-1].split(".")[0] for f in checkpoint_files))

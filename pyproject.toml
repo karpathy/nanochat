@@ -16,6 +16,9 @@ dependencies = [
     "torch>=2.8.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
+    "google-cloud-storage>=2.10.0",
+    "kfp>=2.0.0",
+    "google-cloud-aiplatform>=1.25.0",
 ]
 
 [build-system]

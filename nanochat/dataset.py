@@ -13,6 +13,7 @@ import time
 import requests
 import pyarrow.parquet as pq
 from multiprocessing import Pool
+from google.cloud import storage
 
 from nanochat.common import get_base_dir
 
@@ -24,8 +25,7 @@ BASE_URL = "https://huggingface.co/datasets/karpathy/fineweb-edu-100b-shuffle/re
 MAX_SHARD = 1822 # the last datashard is shard_01822.parquet
 index_to_filename = lambda index: f"shard_{index:05d}.parquet" # format of the filenames
 base_dir = get_base_dir()
-DATA_DIR = os.path.join(base_dir, "base_data")
-os.makedirs(DATA_DIR, exist_ok=True)
+DATA_DIR = os.environ.get("NANOCHAT_DATA_DIR", os.path.join(base_dir, "base_data"))
 
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
@@ -33,12 +33,24 @@ os.makedirs(DATA_DIR, exist_ok=True)
 def list_parquet_files(data_dir=None):
     """ Looks into a data dir and returns full paths to all parquet files. """
     data_dir = DATA_DIR if data_dir is None else data_dir
-    parquet_files = sorted([
-        f for f in os.listdir(data_dir)
-        if f.endswith('.parquet') and not f.endswith('.tmp')
-    ])
-    parquet_paths = [os.path.join(data_dir, f) for f in parquet_files]
-    return parquet_paths
+    if data_dir.startswith("gs://"):
+        storage_client = storage.Client()
+        bucket_name, prefix = data_dir[5:].split("/", 1)
+        bucket = storage_client.bucket(bucket_name)
+        blobs = bucket.list_blobs(prefix=prefix)
+        parquet_files = sorted([
+            f"gs://{bucket_name}/{blob.name}" for blob in blobs
+            if blob.name.endswith('.parquet') and not blob.name.endswith('.tmp')
+        ])
+        return parquet_files
+    else:
+        os.makedirs(data_dir, exist_ok=True)
+        parquet_files = sorted([
+            f for f in os.listdir(data_dir)
+            if f.endswith('.parquet') and not f.endswith('.tmp')
+        ])
+        parquet_paths = [os.path.join(data_dir, f) for f in parquet_files]
+        return parquet_paths
 
 def parquets_iter_batched(split, start=0, step=1):
     """
@@ -59,13 +71,23 @@ def parquets_iter_batched(split, start=0, step=1):
 # -----------------------------------------------------------------------------
 def download_single_file(index):
     """ Downloads a single file index, with some backoff """
-
-    # Construct the local filepath for this file and skip if it already exists
     filename = index_to_filename(index)
-    filepath = os.path.join(DATA_DIR, filename)
-    if os.path.exists(filepath):
-        print(f"Skipping {filepath} (already exists)")
-        return True
+
+    if DATA_DIR.startswith("gs://"):
+        storage_client = storage.Client()
+        bucket_name, prefix = DATA_DIR[5:].split("/", 1)
+        bucket = storage_client.bucket(bucket_name)
+        blob_name = os.path.join(prefix, filename)
+        blob = bucket.blob(blob_name)
+
+        if blob.exists():
+            print(f"Skipping {filename} (already exists in GCS)")
+            return True
+    else:
+        filepath = os.path.join(DATA_DIR, filename)
+        if os.path.exists(filepath):
+            print(f"Skipping {filepath} (already exists)")
+            return True
 
     # Construct the remote URL for this file
     url = f"{BASE_URL}/{filename}"
@@ -77,26 +99,37 @@ def download_single_file(index):
         try:
             response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
-            # Write to temporary file first
-            temp_path = filepath + f".tmp"
-            with open(temp_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
-                    if chunk:
-                        f.write(chunk)
-            # Move temp file to final location
-            os.rename(temp_path, filepath)
-            print(f"Successfully downloaded {filename}")
+
+            if DATA_DIR.startswith("gs://"):
+                storage_client = storage.Client()
+                bucket_name, prefix = DATA_DIR[5:].split("/", 1)
+                bucket = storage_client.bucket(bucket_name)
+                blob_name = os.path.join(prefix, filename)
+                blob = bucket.blob(blob_name)
+                blob.upload_from_string(response.content)
+            else:
+                # Write to temporary file first
+                temp_path = filepath + f".tmp"
+                with open(temp_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
+                        if chunk:
+                            f.write(chunk)
+                # Move temp file to final location
+                os.rename(temp_path, filepath)
+
+            print(f"Successfully downloaded and stored {filename}")
             return True
 
         except (requests.RequestException, IOError) as e:
             print(f"Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
             # Clean up any partial files
-            for path in [filepath + f".tmp", filepath]:
-                if os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except:
-                        pass
+            if not DATA_DIR.startswith("gs://"):
+                for path in [filepath + f".tmp", filepath]:
+                    if os.path.exists(path):
+                        try:
+                            os.remove(path)
+                        except:
+                            pass
             # Try a few times with exponential backoff: 2^attempt seconds
             if attempt < max_attempts:
                 wait_time = 2 ** attempt
