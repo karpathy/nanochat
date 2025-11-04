@@ -17,7 +17,7 @@ COPY . .
 RUN /root/.local/bin/uv sync --extra gpu
 
 # Build the rustbpe tokenizer.
-RUN /root/.local/bin/uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+RUN /root/.local/bin/uv run maturin develop --release --manifest-path rustbpe/Cargo.toml --uv
 
 # Set the entrypoint.
 ENTRYPOINT ["python"]
