@@ -219,9 +219,7 @@ class Engine:
 
             # Get sampled tokens - either from prefill or from forward pass
             if first_iteration:
-                # Use the tokens we already sampled from prefill
-                sampled_tokens = [sampled_tokens[0]] * num_samples  # Broadcast first token to all rows
-                # TODO: we should sample a token for each row instead of broadcasting
+                # sampled_tokens already contains num_samples independently sampled tokens
                 first_iteration = False
             else:
                 # Forward the model and get the next token for each row

@@ -40,6 +40,7 @@ device_batch_size = None # per-device batch size (set to not OOM), None = auto-d
 auto_batch_size = True # whether to auto-discover optimal batch size
 batch_size_margin = 0.85 # safety margin for auto-discovered batch size
 batch_size_cache = True # whether to cache auto-discovered batch size
+max_seq_len = 2048 # maximum sequence length for fixed padding (enables torch.compile)
 # optimization
 num_epochs = 1
 max_iterations = -1 # override number of iterations (-1 = use num_epochs * num_iterations)
@@ -104,8 +105,8 @@ elif device_batch_size is None:
     print0(f"Auto-discovery disabled, using default device_batch_size={device_batch_size}")
 
 orig_model = model # original, uncompiled model
-# model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs
-engine = Engine(model, tokenizer) # will be used for inline model evaluation only
+model = torch.compile(model, dynamic=False) # enabled with fixed-length padding
+engine = Engine(orig_model, tokenizer) # use uncompiled model for engine (variable-length eval)
 
 # -----------------------------------------------------------------------------
 # Task data mixture we'll train on
@@ -126,7 +127,7 @@ def sft_data_generator(dataset, batch_size):
     # prepares a list of tokenized conversations into a batch and yields
     def collate_and_yield(batch):
         nrows = len(batch)
-        ncols = max(len(ids) for ids, mask in batch) - 1 # seq of n creates inputs/targets of n-1
+        ncols = max_seq_len - 1 # fixed length for torch.compile (seq of n creates inputs/targets of n-1)
         inputs = torch.full((nrows, ncols), pad_token_id, dtype=torch.long)
         targets = torch.full((nrows, ncols), -1, dtype=torch.long) # -1 is ignore index
         for i, (ids, mask) in enumerate(batch):
@@ -199,13 +200,13 @@ for step in range(num_iterations):
 
     # evaluate the validation loss
     if last_step or step % eval_every == 0:
-        model.eval()
+        orig_model.eval()
         val_iter = iter(build_val_loader())
         losses = []
         for _ in range(eval_steps):
             val_inputs, val_targets = next(val_iter)
             with torch.no_grad(), autocast_ctx:
-                loss = model(val_inputs, val_targets)
+                loss = orig_model(val_inputs, val_targets)
             losses.append(loss)
         val_loss = torch.stack(losses).mean() # average over eval_steps
         if ddp:
@@ -216,22 +217,24 @@ for step in range(num_iterations):
             "step": step,
             "val_loss": val_loss,
         })
+        orig_model.train()
         model.train()
 
     # evlauate accuracy of the multiple choice tasks (which are quick to run)
     if last_step or (step > 0 and step % eval_metrics_every == 0):
-        model.eval()
+        orig_model.eval()
         metrics = {}
         with torch.no_grad(), autocast_ctx:
             # note that because these are inside no_grad, we can usually afford to at least ~2X the batch size
-            metrics["mmlu_acc"] = run_chat_eval("MMLU", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
-            metrics["arc_easy_acc"] = run_chat_eval("ARC-Easy", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
+            metrics["mmlu_acc"] = run_chat_eval("MMLU", orig_model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
+            metrics["arc_easy_acc"] = run_chat_eval("ARC-Easy", orig_model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
         metrics_str = ', '.join(f'{k}: {v:.6f}' for k, v in metrics.items())
         print0(f"Step {step:05d} | {metrics_str}")
         wandb_run.log({
             "step": step,
             **metrics,
         })
+        orig_model.train()
         model.train()
 
     if last_step:
@@ -276,14 +279,14 @@ for step in range(num_iterations):
 # Save the model at the end of the run
 if master_process:
     base_dir = get_base_dir()
-    depth = model.config.n_layer
+    depth = orig_model.config.n_layer
     model_tag = f"d{depth}" # base the model tag on the depth of the base model
     checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", model_tag)
-    model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
+    model_config_kwargs = orig_model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
     save_checkpoint(
         checkpoint_dir,
         step,
-        model.state_dict(),
+        orig_model.state_dict(),
         None, # note: we don't bother to save the optimizer state
         {
             "step": step,

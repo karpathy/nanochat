@@ -22,6 +22,7 @@ import torch.nn.functional as F
 from nanochat.common import get_dist_info, print0
 from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
+from nanochat.engine import KVCache
 
 @dataclass
 class GPTConfig:
@@ -304,10 +305,44 @@ class GPT(nn.Module):
         if temperature > 0:
             rng = torch.Generator(device=device)
             rng.manual_seed(seed)
-        ids = torch.tensor([tokens], dtype=torch.long, device=device) # add batch dim
-        for _ in range(max_tokens):
-            logits = self.forward(ids) # (B, T, vocab_size)
-            logits = logits[:, -1, :] # (B, vocab_size)
+
+        # Initialize KV cache
+        kv_length_hint = len(tokens) + max_tokens
+        kv_cache = KVCache(
+            batch_size=1,
+            num_heads=self.config.n_kv_head,
+            seq_len=kv_length_hint,
+            head_dim=self.config.n_embd // self.config.n_head,
+            num_layers=self.config.n_layer
+        )
+
+        # Prefill phase: process the prompt
+        ids = torch.tensor([tokens], dtype=torch.long, device=device)
+        logits = self.forward(ids, kv_cache=kv_cache)
+        logits = logits[:, -1, :]
+
+        # Sample first token
+        if top_k is not None:
+            v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+            logits[logits < v[:, [-1]]] = -float('Inf')
+        if temperature > 0:
+            logits = logits / temperature
+            probs = F.softmax(logits, dim=-1)
+            next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
+        else:
+            next_ids = torch.argmax(logits, dim=-1, keepdim=True)
+
+        # Yield first token
+        token = next_ids.item()
+        yield token
+
+        # Generation loop: process one token at a time with KV cache
+        for _ in range(max_tokens - 1):
+            # Forward pass with only the new token
+            logits = self.forward(next_ids, kv_cache=kv_cache)
+            logits = logits[:, -1, :]
+
+            # Sample next token
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float('Inf')
@@ -317,6 +352,6 @@ class GPT(nn.Module):
                 next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
             else:
                 next_ids = torch.argmax(logits, dim=-1, keepdim=True)
-            ids = torch.cat((ids, next_ids), dim=1)
+
             token = next_ids.item()
             yield token
