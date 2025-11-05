@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 rustbpe/target/
 dev-ignore/
+
+# Test results
+tests/results/*.log
+tests/results/*.json
+!tests/results/.gitkeep

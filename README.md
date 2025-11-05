@@ -111,11 +111,30 @@ Alternatively, I recommend using [DeepWiki](https://deepwiki.com/) from Devin/Co
 
 ## Tests
 
-I haven't invested too much here but some tests exist, especially for the tokenizer. Run e.g. as:
+nanochat includes comprehensive testing for both core functionality and auto-discovery features:
+
+### Tokenizer Tests
 
 ```bash
 python -m pytest tests/test_rustbpe.py -v -s
 ```
+
+### Auto-Discovery Tests
+
+The auto-discovery functionality has extensive unit and integration tests:
+
+```bash
+# Run unit tests (fast, ~10 seconds, no GPU required)
+bash tests/run_unit_tests.sh
+
+# Run integration tests (requires GPU, ~15-30 minutes)
+bash tests/run_integration_tests.sh
+
+# Run full test suite including long stability tests (~1-2 hours)
+RUN_LONG_TESTS=1 bash tests/run_integration_tests.sh
+```
+
+For more details on the test suite, see [tests/README.md](tests/README.md).
 
 ## Contributing
 
