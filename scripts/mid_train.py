@@ -34,11 +34,7 @@ model_tag = None # model tag to load the model from (base model or midtrained mo
 step = None # step to load the model from (base model or midtrained model)
 dtype = "bfloat16"
 max_seq_len = 2048
-# Auto batch size discovery
-auto_batch_size = True       # Enable/disable auto-discovery
-batch_size_margin = 0.85     # Safety margin (85% of max)
-batch_size_cache = False     # Enable result caching
-device_batch_size = None     # If None, auto-discover; if set, use that value
+device_batch_size = 32
 unembedding_lr = 0.004
 embedding_lr = 0.2
 matrix_lr = 0.02
@@ -70,6 +66,18 @@ if pretrain_batch_size is not None and device_batch_size > pretrain_batch_size:
     print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device_batch_size to this script?")
 orig_model = model
 model = torch.compile(model, dynamic=False)
+
+# Create batch sample function for auto-discovery
+vocab_size = tokenizer.get_vocab_size()
+def create_batch_sample_fn(max_seq_len, vocab_size, device):
+    def sample_fn(batch_size, seq_len):
+        inputs = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
+        targets = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
+        return inputs, targets
+    return sample_fn
+
+batch_sample_fn = create_batch_sample_fn(max_seq_len, vocab_size, device)
+
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration for a single rank

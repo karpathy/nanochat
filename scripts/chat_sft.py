@@ -36,11 +36,7 @@ model_tag = None # model tag to load the model from (base model or midtrained mo
 step = None # step to load the model from (base model or midtrained model)
 # compute/precision
 dtype = "bfloat16"
-# Auto batch size discovery
-auto_batch_size = True       # Enable/disable auto-discovery
-batch_size_margin = 0.85     # Safety margin (85% of max)
-batch_size_cache = False     # Enable result caching
-device_batch_size = None     # If None, auto-discover; if set, use that value
+device_batch_size = 4 # max to avoid OOM
 # optimization
 num_epochs = 1
 max_iterations = -1 # override number of iterations (-1 = use num_epochs * num_iterations)
@@ -72,6 +68,19 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sf
 
 # Load the model and tokenizer
 model, tokenizer, meta = load_model(source, device, phase="train", model_tag=model_tag, step=step)
+
+# Create batch sample function for auto-discovery
+max_seq_len = model.config.sequence_len
+def create_batch_sample_fn(max_seq_len, vocab_size, device):
+    def sample_fn(batch_size, seq_len):
+        # Use max_seq_len (worst case for variable-length sequences)
+        inputs = torch.randint(0, vocab_size, (batch_size, max_seq_len), device=device)
+        targets = torch.full((batch_size, max_seq_len), -1, dtype=torch.long, device=device)
+        return inputs, targets
+    return sample_fn
+
+batch_sample_fn = create_batch_sample_fn(max_seq_len, model.config.vocab_size, device)
+
 orig_model = model # original, uncompiled model
 # model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs
 engine = Engine(model, tokenizer) # will be used for inline model evaluation only
