@@ -19,8 +19,9 @@ from contextlib import nullcontext
 
 import pandas as pd
 import torch
+import wandb
 
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type
+from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, DummyWandb
 from nanochat.tokenizer import HuggingFaceTokenizer
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
@@ -123,12 +124,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--hf-path', type=str, default=None, help='HuggingFace model path to evaluate')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per task to evaluate (-1 = disable)')
+    parser.add_argument('--model-step', type=int, default=None, help='Checkpoint step to evaluate when using local models')
     args = parser.parse_args()
 
     # distributed / precision setup
     device_type = autodetect_device_type()
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
     autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+    wandb_run = DummyWandb()
+    use_wandb = bool(os.environ.get("WANDB_RUN_ID")) and args.hf_path is None and ddp_rank == 0
 
     # Load model and tokenizer from command line or from file system
     if args.hf_path is not None:
@@ -140,24 +144,32 @@ def main():
         model_slug = hf_path.replace("/", "-") # for the output csv file
     else:
         # load a local model from the file system
-        model, tokenizer, meta = load_model("base", device, phase="eval")
+        model, tokenizer, meta = load_model("base", device, phase="eval", step=args.model_step)
         model_name = f"base_model (step {meta['step']})" # just for logging
         model_slug = f"base_model_{meta['step']:06d}" # for the output csv file
+        if use_wandb:
+            wandb_kwargs = {
+                "project": os.environ.get("WANDB_PROJECT", "nanochat"),
+                "name": os.environ.get("WANDB_EVAL_RUN", model_name),
+                "id": os.environ.get("WANDB_RUN_ID"),
+                "resume": "allow",
+                "reinit": True,
+            }
+            wandb_kwargs = {k: v for k, v in wandb_kwargs.items() if v is not None}
+            wandb_run = wandb.init(**wandb_kwargs)
 
     # Evaluate the model
     with autocast_ctx:
         out = evaluate_model(model, tokenizer, device, max_per_task=args.max_per_task)
 
     # Write out the results to a csv file
-    core_metric = None
-    centered_results = {}
+    results = out["results"]
+    centered_results = out["centered_results"]
+    core_metric = out["core_metric"]
     if ddp_rank == 0:
         base_dir = get_base_dir()
         output_csv_path = os.path.join(base_dir, "base_eval", f"{model_slug}.csv")
         os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
-        results = out["results"]
-        centered_results = out["centered_results"]
-        core_metric = out["core_metric"]
         with open(output_csv_path, 'w') as f:
             f.write(f"{'Task':<35}, {'Accuracy':<10}, {'Centered':<10}\n")
             for label in results:
@@ -179,6 +191,15 @@ def main():
         },
         centered_results, # the full table
     ])
+
+    if use_wandb:
+        wandb_payload = {"core/metric": core_metric}
+        wandb_payload.update({f"core/{k}": v for k, v in centered_results.items()})
+        wandb_payload.update({f"core_raw/{k}": v for k, v in results.items()})
+        for key, value in wandb_payload.items():
+            wandb_run.summary[key] = value
+        wandb_run.log(wandb_payload, step=meta["step"])
+        wandb_run.finish()
 
     compute_cleanup()
 

@@ -55,10 +55,21 @@ eval_every = 100
 eval_steps = 100
 eval_metrics_every = 200
 eval_metrics_max_problems = 1024
+checkpoint_every_steps = 0 # save intermediate checkpoints every N optimization steps (0 = disable)
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
+
+# Normalize evaluation knobs: <=0 disables inline evaluation
+if eval_every <= 0:
+    eval_every = None
+if eval_steps <= 0:
+    eval_steps = 0
+if eval_metrics_every <= 0:
+    eval_metrics_every = None
+if eval_metrics_max_problems <= 0:
+    eval_metrics_max_problems = 0
 # -----------------------------------------------------------------------------
 
 # Compute init
@@ -70,13 +81,27 @@ autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if dev
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sft", name=run, config=user_config, save_code=True)
+if use_dummy_wandb:
+    wandb_run = DummyWandb()
+else:
+    wandb_kwargs = {
+        "project": os.environ.get("WANDB_PROJECT", "nanochat-sft"),
+        "name": run,
+        "config": user_config,
+        "save_code": True,
+        "reinit": True,
+    }
+    wandb_id = os.environ.get("WANDB_RUN_ID")
+    if wandb_id:
+        wandb_kwargs.update({"id": wandb_id, "resume": "allow"})
+    wandb_run = wandb.init(**wandb_kwargs)
 
 # Load the model and tokenizer
 model, tokenizer, meta = load_model(source, device, phase="train", model_tag=model_tag, step=step)
 orig_model = model # original, uncompiled model
 # model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs
 engine = Engine(model, tokenizer) # will be used for inline model evaluation only
+model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
 
 # -----------------------------------------------------------------------------
 # Task data mixture we'll train on
@@ -142,6 +167,14 @@ if num_iterations == -1:
 train_loader = sft_data_generator(train_ds, batch_size=device_batch_size)
 build_val_loader = lambda: sft_data_generator(val_ds, batch_size=device_batch_size)
 
+sequences_per_step = target_examples_per_step
+checkpoint_every_steps = int(checkpoint_every_steps)
+checkpoint_enabled = checkpoint_every_steps > 0
+
+base_dir = get_base_dir()
+checkpoint_dirname = model_tag if model_tag else f"d{model.config.n_layer}"
+checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", checkpoint_dirname)
+
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer
 
@@ -168,11 +201,34 @@ def get_lr_multiplier(it):
 # Go!
 step = 0
 train_iter = iter(train_loader)
+total_tokens_seen = 0
+total_sequences_seen = 0
+last_val_loss = None
+last_eval_metrics = {}
+
+def save_sft_checkpoint(step_idx):
+    meta = {
+        "step": step_idx,
+        "val_loss": last_val_loss,
+        **last_eval_metrics,
+        "model_config": model_config_kwargs,
+        "total_tokens_seen": total_tokens_seen,
+        "total_sequences_seen": total_sequences_seen,
+    }
+    save_checkpoint(
+        checkpoint_dir,
+        step_idx,
+        model.state_dict(),
+        None,
+        meta,
+    )
+
 for step in range(num_iterations):
     last_step = step == num_iterations - 1
 
-    # evaluate the validation loss
-    if last_step or step % eval_every == 0:
+    # evaluate the validation loss (if enabled)
+    run_val = eval_every is not None and eval_steps > 0 and (last_step or step % eval_every == 0)
+    if run_val:
         model.eval()
         val_iter = iter(build_val_loader())
         losses = []
@@ -186,14 +242,20 @@ for step in range(num_iterations):
             dist.all_reduce(val_loss, op=dist.ReduceOp.AVG) # average over ranks
         val_loss = val_loss.item()
         print0(f"Step {step:05d} | Validation loss: {val_loss:.6f}")
+        last_val_loss = val_loss
         wandb_run.log({
             "step": step,
             "val_loss": val_loss,
+            "train/total_tokens": total_tokens_seen,
+            "train/total_sequences": total_sequences_seen,
         })
         model.train()
 
-    # evlauate accuracy of the multiple choice tasks (which are quick to run)
-    if last_step or (step > 0 and step % eval_metrics_every == 0):
+    # evaluate accuracy of the multiple choice tasks (if enabled)
+    run_metrics = eval_metrics_every is not None and eval_metrics_max_problems > 0 and (
+        last_step or (step > 0 and step % eval_metrics_every == 0)
+    )
+    if run_metrics:
         model.eval()
         metrics = {}
         with torch.no_grad(), autocast_ctx:
@@ -202,9 +264,12 @@ for step in range(num_iterations):
             metrics["arc_easy_acc"] = run_chat_eval("ARC-Easy", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=eval_metrics_max_problems)
         metrics_str = ', '.join(f'{k}: {v:.6f}' for k, v in metrics.items())
         print0(f"Step {step:05d} | {metrics_str}")
+        last_eval_metrics = metrics.copy()
         wandb_run.log({
             "step": step,
             **metrics,
+            "train/total_tokens": total_tokens_seen,
+            "train/total_sequences": total_sequences_seen,
         })
         model.train()
 
@@ -238,34 +303,25 @@ for step in range(num_iterations):
     # logging
     train_loss_item = train_loss.item()
     num_tokens_item = num_tokens.item()
+    total_tokens_seen += num_tokens_item
+    total_sequences_seen += sequences_per_step
+    current_step = step + 1
+    if master_process and checkpoint_enabled and not last_step and current_step % checkpoint_every_steps == 0:
+        save_sft_checkpoint(current_step)
     print0(f"Step {step:05d}/{num_iterations:05d} | Training loss: {train_loss_item:.6f}| lrm: {lrm:.6f}| num_tokens: {num_tokens_item:,}")
     wandb_run.log({
         "step": step,
         "lrm": lrm,
         "train_loss": train_loss_item,
         "num_tokens": num_tokens_item,
+        "train/total_tokens": total_tokens_seen,
+        "train/total_sequences": total_sequences_seen,
     })
     step += 1
 
 # Save the model at the end of the run
 if master_process:
-    base_dir = get_base_dir()
-    depth = model.config.n_layer
-    model_tag = f"d{depth}" # base the model tag on the depth of the base model
-    checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", model_tag)
-    model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
-    save_checkpoint(
-        checkpoint_dir,
-        step,
-        model.state_dict(),
-        None, # note: we don't bother to save the optimizer state
-        {
-            "step": step,
-            "val_loss": val_loss,
-            **metrics,
-            "model_config": model_config_kwargs,
-        }
-    )
+    save_sft_checkpoint(step)
     print(f"✅ Saved model checkpoint to {checkpoint_dir}")
 
 # Log to report
@@ -276,7 +332,9 @@ get_report().log(section="Chat SFT", data=[
         "Training rows": len(train_ds),
         "Number of iterations": num_iterations,
         "Training loss": train_loss_item,
-        "Validation loss": val_loss,
+        "Validation loss": last_val_loss,
+        "Total tokens processed": total_tokens_seen,
+        "Total sequences processed": total_sequences_seen,
     },
 ])
 

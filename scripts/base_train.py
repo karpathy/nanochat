@@ -60,6 +60,7 @@ core_metric_max_per_task = 500 # examples per task in estimating the core metric
 sample_every = 2000 # every how many steps to sample from the model
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
+checkpoint_every_steps = 0 # save intermediate checkpoints every N optimization steps (0 = disable)
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
@@ -76,7 +77,19 @@ get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else l
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=run, config=user_config)
+if use_dummy_wandb:
+    wandb_run = DummyWandb()
+else:
+    wandb_kwargs = {
+        "project": os.environ.get("WANDB_PROJECT", "nanochat"),
+        "name": run,
+        "config": user_config,
+        "reinit": True,
+    }
+    wandb_id = os.environ.get("WANDB_RUN_ID")
+    if wandb_id:
+        wandb_kwargs.update({"id": wandb_id, "resume": "allow"})
+    wandb_run = wandb.init(**wandb_kwargs)
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
 tokenizer = get_tokenizer()
@@ -138,6 +151,10 @@ print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params:.2f}") # Chinchilla is ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
+sequences_per_step = max(1, total_batch_size // max_seq_len)
+checkpoint_every_steps = int(checkpoint_every_steps)
+checkpoint_enabled = checkpoint_every_steps > 0
+
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
 optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
@@ -149,6 +166,10 @@ tokens_dir = os.path.join(base_dir, "tokenized_data")
 train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", device=device)
 build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)
 x, y = next(train_loader) # kick off load of the very first batch of data
+
+# Checkpoint output location
+checkpoint_dirname = model_tag if model_tag else f"d{depth}"
+checkpoint_dir = os.path.join(base_dir, "base_checkpoints", checkpoint_dirname)
 
 # -----------------------------------------------------------------------------
 # Set up hyperparameter schedulers
@@ -177,6 +198,33 @@ min_val_bpb = float("inf")
 smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
+# Keep track of total tokens/sequences processed for logging
+tokens_per_step = total_batch_size
+total_tokens_seen = 0
+total_sequences_seen = 0
+last_val_bpb = None
+
+def save_base_checkpoint(step_idx):
+    output_dirname = model_tag if model_tag else f"d{depth}"
+    checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
+    optimizer_state = [opt.state_dict() for opt in optimizers]
+    meta = {
+        "step": step_idx,
+        "val_bpb": last_val_bpb,
+        "model_config": model_config_kwargs,
+        "user_config": user_config,
+        "device_batch_size": device_batch_size,
+        "max_seq_len": max_seq_len,
+        "total_tokens_seen": total_tokens_seen,
+        "total_sequences_seen": total_sequences_seen,
+    }
+    save_checkpoint(
+        checkpoint_dir,
+        step_idx,
+        orig_model.state_dict(),
+        optimizer_state,
+        meta,
+    )
 # note that we run +1 steps only so that we can eval and save at the end
 for step in range(num_iterations + 1):
     last_step = step == num_iterations
@@ -192,11 +240,14 @@ for step in range(num_iterations + 1):
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
+        last_val_bpb = val_bpb
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
             "val/bpb": val_bpb,
+            "train/total_tokens": total_tokens_seen,
+            "train/total_sequences": total_sequences_seen,
         })
         model.train()
 
@@ -213,12 +264,14 @@ for step in range(num_iterations + 1):
             "total_training_flops": flops_so_far,
             "core_metric": results["core_metric"],
             "centered_results": results["centered_results"],
+            "train/total_tokens": total_tokens_seen,
+            "train/total_sequences": total_sequences_seen,
         })
         model.train()
 
     # once in a while: sample from the model (only on master process)
     # use the original uncompiled model because the inputs keep changing shape
-    if master_process and (last_step or (step > 0 and step % sample_every == 0)):
+    if master_process and sample_every > 0 and (last_step or (step > 0 and step % sample_every == 0)):
         model.eval()
         prompts = [
             "The capital of France is",
@@ -239,22 +292,7 @@ for step in range(num_iterations + 1):
 
     # save checkpoint at the end of the run (only on master process)
     if master_process and last_step:
-        output_dirname = model_tag if model_tag else f"d{depth}" # e.g. d12
-        checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
-        save_checkpoint(
-            checkpoint_dir,
-            step,
-            orig_model.state_dict(),
-            [opt.state_dict() for opt in optimizers], # TODO: make sure saving across ranks is done correctly
-            {
-                "step": step,
-                "val_bpb": val_bpb, # loss at last step
-                "model_config": model_config_kwargs,
-                "user_config": user_config, # inputs to the training script
-                "device_batch_size": device_batch_size,
-                "max_seq_len": max_seq_len,
-            }
-        )
+        save_base_checkpoint(step)
 
     if last_step:
         break
@@ -287,6 +325,11 @@ for step in range(num_iterations + 1):
     model.zero_grad(set_to_none=True)
     synchronize()
     t1 = time.time()
+    total_tokens_seen += tokens_per_step
+    total_sequences_seen += sequences_per_step
+    current_step = step + 1
+    if master_process and checkpoint_enabled and not last_step and checkpoint_every_steps > 0 and current_step % checkpoint_every_steps == 0:
+        save_base_checkpoint(current_step)
     dt = t1 - t0
     # -------------------------------------------------------------------------
 
@@ -311,6 +354,8 @@ for step in range(num_iterations + 1):
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,
             "train/mfu": mfu,
+            "train/total_tokens": total_tokens_seen,
+            "train/total_sequences": total_sequences_seen,
         })
 
 # print a few more stats
@@ -335,12 +380,14 @@ get_report().log(section="Base model training", data=[
     },
     { # stats about training outcomes
         "Minimum validation bpb": min_val_bpb,
-        "Final validation bpb": val_bpb,
+        "Final validation bpb": last_val_bpb,
         "CORE metric estimate": results.get("core_metric", None),
         "MFU %": f"{mfu:.2f}%",
         "Total training flops": f"{flops_so_far:e}",
         "Total training time": f"{total_training_time/60:.2f}m",
         "Peak memory usage": f"{get_max_memory() / 1024 / 1024:.2f}MiB",
+        "Total tokens processed": total_tokens_seen,
+        "Total sequences processed": total_sequences_seen,
     }
 ])
 

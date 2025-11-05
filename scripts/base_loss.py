@@ -9,6 +9,9 @@ torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
 import os
 from contextlib import nullcontext
 import torch
+import wandb
+
+from nanochat.common import DummyWandb
 from nanochat.checkpoint_manager import load_model
 from nanochat.common import compute_init, print0, compute_cleanup, autodetect_device_type
 from nanochat.dataloader import tokenizing_distributed_data_loader
@@ -36,6 +39,19 @@ tokens_per_step = device_batch_size * sequence_len * ddp_world_size
 assert split_tokens % tokens_per_step == 0, "split_tokens must be divisible by tokens_per_step"
 steps = split_tokens // tokens_per_step
 token_bytes = get_token_bytes(device=device)
+use_wandb = bool(os.environ.get("WANDB_RUN_ID"))
+wandb_run = DummyWandb()
+if use_wandb:
+    wandb_kwargs = {
+        "project": os.environ.get("WANDB_PROJECT", "nanochat"),
+        "name": os.environ.get("WANDB_EVAL_RUN", "base-eval"),
+        "id": os.environ.get("WANDB_RUN_ID"),
+        "resume": "allow",
+        "reinit": True,
+    }
+    wandb_kwargs = {k: v for k, v in wandb_kwargs.items() if v is not None}
+    wandb_run = wandb.init(**wandb_kwargs)
+
 bpb_results = {}
 for split_name in ["train", "val"]:
     loader = tokenizing_distributed_data_loader(device_batch_size, sequence_len, split_name, device=device)
@@ -63,7 +79,7 @@ if ddp_rank == 0:
             sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
         sample_str = tokenizer.decode(sample[0])
         print0(sample_str)
-        samples.append(sample_str)
+    samples.append(sample_str)
 
 # Log to report
 from nanochat.report import get_report
@@ -74,6 +90,13 @@ get_report().log(section="Base model loss", data=[
     },
     {f"sample {i}": sample for i, sample in enumerate(samples)},
 ])
+
+if use_wandb:
+    wandb_run.log({
+        "base_loss/train_bpb": bpb_results["train"],
+        "base_loss/val_bpb": bpb_results["val"],
+    }, step=meta.get("step"))
+    wandb_run.finish()
 
 # Cleanup
 compute_cleanup()

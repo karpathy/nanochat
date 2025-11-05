@@ -1,6 +1,6 @@
 """
 Evaluate the Chat model.
-All the generic code lives here, and all the evlauation-specific
+All the generic code lives here, and all the evaluation-specific
 code lives in nanochat directory and is imported from here.
 
 Example runs:
@@ -9,13 +9,15 @@ torchrun --nproc_per_node=8 -m scripts.chat_eval -- -a ARC-Easy
 """
 
 import argparse
+import os
 from functools import partial
 from contextlib import nullcontext
 
 import torch
 import torch.distributed as dist
+import wandb
 
-from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0, autodetect_device_type
+from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0, autodetect_device_type, DummyWandb
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
 
@@ -201,9 +203,21 @@ if __name__ == "__main__":
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
     ptdtype = torch.float32 if args.dtype == 'float32' else torch.bfloat16
     autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
+    wandb_run = DummyWandb()
+    use_wandb = bool(os.environ.get("WANDB_RUN_ID")) and ddp_rank == 0
 
     model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
     engine = Engine(model, tokenizer)
+    if use_wandb:
+        wandb_kwargs = {
+            "project": os.environ.get("WANDB_PROJECT", "nanochat"),
+            "name": os.environ.get("WANDB_EVAL_RUN", f"{args.source}-eval"),
+            "id": os.environ.get("WANDB_RUN_ID"),
+            "resume": "allow",
+            "reinit": True,
+        }
+        wandb_kwargs = {k: v for k, v in wandb_kwargs.items() if v is not None}
+        wandb_run = wandb.init(**wandb_kwargs)
 
     # Get the tasks to evaluate on
     all_tasks = ['ARC-Easy', 'ARC-Challenge', 'MMLU', 'GSM8K', 'HumanEval', 'SpellingBee']
@@ -253,5 +267,12 @@ if __name__ == "__main__":
         results,
         chatcore_metric_dict,
     ])
+
+    if use_wandb:
+        wandb_payload = {f"chat_eval/{task}": acc for task, acc in results.items()}
+        if chatcore_metric_dict:
+            wandb_payload.update({"chat_eval/chatcore": chatcore_metric_dict["ChatCORE metric"]})
+        wandb_run.log(wandb_payload, step=meta.get("step"))
+        wandb_run.finish()
 
     compute_cleanup()

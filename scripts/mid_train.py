@@ -48,6 +48,7 @@ eval_every = 150 # -1 = disable
 eval_tokens = 20*524288
 total_batch_size = 524288
 dry_run = 0 # dry_run=1 is for experiments: we will log to wandb but we won't write checkpoints or report
+checkpoint_every_steps = 0 # save intermediate checkpoints every N optimization steps (0 = disable)
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
@@ -63,7 +64,19 @@ get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else l
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-mid", name=run, config=user_config)
+if use_dummy_wandb:
+    wandb_run = DummyWandb()
+else:
+    wandb_kwargs = {
+        "project": os.environ.get("WANDB_PROJECT", "nanochat-mid"),
+        "name": run,
+        "config": user_config,
+        "reinit": True,
+    }
+    wandb_id = os.environ.get("WANDB_RUN_ID")
+    if wandb_id:
+        wandb_kwargs.update({"id": wandb_id, "resume": "allow"})
+    wandb_run = wandb.init(**wandb_kwargs)
 
 # Load the model and tokenizer
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=model_tag, step=step)
@@ -82,6 +95,10 @@ print0(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tok
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 token_bytes = get_token_bytes(device=device)
+
+sequences_per_step = max(1, total_batch_size // max_seq_len)
+checkpoint_every_steps = int(checkpoint_every_steps)
+checkpoint_enabled = checkpoint_every_steps > 0
 
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
 optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
@@ -159,6 +176,9 @@ train_loader = mid_data_generator("train")
 build_val_loader = lambda: mid_data_generator("val")
 progress = 0 # will go from 0 to 1 over the course of the epoch
 
+checkpoint_dirname = f"d{depth}"
+checkpoint_dir = os.path.join(base_dir, "mid_checkpoints", checkpoint_dirname)
+
 # Learning rate scheduler
 def get_lr_multiplier(progress):
     # first 80% of training: no decay, then linearly ramp down to 0.
@@ -177,6 +197,37 @@ min_val_bpb = float("inf")
 smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
+tokens_per_step = total_batch_size
+total_tokens_seen = 0
+total_sequences_seen = 0
+last_val_bpb = None
+
+def save_mid_checkpoint(step_idx):
+    if dry_run:
+        return
+    meta = {
+        "step": step_idx,
+        "val_bpb": last_val_bpb,
+        "model_config": {
+            "sequence_len": max_seq_len,
+            "vocab_size": tokenizer.get_vocab_size(),
+            "n_layer": depth,
+            "n_head": model.config.n_head,
+            "n_kv_head": model.config.n_kv_head,
+            "n_embd": model.config.n_embd,
+        },
+        "user_config": user_config,
+        "total_tokens_seen": total_tokens_seen,
+        "total_sequences_seen": total_sequences_seen,
+    }
+    optimizer_state = [opt.state_dict() for opt in optimizers]
+    save_checkpoint(
+        checkpoint_dir,
+        step_idx,
+        orig_model.state_dict(),
+        optimizer_state,
+        meta,
+    )
 step = 0
 while True:
     flops_so_far = num_flops_per_token * total_batch_size * step
@@ -197,37 +248,20 @@ while True:
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
+        last_val_bpb = val_bpb
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
             "val/bpb": val_bpb,
+            "train/total_tokens": total_tokens_seen,
+            "train/total_sequences": total_sequences_seen,
         })
         model.train()
 
     # save checkpoint at the end of the run (only on master process)
     if master_process and last_step and not dry_run:
-        output_dirname = f"d{depth}" # e.g. d12
-        checkpoint_dir = os.path.join(base_dir, "mid_checkpoints", output_dirname)
-        save_checkpoint(
-            checkpoint_dir,
-            step,
-            orig_model.state_dict(),
-            [opt.state_dict() for opt in optimizers], # TODO: make sure saving across ranks is done correctly
-            {
-                "step": step,
-                "val_bpb": val_bpb, # loss at last step
-                "model_config": {
-                    "sequence_len": max_seq_len,
-                    "vocab_size": tokenizer.get_vocab_size(),
-                    "n_layer": depth,
-                    "n_head": model.config.n_head,
-                    "n_kv_head": model.config.n_kv_head,
-                    "n_embd": model.config.n_embd,
-                },
-                "user_config": user_config, # inputs to the training script
-            }
-        )
+        save_mid_checkpoint(step)
 
     if last_step:
         break
@@ -258,11 +292,16 @@ while True:
     model.zero_grad(set_to_none=True)
     synchronize()
     t1 = time.time()
+    total_tokens_seen += tokens_per_step
+    total_sequences_seen += sequences_per_step
     dt = t1 - t0
     # -------------------------------------------------------------------------
 
     # State
     step += 1
+
+    if master_process and checkpoint_enabled and not last_step and checkpoint_every_steps > 0 and step % checkpoint_every_steps == 0:
+        save_mid_checkpoint(step)
 
     # logging
     smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss.item() # EMA the training loss
@@ -285,6 +324,8 @@ while True:
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,
             "train/mfu": mfu,
+            "train/total_tokens": total_tokens_seen,
+            "train/total_sequences": total_sequences_seen,
         })
 
 # print a few more stats
@@ -303,6 +344,9 @@ if not dry_run:
         },
         { # stats about training outcomes
             "Minimum validation bpb": min_val_bpb,
+            "Final validation bpb": last_val_bpb,
+            "Total tokens processed": total_tokens_seen,
+            "Total sequences processed": total_sequences_seen,
         }
     ])
 
