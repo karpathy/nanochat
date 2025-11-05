@@ -1,0 +1,18 @@
+[project]
+name = "rustbpe"
+version = "0.1.0"
+description = "Rust BPE tokenizer from nanochat as standalone package"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = []
+
+[build-system]
+requires = ["maturin>=1.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "rustbpe"
+bindings = "pyo3"
+python-source = "."
+features = ["pyo3/extension-module"]
