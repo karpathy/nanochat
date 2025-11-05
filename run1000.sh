@@ -72,7 +72,7 @@ python -m scripts.tok_eval
 # 5) That's it, everything else (e.g. the learning rates) is adjusted automatically by the training script.
 
 # Number of processes/GPUs to use
-NPROC_PER_NODE=8
+NPROC_PER_NODE=${NPROC_PER_NODE:-8}
 
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=32 --device_batch_size=8 --run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss
