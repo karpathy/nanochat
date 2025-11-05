@@ -36,7 +36,10 @@ model_tag = None # model tag to load the model from (base model or midtrained mo
 step = None # step to load the model from (base model or midtrained model)
 # compute/precision
 dtype = "bfloat16"
-device_batch_size = 4 # max to avoid OOM
+device_batch_size = None # per-device batch size (set to not OOM), None = auto-discover
+auto_batch_size = True # whether to auto-discover optimal batch size
+batch_size_margin = 0.85 # safety margin for auto-discovered batch size
+batch_size_cache = True # whether to cache auto-discovered batch size
 # optimization
 num_epochs = 1
 max_iterations = -1 # override number of iterations (-1 = use num_epochs * num_iterations)
@@ -69,17 +72,36 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sf
 # Load the model and tokenizer
 model, tokenizer, meta = load_model(source, device, phase="train", model_tag=model_tag, step=step)
 
-# Create batch sample function for auto-discovery
-max_seq_len = model.config.sequence_len
-def create_batch_sample_fn(max_seq_len, vocab_size, device):
-    def sample_fn(batch_size, seq_len):
-        # Use max_seq_len (worst case for variable-length sequences)
-        inputs = torch.randint(0, vocab_size, (batch_size, max_seq_len), device=device)
-        targets = torch.full((batch_size, max_seq_len), -1, dtype=torch.long, device=device)
-        return inputs, targets
-    return sample_fn
+# Create a batch sample function for auto-discovery
+def batch_sample_fn(batch_size):
+    """Generate a sample batch for auto-discovery of optimal batch size."""
+    vocab_size = tokenizer.get_vocab_size()
+    # For chat SFT, we use variable length sequences, so we use max_seq_len for discovery
+    # Note: We need to define max_seq_len before this point, which is already done in config
+    pad_token_id = tokenizer.encode_special("<|assistant_end|>")
+    max_len = 2048  # Use a fixed max length for discovery
+    return (
+        torch.randint(0, vocab_size, (batch_size, max_len), dtype=torch.int32, device="cuda"),
+        torch.randint(0, vocab_size, (batch_size, max_len), dtype=torch.int64, device="cuda")
+    )
 
-batch_sample_fn = create_batch_sample_fn(max_seq_len, model.config.vocab_size, device)
+# Auto-discover optimal batch size if not manually set
+if auto_batch_size and device_batch_size is None:
+    from nanochat.auto_batch_size import find_optimal_device_batch_size
+    device_batch_size = find_optimal_device_batch_size(
+        model=model,
+        max_seq_len=2048,  # Use fixed max length for discovery
+        total_batch_size=target_examples_per_step,
+        ddp_world_size=ddp_world_size,
+        data_sample_fn=batch_sample_fn,
+        override=device_batch_size,
+        safety_margin=batch_size_margin,
+        enable_cache=batch_size_cache,
+        ddp_rank=ddp_rank,
+    )
+elif device_batch_size is None:
+    device_batch_size = 4
+    print0(f"Auto-discovery disabled, using default device_batch_size={device_batch_size}")
 
 orig_model = model # original, uncompiled model
 # model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs

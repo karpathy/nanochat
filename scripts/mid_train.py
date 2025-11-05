@@ -34,7 +34,10 @@ model_tag = None # model tag to load the model from (base model or midtrained mo
 step = None # step to load the model from (base model or midtrained model)
 dtype = "bfloat16"
 max_seq_len = 2048
-device_batch_size = 32
+device_batch_size = None # per-device batch size (set to not OOM), None = auto-discover
+auto_batch_size = True # whether to auto-discover optimal batch size
+batch_size_margin = 0.85 # safety margin for auto-discovered batch size
+batch_size_cache = True # whether to cache auto-discovered batch size
 unembedding_lr = 0.004
 embedding_lr = 0.2
 matrix_lr = 0.02
@@ -61,23 +64,39 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-mi
 
 # Load the model and tokenizer
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=model_tag, step=step)
+
+# Create a batch sample function for auto-discovery
+def batch_sample_fn(batch_size):
+    """Generate a sample batch for auto-discovery of optimal batch size."""
+    vocab_size = tokenizer.get_vocab_size()
+    return (
+        torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int32, device="cuda"),
+        torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device="cuda")
+    )
+
+# Auto-discover optimal batch size if not manually set
+if auto_batch_size and device_batch_size is None:
+    from nanochat.auto_batch_size import find_optimal_device_batch_size
+    device_batch_size = find_optimal_device_batch_size(
+        model=model,
+        max_seq_len=max_seq_len,
+        total_batch_size=total_batch_size,
+        ddp_world_size=ddp_world_size,
+        data_sample_fn=batch_sample_fn,
+        override=device_batch_size,
+        safety_margin=batch_size_margin,
+        enable_cache=batch_size_cache,
+        ddp_rank=ddp_rank,
+    )
+elif device_batch_size is None:
+    device_batch_size = 8
+    print0(f"Auto-discovery disabled, using default device_batch_size={device_batch_size}")
+
 pretrain_batch_size = meta.get("device_batch_size", None)
 if pretrain_batch_size is not None and device_batch_size > pretrain_batch_size:
     print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device_batch_size to this script?")
 orig_model = model
 model = torch.compile(model, dynamic=False)
-
-# Create batch sample function for auto-discovery
-vocab_size = tokenizer.get_vocab_size()
-def create_batch_sample_fn(max_seq_len, vocab_size, device):
-    def sample_fn(batch_size, seq_len):
-        inputs = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
-        targets = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
-        return inputs, targets
-    return sample_fn
-
-batch_sample_fn = create_batch_sample_fn(max_seq_len, vocab_size, device)
-
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration for a single rank
