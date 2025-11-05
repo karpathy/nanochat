@@ -70,7 +70,12 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sf
 model, tokenizer, meta = load_model(source, device, phase="train", model_tag=model_tag, step=step)
 orig_model = model # original, uncompiled model
 # model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs
-engine = Engine(orig_model, tokenizer) # will be used for inline model evaluation only
+# Validation: Log compilation status
+if hasattr(model, '_orig_mod'):
+    print0("[VALIDATION] ✓ Model is compiled (torch.compile detected)")
+else:
+    print0("[VALIDATION] ✗ Model is NOT compiled (running in eager mode)")
+engine = Engine(model, tokenizer) # will be used for inline model evaluation only
 
 # -----------------------------------------------------------------------------
 # Task data mixture we'll train on
@@ -156,10 +161,16 @@ def get_lr_multiplier(it):
     lrm = 1.0 - it / num_iterations
     return lrm
 
+# Validation: Performance tracking variables
+import time
+step_times = []
+step_tokens = []
+
 # Go!
 step = 0
 train_iter = iter(train_loader)
 for step in range(num_iterations):
+    step_start_time = time.time()
     last_step = step == num_iterations - 1
 
     # evaluate the validation loss
@@ -189,8 +200,8 @@ for step in range(num_iterations):
         metrics = {}
         with torch.no_grad(), autocast_ctx:
             # note that because these are inside no_grad, we can usually afford to at least ~2X the batch size
-            metrics["mmlu_acc"] = run_chat_eval("MMLU", orig_model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
-            metrics["arc_easy_acc"] = run_chat_eval("ARC-Easy", orig_model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
+            metrics["mmlu_acc"] = run_chat_eval("MMLU", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
+            metrics["arc_easy_acc"] = run_chat_eval("ARC-Easy", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
         metrics_str = ', '.join(f'{k}: {v:.6f}' for k, v in metrics.items())
         print0(f"Step {step:05d} | {metrics_str}")
         wandb_run.log({
@@ -206,6 +217,9 @@ for step in range(num_iterations):
     num_tokens = torch.tensor(0, device=device) # the number of "active" tokens of supervision seen
     for micro_step in range(grad_accum_steps):
         train_inputs, train_targets = next(train_iter)
+        # Validation: Log batch shapes for first 3 steps to verify fixed padding
+        if step < 3 and micro_step == 0:
+            print0(f"[VALIDATION] Step {step} | Batch shape: {train_inputs.shape}")
         with autocast_ctx:
             loss = model(train_inputs, train_targets)
         train_loss = loss.detach() # for logging
@@ -226,15 +240,33 @@ for step in range(num_iterations):
         opt.step()
     model.zero_grad(set_to_none=True)
 
+    # Validation: Calculate performance metrics
+    step_end_time = time.time()
+    step_time = step_end_time - step_start_time
+    
     # logging
     train_loss_item = train_loss.item()
     num_tokens_item = num_tokens.item()
-    print0(f"Step {step:05d}/{num_iterations:05d} | Training loss: {train_loss_item:.6f}| lrm: {lrm:.6f}| num_tokens: {num_tokens_item:,}")
+    
+    # Validation: Track performance (skip first 5 warmup iterations)
+    if step >= 5:
+        step_times.append(step_time)
+        step_tokens.append(num_tokens_item)
+    
+    # Validation: Calculate and log performance metrics every 10 steps (after warmup)
+    if step >= 5 and step % 10 == 0:
+        avg_step_time = sum(step_times[-10:]) / len(step_times[-10:]) if len(step_times) >= 10 else sum(step_times) / len(step_times)
+        avg_tokens = sum(step_tokens[-10:]) / len(step_tokens[-10:]) if len(step_tokens) >= 10 else sum(step_tokens) / len(step_tokens)
+        tokens_per_sec = avg_tokens / avg_step_time if avg_step_time > 0 else 0
+        print0(f"[VALIDATION] Avg time/step: {avg_step_time:.3f}s | Tokens/sec: {tokens_per_sec:.1f}")
+    
+    print0(f"Step {step:05d}/{num_iterations:05d} | Training loss: {train_loss_item:.6f}| lrm: {lrm:.6f}| num_tokens: {num_tokens_item:,} | time: {step_time:.3f}s")
     wandb_run.log({
         "step": step,
         "lrm": lrm,
         "train_loss": train_loss_item,
         "num_tokens": num_tokens_item,
+        "step_time": step_time,
     })
     step += 1
 
@@ -248,7 +280,7 @@ if master_process:
     save_checkpoint(
         checkpoint_dir,
         step,
-        orig_model.state_dict(),
+        model.state_dict(),
         None, # note: we don't bother to save the optimizer state
         {
             "step": step,
