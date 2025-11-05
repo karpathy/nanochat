@@ -112,7 +112,8 @@ with torch.device("meta"):
 model.to_empty(device=device)
 model.init_weights()
 orig_model = model # original, uncompiled model, for saving raw model state_dict
-model = torch.compile(model, dynamic=False) # TODO: dynamic True/False think through
+eval_model = torch.compile(model, fullgraph=True, dynamic=True) # eval model compiled for dynamic shapes
+model = torch.compile(model, fullgraph=True, dynamic=False) # TODO: dynamic True/False think through
 num_params = sum(p.numel() for p in model.parameters())
 print0(f"Number of parameters: {num_params:,}")
 num_flops_per_token = model.estimate_flops()
@@ -200,14 +201,16 @@ for step in range(num_iterations + 1):
         })
         model.train()
 
-    # once in a while: estimate the CORE metric (all ranks participate)
-    # use the original uncompiled model because the inputs keep changing shape
+    # once in a while: estimate the CORE metric (all ranks participate)  
+    # use the eval-compiled model as the training-compiled model has
+    #  been specialized for a fixed input shape
     results = {}
     if core_metric_every > 0 and (last_step or (step > 0 and step % core_metric_every == 0)):
         model.eval()
         with autocast_ctx:
-            results = evaluate_model(orig_model, tokenizer, device, max_per_task=core_metric_max_per_task)
-        print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
+            results = evaluate_model(eval_model, tokenizer, device, max_per_task=core_metric_max_per_task)
+        print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f} Eval time: {results['dt']:.4f}s")
+        
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -217,7 +220,8 @@ for step in range(num_iterations + 1):
         model.train()
 
     # once in a while: sample from the model (only on master process)
-    # use the original uncompiled model because the inputs keep changing shape
+    # use the eval-compiled model as the training-compiled model has
+    # been specialized for a fixed input shape
     if master_process and (last_step or (step > 0 and step % sample_every == 0)):
         model.eval()
         prompts = [
@@ -229,7 +233,7 @@ for step in range(num_iterations + 1):
             "My favorite color is",
             "If 5*x + 3 = 13, then x is",
         ]
-        engine = Engine(orig_model, tokenizer) # use orig_model to avoid recompilation
+        engine = Engine(eval_model, tokenizer) # use eval_model to avoid recompilation
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
             with autocast_ctx:
