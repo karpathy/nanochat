@@ -274,7 +274,7 @@ for step in range(num_iterations + 1):
     # gradient clipping (TODO possibly experiment with)
     if grad_clip > 0.0:
         grad_norm = torch.nn.utils.clip_grad_norm_(orig_model.parameters(), grad_clip)
-        grad_norm = grad_norm.item()
+        grad_norm = grad_norm.item() # takes cpu and gpu sync, call it once and use everywhere
     # step the optimizers
     lrm = get_lr_multiplier(step)
     for opt in optimizers:
@@ -301,14 +301,10 @@ for step in range(num_iterations + 1):
     mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
-    print0(
-        f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | "
-        f"loss: {debiased_smooth_loss:.6f} | "
-        + (f"grad_norm: {grad_norm.item():.5f} | " if grad_clip > 0.0 else "")
-        + f"lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | "
-        f"tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | "
-        f"total time: {total_training_time/60:.2f}m"
-    )
+    print_grad_norm = ""
+    if grad_clip > 0.0:
+        print_grad_norm = f" grad_norm: {grad_norm:.5f} |"
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} |{print_grad_norm} lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
     if step % 100 == 0:
         log_data = {
             "step": step,
