@@ -34,7 +34,11 @@ model_tag = None # model tag to load the model from (base model or midtrained mo
 step = None # step to load the model from (base model or midtrained model)
 dtype = "bfloat16"
 max_seq_len = 2048
-device_batch_size = 32
+# Auto batch size discovery
+auto_batch_size = True       # Enable/disable auto-discovery
+batch_size_margin = 0.85     # Safety margin (85% of max)
+batch_size_cache = False     # Enable result caching
+device_batch_size = None     # If None, auto-discover; if set, use that value
 unembedding_lr = 0.004
 embedding_lr = 0.2
 matrix_lr = 0.02

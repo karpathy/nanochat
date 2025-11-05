@@ -35,7 +35,11 @@ num_iterations = -1 # explicit number of steps of the optimization (-1 = disable
 target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
 target_param_data_ratio = 20 # calculate num_iterations to maintain fixed data:param ratio (Chinchilla=20) (-1 = disable)
 # Optimization
-device_batch_size = 32 # per-device batch size (set to not OOM)
+# Auto batch size discovery
+auto_batch_size = True       # Enable/disable auto-discovery
+batch_size_margin = 0.85     # Safety margin (85% of max)
+batch_size_cache = False     # Enable result caching
+device_batch_size = None     # If None, auto-discover; if set, use that value
 total_batch_size = 524288 # total desired batch size, in #tokens
 embedding_lr = 0.2 # learning rate for the embedding parameters (Adam)
 unembedding_lr = 0.004 # learning rate for the unembedding parameters (Adam)
