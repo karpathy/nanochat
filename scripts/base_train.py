@@ -74,7 +74,7 @@ synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 # wandb logging init
-wandb_run = get_wandb("nanochat",run=run, master_process=master_process, user_config=user_config)
+wandb_run = get_wandb("nanochat", run=run, master_process=master_process, user_config=user_config)
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
 tokenizer = get_tokenizer()
