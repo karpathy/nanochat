@@ -64,7 +64,7 @@ synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 # wandb logging init
-wandb_run = get_wandb("nanochat-mid" , run=run, master_process=master_process, user_config=user_config)
+wandb_run = get_wandb("nanochat-mid", run=run, master_process=master_process, user_config=user_config)
 
 # Load the model and tokenizer
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=model_tag, step=step)
