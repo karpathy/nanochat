@@ -58,6 +58,18 @@ def get_base_dir():
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
+def get_project_root():
+    # locates the project root by walking upward from this file
+    _PROJECT_MARKERS = ('.git', 'uv.lock')
+    curr = os.path.dirname(os.path.abspath(__file__))
+    while True:
+        if any(os.path.exists(os.path.join(curr, m)) for m in _PROJECT_MARKERS):
+            return curr 
+        parent = os.path.dirname(curr) 
+        if parent == curr: # reached filesystem root 
+            return None 
+        curr = parent 
+
 def download_file_with_lock(url, filename, postprocess_fn=None):
     """
     Downloads a file from a URL to a local path in the base directory.
