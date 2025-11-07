@@ -70,6 +70,26 @@ def get_project_root():
             return None 
         curr = parent 
 
+def get_logs_dir():
+    """ 
+    Resolves the directory where log files should be written.
+    - if $LOG_DIR is set, use that.
+    - else if, project root is detected, use <project_root>/logs. 
+    - else, fall back to <get_base_dir()>/logs 
+    """
+    env = os.environ.get("LOG_DIR")
+    if env:
+        path = os.path.abspath(env)
+        os.makedirs(path, exist_ok=True)
+        return path 
+
+    root = get_project_root() 
+    if not root:
+        root = get_base_dir()
+    logs = os.path.join(root, 'logs')
+    os.makedirs(logs, exist_ok=True)
+    return logs
+
 def download_file_with_lock(url, filename, postprocess_fn=None):
     """
     Downloads a file from a URL to a local path in the base directory.
