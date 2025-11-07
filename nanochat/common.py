@@ -5,10 +5,17 @@ Common utilities for nanochat.
 import os
 import re
 import logging
-import fcntl
 import urllib.request
 import torch
 import torch.distributed as dist
+import time
+
+# For cross-platform file locking
+import platform
+if platform.system() == "Windows":
+    import msvcrt
+else:
+    import fcntl
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
@@ -71,22 +78,34 @@ def download_file_with_lock(url, filename):
         return file_path
 
     with open(lock_path, 'w') as lock_file:
+        try:
+            # Only a single rank can acquire this lock
+            # All other ranks block until it is released
+            if platform.system() == "Windows":
+                # Windows-specific file locking
+                # msvcrt.locking requires a file handle, not a file object
+                fd = lock_file.fileno()
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1) # Lock 1 byte
+            else:
+                # Unix-specific file locking
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
 
-        # Only a single rank can acquire this lock
-        # All other ranks block until it is released
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            if os.path.exists(file_path):
+                return file_path
 
-        if os.path.exists(file_path):
-            return file_path
+            print(f"Downloading {url}...")
+            with urllib.request.urlopen(url) as response:
+                content = response.read().decode('utf-8')
 
-        print(f"Downloading {url}...")
-        with urllib.request.urlopen(url) as response:
-            content = response.read().decode('utf-8')
+            with open(file_path, 'w') as f:
+                f.write(content)
 
-        with open(file_path, 'w') as f:
-            f.write(content)
-
-        print(f"Downloaded to {file_path}")
+            print(f"Downloaded to {file_path}")
+        finally:
+            if platform.system() == "Windows":
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1) # Unlock 1 byte
+            else:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     # Clean up the lock file after the lock is released
     try:

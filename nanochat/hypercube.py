@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class HypercubeTopology:
     def __init__(self, n: int):
@@ -61,40 +62,130 @@ class HypercubeTopology:
             current_vertex = next_vertex
         return path
 
-class HypercubeEmbeddingLayer(nn.Module):
-    def __init__(self, num_raw_concepts, embedding_dim, hypercube_topology):
+class AutoregressiveLatentGenerator(nn.Module):
+    def __init__(self, continuous_latent_dim, conditional_dim, num_layers=2, hidden_dim_multiplier=2):
         super().__init__()
-        self.raw_embedding_layer = nn.Embedding(num_raw_concepts, embedding_dim)
-        self.hypercube_topology = hypercube_topology
-        # Embeddings for hypercube vertices. The number of vertices is hypercube_topology.num_vertices
-        self.vertex_embeddings = nn.Embedding(hypercube_topology.num_vertices, embedding_dim)
-
-    def forward(self, concept_ids):
-        # Get initial embeddings for the input concept_ids
-        initial_embeddings = self.raw_embedding_layer(concept_ids) # (batch_size, embedding_dim)
-
-        # Find the nearest hypercube vertex for each initial embedding
+        self.continuous_latent_dim = continuous_latent_dim
+        self.conditional_dim = conditional_dim
+        self.layers = nn.ModuleList()
         
-        # Get all hypercube vertex embeddings
-        # Ensure all_vertex_ids are on the same device as concept_ids
-        all_vertex_ids = torch.arange(self.hypercube_topology.num_vertices, device=concept_ids.device)
-        all_vertex_embeddings = self.vertex_embeddings(all_vertex_ids) # (num_vertices, embedding_dim)
+        # The first layer now takes both the latent vector and the condition
+        self.layers.append(nn.Linear(continuous_latent_dim + conditional_dim, continuous_latent_dim * hidden_dim_multiplier))
+        self.layers.append(nn.GELU())
+        self.layers.append(nn.LayerNorm(continuous_latent_dim * hidden_dim_multiplier))
+        self.layers.append(nn.Linear(continuous_latent_dim * hidden_dim_multiplier, continuous_latent_dim))
+        self.layers.append(nn.GELU())
+        self.layers.append(nn.LayerNorm(continuous_latent_dim))
 
-        # Calculate squared Euclidean distance
-        # initial_embeddings_expanded: (batch_size, 1, embedding_dim)
-        # all_vertex_embeddings_expanded: (1, num_vertices, embedding_dim)
-        initial_embeddings_expanded = initial_embeddings.unsqueeze(1)
-        all_vertex_embeddings_expanded = all_vertex_embeddings.unsqueeze(0)
+    def forward(self, latent_vector, condition):
+        # Concatenate the latent vector with the condition
+        combined_input = torch.cat((latent_vector, condition), dim=-1)
+        for layer in self.layers:
+            combined_input = layer(combined_input)
+        return combined_input
 
-        distances = torch.sum((initial_embeddings_expanded - all_vertex_embeddings_expanded)**2, dim=2) # (batch_size, num_vertices)
+class EnergyFunction(nn.Module):
+    def __init__(self, latent_dim, hidden_dim_multiplier=2):
+        super().__init__()
+        self.latent_dim = latent_dim
+        self.net = nn.Sequential(
+            nn.Linear(latent_dim * 2, latent_dim * hidden_dim_multiplier),
+            nn.GELU(),
+            nn.LayerNorm(latent_dim * hidden_dim_multiplier),
+            nn.Linear(latent_dim * hidden_dim_multiplier, 1)  # Outputs a scalar energy value
+        )
 
-        # Find the index of the nearest vertex for each initial embedding
-        nearest_vertex_indices = torch.argmin(distances, dim=1) # (batch_size,)
+    def forward(self, z_t_plus_1, z_le_t):
+        # z_t_plus_1: (batch_size, latent_dim) - the next latent vector
+        # z_le_t: (batch_size, latent_dim) - the previous latent context (e.g., current continuous_latent)
+        combined_latent = torch.cat((z_t_plus_1, z_le_t), dim=-1)
+        return self.net(combined_latent)
 
-        # Retrieve the embeddings of the nearest vertices
-        final_embeddings = self.vertex_embeddings(nearest_vertex_indices)
 
-        return final_embeddings
+class HypercubeEmbeddingLayer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.num_concept_ids = config.num_concept_ids
+        self.embedding_dim = config.embedding_dim
+        self.hypercube_dim = config.hypercube_dim
+        self.hypercube_topology = HypercubeTopology(self.hypercube_dim)
+
+        # Existing discrete embedding setup
+        self.raw_embedding_layer = nn.Embedding(self.num_concept_ids, self.embedding_dim)
+        self.vertex_embeddings = nn.Parameter(torch.randn(self.hypercube_topology.num_vertices, self.embedding_dim))
+
+        # New CALM-inspired continuous latent space components
+        self.continuous_latent_dim = self.embedding_dim  # Scaled for autoencoder capacity
+        # Autoencoder encoder (compresses concept embeddings to continuous latent vector)
+        self.autoencoder_encoder = nn.Sequential(
+            nn.Linear(self.embedding_dim, self.continuous_latent_dim),
+            nn.LayerNorm(self.continuous_latent_dim),
+            nn.GELU()
+        )
+        # Autoencoder decoder (reconstructs concept embeddings from continuous latent vector)
+        self.autoencoder_decoder = nn.Sequential(
+            nn.Linear(self.continuous_latent_dim, self.embedding_dim),
+            nn.LayerNorm(self.embedding_dim),
+            nn.GELU()
+        )
+
+        # Autoregressive latent generator
+        # The conditional_dim is set to continuous_latent_dim for now, meaning it's conditioned on the previous latent state
+        self.autoregressive_generator = AutoregressiveLatentGenerator(self.continuous_latent_dim, self.continuous_latent_dim)
+
+        # Energy function for CALM-style training
+        self.energy_function = EnergyFunction(self.continuous_latent_dim)
+
+
+    def forward(self, concept_ids, previous_continuous_latent=None, target_continuous_latent=None):
+        # Existing discrete embedding logic
+        raw_embeddings = self.raw_embedding_layer(concept_ids)
+        distances = torch.cdist(raw_embeddings, self.vertex_embeddings)
+        nearest_vertex_indices = torch.argmin(distances, dim=-1)
+        discrete_vertex_embeddings = self.vertex_embeddings[nearest_vertex_indices]
+
+        # New continuous latent space processing (CALM integration)
+        continuous_latent = self.autoencoder_encoder(discrete_vertex_embeddings)
+        reconstructed_embeddings = self.autoencoder_decoder(continuous_latent)
+        # Store reconstruction loss for training (to be used in objective later)
+        self.reconstruction_loss = F.mse_loss(reconstructed_embeddings, discrete_vertex_embeddings)
+
+        # Autoregressive generation of the next latent vector
+        if previous_continuous_latent is not None:
+            # If a previous latent is provided, use it and the current continuous_latent as condition
+            predicted_next_continuous_latent = self.autoregressive_generator(previous_continuous_latent, continuous_latent)
+        else:
+            # If no previous latent, the first generated latent is conditioned on itself (or a zero vector if preferred)
+            predicted_next_continuous_latent = self.autoregressive_generator(continuous_latent, continuous_latent)
+
+        # Calculate energy loss for CALM-style training
+        if target_continuous_latent is not None:
+            energy_loss = self.energy_function(continuous_latent, target_continuous_latent)
+        else:
+            # Initialize energy loss to zero if no target is provided
+            energy_loss = torch.tensor(0.0, device=continuous_latent.device)
+
+        return discrete_vertex_embeddings, continuous_latent, predicted_next_continuous_latent, self.reconstruction_loss, energy_loss
+
+        # Calculate energy-based loss if a target is provided
+        self.energy_loss = torch.tensor(0.0, device=continuous_latent.device) # Initialize to 0
+        if target_continuous_latent is not None:
+            # E_theta(z_t+1, z_<=t) - 1)^2
+            energy_real = self.energy_function(target_continuous_latent, continuous_latent)
+            loss_real = (energy_real - 1)**2
+
+            # E_theta(z_tilde, z_<=t))^2 where z_tilde is a negative sample
+            # For now, we'll use the predicted_next_continuous_latent as a negative sample
+            # In a full CALM implementation, this would involve sampling from a noise distribution
+            energy_fake = self.energy_function(predicted_next_continuous_latent.detach(), continuous_latent)
+            loss_fake = energy_fake**2
+
+            self.energy_loss = (loss_real + loss_fake).mean()
+
+        # Return both discrete and continuous representations for transition phase
+        # Now also return the generated next_continuous_latent and the losses
+        return discrete_vertex_embeddings, continuous_latent, predicted_next_continuous_latent, self.reconstruction_loss, self.energy_loss
 
 
 class LongTermMemory(nn.Module):

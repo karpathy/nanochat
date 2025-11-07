@@ -19,8 +19,9 @@ from contextlib import nullcontext
 
 from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
-from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.engine import Engine
+from nanochat.gpt import GPT, GPTConfig
+from nanochat.tokenizer import HuggingFaceTokenizer
 from scripts.chat_eval import run_chat_eval
 
 from tasks.common import TaskMixture
@@ -29,6 +30,51 @@ from tasks.gsm8k import GSM8K
 from tasks.smoltalk import SmolTalk
 from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
+
+# -----------------------------------------------------------------------------
+# SFT specific functions
+
+SPECIAL_TOKENS = [
+    "<|bos|>",
+    "<|user_start|>", "<|user_end|>",
+    "<|assistant_start|>", "<|assistant_end|>",
+    "<|python_start|>", "<|python_end|>",
+    "<|output_start|>", "<|output_end|>",
+]
+
+def render_conversation(tokenizer, doc):
+    ids = [tokenizer.encode("<|bos|>")[0]]
+    mask = [0] # BOS token is never a target
+    for message in doc["messages"]:
+        if message["role"] == "user":
+            ids.extend(tokenizer.encode("<|user_start|>"))
+            mask.extend([0] * len(tokenizer.encode("<|user_start|>")))
+            ids.extend(tokenizer.encode(message["content"]))
+            mask.extend([0] * len(tokenizer.encode(message["content"])))
+            ids.extend(tokenizer.encode("<|user_end|>"))
+            mask.extend([0] * len(tokenizer.encode("<|user_end|>")))
+        elif message["role"] == "assistant":
+            ids.extend(tokenizer.encode("<|assistant_start|>"))
+            mask.extend([0] * len(tokenizer.encode("<|assistant_start|>")))
+            ids.extend(tokenizer.encode(message["content"]))
+            mask.extend([1] * len(tokenizer.encode(message["content"])))
+            ids.extend(tokenizer.encode("<|assistant_end|>"))
+            mask.extend([0] * len(tokenizer.encode("<|assistant_end|>")))
+        elif message["role"] == "python":
+            ids.extend(tokenizer.encode("<|python_start|>"))
+            mask.extend([0] * len(tokenizer.encode("<|python_start|>")))
+            ids.extend(tokenizer.encode(message["content"]))
+            mask.extend([0] * len(tokenizer.encode(message["content"])))
+            ids.extend(tokenizer.encode("<|python_end|>"))
+            mask.extend([0] * len(tokenizer.encode("<|python_end|>")))
+        elif message["role"] == "output":
+            ids.extend(tokenizer.encode("<|output_start|>"))
+            mask.extend([0] * len(tokenizer.encode("<|output_start|>")))
+            ids.extend(tokenizer.encode(message["content"]))
+            mask.extend([0] * len(tokenizer.encode(message["content"])))
+            ids.extend(tokenizer.encode("<|output_end|>"))
+            mask.extend([0] * len(tokenizer.encode("<|output_end|>")))
+    return ids, mask
 
 # -----------------------------------------------------------------------------
 # SFT Hyperparameters
@@ -73,10 +119,27 @@ use_dummy_wandb = run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sft", name=run, config=user_config, save_code=True)
 
 # Load the model and tokenizer
-model, tokenizer, meta = load_model(source, device, phase="train", model_tag=model_tag, step=step)
+model_dir = {
+    "base": "base_checkpoints",
+    "mid": "mid_checkpoints",
+    "sft": "chatsft_checkpoints",
+    "rl": "chatrl_checkpoints",
+}[source]
+base_dir = get_base_dir()
+checkpoints_dir = os.path.join(base_dir, model_dir)
+
+if os.path.exists(checkpoints_dir) and len(os.listdir(checkpoints_dir)) > 0:
+    model, tokenizer, meta = load_model(source, device, phase="train", model_tag=model_tag, step=step)
+else:
+    print0(f"No checkpoints found in {checkpoints_dir}. Building a new model.")
+    # Initialize a new GPT model and tokenizer
+    model_config = GPTConfig()
+    model = GPT(model_config)
+    tokenizer = HuggingFaceTokenizer.from_pretrained("gpt2") # Using gpt2 as a default pretrained tokenizer
+    meta = {"model_config": model_config.__dict__}
+
 orig_model = model # original, uncompiled model
-# model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs
-engine = Engine(model, tokenizer) # will be used for inline model evaluation only
+engine = Engine(model_config) # will be used for inline model evaluation only
 
 # -----------------------------------------------------------------------------
 # Task data mixture we'll train on
@@ -96,7 +159,7 @@ val_ds = SmolTalk(split="test") # general conversations, 24K rows (though we don
 # DataLoader
 
 def sft_data_generator(dataset, batch_size):
-    pad_token_id = tokenizer.encode_special("<|assistant_end|>") # use <|assistant_end|> as the pad token is ok, these positions are masked in the loss
+    pad_token_id = tokenizer.encode("<|assistant_end|>")[0] # use <|assistant_end|> as the pad token is ok, these positions are masked in the loss
     # prepares a list of tokenized conversations into a batch and yields
     def collate_and_yield(batch):
         nrows = len(batch)
@@ -106,6 +169,7 @@ def sft_data_generator(dataset, batch_size):
         for i, (ids, mask) in enumerate(batch):
             n = len(ids)
             ids_tensor = torch.tensor(ids, dtype=torch.long)
+            print(f"ids_tensor max: {ids_tensor.max()}, min: {ids_tensor.min()}")
             inputs[i, :n-1] = ids_tensor[:-1]
             # recall -1 is the ignore index, so mask out targets where mask is 0
             row_targets = ids_tensor[1:]
@@ -121,7 +185,7 @@ def sft_data_generator(dataset, batch_size):
     while True:
         for i in range(ddp_rank, len(dataset), ddp_world_size):
             doc = dataset[i]
-            ids, mask = tokenizer.render_conversation(doc)
+            ids, mask = render_conversation(tokenizer, doc)
             batch.append((ids, mask))
             if len(batch) == batch_size:
                 yield collate_and_yield(batch)
@@ -179,16 +243,19 @@ for step in range(num_iterations):
         for _ in range(eval_steps):
             val_inputs, val_targets = next(val_iter)
             with torch.no_grad(), autocast_ctx:
-                loss = model(val_inputs, val_targets)
-            losses.append(loss)
-        val_loss = torch.stack(losses).mean() # average over eval_steps
+                total_loss, lm_loss, recon_loss, energy_loss, _, _ = engine(val_inputs, val_targets)
+            losses.append(total_loss)
+        val_total_loss = torch.stack(losses).mean() # average over eval_steps
         if ddp:
-            dist.all_reduce(val_loss, op=dist.ReduceOp.AVG) # average over ranks
-        val_loss = val_loss.item()
-        print0(f"Step {step:05d} | Validation loss: {val_loss:.6f}")
+            dist.all_reduce(val_total_loss, op=dist.ReduceOp.AVG) # average over ranks
+        val_total_loss = val_total_loss.item()
+        print0(f"Step {step:05d} | Validation total loss: {val_total_loss:.6f}")
         wandb_run.log({
             "step": step,
-            "val_loss": val_loss,
+            "val_total_loss": val_total_loss,
+            "val_lm_loss": lm_loss.item(),
+            "val_recon_loss": recon_loss.item(),
+            "val_energy_loss": energy_loss.item(),
         })
         model.train()
 
@@ -216,10 +283,13 @@ for step in range(num_iterations):
     for micro_step in range(grad_accum_steps):
         train_inputs, train_targets = next(train_iter)
         with autocast_ctx:
-            loss = model(train_inputs, train_targets)
-        train_loss = loss.detach() # for logging
-        loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
-        loss.backward() # accumulate the gradient
+            total_loss, lm_loss, recon_loss, energy_loss = engine(train_inputs, train_targets)
+        train_total_loss = total_loss.detach() # for logging
+        train_lm_loss = lm_loss.detach()
+        train_recon_loss = recon_loss.detach()
+        train_energy_loss = energy_loss.detach()
+        total_loss = total_loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
+        total_loss.backward() # accumulate the gradient
         num_tokens += (train_targets >= 0).sum()
     if ddp:
         dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM) # sum over ranks
@@ -236,13 +306,15 @@ for step in range(num_iterations):
     model.zero_grad(set_to_none=True)
 
     # logging
-    train_loss_item = train_loss.item()
     num_tokens_item = num_tokens.item()
-    print0(f"Step {step:05d}/{num_iterations:05d} | Training loss: {train_loss_item:.6f}| lrm: {lrm:.6f}| num_tokens: {num_tokens_item:,}")
+    print0(f"Step {step:05d}/{num_iterations:05d} | Training total loss: {train_total_loss.item():.6f} | LM loss: {train_lm_loss.item():.6f} | Recon loss: {train_recon_loss.item():.6f} | Energy loss: {train_energy_loss.item():.6f} | lrm: {lrm:.6f} | num_tokens: {num_tokens_item:,}")
     wandb_run.log({
         "step": step,
         "lrm": lrm,
-        "train_loss": train_loss_item,
+        "train_total_loss": train_total_loss.item(),
+        "train_lm_loss": train_lm_loss.item(),
+        "train_recon_loss": train_recon_loss.item(),
+        "train_energy_loss": train_energy_loss.item(),
         "num_tokens": num_tokens_item,
     })
     step += 1
@@ -261,7 +333,7 @@ if master_process:
         None, # note: we don't bother to save the optimizer state
         {
             "step": step,
-            "val_loss": val_loss,
+            "val_total_loss": val_total_loss,
             **metrics,
             "model_config": model_config_kwargs,
         }
@@ -275,8 +347,8 @@ get_report().log(section="Chat SFT", data=[
     {
         "Training rows": len(train_ds),
         "Number of iterations": num_iterations,
-        "Training loss": train_loss_item,
-        "Validation loss": val_loss,
+        "Training total loss": train_total_loss.item(),
+        "Validation total loss": val_total_loss,
     },
 ])
 

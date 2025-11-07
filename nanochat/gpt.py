@@ -31,7 +31,8 @@ class GPTConfig:
                  n_embd=768,
                  sequence_len=1024,
                  n_kv_head=None,
-                 num_concept_ids=4096, # Updated to 4096 for n=12 hypercube
+                 num_concept_ids=50257, # Updated to match gpt2 tokenizer vocab size
+                 hypercube_dim=12, # Default hypercube dimension
                  abacus_input_dim=64, # Default input dimension for the AbacusEncoder
                  dropout=0.0,
                  bias=False,
@@ -92,9 +93,12 @@ class GPTConfig:
         self.n_layer = n_layer
         self.n_head = n_head
         self.n_embd = n_embd
+        self.embedding_dim = n_embd
         self.sequence_len = sequence_len
         self.n_kv_head = n_kv_head if n_kv_head is not None else n_head
         self.num_concept_ids = num_concept_ids
+        self.hypercube_dim = hypercube_dim
+        self.abacus_input_dim = abacus_input_dim
         self.dropout = dropout
         self.bias = bias
         self.multiple_of = multiple_of
@@ -248,8 +252,8 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, cos_sin, kv_cache):
-        x = x + self.attn(norm(x), cos_sin, kv_cache)
+    def forward(self, x, cos_sin, kv_cache, episodic_kv: tuple[torch.Tensor, torch.Tensor] | None = None):
+        x = x + self.attn(norm(x), cos_sin, kv_cache, episodic_kv)
         x = x + self.mlp(norm(x))
         return x
 
@@ -262,7 +266,9 @@ class PsycheController(nn.Module):
     def forward(self, x):
         # For now, just return equal weights for each psyche layer
         # In the future, this will be trained to dynamically blend psyche outputs
-        return torch.softmax(self.controller_head(x), dim=-1)
+        # Average x over the sequence dimension to get (B, C)
+        x_averaged = x.mean(dim=1)
+        return torch.softmax(self.controller_head(x_averaged), dim=-1)
 
 
 class GPT(nn.Module):
@@ -294,7 +300,7 @@ class GPT(nn.Module):
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them, but assert fail if we ever reach that amount.
         # In the future we can dynamically grow the cache, for now it's fine.
-        self.rotary_seq_len = config.sequence_len * 10 # 10X over-compute should be enough, TODO make nicer?
+        self.rotary_seq_len = 16384 # 10X over-compute should be enough, TODO make nicer?
         head_dim = config.n_embd // config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
@@ -408,6 +414,10 @@ class GPT(nn.Module):
         cos_sin = self.cos[:, :T, :, :], self.sin[:, :T, :, :]
 
         x = input_embeddings
+
+        # Generate psyche weights if not provided
+        if psyche_weights is None:
+            psyche_weights = self.psyche_controller(x)
 
         # Process Id layers
         x_id = self._run_layers(self.id_layers, x, cos_sin, kv_cache, episodic_kv)
@@ -533,6 +543,8 @@ class GPT(nn.Module):
             x_superego = self._run_layers(self.superego_layers, x_superego, cos_sin, kv_cache, episodic_kv)
 
         # Dynamically blend the outputs based on psyche_weights
+        if psyche_weights is None:
+            psyche_weights = self.psyche_controller(x)
         # Reshape psyche_weights for broadcasting: (B, 1, 3)
         psyche_weights_reshaped = psyche_weights.unsqueeze(1)
 
