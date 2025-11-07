@@ -38,11 +38,31 @@ class ColoredFormatter(logging.Formatter):
 
 def setup_default_logging():
     handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO) 
     handler.setFormatter(ColoredFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logging.basicConfig(
         level=logging.INFO,
         handlers=[handler]
     )
+
+def setup_file_logger(logger_name, filename, level=logging.DEBUG, formatter=None):
+    clean_name = os.path.basename(filename)
+    if clean_name != filename or not clean_name:
+        raise ValueError(f"Invalid log filename provided: {filename}")
+    if not clean_name.endswith(".log"):
+        clean_name += ".log"
+    logs_dir = get_logs_dir()
+    path = os.path.join(logs_dir, clean_name)
+
+    handler = logging.FileHandler(path, mode="w")
+    handler.setLevel(level)
+    handler.setFormatter(
+        formatter
+        or ColoredFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
+    logger = logging.getLogger(logger_name)
+    logger.addHandler(handler)
+    return path
 
 setup_default_logging()
 logger = logging.getLogger(__name__)
