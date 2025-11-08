@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>shadcn/ui Components Showcase</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        border: "hsl(214.3 31.8% 91.4%)",
+                        input: "hsl(214.3 31.8% 91.4%)",
+                        ring: "hsl(221.2 83.2% 53.3%)",
+                        background: "hsl(0 0% 100%)",
+                        foreground: "hsl(222.2 84% 4.9%)",
+                        primary: {
+                            DEFAULT: "hsl(222.2 47.4% 11.2%)",
+                            foreground: "hsl(210 40% 98%)",
+                        },
+                        secondary: {
+                            DEFAULT: "hsl(210 40% 96.1%)",
+                            foreground: "hsl(222.2 47.4% 11.2%)",
+                        },
+                        destructive: {
+                            DEFAULT: "hsl(0 84.2% 60.2%)",
+                            foreground: "hsl(210 40% 98%)",
+                        },
+                        muted: {
+                            DEFAULT: "hsl(210 40% 96.1%)",
+                            foreground: "hsl(215.4 16.3% 46.9%)",
+                        },
+                        accent: {
+                            DEFAULT: "hsl(210 40% 96.1%)",
+                            foreground: "hsl(222.2 47.4% 11.2%)",
+                        },
+                        popover: {
+                            DEFAULT: "hsl(0 0% 100%)",
+                            foreground: "hsl(222.2 84% 4.9%)",
+                        },
+                        card: {
+                            DEFAULT: "hsl(0 0% 100%)",
+                            foreground: "hsl(222.2 84% 4.9%)",
+                        },
+                    },
+                    borderRadius: {
+                        lg: "0.5rem",
+                        md: "calc(0.5rem - 2px)",
+                        sm: "calc(0.5rem - 4px)",
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        /* Custom component styles matching shadcn/ui */
+        .btn {
+            @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none;
+        }
+
+        .btn-default {
+            @apply bg-primary text-primary-foreground hover:bg-primary/90;
+            padding: 0.5rem 1rem;
+        }
+
+        .btn-destructive {
+            @apply bg-destructive text-destructive-foreground hover:bg-destructive/90;
+            padding: 0.5rem 1rem;
+        }
+
+        .btn-outline {
+            @apply border border-input hover:bg-accent hover:text-accent-foreground;
+            padding: 0.5rem 1rem;
+        }
+
+        .btn-secondary {
+            @apply bg-secondary text-secondary-foreground hover:bg-secondary/80;
+            padding: 0.5rem 1rem;
+        }
+
+        .btn-ghost {
+            @apply hover:bg-accent hover:text-accent-foreground;
+            padding: 0.5rem 1rem;
+        }
+
+        .btn-link {
+            @apply underline-offset-4 hover:underline text-primary;
+            padding: 0.5rem 1rem;
+        }
+
+        .input {
+            @apply flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+        }
+
+        .textarea {
+            @apply flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+        }
+
+        .card {
+            @apply rounded-lg border bg-card text-card-foreground shadow-sm;
+        }
+
+        .badge {
+            @apply inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2;
+        }
+
+        .badge-default {
+            @apply border-transparent bg-primary text-primary-foreground hover:bg-primary/80;
+        }
+
+        .badge-secondary {
+            @apply border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80;
+        }
+
+        .badge-destructive {
+            @apply border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80;
+        }
+
+        .badge-outline {
+            @apply text-foreground;
+        }
+
+        .alert {
+            @apply relative w-full rounded-lg border p-4;
+        }
+
+        .alert-default {
+            @apply bg-background text-foreground;
+        }
+
+        .alert-destructive {
+            @apply border-destructive/50 text-destructive dark:border-destructive;
+        }
+
+        /* Switch styles */
+        .switch {
+            @apply peer inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 bg-input;
+        }
+
+        .switch:checked {
+            @apply bg-primary;
+        }
+
+        .switch-thumb {
+            @apply pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform;
+        }
+
+        /* Checkbox styles */
+        .checkbox {
+            @apply peer h-4 w-4 shrink-0 rounded-sm border border-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+        }
+
+        .checkbox:checked {
+            @apply bg-primary text-primary-foreground;
+        }
+
+        /* Radio styles */
+        .radio {
+            @apply aspect-square h-4 w-4 rounded-full border border-primary text-primary ring-offset-background focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+        }
+
+        /* Progress bar */
+        .progress {
+            @apply relative h-4 w-full overflow-hidden rounded-full bg-secondary;
+        }
+
+        .progress-indicator {
+            @apply h-full bg-primary transition-all;
+        }
+
+        /* Skeleton */
+        .skeleton {
+            @apply animate-pulse rounded-md bg-muted;
+        }
+
+        /* Tabs */
+        .tabs-list {
+            @apply inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground;
+        }
+
+        .tabs-trigger {
+            @apply inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+        }
+
+        .tabs-trigger-active {
+            @apply bg-background text-foreground shadow-sm;
+        }
+
+        /* Avatar */
+        .avatar {
+            @apply relative flex h-10 w-10 shrink-0 overflow-hidden rounded-full;
+        }
+
+        .avatar-image {
+            @apply aspect-square h-full w-full;
+        }
+
+        .avatar-fallback {
+            @apply flex h-full w-full items-center justify-center rounded-full bg-muted;
+        }
+
+        /* Select */
+        .select {
+            @apply flex h-10 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+        }
+
+        /* Label */
+        .label {
+            @apply text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .animate-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+    </style>
+</head>
+<body class="bg-background text-foreground">
+    <div class="container mx-auto px-4 py-8 max-w-7xl">
+        <div class="mb-12">
+            <h1 class="text-4xl font-bold mb-2">shadcn/ui Components Showcase</h1>
+            <p class="text-muted-foreground">A comprehensive display of all shadcn/ui components built with Tailwind CSS</p>
+        </div>
+
+        <!-- Buttons Section -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Buttons</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Default</h3>
+                    <button class="btn btn-default">Button</button>
+                </div>
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Secondary</h3>
+                    <button class="btn btn-secondary">Button</button>
+                </div>
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Destructive</h3>
+                    <button class="btn btn-destructive">Button</button>
+                </div>
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Outline</h3>
+                    <button class="btn btn-outline">Button</button>
+                </div>
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Ghost</h3>
+                    <button class="btn btn-ghost">Button</button>
+                </div>
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Link</h3>
+                    <button class="btn btn-link">Button</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Input Section -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Input Fields</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Input</h3>
+                    <div class="space-y-2">
+                        <label class="label">Email</label>
+                        <input type="email" placeholder="Email" class="input" />
+                    </div>
+                </div>
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Input with Label</h3>
+                    <div class="space-y-2">
+                        <label class="label">Username</label>
+                        <input type="text" placeholder="@username" class="input" />
+                        <p class="text-sm text-muted-foreground">This is your public display name.</p>
+                    </div>
+                </div>
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Disabled Input</h3>
+                    <input type="text" placeholder="Disabled" class="input" disabled />
+                </div>
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Textarea</h3>
+                    <textarea placeholder="Type your message here." class="textarea"></textarea>
+                </div>
+            </div>
+        </section>
+
+        <!-- Cards Section -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Cards</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="card">
+                    <div class="p-6">
+                        <h3 class="text-xl font-semibold mb-2">Card Title</h3>
+                        <p class="text-sm text-muted-foreground mb-4">Card Description</p>
+                        <p class="text-sm">This is a simple card component with a title, description, and content area.</p>
+                    </div>
+                    <div class="border-t p-6 pt-4">
+                        <button class="btn btn-default w-full">Action</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="p-6">
+                        <h3 class="text-xl font-semibold mb-2">Notifications</h3>
+                        <p class="text-sm text-muted-foreground mb-4">You have 3 unread messages.</p>
+                        <div class="space-y-2">
+                            <div class="flex items-start gap-3">
+                                <div class="avatar">
+                                    <div class="avatar-fallback bg-primary text-primary-foreground">CN</div>
+                                </div>
+                                <div class="flex-1">
+                                    <p class="text-sm font-medium">Your call has been confirmed.</p>
+                                    <p class="text-xs text-muted-foreground">5 min ago</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="p-6">
+                        <h3 class="text-xl font-semibold mb-2">Stats Card</h3>
+                        <div class="mt-4">
+                            <div class="text-3xl font-bold">$45,231.89</div>
+                            <p class="text-xs text-muted-foreground mt-1">+20.1% from last month</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Badges Section -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Badges</h2>
+            <div class="card p-6">
+                <div class="flex flex-wrap gap-3">
+                    <span class="badge badge-default">Default</span>
+                    <span class="badge badge-secondary">Secondary</span>
+                    <span class="badge badge-destructive">Destructive</span>
+                    <span class="badge badge-outline">Outline</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Alerts Section -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Alerts</h2>
+            <div class="space-y-4">
+                <div class="alert alert-default">
+                    <svg class="h-4 w-4 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <strong class="font-medium">Heads up!</strong>
+                    <p class="text-sm mt-1">You can add components to your app using the cli.</p>
+                </div>
+                <div class="alert alert-destructive">
+                    <svg class="h-4 w-4 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <strong class="font-medium">Error</strong>
+                    <p class="text-sm mt-1">Your session has expired. Please log in again.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tabs Section -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Tabs</h2>
+            <div class="card p-6">
+                <div class="tabs-list inline-flex">
+                    <button class="tabs-trigger tabs-trigger-active">Account</button>
+                    <button class="tabs-trigger">Password</button>
+                    <button class="tabs-trigger">Settings</button>
+                </div>
+                <div class="mt-4 p-4 border rounded-md">
+                    <h3 class="text-lg font-medium mb-2">Account</h3>
+                    <p class="text-sm text-muted-foreground">Make changes to your account here. Click save when you're done.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Form Elements Section -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Form Elements</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Checkbox</h3>
+                    <div class="space-y-3">
+                        <div class="flex items-center space-x-2">
+                            <input type="checkbox" id="c1" class="checkbox" checked />
+                            <label for="c1" class="label cursor-pointer">Accept terms and conditions</label>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <input type="checkbox" id="c2" class="checkbox" />
+                            <label for="c2" class="label cursor-pointer">Send me newsletters</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Radio Group</h3>
+                    <div class="space-y-3">
+                        <div class="flex items-center space-x-2">
+                            <input type="radio" id="r1" name="radio" class="radio" checked />
+                            <label for="r1" class="label cursor-pointer">Default</label>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <input type="radio" id="r2" name="radio" class="radio" />
+                            <label for="r2" class="label cursor-pointer">Comfortable</label>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <input type="radio" id="r3" name="radio" class="radio" />
+                            <label for="r3" class="label cursor-pointer">Compact</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Switch</h3>
+                    <div class="space-y-3">
+                        <div class="flex items-center space-x-2">
+                            <label class="relative inline-block w-11 h-6">
+                                <input type="checkbox" class="opacity-0 w-0 h-0 peer" checked />
+                                <span class="switch absolute cursor-pointer top-0 left-0 right-0 bottom-0 bg-input rounded-full transition-colors peer-checked:bg-primary">
+                                    <span class="switch-thumb absolute left-[2px] top-[2px] peer-checked:translate-x-5"></span>
+                                </span>
+                            </label>
+                            <label class="label cursor-pointer">Airplane Mode</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="card p-6">
+                    <h3 class="text-lg font-medium mb-4">Select</h3>
+                    <select class="select">
+                        <option>Select a fruit...</option>
+                        <option>Apple</option>
+                        <option>Banana</option>
+                        <option>Orange</option>
+                    </select>
+                </div>
+            </div>
+        </section>
+
+        <!-- Avatar Section -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Avatars</h2>
+            <div class="card p-6">
+                <div class="flex items-center gap-4">
+                    <div class="avatar">
+                        <div class="avatar-fallback bg-primary text-primary-foreground">JD</div>
+                    </div>
+                    <div class="avatar">
+                        <div class="avatar-fallback bg-secondary text-secondary-foreground">AB</div>
+                    </div>
+                    <div class="avatar">
+                        <div class="avatar-fallback bg-destructive text-destructive-foreground">CD</div>
+                    </div>
+                    <div class="avatar w-12 h-12">
+                        <div class="avatar-fallback bg-accent text-accent-foreground">LG</div>
+                    </div>
+                    <div class="avatar w-16 h-16">
+                        <div class="avatar-fallback bg-muted text-muted-foreground">XL</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Progress Section -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Progress</h2>
+            <div class="card p-6 space-y-4">
+                <div class="progress">
+                    <div class="progress-indicator" style="width: 33%"></div>
+                </div>
+                <div class="progress">
+                    <div class="progress-indicator" style="width: 66%"></div>
+                </div>
+                <div class="progress">
+                    <div class="progress-indicator" style="width: 100%"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Skeleton Section -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Skeleton</h2>
+            <div class="card p-6">
+                <div class="space-y-3">
+                    <div class="skeleton h-4 w-full"></div>
+                    <div class="skeleton h-4 w-5/6"></div>
+                    <div class="skeleton h-4 w-4/6"></div>
+                    <div class="skeleton h-32 w-full"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Complex Example Section -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Complex Form Example</h2>
+            <div class="card p-6">
+                <h3 class="text-xl font-semibold mb-2">Create an account</h3>
+                <p class="text-sm text-muted-foreground mb-6">Enter your email below to create your account</p>
+                <form class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="space-y-2">
+                            <label class="label">First name</label>
+                            <input type="text" placeholder="John" class="input" />
+                        </div>
+                        <div class="space-y-2">
+                            <label class="label">Last name</label>
+                            <input type="text" placeholder="Doe" class="input" />
+                        </div>
+                    </div>
+                    <div class="space-y-2">
+                        <label class="label">Email</label>
+                        <input type="email" placeholder="john.doe@example.com" class="input" />
+                    </div>
+                    <div class="space-y-2">
+                        <label class="label">Password</label>
+                        <input type="password" placeholder="••••••••" class="input" />
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <input type="checkbox" id="terms" class="checkbox" />
+                        <label for="terms" class="label cursor-pointer">
+                            I agree to the <a href="#" class="text-primary hover:underline">terms and conditions</a>
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn-default w-full">Create account</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- Data Table Example -->
+        <section class="mb-12">
+            <h2 class="text-2xl font-semibold mb-6">Data Table</h2>
+            <div class="card">
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="border-b">
+                            <tr>
+                                <th class="text-left p-4 font-medium">
+                                    <input type="checkbox" class="checkbox" />
+                                </th>
+                                <th class="text-left p-4 font-medium">Name</th>
+                                <th class="text-left p-4 font-medium">Status</th>
+                                <th class="text-left p-4 font-medium">Email</th>
+                                <th class="text-left p-4 font-medium">Role</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="border-b hover:bg-muted/50">
+                                <td class="p-4">
+                                    <input type="checkbox" class="checkbox" />
+                                </td>
+                                <td class="p-4 font-medium">John Doe</td>
+                                <td class="p-4">
+                                    <span class="badge badge-default">Active</span>
+                                </td>
+                                <td class="p-4 text-muted-foreground">john@example.com</td>
+                                <td class="p-4">Admin</td>
+                            </tr>
+                            <tr class="border-b hover:bg-muted/50">
+                                <td class="p-4">
+                                    <input type="checkbox" class="checkbox" />
+                                </td>
+                                <td class="p-4 font-medium">Jane Smith</td>
+                                <td class="p-4">
+                                    <span class="badge badge-secondary">Pending</span>
+                                </td>
+                                <td class="p-4 text-muted-foreground">jane@example.com</td>
+                                <td class="p-4">User</td>
+                            </tr>
+                            <tr class="hover:bg-muted/50">
+                                <td class="p-4">
+                                    <input type="checkbox" class="checkbox" />
+                                </td>
+                                <td class="p-4 font-medium">Bob Johnson</td>
+                                <td class="p-4">
+                                    <span class="badge badge-destructive">Inactive</span>
+                                </td>
+                                <td class="p-4 text-muted-foreground">bob@example.com</td>
+                                <td class="p-4">User</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="text-center text-muted-foreground text-sm py-8 border-t">
+            <p>Built with <a href="https://ui.shadcn.com" class="text-primary hover:underline">shadcn/ui</a> and <a href="https://tailwindcss.com" class="text-primary hover:underline">Tailwind CSS</a></p>
+        </footer>
+    </div>
+</body>
+</html>
