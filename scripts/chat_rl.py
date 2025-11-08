@@ -17,6 +17,12 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
 """
 
 import os
+# Fix for H100 CUDA error during Triton autotuning (GitHub Issue #257)
+# Disable Triton autotuning to avoid torch.empty_strided() invalid argument errors
+os.environ["TORCHINDUCTOR_MAX_AUTOTUNE"] = "0"
+os.environ["TORCHINDUCTOR_COORDINATE_DESCENT_TUNING"] = "0"
+os.environ["TORCH_COMPILE_DISABLE_CUDAGRAPHS"] = "1"
+os.environ["TORCHINDUCTOR_FX_GRAPH_CACHE"] = "1"
 import itertools
 import re
 import wandb
