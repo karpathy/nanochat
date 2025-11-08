@@ -59,7 +59,7 @@ core_metric_every = 2000 # every how many steps to evaluate the core metric (-1 
 core_metric_max_per_task = 500 # examples per task in estimating the core metric
 sample_every = 2000 # every how many steps to sample from the model
 # Logging
-promised_flops_per_sec_per_gpu = 989e12 # Note: only useful for logging. Default value set for bfloat16 H100 SXM, without 2:4 sparsity. Set it to bfloat16 flops without sparsity for your gpu to log correct `mfu` (model flops utilization).
+promised_flops_per_gpu = 15e12 # Only used for logging. Set it to "without sparsity, bfloat16 flops for a single gpu", to log correct `mfu`. Default is set for H100 SXM, bfloat16, without 2:4 sparsity.
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
 # now allow CLI to override the settings via the configurator lol
@@ -300,7 +300,7 @@ for step in range(num_iterations + 1):
     pct_done = 100 * step / num_iterations
     tok_per_sec = int(total_batch_size / dt)
     flops_per_sec = num_flops_per_token * total_batch_size / dt
-    promised_flops_per_sec_all_gpus = promised_flops_per_sec_per_gpu * ddp_world_size 
+    promised_flops_per_sec_all_gpus = promised_flops_per_gpu * ddp_world_size 
     mfu = 100 * flops_per_sec / promised_flops_per_sec_all_gpus # in %
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
