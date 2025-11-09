@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logit Lens Explorer - NanoChat d32</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        .token-stable { color: #6b7280; }
+        .token-changing { color: #dc2626; font-weight: 600; }
+        .confidence-stripe { height: 4px; margin: 2px 0; border-radius: 2px; }
+        .tooltip-content {
+            max-width: 300px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .layer-slider {
+            writing-mode: bt-lr; /* IE */
+            -webkit-appearance: slider-vertical; /* WebKit */
+            width: 30px;
+            height: 400px;
+            background: transparent;
+            outline: none;
+        }
+        @supports not (-webkit-appearance: slider-vertical) {
+            .layer-slider {
+                width: 400px;
+                height: 30px;
+                transform: rotate(-90deg);
+                transform-origin: 200px 200px;
+                margin: 200px 0;
+            }
+        }
+        .loading-spinner {
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div x-data="logitLensExplorer()" class="container mx-auto p-4 max-w-7xl">
+        <!-- Header -->
+        <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-900">Logit Lens Explorer</h1>
+                    <p class="text-gray-600 mt-1">Interactive exploration of emergent reasoning across nanochat d32's 33 layers</p>
+                </div>
+                <img src="/logo.svg" alt="NanoChat" class="w-12 h-12">
+            </div>
+        </div>
+
+        <!-- Input Section -->
+        <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Input Text</label>
+            <textarea
+                x-model="inputText"
+                @keyup.enter.exact="analyzeText()"
+                placeholder="Enter text to analyze how nanochat d32 processes it across all 33 layers..."
+                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                rows="3"
+                maxlength="1000"
+            ></textarea>
+            <div class="flex justify-between items-center mt-2">
+                <span class="text-sm text-gray-500">
+                    <span x-text="inputText.length"></span>/1000 characters
+                </span>
+                <button
+                    @click="analyzeText()"
+                    :disabled="loading || !inputText.trim()"
+                    class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                    <span x-show="!loading">Analyze Layers</span>
+                    <span x-show="loading" class="flex items-center">
+                        <div class="loading-spinner mr-2" style="width: 16px; height: 16px; border-width: 2px;"></div>
+                        Analyzing...
+                    </span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Interface -->
+        <div x-show="data" class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <!-- Layer Scrubber (Left) -->
+            <div class="lg:col-span-1">
+                <div class="bg-white rounded-lg shadow-sm p-6 sticky top-4">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Layer Scrubber</h3>
+
+                    <!-- Vertical Slider -->
+                    <div class="flex flex-col items-center">
+                        <div class="text-2xl font-bold text-blue-600 mb-2" x-text="currentLayer"></div>
+                        <input
+                            type="range"
+                            x-model="currentLayer"
+                            min="0"
+                            :max="maxLayer"
+                            step="1"
+                            orient="vertical"
+                            class="layer-slider mb-4"
+                            @input="updateDisplay()"
+                        >
+                        <div class="text-sm text-gray-600 text-center">
+                            <div x-text="getLayerName(currentLayer)"></div>
+                            <div class="text-xs mt-1" x-text="`${currentLayer} / ${maxLayer}`"></div>
+                        </div>
+                    </div>
+
+                    <!-- Layer Quick Jumps -->
+                    <div class="mt-6 space-y-2">
+                        <h4 class="text-sm font-medium text-gray-700">Quick Jumps</h4>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button @click="setLayer(0)" class="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded">Embedding</button>
+                            <button @click="setLayer(8)" class="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded">Early</button>
+                            <button @click="setLayer(16)" class="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded">Mid</button>
+                            <button @click="setLayer(24)" class="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded">Late</button>
+                            <button @click="setLayer(maxLayer)" class="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded">Final</button>
+                            <button @click="autoPlay" class="px-2 py-1 text-xs bg-green-100 hover:bg-green-200 rounded text-green-800">▶ Play</button>
+                        </div>
+                    </div>
+
+                    <!-- Stats -->
+                    <div x-show="data" class="mt-6 pt-6 border-t border-gray-200">
+                        <h4 class="text-sm font-medium text-gray-700 mb-2">Stats</h4>
+                        <div class="space-y-1 text-xs text-gray-600">
+                            <div>Tokens: <span x-text="data?.input_tokens?.length || 0"></span></div>
+                            <div>Layers: <span x-text="data?.num_layers || 0"></span></div>
+                            <div>Changes: <span x-text="countTokenChanges()"></span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Display Area (Right) -->
+            <div class="lg:col-span-3">
+                <div class="bg-white rounded-lg shadow-sm p-6">
+                    <!-- Layer Text Display -->
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-3">
+                            Layer <span x-text="currentLayer"></span> Output
+                            <span class="text-sm font-normal text-gray-500" x-text="`(${getLayerName(currentLayer)})`"></span>
+                        </h3>
+                        <div class="p-4 bg-gray-50 rounded-lg font-mono text-sm min-h-[100px]">
+                            <div x-show="currentLayerText" x-html="currentLayerText"></div>
+                            <div x-show="!currentLayerText" class="text-gray-400 italic">Analyze text to see layer output...</div>
+                        </div>
+                    </div>
+
+                    <!-- Token Comparison -->
+                    <div x-show="data" class="mb-6">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-3">Token Comparison</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <!-- Input vs Current Layer -->
+                            <div class="p-4 bg-blue-50 rounded-lg">
+                                <h4 class="text-sm font-medium text-blue-900 mb-2">Input Text</h4>
+                                <div class="font-mono text-sm" x-text="data?.input_text || ''"></div>
+                            </div>
+                            <div class="p-4 bg-green-50 rounded-lg">
+                                <h4 class="text-sm font-medium text-green-900 mb-2">Final Output</h4>
+                                <div class="font-mono text-sm" x-text="data?.final_text || ''"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Token Details with Confidence Stripes -->
+                    <div x-show="data && tokenDetails.length > 0" class="mb-6">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-3">Token Details</h3>
+                        <div class="space-y-3">
+                            <template x-for="(token, index) in tokenDetails" :key="index">
+                                <div class="p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                                     @mouseover="showTooltip(index)"
+                                     @mouseleave="hideTooltip()"
+                                     style="position: relative;">
+
+                                    <!-- Token Display -->
+                                    <div class="flex items-center justify-between mb-2">
+                                        <span class="font-mono text-lg"
+                                              :class="token.isStable ? 'token-stable' : 'token-changing'"
+                                              x-text="token.text"></span>
+                                        <span class="text-xs text-gray-500" x-text="`Pos ${index}`"></span>
+                                    </div>
+
+                                    <!-- Confidence Stripe -->
+                                    <div class="confidence-stripe bg-gradient-to-r from-yellow-400 to-blue-600"
+                                         :style="`width: ${token.confidence * 100}%;`"
+                                         title="Token confidence across layers"></div>
+
+                                    <!-- Tooltip -->
+                                    <div x-show="tooltipIndex === index"
+                                         x-transition
+                                         class="absolute z-10 p-3 bg-gray-900 text-white rounded-lg shadow-lg tooltip-content"
+                                         style="bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 10px;">
+                                        <div class="font-semibold mb-2" x-text="`Top 3 Predictions - ${getLayerName(currentLayer)}`"></div>
+                                        <template x-for="(pred, predIndex) in token.topPredictions" :key="predIndex">
+                                            <div class="flex justify-between items-center py-1">
+                                                <span class="font-mono" x-text="pred.token"></span>
+                                                <span class="text-green-400" x-text="`${(pred.prob * 100).toFixed(1)}%`"></span>
+                                            </div>
+                                        </template>
+                                        <!-- Arrow -->
+                                        <div class="absolute w-0 h-0 border-l-8 border-r-8 border-t-8 border-transparent border-t-gray-900"
+                                             style="bottom: -8px; left: 50%; transform: translateX(-50%);"></div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Options -->
+                    <div x-show="data" class="pt-6 border-t border-gray-200">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-3">Display Options</h3>
+                        <div class="flex flex-wrap gap-4">
+                            <label class="flex items-center">
+                                <input type="checkbox" x-model="showConfidenceStripes" class="mr-2">
+                                <span class="text-sm">Show Confidence Stripes</span>
+                            </label>
+                            <label class="flex items-center">
+                                <input type="checkbox" x-model="showTooltips" class="mr-2">
+                                <span class="text-sm">Enable Tooltips</span>
+                            </label>
+                            <label class="flex items-center">
+                                <input type="checkbox" x-model="highlightChanges" class="mr-2">
+                                <span class="text-sm">Highlight Changes</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error Display -->
+        <div x-show="error" class="bg-red-50 border border-red-200 rounded-lg p-4 mt-6">
+            <h3 class="text-red-800 font-semibold">Error</h3>
+            <p class="text-red-700" x-text="error"></p>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = '';
+
+        function logitLensExplorer() {
+            return {
+                inputText: 'The future of artificial intelligence is',
+                currentLayer: 0,
+                maxLayer: 32,
+                data: null,
+                loading: false,
+                error: null,
+                currentLayerText: '',
+                tokenDetails: [],
+                tooltipIndex: null,
+                autoPlayInterval: null,
+                showConfidenceStripes: true,
+                showTooltips: true,
+                highlightChanges: true,
+
+                init() {
+                    // Load with example text on page load
+                    this.analyzeText();
+                },
+
+                async analyzeText() {
+                    if (!this.inputText.trim()) return;
+
+                    this.loading = true;
+                    this.error = null;
+
+                    try {
+                        const response = await fetch(`${API_URL}/logit-lens`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                text: this.inputText,
+                                max_tokens: 128
+                            })
+                        });
+
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.detail || 'Analysis failed');
+                        }
+
+                        this.data = await response.json();
+                        this.maxLayer = this.data.num_layers - 1;
+                        this.currentLayer = this.maxLayer; // Start at final layer
+                        this.updateDisplay();
+
+                    } catch (error) {
+                        this.error = error.message;
+                        console.error('Analysis error:', error);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                updateDisplay() {
+                    if (!this.data || !this.data.layer_texts) return;
+
+                    const layerText = this.data.layer_texts[this.currentLayer] || '';
+                    const finalText = this.data.layer_texts[this.maxLayer] || '';
+
+                    // Create token comparison with diff highlighting
+                    this.tokenDetails = this.createTokenDetails(layerText, finalText);
+
+                    // Update current layer display with highlighting
+                    this.currentLayerText = this.highlightTextDifferences(layerText, finalText);
+                },
+
+                createTokenDetails(currentLayerText, finalText) {
+                    if (!this.data?.token_info || !this.data?.token_info[this.currentLayer]) {
+                        return [];
+                    }
+
+                    const currentTokens = this.tokenizeText(currentLayerText);
+                    const finalTokens = this.tokenizeText(finalText);
+                    const tokenInfo = this.data.token_info[this.currentLayer];
+
+                    return currentTokens.map((token, index) => ({
+                        text: token,
+                        isStable: token === (finalTokens[index] || ''),
+                        topPredictions: tokenInfo[index] || [],
+                        confidence: this.calculateTokenConfidence(index)
+                    }));
+                },
+
+                tokenizeText(text) {
+                    // Simple tokenization for display - split by spaces and handle punctuation
+                    return text.match(/\S+|\s+/g) || [];
+                },
+
+                calculateTokenConfidence(tokenIndex) {
+                    if (!this.data?.token_info || !this.data?.token_info[this.currentLayer]) {
+                        return 0.5;
+                    }
+
+                    const topPredictions = this.data.token_info[this.currentLayer][tokenIndex] || [];
+                    if (topPredictions.length === 0) return 0.5;
+
+                    // Confidence is the probability of the top prediction
+                    return topPredictions[0].prob;
+                },
+
+                highlightTextDifferences(currentText, finalText) {
+                    if (!this.highlightChanges) {
+                        return `<span class="token-stable">${currentText}</span>`;
+                    }
+
+                    const currentTokens = this.tokenizeText(currentText);
+                    const finalTokens = this.tokenizeText(finalText);
+
+                    return currentTokens.map((token, index) => {
+                        const isStable = token === (finalTokens[index] || '');
+                        const cssClass = isStable ? 'token-stable' : 'token-changing';
+                        return `<span class="${cssClass}">${token}</span>`;
+                    }).join('');
+                },
+
+                getLayerName(layerIndex) {
+                    if (!this.data?.layer_names) return `Layer ${layerIndex}`;
+                    return this.data.layer_names[layerIndex] || `Layer ${layerIndex}`;
+                },
+
+                setLayer(layer) {
+                    this.currentLayer = layer;
+                    this.updateDisplay();
+                },
+
+                countTokenChanges() {
+                    if (!this.tokenDetails.length) return 0;
+                    return this.tokenDetails.filter(token => !token.isStable).length;
+                },
+
+                showTooltip(index) {
+                    if (this.showTooltips) {
+                        this.tooltipIndex = index;
+                    }
+                },
+
+                hideTooltip() {
+                    this.tooltipIndex = null;
+                },
+
+                autoPlay() {
+                    if (this.autoPlayInterval) {
+                        clearInterval(this.autoPlayInterval);
+                        this.autoPlayInterval = null;
+                        return;
+                    }
+
+                    this.autoPlayInterval = setInterval(() => {
+                        this.currentLayer = (this.currentLayer + 1) % (this.maxLayer + 1);
+                        this.updateDisplay();
+
+                        if (this.currentLayer === this.maxLayer) {
+                            clearInterval(this.autoPlayInterval);
+                            this.autoPlayInterval = null;
+                        }
+                    }, 500);
+                }
+            };
+        }
+    </script>
+</body>
+</html>
