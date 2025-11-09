@@ -2,12 +2,16 @@
 
 This guide provides detailed implementation plans for 10 beginner-friendly features that can be added to nanochat. Each feature includes detailed explanations, code snippets, and step-by-step implementation instructions.
 
+**Implementation Status:** 2/10 features completed ✅
+- Feature 1: Interactive Tokenizer Playground ✅ **IMPLEMENTED**
+- Feature 5: Model Size & Cost Calculator ✅ **IMPLEMENTED**
+
 ## Table of Contents
-1. [Feature 1: Interactive Tokenizer Playground](#feature-1-interactive-tokenizer-playground)
+1. [Feature 1: Interactive Tokenizer Playground](#feature-1-interactive-tokenizer-playground) ✅ **IMPLEMENTED**
 2. [Feature 2: Training Progress Dashboard](#feature-2-training-progress-dashboard)
 3. [Feature 3: Checkpoint Browser & Comparator](#feature-3-checkpoint-browser--comparator)
 4. [Feature 4: Dataset Inspector](#feature-4-dataset-inspector)
-5. [Feature 5: Model Size & Cost Calculator](#feature-5-model-size--cost-calculator)
+5. [Feature 5: Model Size & Cost Calculator](#feature-5-model-size--cost-calculator) ✅ **IMPLEMENTED**
 6. [Feature 6: Generation Parameter Explorer](#feature-6-generation-parameter-explorer)
 7. [Feature 7: Training Resume Helper](#feature-7-training-resume-helper)
 8. [Feature 8: Simple Attention Visualizer](#feature-8-simple-attention-visualizer)
@@ -17,6 +21,8 @@ This guide provides detailed implementation plans for 10 beginner-friendly featu
 ---
 
 ## Feature 1: Interactive Tokenizer Playground
+
+✅ **STATUS: IMPLEMENTED** - Available in `tools/tokenizer_playground.py`
 
 ### Why This Feature is Useful
 
@@ -1439,6 +1445,8 @@ python tools/dataset_inspector.py data/train.jsonl --export review.txt --export-
 ---
 
 ## Feature 5: Model Size & Cost Calculator
+
+✅ **STATUS: IMPLEMENTED** - Available in `tools/model_calculator.py`
 
 ### Why This Feature is Useful
 

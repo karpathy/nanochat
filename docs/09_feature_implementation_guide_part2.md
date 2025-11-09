@@ -669,37 +669,37 @@ python tools/training_resume_helper.py out/base_checkpoints/d20 --command
 
 ### Quick Reference Table
 
-| # | Feature | Difficulty | Implementation Time | Key Learning |
-|---|---------|------------|---------------------|--------------|
-| 1 | Tokenizer Playground | ⭐ | 2-3 hours | Tokenization, text processing |
-| 2 | Training Dashboard | ⭐⭐ | 4-6 hours | Visualization, real-time monitoring |
-| 3 | Checkpoint Browser | ⭐ | 2-3 hours | File management, metadata |
-| 4 | Dataset Inspector | ⭐ | 2-4 hours | Data validation, statistics |
-| 5 | Model Calculator | ⭐ | 1-2 hours | Parameter counting, estimation |
-| 6 | Generation Explorer | ⭐⭐ | 3-5 hours | Sampling, probabilities |
-| 7 | Training Resume | ⭐ | 2-3 hours | Checkpointing, state management |
-| 8 | Attention Visualizer | ⭐⭐ | 4-6 hours | Attention mechanics, visualization |
-| 9 | LR Finder | ⭐⭐ | 3-4 hours | Optimization, hyperparameter tuning |
-| 10 | Conversation Builder | ⭐⭐ | 3-5 hours | Data creation, UX design |
+| # | Feature | Status | Difficulty | Implementation Time | Key Learning |
+|---|---------|--------|------------|---------------------|--------------|
+| 1 | Tokenizer Playground | ✅ **DONE** | ⭐ | 2-3 hours | Tokenization, text processing |
+| 2 | Training Dashboard | 📝 Planned | ⭐⭐ | 4-6 hours | Visualization, real-time monitoring |
+| 3 | Checkpoint Browser | 📝 Planned | ⭐ | 2-3 hours | File management, metadata |
+| 4 | Dataset Inspector | 📝 Planned | ⭐ | 2-4 hours | Data validation, statistics |
+| 5 | Model Calculator | ✅ **DONE** | ⭐ | 1-2 hours | Parameter counting, estimation |
+| 6 | Generation Explorer | 📝 Planned | ⭐⭐ | 3-5 hours | Sampling, probabilities |
+| 7 | Training Resume | 📝 Planned | ⭐ | 2-3 hours | Checkpointing, state management |
+| 8 | Attention Visualizer | 📝 Planned | ⭐⭐ | 4-6 hours | Attention mechanics, visualization |
+| 9 | LR Finder | 📝 Planned | ⭐⭐ | 3-4 hours | Optimization, hyperparameter tuning |
+| 10 | Conversation Builder | 📝 Planned | ⭐⭐ | 3-5 hours | Data creation, UX design |
 
 ### Recommended Implementation Order
 
 For beginners, implement in this order:
 
-1. **Start with #5 (Model Calculator)** - Quickest win, helps with all future experiments
-2. **Then #1 (Tokenizer Playground)** - Most educational for understanding LLMs
-3. **Then #3 (Checkpoint Browser)** - Most useful day-to-day
-4. **Then #4 (Dataset Inspector)** - Important before training
-5. **Then #7 (Training Resume)** - Saves time when training crashes
-6. **Then #2 (Training Dashboard)** - Makes training more visible
-7. **Then #6 (Generation Explorer)** - Fun and educational
+1. ✅ **#5 (Model Calculator)** - Already implemented! Use it to plan your experiments
+2. ✅ **#1 (Tokenizer Playground)** - Already implemented! Great for understanding LLMs
+3. **#4 (Dataset Inspector)** - Important before training (good next choice!)
+4. **#7 (Training Resume)** - Saves time when training crashes
+5. **#3 (Checkpoint Browser)** - Useful day-to-day for managing models
+6. **#2 (Training Dashboard)** - Makes training more visible
+7. **#6 (Generation Explorer)** - Fun and educational
 8. **Rest as needed** - Based on your interests
 
 ### Total Implementation Time
 
-- **All 10 features**: 26-41 hours
-- **Top 5 essentials (#1, #2, #3, #4, #5)**: 11-18 hours
-- **Just the quick wins (#1, #3, #5)**: 5-8 hours
+- **All 10 features**: 26-41 hours (✅ 2 done, ~8 remaining = 23-36 hours)
+- **Top 5 essentials (#1, #2, #3, #4, #5)**: 11-18 hours (✅ 2 done, 3 remaining = 8-13 hours)
+- **Quick wins (#1, #3, #5)**: 5-8 hours (✅ 2 done, #3 remaining = 2-3 hours)
 
 ---
 
