@@ -47,6 +47,27 @@
             color: #111827;
         }
 
+        .logit-lens-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            background-color: #f3f4f6;
+            color: #374151;
+            text-decoration: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .logit-lens-btn:hover {
+            background-color: #e5e7eb;
+            border-color: #d1d5db;
+            color: #111827;
+        }
+
         .new-conversation-btn {
             width: 32px;
             height: 32px;
@@ -274,6 +295,17 @@
                 </svg>
             </button>
             <h1>nanochat</h1>
+            <a href="/logit-lens-ui" class="logit-lens-btn" title="Logit Lens Explorer - See how the model thinks across layers">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12c.552 0 1-.448 1-1V8c0-.552-.448-1-1-1h-3c-.552 0-1 .448-1 1v3c0 .552.448 1 1 1h3zm0-1h-3V8h3v3z"></path>
+                    <path d="M14 12c.552 0 1-.448 1-1V8c0-.552-.448-1-1-1h-3c-.552 0-1 .448-1 1v3c0 .552.448 1 1 1h3zm0-1h-3V8h3v3z"></path>
+                    <path d="M7 12c.552 0 1-.448 1-1V8c0-.552-.448-1-1-1H4c-.552 0-1 .448-1 1v3c0 .552.448 1 1 1h3zm0-1H4V8h3v3z"></path>
+                    <path d="M21 19c.552 0 1-.448 1-1v-3c0-.552-.448-1-1-1h-3c-.552 0-1 .448-1 1v3c0 .552.448 1 1 1h3zm0-1h-3v-3h3v3z"></path>
+                    <path d="M14 19c.552 0 1-.448 1-1v-3c0-.552-.448-1-1-1h-3c-.552 0-1 .448-1 1v3c0 .552.448 1 1 1h3zm0-1h-3v-3h3v3z"></path>
+                    <path d="M7 19c.552 0 1-.448 1-1v-3c0-.552-.448-1-1-1H4c-.552 0-1 .448-1 1v3c0 .552.448 1 1 1h3zm0-1H4v-3h3v3z"></path>
+                </svg>
+                <span>Logit Lens</span>
+            </a>
         </div>
     </div>
 
