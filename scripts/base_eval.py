@@ -59,7 +59,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     config_path = os.path.join(eval_bundle_dir, "core.yaml")
     data_base_path = os.path.join(eval_bundle_dir, "eval_data")
     eval_meta_data = os.path.join(eval_bundle_dir, "eval_meta_data.csv")
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     tasks = config['icl_tasks']
 
@@ -88,7 +88,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
 
         # Load data for this task
         data_path = os.path.join(data_base_path, task_meta['dataset_uri'])
-        with open(data_path, 'r') as f:
+        with open(data_path, 'r', encoding='utf-8') as f:
             data = [json.loads(line.strip()) for line in f]
 
         # shuffle the data because in many cases it appears ordered but we want
@@ -184,7 +184,7 @@ def main():
         results = out["results"]
         centered_results = out["centered_results"]
         core_metric = out["core_metric"]
-        with open(output_csv_path, 'w') as f:
+        with open(output_csv_path, 'w', encoding='utf-8', newline='') as f:
             f.write(f"{'Task':<35}, {'Accuracy':<10}, {'Centered':<10}\n")
             for label in results:
                 f.write(f"{label:<35}, {results[label]:<10.6f}, {centered_results[label]:<10.6f}\n")
@@ -193,7 +193,7 @@ def main():
         print0("="*80)
         print0(f"Model: {model_name}")
         print0("="*80)
-        with open(output_csv_path, 'r') as f:
+        with open(output_csv_path, 'r', encoding='utf-8') as f:
             print0(f.read())
 
     # Log to report

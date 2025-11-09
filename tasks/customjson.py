@@ -32,7 +32,7 @@ class CustomJSON(Task):
             print("-" * 80)
 
         else:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if not line:  # skip empty lines
