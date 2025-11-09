@@ -210,6 +210,28 @@ class GPT(nn.Module):
         num_flops_per_token = 6 * (nparams - nparams_embedding) + 12 * l * h * q * t
         return num_flops_per_token
 
+    def decode_hidden_states(self, hidden_states):
+        """
+        Project hidden states through lm_head to get logits at each layer.
+        Args:
+            hidden_states: List of tensors, each of shape (B, T, C) representing hidden states at different layers
+        Returns:
+            List of logits tensors, each of shape (B, T, vocab_size)
+        """
+        layer_logits = []
+        softcap = 15
+
+        for hidden_state in hidden_states:
+            # Apply the same final norm as in forward pass
+            normalized_state = norm(hidden_state)
+            # Project through lm_head
+            logits = self.lm_head(normalized_state)
+            # Apply softcap
+            logits = softcap * torch.tanh(logits / softcap)
+            layer_logits.append(logits)
+
+        return layer_logits
+
     def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
@@ -241,7 +263,7 @@ class GPT(nn.Module):
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean', capture_hidden_states=False):
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim))
@@ -255,9 +277,23 @@ class GPT(nn.Module):
         # Forward the trunk of the Transformer
         x = self.transformer.wte(idx)
         x = norm(x)
-        for block in self.transformer.h:
+
+        # Capture hidden states for logit-lens if requested
+        hidden_states = []
+        if capture_hidden_states:
+            # Store initial embedding state (layer -1)
+            hidden_states.append(x.clone())
+
+        for i, block in enumerate(self.transformer.h):
             x = block(x, cos_sin, kv_cache)
+            if capture_hidden_states:
+                # Store hidden state after each transformer block
+                hidden_states.append(x.clone())
+
         x = norm(x)
+        if capture_hidden_states:
+            # Store final pre-lm_head state (layer n_layer)
+            hidden_states.append(x.clone())
 
         # Forward the lm_head (compute logits)
         softcap = 15
@@ -273,7 +309,11 @@ class GPT(nn.Module):
             # inference mode: compute and return the logits
             logits = self.lm_head(x)
             logits = softcap * torch.tanh(logits / softcap) # logits softcap
-            return logits
+
+            if capture_hidden_states:
+                return logits, hidden_states
+            else:
+                return logits
 
     @torch.inference_mode()
     def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
