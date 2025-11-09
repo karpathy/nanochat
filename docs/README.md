@@ -72,6 +72,26 @@ This guide is organized into 8 comprehensive documents. **Read them in order** i
 - Customizing the model
 - Troubleshooting common issues
 
+### 9. [Feature Implementation Guide](09_feature_implementation_guide.md)
+**Hands-on learning through building features**
+- 10 beginner-friendly features to add to nanochat
+- Complete implementations with detailed explanations
+- Step-by-step coding instructions
+- Learn by doing: tokenization, training, inference tools
+- See also: [Part 2](09_feature_implementation_guide_part2.md) for additional features
+
+## 🛠️ Available Tools
+
+The `tools/` directory contains ready-to-use utilities for learning and experimentation:
+
+- **model_calculator.py** - Calculate model size, memory, and training costs
+  - Estimate parameters for any model configuration
+  - Predict GPU memory requirements
+  - Calculate training time and FLOPs
+  - Perfect for understanding model scaling
+
+More tools coming soon! See the [Feature Implementation Guide](09_feature_implementation_guide.md) for features you can build.
+
 ## 🎯 How to Use This Documentation
 
 ### If you're completely new to LLMs:
@@ -79,15 +99,23 @@ This guide is organized into 8 comprehensive documents. **Read them in order** i
 2. Don't skip sections - each builds on previous knowledge
 3. Try the code examples as you go
 4. Re-read sections that are confusing (this is complex stuff!)
+5. Build features from document 9 to practice what you learned
 
 ### If you have some ML background:
 1. Skim document 1
 2. Focus on documents 2-5 for implementation details
 3. Reference documents 6-7 as needed
+4. Jump to document 9 to build practical tools
 
 ### If you just want to run the code:
 1. Go straight to document 8 (Quick Start)
-2. Reference other docs when you need to understand specifics
+2. Use tools from the `tools/` directory
+3. Reference other docs when you need to understand specifics
+
+### If you learn best by building:
+1. Read document 1-2 for basics
+2. Jump to document 9 and start building features
+3. Reference other docs as needed while implementing
 
 ## 🔑 Key Concepts You'll Learn
 
@@ -120,7 +148,10 @@ nanochat/
 │   ├── chat_web.py       # Web interface (see doc 8)
 │   └── chat_eval.py      # Run benchmarks (see doc 7)
 ├── rustbpe/               # Tokenizer training (see doc 2)
-└── tasks/                 # Evaluation tasks (see doc 7)
+├── tasks/                 # Evaluation tasks (see doc 7)
+├── docs/                  # Complete documentation (you are here!)
+└── tools/                 # Learning and utility tools (see doc 9)
+    └── model_calculator.py  # Model size & cost calculator
 ```
 
 ## 📖 Glossary
