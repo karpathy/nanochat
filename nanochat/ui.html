@@ -260,6 +260,12 @@
             color: #ffffff;
         }
 
+        .logit-lens-toggle-container {
+            padding: 0.75rem 1rem 0.5rem;
+            border-top: 1px solid #f3f4f6;
+            margin-top: 0.5rem;
+        }
+
         .message.assistant .message-content:hover {
             background-color: #f9fafb;
         }
@@ -446,6 +452,12 @@
                 </svg>
             </button>
         </div>
+        <div class="logit-lens-toggle-container">
+            <label class="flex items-center cursor-pointer">
+                <input type="checkbox" id="logitLensToggle" class="mr-2" onchange="toggleLogitLensSetting()">
+                <span class="text-sm text-gray-600">Enable Logit Lens for next response</span>
+            </label>
+        </div>
     </div>
 
     <script>
@@ -460,6 +472,9 @@
         let isGenerating = false;
         let currentTemperature = 0.8;
         let currentTopK = 50;
+        let includeLogitLens = false;
+        let logitLensData = {}; // Store logit-lens data per message
+        let animationIntervals = {}; // Store animation intervals
 
         chatInput.addEventListener('input', function() {
             this.style.height = 'auto';
@@ -491,9 +506,154 @@
             chatInput.style.height = 'auto';
             sendButton.disabled = false;
             isGenerating = false;
+            logitLensData = {}; // Clear logit lens data
             vizContainer.classList.remove('visible'); // Hide visualization
             vizContainer.innerHTML = ''; // Clear it
             chatInput.focus();
+        }
+
+        // Logit-Lens Functions
+        function toggleLogitLens(messageIndex) {
+            const playButton = document.querySelector(`.logit-lens-toggle[data-message-index="${messageIndex}"]`);
+            const panel = document.querySelector(`.logit-lens-panel[data-message-index="${messageIndex}"]`);
+
+            if (panel.classList.contains('active')) {
+                panel.classList.remove('active');
+                playButton.classList.remove('active');
+                playButton.innerHTML = '▶';
+            } else {
+                panel.classList.add('active');
+                playButton.classList.add('active');
+                playButton.innerHTML = '⏸';
+
+                // If we have data, update display
+                if (logitLensData[messageIndex]) {
+                    updateLayerDisplay(messageIndex, 32); // Start at final layer
+                }
+            }
+        }
+
+        function updateLayerDisplay(messageIndex, layerIndex) {
+            const output = document.querySelector(`.logit-lens-output[data-message-index="${messageIndex}"]`);
+            const layerInfo = document.querySelector(`.logit-lens-panel[data-message-index="${messageIndex}"] .layer-scrubber .layer-info`);
+            const data = logitLensData[messageIndex];
+
+            if (!data || !data.layer_texts || layerIndex >= data.layer_texts.length) {
+                output.textContent = 'No logit-lens data available for this layer.';
+                return;
+            }
+
+            const layerName = data.layer_names[layerIndex];
+            const layerText = data.layer_texts[layerIndex];
+            const finalText = data.layer_texts[data.layer_texts.length - 1];
+
+            // Update layer info
+            layerInfo.innerHTML = `
+                <div class="font-semibold">${layerName}</div>
+                <div class="text-xs text-gray-500">${layerIndex}/${data.layer_texts.length - 1}</div>
+            `;
+
+            // Create highlighted text
+            const highlightedText = createHighlightedText(layerText, finalText);
+            output.innerHTML = highlightedText;
+        }
+
+        function createHighlightedText(currentText, finalText) {
+            if (!currentText || !finalText) return currentText || '';
+
+            const currentTokens = currentText.match(/\S+|\s+/g) || [];
+            const finalTokens = finalText.match(/\S+|\s+/g) || [];
+
+            return currentTokens.map((token, index) => {
+                const isStable = token === (finalTokens[index] || '');
+                const cssClass = isStable ? 'token-stable' : 'token-changing';
+                return `<span class="${cssClass}">${token}</span>`;
+            }).join('');
+        }
+
+        function toggleLogitLensAnimation(messageIndex) {
+            const playBtn = document.querySelector(`[data-action="play"][data-message-index="${messageIndex}"]`);
+            const data = logitLensData[messageIndex];
+
+            if (!data || !data.layer_texts) {
+                alert('No logit-lens data available for this message.');
+                return;
+            }
+
+            if (animationIntervals[messageIndex]) {
+                // Stop animation
+                clearInterval(animationIntervals[messageIndex]);
+                delete animationIntervals[messageIndex];
+                playBtn.innerHTML = '▶ Play';
+                playBtn.classList.remove('active');
+            } else {
+                // Start animation
+                let currentLayer = 0;
+                const maxLayer = data.layer_texts.length - 1;
+
+                playBtn.innerHTML = '⏸ Pause';
+                playBtn.classList.add('active');
+
+                // Update slider and display
+                const slider = document.querySelector(`.layer-slider[data-message-index="${messageIndex}"]`);
+                slider.value = currentLayer;
+                updateLayerDisplay(messageIndex, currentLayer);
+
+                animationIntervals[messageIndex] = setInterval(() => {
+                    currentLayer++;
+                    if (currentLayer > maxLayer) {
+                        clearInterval(animationIntervals[messageIndex]);
+                        delete animationIntervals[messageIndex];
+                        playBtn.innerHTML = '▶ Play';
+                        playBtn.classList.remove('active');
+                    } else {
+                        slider.value = currentLayer;
+                        updateLayerDisplay(messageIndex, currentLayer);
+                    }
+                }, 500);
+            }
+        }
+
+        function resetLogitLens(messageIndex) {
+            // Stop any running animation
+            if (animationIntervals[messageIndex]) {
+                clearInterval(animationIntervals[messageIndex]);
+                delete animationIntervals[messageIndex];
+            }
+
+            // Reset to final layer
+            const slider = document.querySelector(`.layer-slider[data-message-index="${messageIndex}"]`);
+            const playBtn = document.querySelector(`[data-action="play"][data-message-index="${messageIndex}"]`);
+
+            slider.value = 32;
+            playBtn.innerHTML = '▶ Play';
+            playBtn.classList.remove('active');
+
+            updateLayerDisplay(messageIndex, 32);
+        }
+
+        function toggleHighlight(messageIndex) {
+            const output = document.querySelector(`.logit-lens-output[data-message-index="${messageIndex}"]`);
+            const btn = document.querySelector(`[data-action="toggle-highlight"][data-message-index="${messageIndex}"]`);
+
+            if (output.classList.contains('highlight-enabled')) {
+                output.classList.remove('highlight-enabled');
+                btn.classList.remove('active');
+                // Remove highlighting by getting current layer and refreshing
+                const slider = document.querySelector(`.layer-slider[data-message-index="${messageIndex}"]`);
+                updateLayerDisplay(messageIndex, parseInt(slider.value));
+            } else {
+                output.classList.add('highlight-enabled');
+                btn.classList.add('active');
+                // Re-apply highlighting
+                const slider = document.querySelector(`.layer-slider[data-message-index="${messageIndex}"]`);
+                updateLayerDisplay(messageIndex, parseInt(slider.value));
+            }
+        }
+
+        function toggleLogitLensSetting() {
+            const toggle = document.getElementById('logitLensToggle');
+            includeLogitLens = toggle.checked;
         }
 
         function addMessage(role, content, messageIndex = null) {
@@ -524,9 +684,74 @@
                         regenerateMessage(messageIndex);
                     }
                 });
-            }
 
-            messageDiv.appendChild(contentDiv);
+                // Add logit-lens play button
+                const playButton = document.createElement('button');
+                playButton.className = 'logit-lens-toggle';
+                playButton.innerHTML = '▶';
+                playButton.setAttribute('title', 'Explore logit-lens');
+                playButton.setAttribute('data-message-index', messageIndex);
+
+                // Create logit-lens panel
+                const lensPanel = document.createElement('div');
+                lensPanel.className = 'logit-lens-panel';
+                lensPanel.setAttribute('data-message-index', messageIndex);
+                lensPanel.innerHTML = `
+                    <div class="layer-scrubber">
+                        <input type="range" class="layer-slider" min="0" max="32" value="32"
+                               data-message-index="${messageIndex}">
+                        <div class="layer-info">
+                            <div class="font-semibold">Layer 32</div>
+                            <div class="text-xs text-gray-500">final</div>
+                        </div>
+                    </div>
+                    <div class="logit-lens-output" data-message-index="${messageIndex}">
+                        No logit-lens data available. Enable with "Enable Logit Lens" toggle.
+                    </div>
+                    <div class="logit-lens-controls">
+                        <button class="logit-lens-btn" data-action="play" data-message-index="${messageIndex}">
+                            ▶ Play
+                        </button>
+                        <button class="logit-lens-btn" data-action="reset" data-message-index="${messageIndex}">
+                            ↺ Reset
+                        </button>
+                        <button class="logit-lens-btn" data-action="toggle-highlight" data-message-index="${messageIndex}">
+                            🔍 Highlight
+                        </button>
+                    </div>
+                `;
+
+                playButton.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    toggleLogitLens(messageIndex);
+                });
+
+                // Add event listeners for controls
+                lensPanel.querySelector('.layer-slider').addEventListener('input', function(e) {
+                    updateLayerDisplay(messageIndex, parseInt(e.target.value));
+                });
+
+                lensPanel.querySelector('[data-action="play"]').addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    toggleLogitLensAnimation(messageIndex);
+                });
+
+                lensPanel.querySelector('[data-action="reset"]').addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    resetLogitLens(messageIndex);
+                });
+
+                lensPanel.querySelector('[data-action="toggle-highlight"]').addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    toggleHighlight(messageIndex);
+                });
+
+                messageDiv.appendChild(contentDiv);
+                messageDiv.appendChild(playButton);
+                messageDiv.appendChild(lensPanel);
+            } else {
+                messageDiv.appendChild(contentDiv);
+            }
             chatWrapper.appendChild(messageDiv);
 
             chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -580,7 +805,8 @@
                         messages: messages,
                         temperature: currentTemperature,
                         top_k: currentTopK,
-                        max_tokens: 512
+                        max_tokens: 512,
+                        include_logit_lens: includeLogitLens
                     }),
                 });
 
@@ -591,6 +817,7 @@
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let fullResponse = '';
+                let receivedLogitLensData = null;
                 assistantContent.textContent = '';
 
                 while (true) {
@@ -621,6 +848,10 @@
                                     });
                                     vizContainer.innerHTML = vizHtml;
                                 }
+                                // --- Logit-lens data handling ---
+                                if (data.done && data.logit_lens) {
+                                    receivedLogitLensData = data.logit_lens;
+                                }
                                 // --- End of new visualization handling ---
                             } catch (e) {
                             }
@@ -630,6 +861,11 @@
 
                 const assistantMessageIndex = messages.length;
                 messages.push({ role: 'assistant', content: fullResponse });
+
+                // Store logit-lens data if received
+                if (receivedLogitLensData) {
+                    logitLensData[assistantMessageIndex] = receivedLogitLensData;
+                }
 
                 // Add click handler to regenerate this assistant message
                 assistantContent.setAttribute('data-message-index', assistantMessageIndex);
