@@ -258,19 +258,6 @@ async def root():
     )
     return HTMLResponse(content=html_content)
 
-@app.get("/logit-lens-ui")
-async def logit_lens_ui():
-    """Serve the logit-lens explorer UI."""
-    ui_html_path = os.path.join("nanochat", "logit_lens.html")
-    with open(ui_html_path, "r", encoding="utf-8") as f:
-        html_content = f.read()
-    # Replace the API_URL to use the same origin
-    html_content = html_content.replace(
-        "const API_URL = `http://${window.location.hostname}:8000`;",
-        "const API_URL = '';"
-    )
-    return HTMLResponse(content=html_content)
-
 
 @app.get("/logo.svg")
 async def logo():
