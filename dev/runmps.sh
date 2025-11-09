@@ -129,6 +129,7 @@ BASE_DEPTH=${BASE_DEPTH:-4}
 SEQ_LEN=${SEQ_LEN:-1024}
 DEVICE_BATCH=${DEVICE_BATCH:-16}
 TOTAL_BATCH=${TOTAL_BATCH:-$((DEVICE_BATCH * SEQ_LEN))} # tokens per optimizer step
+KV_HEAD_MULT=${KV_HEAD_MULT:-1}
 EVAL_SEQUENCES=10000
 EVAL_STEPS=$(((EVAL_SEQUENCES + DEVICE_BATCH - 1) / DEVICE_BATCH))
 EVAL_BATCH_MULT=4 # evaluate on 4 full batches
@@ -243,6 +244,7 @@ python -m scripts.tok_eval
         --max_seq_len=$SEQ_LEN \
         --device_batch_size=$DEVICE_BATCH \
         --total_batch_size=$TOTAL_BATCH \
+        --kv_head_mult=$KV_HEAD_MULT \
         --target_param_data_ratio=$TARGET_PARAM_DATA_RATIO \
         --run="$WANDB_RUN" \
         --eval_every=$EVAL_STEPS \
