@@ -364,7 +364,8 @@ async def generate_stream(
     tokens,
     temperature=None,
     max_new_tokens=None,
-    top_k=None
+    top_k=None,
+    include_logit_lens=False
 ) -> AsyncGenerator[str, None]:
     """Generate assistant response with streaming."""
     temperature = temperature if temperature is not None else args.temperature
@@ -428,7 +429,67 @@ async def generate_stream(
                     yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                     last_clean_text = current_text
 
-    yield f"data: {json.dumps({'done': True})}\n\n"
+    # After generation is complete, capture logit-lens data if requested
+    logit_lens_data = None
+    if include_logit_lens and accumulated_tokens:
+        try:
+            # Create input tensor with full conversation + generated response
+            full_tokens = tokens + accumulated_tokens
+            input_tensor = torch.tensor([full_tokens], dtype=torch.long, device=worker.device)
+
+            # Forward pass with hidden state capture
+            with worker.autocast_ctx:
+                logits, hidden_states = worker.engine.model.forward(
+                    input_tensor,
+                    capture_hidden_states=True
+                )
+
+                # Decode hidden states through lm_head for each layer
+                layer_logits = worker.engine.model.decode_hidden_states(hidden_states)
+
+                # Convert to greedy decoded tokens for each layer (only for generated part)
+                layer_texts = []
+                token_info = []
+                start_idx = len(tokens)  # Start from generated tokens
+
+                for layer_idx, layer_logit in enumerate(layer_logits):
+                    # Get tokens for generated part only
+                    generated_logits = layer_logits[layer_idx][0, start_idx:start_idx + len(accumulated_tokens), :]
+                    decoded_tokens = torch.argmax(generated_logits, dim=-1).tolist()
+                    layer_text = worker.tokenizer.decode(decoded_tokens)
+                    layer_texts.append(layer_text)
+
+                    # Get top-3 tokens for each position in generated part
+                    layer_token_info = []
+                    for pos_idx in range(generated_logits.size(0)):
+                        pos_logits = generated_logits[pos_idx, :]
+                        top_probs, top_indices = torch.topk(F.softmax(pos_logits, dim=-1), 3)
+
+                        top_tokens = []
+                        for prob, idx in zip(top_probs, top_indices):
+                            token_str = worker.tokenizer.decode([idx.item()])
+                            top_tokens.append({
+                                "token": token_str.replace('\n', '\\n').replace('\t', '\\t'),
+                                "prob": prob.item(),
+                                "id": idx.item()
+                            })
+                        layer_token_info.append(top_tokens)
+
+                    token_info.append(layer_token_info)
+
+                logit_lens_data = {
+                    "input_tokens": tokens,
+                    "generated_tokens": accumulated_tokens,
+                    "layer_texts": layer_texts,
+                    "token_info": token_info,
+                    "layer_names": ["embedding"] + [f"layer_{i}" for i in range(len(layer_texts)-1)],
+                    "final_text": current_text
+                }
+        except Exception as e:
+            print(f"Error capturing logit-lens data: {e}")
+            logit_lens_data = None
+
+    yield f"data: {json.dumps({'done': True, 'logit_lens': logit_lens_data})}\n\n"
 
 @app.post("/chat/completions")
 async def chat_completions(request: ChatRequest):
@@ -477,7 +538,8 @@ async def chat_completions(request: ChatRequest):
                     conversation_tokens,
                     temperature=request.temperature,
                     max_new_tokens=request.max_tokens,
-                    top_k=request.top_k
+                    top_k=request.top_k,
+                    include_logit_lens=request.include_logit_lens
                 ):
                     # Accumulate response for logging
                     chunk_data = json.loads(chunk.replace("data: ", "").strip())
