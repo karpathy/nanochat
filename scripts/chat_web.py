@@ -442,6 +442,8 @@ async def generate_stream(
                 for layer_idx, layer_logit in enumerate(layer_logits):
                     # Get tokens for generated part only
                     generated_logits = layer_logits[layer_idx][0, start_idx:start_idx + len(accumulated_tokens), :]
+
+                    # Greedy decoding for logit-lens (shows what each layer would predict)
                     decoded_tokens = torch.argmax(generated_logits, dim=-1).tolist()
                     layer_text = worker.tokenizer.decode(decoded_tokens)
                     layer_texts.append(layer_text)
@@ -470,7 +472,9 @@ async def generate_stream(
                     "layer_texts": layer_texts,
                     "token_info": token_info,
                     "layer_names": ["embedding"] + [f"layer_{i}" for i in range(len(layer_texts)-1)],
-                    "final_text": current_text
+                    "final_text": current_text,
+                    "actual_generated_text": current_text,  # What was actually generated via sampling
+                    "decoding_method": "greedy"  # Logit-lens uses greedy decoding vs actual generation uses sampling
                 }
         except Exception as e:
             print(f"Error capturing logit-lens data: {e}")
