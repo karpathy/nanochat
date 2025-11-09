@@ -791,7 +791,8 @@
             isGenerating = true;
             sendButton.disabled = true;
 
-            const assistantContent = addMessage('assistant', '');
+            const assistantMessageIndex = messages.length;
+            const assistantContent = addMessage('assistant', '', assistantMessageIndex);
             assistantContent.innerHTML = '<span class="typing-indicator"></span>';
             vizContainer.classList.add('visible'); // Show visualization container
 
@@ -859,7 +860,6 @@
                     }
                 }
 
-                const assistantMessageIndex = messages.length;
                 messages.push({ role: 'assistant', content: fullResponse });
 
                 // Store logit-lens data if received
