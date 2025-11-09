@@ -84,6 +84,12 @@ This guide is organized into 8 comprehensive documents. **Read them in order** i
 
 The `tools/` directory contains ready-to-use utilities for learning and experimentation:
 
+- **tokenizer_playground.py** - Interactive tokenizer visualization
+  - See how text is tokenized in real-time with color-coding
+  - Understand token boundaries and special tokens
+  - Compare tokenization efficiency of different texts
+  - Perfect for understanding how "Hello world" becomes `[1000, 1001, 33]`
+
 - **model_calculator.py** - Calculate model size, memory, and training costs
   - Estimate parameters for any model configuration
   - Predict GPU memory requirements
@@ -151,7 +157,8 @@ nanochat/
 ├── tasks/                 # Evaluation tasks (see doc 7)
 ├── docs/                  # Complete documentation (you are here!)
 └── tools/                 # Learning and utility tools (see doc 9)
-    └── model_calculator.py  # Model size & cost calculator
+    ├── tokenizer_playground.py  # Interactive tokenizer visualization
+    └── model_calculator.py      # Model size & cost calculator
 ```
 
 ## 📖 Glossary

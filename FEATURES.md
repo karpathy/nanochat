@@ -38,7 +38,87 @@ Practical utilities for understanding model behavior and planning experiments:
 
 #### ✅ Implemented Features
 
-##### 1. Model Size & Cost Calculator (`model_calculator.py`)
+##### 1. Interactive Tokenizer Playground (`tokenizer_playground.py`)
+Visualize and understand how text is tokenized into tokens.
+
+**What it does:**
+- Colorized visualization of tokens in your terminal
+- Show detailed token information (IDs, byte counts, types)
+- Display all special tokens used in conversations
+- Compare tokenization efficiency of different texts
+- Interactive mode for experimentation
+- Vocabulary statistics and breakdown
+
+**Why it's useful:**
+- Understand how "Hello world" becomes token IDs
+- See token boundaries visually with color-coding
+- Learn about special tokens for chat and tool use
+- Debug tokenization issues
+- Optimize prompts for token efficiency
+- Concrete understanding of BPE algorithm results
+
+**Usage:**
+```bash
+# Tokenize a single text
+python tools/tokenizer_playground.py "Hello world!"
+
+# Interactive mode - experiment with different texts
+python tools/tokenizer_playground.py --interactive
+python tools/tokenizer_playground.py -i
+
+# Show all special tokens
+python tools/tokenizer_playground.py --special
+
+# Show vocabulary information
+python tools/tokenizer_playground.py --vocab
+
+# Compare multiple texts
+python tools/tokenizer_playground.py --compare "Hello" "Hi" "Hey there"
+```
+
+**Example output:**
+```
+======================================================================
+TOKENIZATION VISUALIZATION
+======================================================================
+
+Original Text:
+  "Hello world!"
+
+Quick Stats:
+  Total tokens:      3
+  Total characters:  12
+  Total bytes:       12
+  Compression ratio: 0.250 tokens/byte
+  Efficiency:        4.00 chars/token
+
+Colored Token Breakdown:
+(Each color represents a different token)
+
+Hello world!  <-- Each word shown in different colors
+
+
+Detailed Token Information:
+
+Index  Token ID   Text                                Bytes    Type
+--------------------------------------------------------------------------------
+0      1000       Hello                               5        Alphabetic
+1      1001        world                              6        Mixed/Other
+2      33         !                                   1        Single byte
+
+======================================================================
+```
+
+**Dependencies:** None (Python standard library only, uses nanochat's tokenizer)
+
+**Learning outcomes:**
+- Understand tokenization visually
+- See how BPE creates subword units
+- Learn about special tokens in conversations
+- Understand token efficiency and compression
+- Debug tokenization-related issues
+
+##### 5. Model Size & Cost Calculator (`model_calculator.py`)
 Calculate parameters, memory, and training costs for any model configuration.
 
 **What it does:**
@@ -132,10 +212,9 @@ MODEL SIZE & COST CALCULATOR
 
 #### 🔜 Planned Features (See `docs/09_feature_implementation_guide.md`)
 
-2. **Interactive Tokenizer Playground** - Visualize tokenization with colors, compare tokenizers
-3. **Training Progress Dashboard** - Real-time visualization of training metrics
+2. **Training Progress Dashboard** - Real-time visualization of training metrics
+3. **Checkpoint Browser & Comparator** - Explore saved models and compare performance
 4. **Dataset Inspector** - Validate and analyze training data
-5. **Checkpoint Browser & Comparator** - Explore saved models and compare performance
 6. **Generation Parameter Explorer** - Experiment with temperature, top-k, top-p
 7. **Training Resume Helper** - Easily resume training from checkpoints
 8. **Simple Attention Visualizer** - See what the model attends to
@@ -188,7 +267,9 @@ The original nanochat is minimalist and production-focused. This fork adds a com
 ## Status
 
 - ✅ Documentation: Complete (9 guides covering all aspects)
-- ✅ Tools: 1/10 features implemented
+- ✅ Tools: 2/10 features implemented
+  - Feature 1: Interactive Tokenizer Playground ✅
+  - Feature 5: Model Size & Cost Calculator ✅
 - 🔄 Actively adding more learning features
 
 ## Acknowledgments
