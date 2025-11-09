@@ -34,6 +34,7 @@ import argparse
 import json
 import os
 import torch
+import torch.nn.functional as F
 import asyncio
 import logging
 import random
@@ -280,7 +281,7 @@ async def generate_stream(
     last_clean_text = ""
 
     with worker.autocast_ctx:
-        for token_column, token_masks in worker.engine.generate(
+        for token_column, token_masks, logits in worker.engine.generate(
             tokens,
             num_samples=1,
             max_tokens=max_new_tokens,
@@ -299,13 +300,33 @@ async def generate_stream(
             # Decode all accumulated tokens to get proper UTF-8 handling
             # Note that decode is a quite efficient operation, basically table lookup and string concat
             current_text = worker.tokenizer.decode(accumulated_tokens)
+
+            # --- Start of new visualization logic ---
+            viz_data = []
+            if logits is not None:
+                # Squeeze batch dimension, apply softmax to get probabilities
+                probs = F.softmax(logits.squeeze(0), dim=-1)
+                # Get the top 5 predictions
+                top_probs, top_indices = torch.topk(probs, 5)
+                for p, i in zip(top_probs, top_indices):
+                    # Replace special characters like newline for cleaner display
+                    token_str = worker.tokenizer.decode([i.item()]).replace('\n', '\\n')
+                    viz_data.append({"token": token_str, "prob": p.item()})
+            # --- End of new visualization logic ---
+
             # Only emit text if it doesn't end with a replacement character
             # This ensures we don't emit incomplete UTF-8 sequences
             if not current_text.endswith('�'):
                 # Extract only the new text since last clean decode
                 new_text = current_text[len(last_clean_text):]
                 if new_text:  # Only yield if there's new content
-                    yield f"data: {json.dumps({'token': new_text, 'gpu': worker.gpu_id}, ensure_ascii=False)}\n\n"
+                    # Add viz_data to the payload
+                    payload = {
+                        'token': new_text,
+                        'gpu': worker.gpu_id,
+                        'viz_data': viz_data
+                    }
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                     last_clean_text = current_text
 
     yield f"data: {json.dumps({'done': True})}\n\n"

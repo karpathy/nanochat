@@ -144,7 +144,8 @@
         .input-container {
             background-color: #ffffff;
             padding: 1rem;
-            padding-bottom: calc(1rem + env(safe-area-inset-bottom))
+            padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+            position: relative; /* Needed for positioning the viz container */
         }
 
         .input-wrapper {
@@ -153,6 +154,35 @@
             display: flex;
             gap: 0.75rem;
             align-items: flex-end;
+        }
+
+        .viz-container {
+            position: absolute;
+            bottom: calc(100% + 1rem); /* Position it above the input area */
+            right: 0;
+            width: 300px;
+            background-color: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.75rem;
+            padding: 0.75rem;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.8rem;
+            color: #4b5563;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        }
+
+        .viz-container.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .viz-container pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-all;
         }
 
         .chat-input {
@@ -254,6 +284,8 @@
     </div>
 
     <div class="input-container">
+        <!-- Add the new visualization container here -->
+        <div id="vizContainer" class="viz-container"></div>
         <div class="input-wrapper">
             <textarea
                 id="chatInput"
@@ -277,6 +309,7 @@
         const chatWrapper = document.getElementById('chatWrapper');
         const chatInput = document.getElementById('chatInput');
         const sendButton = document.getElementById('sendButton');
+        const vizContainer = document.getElementById('vizContainer');
 
         let messages = [];
         let isGenerating = false;
@@ -313,6 +346,8 @@
             chatInput.style.height = 'auto';
             sendButton.disabled = false;
             isGenerating = false;
+            vizContainer.classList.remove('visible'); // Hide visualization
+            vizContainer.innerHTML = ''; // Clear it
             chatInput.focus();
         }
 
@@ -374,6 +409,9 @@
                 allMessages[i].remove();
             }
 
+            vizContainer.classList.remove('visible'); // Hide visualization
+            vizContainer.innerHTML = ''; // Clear it
+
             // Enable send button and focus input
             sendButton.disabled = false;
             chatInput.focus();
@@ -385,6 +423,7 @@
 
             const assistantContent = addMessage('assistant', '');
             assistantContent.innerHTML = '<span class="typing-indicator"></span>';
+            vizContainer.classList.add('visible'); // Show visualization container
 
             try {
                 const response = await fetch(`${API_URL}/chat/completions`, {
@@ -425,6 +464,19 @@
                                     assistantContent.textContent = fullResponse;
                                     chatContainer.scrollTop = chatContainer.scrollHeight;
                                 }
+                                // --- Start of new visualization handling ---
+                                if (data.viz_data) {
+                                    let vizHtml = '<strong>Top 5 Next Token Predictions:</strong>\n';
+                                    data.viz_data.forEach(item => {
+                                        const probPercent = (item.prob * 100).toFixed(2);
+                                        // Use textContent to prevent any potential HTML injection from token strings
+                                        const pre = document.createElement('pre');
+                                        pre.textContent = `${probPercent.padStart(6, ' ')}% | '${item.token}'`;
+                                        vizHtml += pre.outerHTML;
+                                    });
+                                    vizContainer.innerHTML = vizHtml;
+                                }
+                                // --- End of new visualization handling ---
                             } catch (e) {
                             }
                         }
@@ -449,6 +501,8 @@
             } finally {
                 isGenerating = false;
                 sendButton.disabled = !chatInput.value.trim();
+                // Optionally hide the visualization after generation is complete
+                // setTimeout(() => vizContainer.classList.remove('visible'), 3000);
             }
         }
 
