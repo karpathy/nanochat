@@ -420,9 +420,12 @@ async def generate_stream(
     logit_lens_data = None
     if include_logit_lens and accumulated_tokens:
         try:
+            print(f"LOGIT-LENS: Starting capture, accumulated_tokens: {len(accumulated_tokens)}, include_logit_lens: {include_logit_lens}")
+
             # Create input tensor with full conversation + generated response
             full_tokens = tokens + accumulated_tokens
             input_tensor = torch.tensor([full_tokens], dtype=torch.long, device=worker.device)
+            print(f"LOGIT-LENS: Created input tensor with shape: {input_tensor.shape}")
 
             # Forward pass with hidden state capture
             with worker.autocast_ctx:
@@ -430,41 +433,50 @@ async def generate_stream(
                     input_tensor,
                     capture_hidden_states=True
                 )
+                print(f"LOGIT-LENS: Forward pass completed, hidden_states type: {type(hidden_states)}")
 
                 # Decode hidden states through lm_head for each layer
                 layer_logits = worker.engine.model.decode_hidden_states(hidden_states)
+                print(f"LOGIT-LENS: Decoded hidden states, layer_logits length: {len(layer_logits)}")
 
                 # Convert to greedy decoded tokens for each layer (only for generated part)
                 layer_texts = []
                 token_info = []
                 start_idx = len(tokens)  # Start from generated tokens
+                print(f"LOGIT-LENS: Processing {len(layer_logits)} layers, start_idx: {start_idx}")
 
                 for layer_idx, layer_logit in enumerate(layer_logits):
-                    # Get tokens for generated part only
-                    generated_logits = layer_logits[layer_idx][0, start_idx:start_idx + len(accumulated_tokens), :]
+                    try:
+                        # Get tokens for generated part only
+                        generated_logits = layer_logit[0, start_idx:start_idx + len(accumulated_tokens), :]
+                        print(f"LOGIT-LENS: Layer {layer_idx}: generated_logits shape: {generated_logits.shape}")
 
-                    # Greedy decoding for logit-lens (shows what each layer would predict)
-                    decoded_tokens = torch.argmax(generated_logits, dim=-1).tolist()
-                    layer_text = worker.tokenizer.decode(decoded_tokens)
-                    layer_texts.append(layer_text)
+                        # Greedy decoding for logit-lens (shows what each layer would predict)
+                        decoded_tokens = torch.argmax(generated_logits, dim=-1).tolist()
+                        layer_text = worker.tokenizer.decode(decoded_tokens)
+                        layer_texts.append(layer_text)
+                        print(f"LOGIT-LENS: Layer {layer_idx}: decoded {len(decoded_tokens)} tokens, text length: {len(layer_text)}")
 
-                    # Get top-3 tokens for each position in generated part
-                    layer_token_info = []
-                    for pos_idx in range(generated_logits.size(0)):
-                        pos_logits = generated_logits[pos_idx, :]
-                        top_probs, top_indices = torch.topk(F.softmax(pos_logits, dim=-1), 3)
+                        # Get top-3 tokens for each position in generated part
+                        layer_token_info = []
+                        for pos_idx in range(generated_logits.size(0)):
+                            pos_logits = generated_logits[pos_idx, :]
+                            top_probs, top_indices = torch.topk(F.softmax(pos_logits, dim=-1), 3)
 
-                        top_tokens = []
-                        for prob, idx in zip(top_probs, top_indices):
-                            token_str = worker.tokenizer.decode([idx.item()])
-                            top_tokens.append({
-                                "token": token_str.replace('\n', '\\n').replace('\t', '\\t'),
-                                "prob": prob.item(),
-                                "id": idx.item()
-                            })
-                        layer_token_info.append(top_tokens)
+                            top_tokens = []
+                            for prob, idx in zip(top_probs, top_indices):
+                                token_str = worker.tokenizer.decode([idx.item()])
+                                top_tokens.append({
+                                    "token": token_str.replace('\n', '\\n').replace('\t', '\\t'),
+                                    "prob": prob.item(),
+                                    "id": idx.item()
+                                })
+                            layer_token_info.append(top_tokens)
 
-                    token_info.append(layer_token_info)
+                        token_info.append(layer_token_info)
+                    except Exception as layer_e:
+                        print(f"LOGIT-LENS: Error processing layer {layer_idx}: {layer_e}")
+                        raise
 
                 logit_lens_data = {
                     "input_tokens": tokens,
@@ -474,10 +486,17 @@ async def generate_stream(
                     "layer_names": ["embedding"] + [f"layer_{i}" for i in range(len(layer_texts)-1)],
                     "final_text": current_text,
                     "actual_generated_text": current_text,  # What was actually generated via sampling
-                    "decoding_method": "greedy"  # Logit-lens uses greedy decoding vs actual generation uses sampling
+                    "decoding_method": "greedy",  # Logit-lens uses greedy decoding vs actual generation uses sampling
+                    "sampling_params": {
+                        "temperature": temperature,
+                        "top_k": top_k
+                    }
                 }
+                print(f"LOGIT-LENS: Successfully created logit_lens_data with {len(layer_texts)} layers")
         except Exception as e:
-            print(f"Error capturing logit-lens data: {e}")
+            import traceback
+            print(f"LOGIT-LENS: Error capturing logit-lens data: {e}")
+            print(f"LOGIT-LENS: Full traceback: {traceback.format_exc()}")
             logit_lens_data = None
 
     yield f"data: {json.dumps({'done': True, 'logit_lens': logit_lens_data})}\n\n"

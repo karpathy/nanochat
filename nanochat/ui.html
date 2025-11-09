@@ -460,12 +460,6 @@
                 </svg>
             </button>
         </div>
-        <div class="logit-lens-toggle-container">
-            <label class="flex items-center cursor-pointer">
-                <input type="checkbox" id="logitLensToggle" class="mr-2" onchange="toggleLogitLensSetting()">
-                <span class="text-sm text-gray-600">Enable Logit Lens for next response</span>
-            </label>
-        </div>
     </div>
 
     <script>
@@ -480,7 +474,7 @@
         let isGenerating = false;
         let currentTemperature = 0.8;
         let currentTopK = 50;
-        let includeLogitLens = false;
+        let includeLogitLens = true;
         let logitLensData = {}; // Store logit-lens data per message
         let animationIntervals = {}; // Store animation intervals
 
@@ -659,11 +653,7 @@
             }
         }
 
-        function toggleLogitLensSetting() {
-            const toggle = document.getElementById('logitLensToggle');
-            includeLogitLens = toggle.checked;
-        }
-
+        
         function addMessage(role, content, messageIndex = null) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}`;
@@ -707,8 +697,11 @@
                 lensPanel.innerHTML = `
                     <div class="logit-lens-info" style="background: #f8fafc; padding: 8px; border-radius: 6px; margin-bottom: 12px; font-size: 12px; color: #64748b; border-left: 3px solid #3b82f6;">
                         <strong>Logit Lens:</strong> Shows what each transformer layer predicts using greedy decoding.
-                        This may differ from the actual message which uses sampling (temperature/top-k).
+                        This may differ from the actual message which uses sampling.
                         Differences are normal and show how sampling introduces variety.
+                        <div class="sampling-params" style="margin-top: 6px; font-size: 11px;">
+                            <strong>Sampling:</strong> <span id="sampling-params-${messageIndex}">Loading...</span>
+                        </div>
                     </div>
                     <div class="layer-scrubber">
                         <input type="range" class="layer-slider" min="0" max="32" value="32"
@@ -719,7 +712,7 @@
                         </div>
                     </div>
                     <div class="logit-lens-output" data-message-index="${messageIndex}">
-                        No logit-lens data available. Enable with "Enable Logit Lens" toggle.
+                        No logit-lens data available yet.
                     </div>
                     <div class="logit-lens-controls">
                         <button class="logit-lens-btn" data-action="play" data-message-index="${messageIndex}">
@@ -878,6 +871,13 @@
                 // Store logit-lens data if received
                 if (receivedLogitLensData) {
                     logitLensData[assistantMessageIndex] = receivedLogitLensData;
+
+                    // Update sampling parameters display
+                    const samplingParamsElement = document.getElementById(`sampling-params-${assistantMessageIndex}`);
+                    if (samplingParamsElement && receivedLogitLensData.sampling_params) {
+                        const params = receivedLogitLensData.sampling_params;
+                        samplingParamsElement.textContent = `Temperature: ${params.temperature}, Top-K: ${params.top_k}`;
+                    }
                 }
 
                 // Add click handler to regenerate this assistant message
