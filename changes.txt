@@ -1,0 +1,301 @@
+Excellent question. This moves beyond simple output inspection into true, instrumented interpretability. You've outlined a fantastic plan, and the libraries you've suggested (`bertviz`, `transformer-lens`, `captum`) are the industry standards for this kind of work.
+
+However, a critical aspect of `nanochat` is that it's a from-scratch, minimal PyTorch implementation. It does **not** use the Hugging Face `transformers` library, so we can't simply pass flags like `output_attentions=True`. We need to manually modify the model's forward pass to capture these internal states.
+
+This is a great exercise, as it forces us to understand exactly where these tensors live. Let's walk through the plan to implement this.
+
+### The Plan
+
+1.  **Step 1: Modify `nanochat/gpt.py` to Expose Internals.** We'll create a new forward method that can return attention weights and hidden states. This is the foundational step.
+2.  **Step 2: Create a New, Non-Streaming Endpoint for Analysis.** Real-time, per-token visualization of attention and gradients is computationally very heavy and complex to stream. A more practical approach is to generate a full response first, and then have a separate action (e.g., a "Visualize" button) that re-runs the model on the final text to generate the interpretability data in one go.
+3.  **Step 3: Integrate Interpretability Libraries in `scripts/chat_web.py`.** We will add the logic to call `bertviz` and `captum` in our new endpoint.
+4.  **Step 4: Update `nanochat/ui.html` with a UI Trigger.** We'll add a button to the UI that calls the new analysis endpoint and displays the results.
+
+---
+
+### Step 1: Modify the Model (`nanochat/gpt.py`)
+
+The biggest challenge here is that `F.scaled_dot_product_attention` is a fused kernel that does not expose the attention matrix for performance reasons. To get the attention weights, we must implement the attention calculation manually.
+
+**1A. Create a new `CausalSelfAttentionWithWeights` module:**
+
+This module will perform the same function but will also return the attention matrix.
+
+```python
+# nanochat/gpt.py
+
+# ... imports ...
+import math
+
+# ... existing code ...
+
+# Create a new class that inherits from the original
+class CausalSelfAttentionWithWeights(CausalSelfAttention):
+    def forward(self, x, cos_sin, kv_cache):
+        B, T, C = x.size()
+
+        # Project and prepare queries, keys, values
+        q = self.c_q(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim).transpose(1, 2)
+        v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim).transpose(1, 2)
+
+        cos, sin = cos_sin
+        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+        q, k = norm(q), norm(k)
+
+        # --- Manual Attention Calculation ---
+        # Note: This version doesn't support KV caching for simplicity in this example.
+        # A full implementation would need to handle the cache.
+        attn = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        
+        # Causal mask
+        mask = torch.triu(torch.ones(T, T, device=x.device, dtype=torch.bool), diagonal=1)
+        attn = attn.masked_fill(mask, float('-inf'))
+        
+        attn = F.softmax(attn, dim=-1)
+        
+        y = attn @ v # (B, H, T, T) @ (B, H, T, D) -> (B, H, T, D)
+        # --- End Manual Attention ---
+
+        y = y.transpose(1, 2).contiguous().view(B, T, -1)
+        y = self.c_proj(y)
+        
+        # Return both the output and the attention weights
+        return y, attn
+```
+
+**1B. Add a new `forward_with_viz` method to the `GPT` class:**
+
+This method will use the new attention module and collect all the intermediate tensors.
+
+```python
+# nanochat/gpt.py
+
+class GPT(nn.Module):
+    # ... existing __init__ and other methods ...
+
+    @torch.no_grad()
+    def forward_with_viz(self, idx):
+        B, T = idx.size()
+        cos_sin = self.cos[:, :T], self.sin[:, :T]
+
+        # Forward the trunk of the Transformer, collecting states
+        hidden_states = []
+        attention_weights = []
+
+        x = self.transformer.wte(idx)
+        x = norm(x)
+        hidden_states.append(x)
+
+        for layer_idx, block in enumerate(self.transformer.h):
+            # Temporarily replace the attention module with our version
+            original_attn_module = block.attn
+            block.attn = CausalSelfAttentionWithWeights(self.config, layer_idx).to(x.device).to(x.dtype)
+            block.attn.load_state_dict(original_attn_module.state_dict())
+            
+            # Forward block, capturing attention
+            attn_out, attn_w = block.attn(norm(x), cos_sin, kv_cache=None)
+            x = x + attn_out
+            x = x + block.mlp(norm(x))
+            
+            # Restore original module
+            block.attn = original_attn_module
+
+            hidden_states.append(x)
+            attention_weights.append(attn_w)
+
+        x = norm(x)
+        logits = self.lm_head(x)
+
+        return {
+            "logits": logits,
+            "hidden_states": hidden_states, # List of tensors, one per layer
+            "attentions": attention_weights # List of tensors, one per layer
+        }
+```
+
+### Step 2 & 3: Create a Visualization Endpoint in `chat_web.py`
+
+Now, let's create a new endpoint that takes a conversation, runs our new `forward_with_viz` method, and uses `bertviz` and `captum` to generate visualizations.
+
+First, you'll need to install the libraries:
+
+```bash
+uv pip install bertviz captum
+```
+
+Then, modify `scripts/chat_web.py`:
+
+```python
+# scripts/chat_web.py
+
+# ... existing imports ...
+from bertviz import head_view
+from captum.attr import IntegratedGradients
+from fastapi.responses import JSONResponse
+
+# ... existing FastAPI app setup ...
+
+class VizRequest(BaseModel):
+    messages: List[ChatMessage]
+
+@app.post("/chat/visualize_attention")
+async def visualize_attention(request: VizRequest):
+    """Generates and returns attention visualization using bertviz."""
+    worker_pool = app.state.worker_pool
+    # Use any available worker, as this is a single, non-streaming request
+    worker = await worker_pool.acquire_worker()
+    try:
+        # 1. Tokenize the conversation
+        # We'll just join the content for a simple visualization
+        full_text = " ".join([m.content for m in request.messages])
+        tokens = worker.tokenizer.encode(full_text)
+        token_strings = [worker.tokenizer.decode([t]) for t in tokens]
+        
+        # 2. Run the visualization forward pass
+        with worker.autocast_ctx:
+            ids = torch.tensor([tokens], device=worker.device)
+            viz_outputs = worker.engine.model.forward_with_viz(ids)
+            attention = [a.to("cpu") for a in viz_outputs["attentions"]] # Move to CPU for bertviz
+
+        # 3. Generate bertviz HTML
+        # The head_view function returns a string containing HTML/JS
+        html = head_view(attention, token_strings, html_action='return_html')
+        
+        return HTMLResponse(content=html)
+    finally:
+        await worker_pool.release_worker(worker)
+
+@app.post("/chat/attribute_tokens")
+async def attribute_tokens(request: VizRequest):
+    """Generates and returns token importance using Captum."""
+    worker_pool = app.state.worker_pool
+    worker = await worker_pool.acquire_worker()
+    try:
+        # 1. Tokenize
+        full_text = " ".join([m.content for m in request.messages])
+        input_ids = torch.tensor([worker.tokenizer.encode(full_text)], device=worker.device)
+
+        # 2. Set up for Captum (requires gradients)
+        worker.engine.model.train() # Set to train mode for gradients
+        
+        # We need a forward function for Captum that returns a scalar
+        def forward_func(input_ids_for_grad):
+            # Run a normal forward pass to get logits
+            logits = worker.engine.model(input_ids_for_grad)
+            # Get the predicted token ID at the last position
+            predicted_id = torch.argmax(logits[:, -1, :], dim=-1)
+            # Return the logit value for that specific predicted token
+            return logits[:, -1, predicted_id]
+
+        ig = IntegratedGradients(forward_func)
+        
+        # We need the word embeddings to attribute against
+        input_embeddings = worker.engine.model.transformer.wte(input_ids)
+
+        # 3. Calculate attributions
+        attributions = ig.attribute(inputs=input_embeddings, target=0)
+        
+        # Normalize attributions for visualization
+        attributions = attributions.sum(dim=-1).squeeze(0)
+        attributions = attributions / torch.norm(attributions)
+        attributions = attributions.cpu().tolist()
+        
+        worker.engine.model.eval() # Set back to eval mode
+
+        tokens = [worker.tokenizer.decode([t]) for t in input_ids.squeeze(0).tolist()]
+        
+        return JSONResponse(content={"tokens": tokens, "scores": attributions})
+    finally:
+        await worker_pool.release_worker(worker)
+
+# ... rest of the file ...
+```
+
+### Step 4: Update the UI (`nanochat/ui.html`)
+
+Finally, add buttons and JavaScript to the UI to call these new endpoints.
+
+```html
+<!-- nanochat/ui.html -->
+
+<!-- ... inside <body> tag ... -->
+<div class="header">
+    <div class="header-left">
+        <!-- ... existing header ... -->
+    </div>
+    <!-- Add new buttons to the header -->
+    <div style="display: flex; gap: 0.5rem;">
+        <button onclick="visualizeAttention()">Visualize Attention</button>
+        <button onclick="attributeTokens()">Token Importance</button>
+    </div>
+</div>
+
+<!-- Add a modal for displaying visualizations -->
+<div id="vizModal" style="display:none; position:fixed; z-index:100; left:0; top:0; width:100%; height:100%; overflow:auto; background-color:rgba(0,0,0,0.4);">
+  <div style="background-color:#fefefe; margin:5% auto; padding:20px; border:1px solid #888; width:80%;">
+    <span onclick="closeModal()" style="color:#aaa; float:right; font-size:28px; font-weight:bold; cursor:pointer;">&times;</span>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<!-- ... rest of the body ... -->
+
+<script>
+    // ... existing script ...
+    const vizModal = document.getElementById('vizModal');
+    const modalContent = document.getElementById('modalContent');
+
+    function closeModal() {
+        vizModal.style.display = 'none';
+        modalContent.innerHTML = '';
+    }
+
+    async function visualizeAttention() {
+        if (isGenerating || messages.length === 0) return;
+        modalContent.innerHTML = 'Generating attention visualization...';
+        vizModal.style.display = 'block';
+
+        const response = await fetch(`${API_URL}/chat/visualize_attention`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ messages: messages }),
+        });
+        const html = await response.text();
+        // Use an iframe to isolate the bertviz styles and scripts
+        modalContent.innerHTML = `<iframe srcdoc="${html.replace(/"/g, '&quot;')}" style="width:100%; height:80vh; border:none;"></iframe>`;
+    }
+
+    async function attributeTokens() {
+        if (isGenerating || messages.length === 0) return;
+        modalContent.innerHTML = 'Calculating token attributions...';
+        vizModal.style.display = 'block';
+
+        const response = await fetch(`${API_URL}/chat/attribute_tokens`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ messages: messages }),
+        });
+        const data = await response.json();
+        
+        // Create a simple color-coded visualization
+        let html = '<h3>Token Importance (Integrated Gradients)</h3>';
+        const maxScore = Math.max(...data.scores.map(Math.abs));
+        data.tokens.forEach((token, i) => {
+            const score = data.scores[i];
+            const intensity = Math.abs(score) / maxScore;
+            const color = score > 0 ? `rgba(110, 231, 183, ${intensity})` : `rgba(252, 165, 165, ${intensity})`;
+            html += `<span style="background-color:${color}; padding: 2px; border-radius:3px;">${token.replace(/\n/g, '↵')}</span> `;
+        });
+        modalContent.innerHTML = html;
+    }
+
+    window.onclick = function(event) {
+        if (event.target == vizModal) {
+            closeModal();
+        }
+    }
+</script>
+```
+
+With these changes, you will have a powerful, albeit basic, interpretability dashboard built directly into your `nanochat` UI, allowing you to probe the model's internal workings for any given conversation.
