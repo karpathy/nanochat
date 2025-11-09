@@ -158,6 +158,10 @@ class ChatRequest(BaseModel):
     max_tokens: Optional[int] = None
     top_k: Optional[int] = None
 
+class LogitLensRequest(BaseModel):
+    text: str
+    max_tokens: Optional[int] = 128
+
 def validate_chat_request(request: ChatRequest):
     """Validate chat request to prevent abuse."""
     # Check number of messages
@@ -253,12 +257,106 @@ async def root():
     )
     return HTMLResponse(content=html_content)
 
+@app.get("/logit-lens-ui")
+async def logit_lens_ui():
+    """Serve the logit-lens explorer UI."""
+    ui_html_path = os.path.join("nanochat", "logit_lens.html")
+    with open(ui_html_path, "r", encoding="utf-8") as f:
+        html_content = f.read()
+    # Replace the API_URL to use the same origin
+    html_content = html_content.replace(
+        "const API_URL = `http://${window.location.hostname}:8000`;",
+        "const API_URL = '';"
+    )
+    return HTMLResponse(content=html_content)
+
 
 @app.get("/logo.svg")
 async def logo():
     """Serve the NanoChat logo for favicon and header."""
     logo_path = os.path.join("nanochat", "logo.svg")
     return FileResponse(logo_path, media_type="image/svg+xml")
+
+@app.post("/logit-lens")
+async def logit_lens(request: LogitLensRequest):
+    """
+    Logit-lens endpoint that returns hidden states and decoded text for each layer.
+    Enables real-time exploration of emergent reasoning across transformer layers.
+    """
+    if len(request.text.strip()) == 0:
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    if len(request.text) > 1000:
+        raise HTTPException(status_code=400, detail="Text too long (max 1000 characters)")
+
+    worker_pool = app.state.worker_pool
+    worker = await worker_pool.acquire_worker()
+
+    try:
+        # Tokenize input text
+        tokens = worker.tokenizer.encode(request.text)
+        if len(tokens) > request.max_tokens:
+            tokens = tokens[:request.max_tokens]
+
+        # Convert to tensor
+        input_tensor = torch.tensor([tokens], dtype=torch.long, device=worker.device)
+
+        with worker.autocast_ctx:
+            # Forward pass with hidden state capture
+            logits, hidden_states = worker.engine.model.forward(
+                input_tensor,
+                capture_hidden_states=True
+            )
+
+            # Decode hidden states through lm_head for each layer
+            layer_logits = worker.engine.model.decode_hidden_states(hidden_states)
+
+            # Convert to greedy decoded tokens for each layer
+            layer_texts = []
+            token_info = []
+
+            for layer_idx, layer_logit in enumerate(layer_logits):
+                # Greedy decoding (argmax) for each position
+                decoded_tokens = torch.argmax(layer_logit, dim=-1)[0].tolist()  # Remove batch dim
+                layer_text = worker.tokenizer.decode(decoded_tokens)
+                layer_texts.append(layer_text)
+
+                # Get top-3 tokens for each position
+                layer_token_info = []
+                for pos_idx in range(len(decoded_tokens)):
+                    pos_logits = layer_logit[0, pos_idx, :]  # Remove batch dim
+                    top_probs, top_indices = torch.topk(F.softmax(pos_logits, dim=-1), 3)
+
+                    top_tokens = []
+                    for prob, idx in zip(top_probs, top_indices):
+                        token_str = worker.tokenizer.decode([idx.item()])
+                        top_tokens.append({
+                            "token": token_str.replace('\n', '\\n').replace('\t', '\\t'),
+                            "prob": prob.item(),
+                            "id": idx.item()
+                        })
+
+                    layer_token_info.append(top_tokens)
+
+                token_info.append(layer_token_info)
+
+            # Calculate final output (last layer)
+            final_logits = layer_logits[-1]
+            final_tokens = torch.argmax(final_logits, dim=-1)[0].tolist()
+            final_text = worker.tokenizer.decode(final_tokens)
+
+            return {
+                "input_text": request.text,
+                "input_tokens": tokens,
+                "final_text": final_text,
+                "final_tokens": final_tokens,
+                "num_layers": len(layer_texts),
+                "layer_texts": layer_texts,
+                "token_info": token_info,
+                "layer_names": ["embedding"] + [f"layer_{i}" for i in range(len(layer_texts)-1)]
+            }
+
+    finally:
+        await worker_pool.release_worker(worker)
 
 async def generate_stream(
     worker: Worker,
