@@ -157,6 +157,7 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     top_k: Optional[int] = None
+    include_logit_lens: Optional[bool] = False
 
 class LogitLensRequest(BaseModel):
     text: str
