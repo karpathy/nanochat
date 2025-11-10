@@ -88,7 +88,9 @@ class GPTConfig:
                  psyche_id_lr_scale=1.0,
                  psyche_ego_lr_scale=1.0,
                  psyche_superego_lr_scale=1.0,
-                 
+                 id_loss_weight=0.2, # New hyperparameter for deep supervision
+                 ego_loss_weight=0.2, # New hyperparameter for deep supervision
+                 superego_loss_weight=0.2, # New hyperparameter for deep supervision
                  **kwargs):
         self.n_layer = n_layer
         self.n_head = n_head
@@ -296,6 +298,9 @@ class GPT(nn.Module):
 
         self.concept_head = nn.Linear(config.n_embd, config.num_concept_ids, bias=False) # New concept head
         self.psyche_controller = PsycheController(config) # Initialize PsycheController
+        self.id_head = nn.Linear(config.n_embd, config.num_concept_ids, bias=False)
+        self.ego_head = nn.Linear(config.n_embd, config.num_concept_ids, bias=False)
+        self.superego_head = nn.Linear(config.n_embd, config.num_concept_ids, bias=False)
         # To support meta device initialization, we init the rotary embeddings here, but it's fake
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them, but assert fail if we ever reach that amount.
@@ -445,18 +450,21 @@ class GPT(nn.Module):
             x_superego = x_superego + long_term_memory_embeddings.unsqueeze(1).expand(-1, x_superego.size(1), -1)
             x_superego = self._run_layers(self.superego_layers, x_superego, cos_sin, kv_cache, episodic_kv)
 
-        # Dynamically blend the outputs based on psyche_weights
-        # Reshape psyche_weights for broadcasting: (B, 1, 3)
-        psyche_weights_reshaped = psyche_weights.unsqueeze(1)
+        # Apply auxiliary heads to the outputs of each psyche layer
+        id_logits = self.id_head(x_id)
+        ego_logits = self.ego_head(x_ego)
+        superego_logits = self.superego_head(x_superego)
 
-        # Stack the outputs and apply weighted sum
-        # Stack will result in (B, T, 3, C)
-        stacked_outputs = torch.stack([x_id, x_ego, x_superego], dim=2)
-        # Weighted sum: (B, T, 1, C) after sum, then squeeze to (B, T, C)
-        x = (stacked_outputs * psyche_weights_reshaped.unsqueeze(-1)).sum(dim=2)
+        # Blend the outputs of the psyche layers using psyche_weights
+        # For now, we'll use the final output of the last layer for concept_head
+        # In the future, this will be a weighted sum based on psyche_weights
+        x = x_id * psyche_weights[:, 0].unsqueeze(1).unsqueeze(2) + \
+            x_ego * psyche_weights[:, 1].unsqueeze(1).unsqueeze(2) + \
+            x_superego * psyche_weights[:, 2].unsqueeze(1).unsqueeze(2)
 
-        # Final concept head
-        return self.concept_head(x), kv_cache, x_id, x_ego, x_superego
+        # Final concept head for the blended output
+        x = norm(x)
+        return self.concept_head(x), kv_cache, id_logits, ego_logits, superego_logits
 
     def forward_prefill(self, input_embeddings: torch.Tensor, kv_cache=None, abacus_embedding: torch.Tensor | None = None, episodic_kv: tuple[torch.Tensor, torch.Tensor] | None = None, long_term_memory_embeddings: torch.Tensor | None = None, psyche_weights: torch.Tensor | None = None):
         B, T, C = input_embeddings.size()

@@ -129,7 +129,7 @@ class Engine(nn.Module):
             self.concept_embedding_layer(concept_ids, previous_continuous_latent) # target_continuous_latent will be set in the training loop
 
         # Pass continuous_latent to the GPT model
-        concept_logits, kv_cache, x_id, x_ego, x_superego = self.model.forward(
+        concept_logits, kv_cache, id_logits, ego_logits, superego_logits = self.model.forward(
             input_embeddings=continuous_latent,
             kv_cache=None, # kv_cache handling will be more complex for full training
             abacus_embedding=None, # Abacus embedding needs to be handled if used in training
@@ -144,12 +144,22 @@ class Engine(nn.Module):
         lm_loss = torch.tensor(0.0, device=concept_ids.device)
         if target_concept_ids is not None:
             # Slice target_concept_ids to match the sequence length of concept_logits
-            target_concept_ids = target_concept_ids[:, :concept_logits.size(1)]
+            target_concept_ids_sliced = target_concept_ids[:, :concept_logits.size(1)]
             # Reshape for cross_entropy: (N, C) for logits, (N) for targets
-            lm_loss = F.cross_entropy(concept_logits.reshape(-1, concept_logits.size(-1)), target_concept_ids.reshape(-1), ignore_index=-1)
+            lm_loss = F.cross_entropy(concept_logits.reshape(-1, concept_logits.size(-1)), target_concept_ids_sliced.reshape(-1), ignore_index=-1)
             total_loss += lm_loss
 
-        return total_loss, lm_loss, reconstruction_loss, energy_loss, continuous_latent, predicted_next_continuous_latent
+            # Calculate auxiliary losses for deep supervision
+            id_loss = F.cross_entropy(id_logits.reshape(-1, id_logits.size(-1)), target_concept_ids_sliced.reshape(-1), ignore_index=-1)
+            ego_loss = F.cross_entropy(ego_logits.reshape(-1, ego_logits.size(-1)), target_concept_ids_sliced.reshape(-1), ignore_index=-1)
+            superego_loss = F.cross_entropy(superego_logits.reshape(-1, superego_logits.size(-1)), target_concept_ids_sliced.reshape(-1), ignore_index=-1)
+
+            # Add weighted auxiliary losses to total_loss
+            total_loss += self.config.id_loss_weight * id_loss
+            total_loss += self.config.ego_loss_weight * ego_loss
+            total_loss += self.config.superego_loss_weight * superego_loss
+
+        return total_loss, lm_loss, reconstruction_loss, energy_loss, id_loss, ego_loss, superego_loss, continuous_latent, predicted_next_continuous_latent
 
     def _concept_encoder_placeholder(self, concept_list: list[int] | dict) -> torch.Tensor:
         raise NotImplementedError("Concept encoder not yet implemented.")
