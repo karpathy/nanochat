@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>برنامج دعم البرامج المسائية في الكليات التقنية</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Cairo', sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            overflow: hidden;
+            direction: rtl;
+        }
+
+        .presentation-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .slide {
+            width: 90vw;
+            max-width: 1200px;
+            height: 85vh;
+            max-height: 675px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            display: none;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+            animation: slideIn 0.5s ease-out;
+        }
+
+        .slide.active {
+            display: flex;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .slide-header {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 30px 50px;
+            min-height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .slide-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .slide-number {
+            font-size: 1.2rem;
+            opacity: 0.8;
+        }
+
+        .slide-content {
+            flex: 1;
+            padding: 50px;
+            overflow-y: auto;
+            background: linear-gradient(to bottom, #ffffff 0%, #f8f9fa 100%);
+        }
+
+        .subtitle {
+            font-size: 1.8rem;
+            color: #2a5298;
+            margin-bottom: 30px;
+            font-weight: 600;
+        }
+
+        .content-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .content-list li {
+            font-size: 1.4rem;
+            margin-bottom: 25px;
+            padding-right: 40px;
+            position: relative;
+            line-height: 1.8;
+            color: #333;
+        }
+
+        .content-list li:before {
+            content: "✓";
+            position: absolute;
+            right: 0;
+            color: #28a745;
+            font-weight: bold;
+            font-size: 1.6rem;
+        }
+
+        .numbered-list {
+            list-style: none;
+            counter-reset: item;
+            padding: 0;
+        }
+
+        .numbered-list li {
+            font-size: 1.4rem;
+            margin-bottom: 20px;
+            padding-right: 50px;
+            position: relative;
+            line-height: 1.8;
+            color: #333;
+        }
+
+        .numbered-list li:before {
+            content: counter(item);
+            counter-increment: item;
+            position: absolute;
+            right: 0;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+
+        .cover-slide {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 50px;
+        }
+
+        .cover-slide .main-title {
+            font-size: 3.5rem;
+            font-weight: 900;
+            margin-bottom: 30px;
+            text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.3);
+            line-height: 1.4;
+        }
+
+        .cover-slide .subtitle-text {
+            font-size: 2rem;
+            font-weight: 400;
+            margin-bottom: 50px;
+            opacity: 0.9;
+        }
+
+        .cover-slide .logo-placeholder {
+            width: 150px;
+            height: 150px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            margin-bottom: 30px;
+            border: 3px solid rgba(255, 255, 255, 0.5);
+        }
+
+        .navigation {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            z-index: 1000;
+        }
+
+        .nav-button {
+            background: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 50px;
+            font-size: 1.2rem;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s ease;
+            font-family: 'Cairo', sans-serif;
+            color: #1e3c72;
+        }
+
+        .nav-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+            background: #f8f9fa;
+        }
+
+        .nav-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .progress-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 5px;
+            background: rgba(255, 255, 255, 0.2);
+            z-index: 1001;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745 0%, #20c997 100%);
+            transition: width 0.3s ease;
+        }
+
+        .icon-box {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            border-radius: 15px;
+            font-size: 2rem;
+            margin-left: 20px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .highlight-box {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            padding: 30px;
+            border-radius: 15px;
+            margin: 20px 0;
+            border-right: 5px solid #2a5298;
+        }
+
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .stat-box {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            border-top: 4px solid #2a5298;
+        }
+
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 900;
+            color: #1e3c72;
+            margin-bottom: 10px;
+        }
+
+        .stat-label {
+            font-size: 1.2rem;
+            color: #666;
+        }
+
+        .flowchart {
+            display: flex;
+            align-items: center;
+            justify-content: space-around;
+            margin: 30px 0;
+            flex-wrap: wrap;
+        }
+
+        .flow-item {
+            background: white;
+            padding: 20px 30px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: #1e3c72;
+            position: relative;
+        }
+
+        .flow-arrow {
+            font-size: 2rem;
+            color: #2a5298;
+            margin: 0 10px;
+        }
+
+        .contact-info {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .contact-item {
+            display: flex;
+            align-items: center;
+            font-size: 1.5rem;
+            color: #333;
+            gap: 15px;
+        }
+
+        .speaker-notes {
+            position: fixed;
+            bottom: 80px;
+            right: 30px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 400px;
+            display: none;
+            font-size: 1rem;
+            line-height: 1.6;
+            z-index: 999;
+        }
+
+        .speaker-notes.show {
+            display: block;
+        }
+
+        .notes-toggle {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 50px;
+            cursor: pointer;
+            font-family: 'Cairo', sans-serif;
+            font-size: 1rem;
+            z-index: 1000;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin: 20px 0;
+        }
+
+        @media (max-width: 768px) {
+            .slide-title {
+                font-size: 1.8rem;
+            }
+            
+            .content-list li,
+            .numbered-list li {
+                font-size: 1.1rem;
+            }
+            
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+    </div>
+
+    <div class="presentation-container">
+        <!-- Slide 1: Cover -->
+        <div class="slide active cover-slide" data-notes="مرحبًا، اليوم سأقدم برنامجًا يهدف إلى دعم الطلاب العاملين في التعليم التقني. دعونا نبدأ بفهم التحديات التي يواجهونها.">
+            <div class="logo-placeholder">🎓</div>
+            <h1 class="main-title">برنامج دعم البرامج المسائية<br>في الكليات التقنية</h1>
+            <p class="subtitle-text">تمكين الشباب لمستقبل أفضل</p>
+            <p style="font-size: 1.3rem; opacity: 0.8; margin-top: 50px;">المؤسسة العامة للتدريب التقني والمهني (TVTC)</p>
+        </div>
+
+        <!-- Slide 2: Agenda -->
+        <div class="slide" data-notes="سأغطي هذه النقاط بالتفصيل لنفهم كيف يمكن لهذا البرنامج أن يغير حياة الشباب.">
+            <div class="slide-header">
+                <h2 class="slide-title">جدول الأعمال</h2>
+                <span class="slide-number">2 / 13</span>
+            </div>
+            <div class="slide-content">
+                <ol class="numbered-list">
+                    <li>المقدمة عن البرنامج</li>
+                    <li>فكرة البرنامج وأهدافه</li>
+                    <li>آليات التنفيذ</li>
+                    <li>الفوائد للشركاء</li>
+                    <li>كيفية المشاركة</li>
+                    <li>دراسة حالة وإحصائيات</li>
+                    <li>الخاتمة والأسئلة</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- Slide 3: Introduction -->
+        <div class="slide" data-notes="تخيل شبابًا يعملون نهارًا ويدرسون ليلاً – هذا هو واقع الكثيرين، وبرنامجنا يهدف إلى دعمهم.">
+            <div class="slide-header">
+                <h2 class="slide-title">المقدمة</h2>
+                <span class="slide-number">3 / 13</span>
+            </div>
+            <div class="slide-content">
+                <div class="highlight-box">
+                    <p style="font-size: 1.6rem; line-height: 2; color: #1e3c72; font-weight: 600;">
+                        كل مساء، يدرس شباب وشابات بعد يوم عمل طويل لتطوير مهاراتهم التقنية
+                    </p>
+                </div>
+                <ul class="content-list">
+                    <li>هؤلاء الطلاب هم الطاقات الواعدة التي ستشكل مستقبل سوق العمل الوطني</li>
+                    <li>البرنامج يقدم التعليم والفرصة للتغيير</li>
+                    <li>يمنحكم فرصة الشراكة في تمكين الجيل القادم</li>
+                </ul>
+                <div class="stats-container">
+                    <div class="stat-box">
+                        <div class="stat-number">💼</div>
+                        <div class="stat-label">طلاب عاملون</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">🌙</div>
+                        <div class="stat-label">دراسة مسائية</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">🎯</div>
+                        <div class="stat-label">مستقبل واعد</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 4: Program Idea -->
+        <div class="slide" data-notes="الفكرة بسيطة: دعم مالي كامل لإزالة الحواجز أمام التعليم التقني.">
+            <div class="slide-header">
+                <h2 class="slide-title">فكرة البرنامج</h2>
+                <span class="slide-number">4 / 13</span>
+            </div>
+            <div class="slide-content">
+                <ul class="content-list">
+                    <li>تمكين الفئة المحتاجة من الحصول على تدريب نوعي في التخصصات التقنية عبر TVTC</li>
+                    <li>دعم مالي يغطي تكلفة التدريب بالكامل للدبلوم المسائي</li>
+                    <li>تعزيز التكافل المجتمعي وتنمية المهارات الوطنية بما يواكب سوق العمل</li>
+                </ul>
+                <div class="flowchart">
+                    <div class="flow-item">الشركاء</div>
+                    <div class="flow-arrow">←</div>
+                    <div class="flow-item">الدعم المالي</div>
+                    <div class="flow-arrow">←</div>
+                    <div class="flow-item">الطلاب</div>
+                    <div class="flow-arrow">←</div>
+                    <div class="flow-item">سوق العمل</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 5: Main Objectives -->
+        <div class="slide" data-notes="هذه الأهداف تضمن أن البرنامج ليس مجرد تعليم، بل استثمار في المستقبل.">
+            <div class="slide-header">
+                <h2 class="slide-title">الأهداف الرئيسية</h2>
+                <span class="slide-number">5 / 13</span>
+            </div>
+            <div class="slide-content">
+                <div class="grid-2">
+                    <div class="highlight-box">
+                        <div class="icon-box">🎯</div>
+                        <h3 style="font-size: 1.5rem; margin: 15px 0; color: #1e3c72;">تمكين الفئات المحتاجة</h3>
+                        <p style="font-size: 1.2rem; color: #666;">إزالة الحواجز المالية أمام التعليم التقني</p>
+                    </div>
+                    <div class="highlight-box">
+                        <div class="icon-box">🤝</div>
+                        <h3 style="font-size: 1.5rem; margin: 15px 0; color: #1e3c72;">تعزيز التكافل المجتمعي</h3>
+                        <p style="font-size: 1.2rem; color: #666;">بناء شراكات فعالة بين القطاعين</p>
+                    </div>
+                    <div class="highlight-box">
+                        <div class="icon-box">💡</div>
+                        <h3 style="font-size: 1.5rem; margin: 15px 0; color: #1e3c72;">تطوير المهارات الوطنية</h3>
+                        <p style="font-size: 1.2rem; color: #666;">مواكبة احتياجات سوق العمل المتطورة</p>
+                    </div>
+                    <div class="highlight-box">
+                        <div class="icon-box">⭐</div>
+                        <h3 style="font-size: 1.5rem; margin: 15px 0; color: #1e3c72;">تشجيع التميز والابتكار</h3>
+                        <p style="font-size: 1.2rem; color: #666;">خلق بيئة محفزة للإبداع والتطور</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 6: Implementation Mechanisms Part 1 -->
+        <div class="slide" data-notes="نضمن الشفافية في اختيار الطلاب لضمان الفعالية.">
+            <div class="slide-header">
+                <h2 class="slide-title">آليات التنفيذ - الجزء الأول</h2>
+                <span class="slide-number">6 / 13</span>
+            </div>
+            <div class="slide-content">
+                <div class="highlight-box">
+                    <h3 style="font-size: 1.8rem; margin-bottom: 20px; color: #1e3c72;">💰 الدعم المالي</h3>
+                    <ul class="content-list">
+                        <li>تغطية 100% من تكاليف التدريب</li>
+                        <li>شامل جميع الرسوم الدراسية والمواد التعليمية</li>
+                        <li>دعم مباشر وفوري للطلاب المستحقين</li>
+                    </ul>
+                </div>
+                <div class="highlight-box" style="margin-top: 30px;">
+                    <h3 style="font-size: 1.8rem; margin-bottom: 20px; color: #1e3c72;">📋 معايير الاختيار</h3>
+                    <ul class="content-list">
+                        <li>تقييم الحاجة المالية بشفافية</li>
+                        <li>الالتزام الأكاديمي والحضور المنتظم</li>
+                        <li>الرغبة الحقيقية في التطوير المهني</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 7: Implementation Mechanisms Part 2 -->
+        <div class="slide" data-notes="الشراكات هي قلب البرنامج – بدونكم، لا يمكن تحقيقه.">
+            <div class="slide-header">
+                <h2 class="slide-title">آليات التنفيذ - الجزء الثاني</h2>
+                <span class="slide-number">7 / 13</span>
+            </div>
+            <div class="slide-content">
+                <div class="highlight-box">
+                    <h3 style="font-size: 1.8rem; margin-bottom: 20px; color: #1e3c72;">🤝 الشراكات</h3>
+                    <ul class="content-list">
+                        <li>دعوة الشركات والمؤسسات للمساهمة</li>
+                        <li>بناء علاقات طويلة الأمد مع القطاع الخاص</li>
+                        <li>تنسيق الجهود لتحقيق أقصى تأثير</li>
+                    </ul>
+                </div>
+                <div class="highlight-box" style="margin-top: 30px;">
+                    <h3 style="font-size: 1.8rem; margin-bottom: 20px; color: #1e3c72;">📊 المتابعة والتقييم</h3>
+                    <ul class="content-list">
+                        <li>تتبع التقدم الأكاديمي للطلاب</li>
+                        <li>برامج توظيف وتدريب عملي</li>
+                        <li>تقارير دورية للشركاء عن الإنجازات</li>
+                    </ul>
+                </div>
+                <div class="stats-container" style="margin-top: 30px;">
+                    <div class="stat-box">
+                        <div class="stat-number">📅</div>
+                        <div class="stat-label">بداية العام الدراسي</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 8: Benefits for Partners -->
+        <div class="slide" data-notes="كشريك، ستكون جزءًا من قصة نجاح وطنية.">
+            <div class="slide-header">
+                <h2 class="slide-title">الفوائد للشركاء</h2>
+                <span class="slide-number">8 / 13</span>
+            </div>
+            <div class="slide-content">
+                <div class="grid-2">
+                    <div class="highlight-box">
+                        <div class="icon-box">❤️</div>
+                        <h3 style="font-size: 1.5rem; margin: 15px 0; color: #1e3c72;">التأثير الاجتماعي</h3>
+                        <p style="font-size: 1.2rem; color: #666;">تحويل حياة الشباب وبناء مجتمع أفضل</p>
+                    </div>
+                    <div class="highlight-box">
+                        <div class="icon-box">💼</div>
+                        <h3 style="font-size: 1.5rem; margin: 15px 0; color: #1e3c72;">الفوائد الاقتصادية</h3>
+                        <p style="font-size: 1.2rem; color: #666;">قوى عاملة مدربة جاهزة للتوظيف</p>
+                    </div>
+                    <div class="highlight-box">
+                        <div class="icon-box">📢</div>
+                        <h3 style="font-size: 1.5rem; margin: 15px 0; color: #1e3c72;">الترويج والتسويق</h3>
+                        <p style="font-size: 1.2rem; color: #666;">الإعلان عن الشركاء في جميع الحملات</p>
+                    </div>
+                    <div class="highlight-box">
+                        <div class="icon-box">🏆</div>
+                        <h3 style="font-size: 1.5rem; margin: 15px 0; color: #1e3c72;">السمعة المؤسسية</h3>
+                        <p style="font-size: 1.2rem; color: #666;">تعزيز صورة المسؤولية الاجتماعية</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 9: How to Participate -->
+        <div class="slide" data-notes="ابدأ اليوم – حتى مساهمة صغيرة تغير حياة طالب.">
+            <div class="slide-header">
+                <h2 class="slide-title">كيفية المشاركة</h2>
+                <span class="slide-number">9 / 13</span>
+            </div>
+            <div class="slide-content">
+                <div class="highlight-box">
+                    <h3 style="font-size: 1.8rem; margin-bottom: 20px; color: #1e3c72;">💵 التبرع المالي</h3>
+                    <p style="font-size: 1.3rem; color: #666; line-height: 1.8;">
+                        المساهمة بتغطية تكاليف تدريب طالب أو أكثر - كل مساهمة تصنع فرقًا حقيقيًا
+                    </p>
+                </div>
+                <div class="highlight-box" style="margin-top: 25px;">
+                    <h3 style="font-size: 1.8rem; margin-bottom: 20px; color: #1e3c72;">🎓 فرص التدريب والتوظيف</h3>
+                    <p style="font-size: 1.3rem; color: #666; line-height: 1.8;">
+                        تقديم فرص تدريب عملي أو وظائف للخريجين - استثمار في مستقبل شركتكم
+                    </p>
+                </div>
+                <div class="highlight-box" style="margin-top: 25px;">
+                    <h3 style="font-size: 1.8rem; margin-bottom: 20px; color: #1e3c72;">👥 المشاركة في اللجان</h3>
+                    <p style="font-size: 1.3rem; color: #666; line-height: 1.8;">
+                        الانضمام إلى لجان البرنامج والمساهمة في التخطيط والتطوير
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 10: Case Study -->
+        <div class="slide" data-notes="هذا ليس مجرد برنامج – إنه يبني مستقبلًا.">
+            <div class="slide-header">
+                <h2 class="slide-title">تأثير البرنامج</h2>
+                <span class="slide-number">10 / 13</span>
+            </div>
+            <div class="slide-content">
+                <div class="highlight-box" style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border-right-color: #28a745;">
+                    <h3 style="font-size: 1.8rem; margin-bottom: 20px; color: #1e3c72;">📖 قصة نجاح</h3>
+                    <p style="font-size: 1.4rem; color: #333; line-height: 2;">
+                        <strong>أحمد</strong> - طالب عمل نهارًا ودرس مساءً في تخصص تقنية المعلومات. 
+                        بفضل الدعم الكامل، تخرج بتفوق ووجد وظيفة في شركة تقنية رائدة خلال شهر واحد من التخرج.
+                    </p>
+                </div>
+                <div class="stats-container" style="margin-top: 30px;">
+                    <div class="stat-box">
+                        <div class="stat-number">85%</div>
+                        <div class="stat-label">نسبة التوظيف بعد التخرج</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">1000+</div>
+                        <div class="stat-label">طالب مستفيد سنويًا</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">95%</div>
+                        <div class="stat-label">معدل رضا الشركاء</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 11: Impact Visualization -->
+        <div class="slide" data-notes="الأرقام تتحدث عن نفسها - هذا البرنامج يحقق نتائج ملموسة.">
+            <div class="slide-header">
+                <h2 class="slide-title">الأثر المتوقع</h2>
+                <span class="slide-number">11 / 13</span>
+            </div>
+            <div class="slide-content">
+                <div class="grid-2">
+                    <div class="highlight-box">
+                        <h3 style="font-size: 1.5rem; margin-bottom: 15px; color: #1e3c72;">📈 على الطلاب</h3>
+                        <ul class="content-list">
+                            <li>تحسين المهارات التقنية</li>
+                            <li>زيادة فرص التوظيف</li>
+                            <li>تحسين الدخل والاستقرار المالي</li>
+                        </ul>
+                    </div>
+                    <div class="highlight-box">
+                        <h3 style="font-size: 1.5rem; margin-bottom: 15px; color: #1e3c72;">🏢 على الشركات</h3>
+                        <ul class="content-list">
+                            <li>كوادر مؤهلة جاهزة</li>
+                            <li>تقليل تكاليف التدريب</li>
+                            <li>تعزيز الولاء المؤسسي</li>
+                        </ul>
+                    </div>
+                    <div class="highlight-box">
+                        <h3 style="font-size: 1.5rem; margin-bottom: 15px; color: #1e3c72;">🇸🇦 على الاقتصاد الوطني</h3>
+                        <ul class="content-list">
+                            <li>تقليل البطالة</li>
+                            <li>زيادة الإنتاجية</li>
+                            <li>تحقيق رؤية 2030</li>
+                        </ul>
+                    </div>
+                    <div class="highlight-box">
+                        <h3 style="font-size: 1.5rem; margin-bottom: 15px; color: #1e3c72;">🌟 على المجتمع</h3>
+                        <ul class="content-list">
+                            <li>تعزيز التكافل الاجتماعي</li>
+                            <li>بناء مجتمع معرفي</li>
+                            <li>تحسين جودة الحياة</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 12: Conclusion -->
+        <div class="slide" data-notes="شكرًا لاهتمامكم – الآن هو وقت العمل.">
+            <div class="slide-header">
+                <h2 class="slide-title">الخاتمة</h2>
+                <span class="slide-number">12 / 13</span>
+            </div>
+            <div class="slide-content">
+                <div class="highlight-box" style="background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); border-right-color: #ff9800; text-align: center; padding: 50px;">
+                    <h3 style="font-size: 2.2rem; margin-bottom: 30px; color: #1e3c72; line-height: 1.8;">
+                        البرنامج فرصة لدعم الجيل الجديد<br>وتعزيز الاقتصاد الوطني
+                    </h3>
+                    <p style="font-size: 1.8rem; color: #333; font-weight: 600; margin-top: 40px;">
+                        دعونا نعمل معًا لتحقيق التغيير 🤝
+                    </p>
+                </div>
+                <div class="stats-container" style="margin-top: 40px;">
+                    <div class="stat-box" style="border-top-color: #28a745;">
+                        <div class="stat-number">🎯</div>
+                        <div class="stat-label">رؤية واضحة</div>
+                    </div>
+                    <div class="stat-box" style="border-top-color: #2a5298;">
+                        <div class="stat-number">💪</div>
+                        <div class="stat-label">شراكة قوية</div>
+                    </div>
+                    <div class="stat-box" style="border-top-color: #ff9800;">
+                        <div class="stat-number">🌟</div>
+                        <div class="stat-label">مستقبل مشرق</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 13: Contact & Questions -->
+        <div class="slide" data-notes="أنا هنا للإجابة على أي استفسار.">
+            <div class="slide-header">
+                <h2 class="slide-title">الأسئلة والتواصل</h2>
+                <span class="slide-number">13 / 13</span>
+            </div>
+            <div class="slide-content">
+                <div style="text-align: center; margin-bottom: 50px;">
+                    <h3 style="font-size: 2.5rem; color: #1e3c72; margin-bottom: 20px;">هل لديكم أسئلة؟</h3>
+                    <p style="font-size: 1.5rem; color: #666;">نحن هنا للإجابة على جميع استفساراتكم</p>
+                </div>
+                <div class="highlight-box">
+                    <h3 style="font-size: 1.8rem; margin-bottom: 30px; color: #1e3c72; text-align: center;">📞 معلومات التواصل</h3>
+                    <div class="contact-info">
+                        <div class="contact-item">
+                            <div class="icon-box" style="width: 50px; height: 50px; font-size: 1.5rem;">📧</div>
+                            <span>البريد الإلكتروني: support@tvtc.gov.sa</span>
+                        </div>
+                        <div class="contact-item">
+                            <div class="icon-box" style="width: 50px; height: 50px; font-size: 1.5rem;">📱</div>
+                            <span>الهاتف: 920000866</span>
+                        </div>
+                        <div class="contact-item">
+                            <div class="icon-box" style="width: 50px; height: 50px; font-size: 1.5rem;">🌐</div>
+                            <span>الموقع الإلكتروني: www.tvtc.gov.sa</span>
+                        </div>
+                    </div>
+                </div>
+                <div style="text-align: center; margin-top: 50px; font-size: 1.8rem; color: #1e3c72; font-weight: 700;">
+                    شكرًا لكم ونتطلع للعمل معكم 🙏
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="navigation">
+        <button class="nav-button" id="prevBtn" onclick="changeSlide(-1)">← السابق</button>
+        <button class="nav-button" id="nextBtn" onclick="changeSlide(1)">التالي →</button>
+    </div>
+
+    <button class="notes-toggle" onclick="toggleNotes()">📝 ملاحظات المتحدث</button>
+    <div class="speaker-notes" id="speakerNotes"></div>
+
+    <script>
+        let currentSlide = 0;
+        const slides = document.querySelectorAll('.slide');
+        const totalSlides = slides.length;
+
+        function showSlide(n) {
+            slides[currentSlide].classList.remove('active');
+            currentSlide = (n + totalSlides) % totalSlides;
+            slides[currentSlide].classList.add('active');
+            
+            // Update progress bar
+            const progress = ((currentSlide + 1) / totalSlides) * 100;
+            document.getElementById('progressFill').style.width = progress + '%';
+            
+            // Update buttons
+            document.getElementById('prevBtn').disabled = currentSlide === 0;
+            document.getElementById('nextBtn').disabled = currentSlide === totalSlides - 1;
+            
+            // Update speaker notes
+            const notes = slides[currentSlide].getAttribute('data-notes');
+            document.getElementById('speakerNotes').textContent = notes || 'لا توجد ملاحظات لهذه الشريحة';
+        }
+
+        function changeSlide(direction) {
+            showSlide(currentSlide + direction);
+        }
+
+        function toggleNotes() {
+            document.getElementById('speakerNotes').classList.toggle('show');
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+                if (currentSlide > 0) changeSlide(-1);
+            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+                if (currentSlide < totalSlides - 1) changeSlide(1);
+            } else if (e.key === 'n' || e.key === 'N') {
+                toggleNotes();
+            }
+        });
+
+        // Initialize
+        showSlide(0);
+    </script>
+</body>
+</html>
