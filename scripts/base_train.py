@@ -59,7 +59,7 @@ core_metric_every = 2000 # every how many steps to evaluate the core metric (-1 
 core_metric_max_per_task = 500 # examples per task in estimating the core metric
 sample_every = 2000 # every how many steps to sample from the model
 # Logging
-promised_flops_per_gpu = 15e12 # Only used for logging. Set it to "without sparsity, bfloat16 flops for a single gpu", to log correct `mfu`. Default is set for H100 SXM, bfloat16, without 2:4 sparsity.
+promised_flops_per_gpu = 989e12 # Only used for logging. Set it to "without sparsity, bfloat16 flops for a single gpu", to log correct `mfu`. Default is set for H100 SXM, bfloat16, without 2:4 sparsity.
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
 # now allow CLI to override the settings via the configurator lol
