@@ -8,6 +8,11 @@
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
+
+# Fix for H100 CUDA error during Triton autotuning (GitHub Issue #257)
+# Disable aggressive autotuning that can cause invalid tensor configurations
+export TORCHINDUCTOR_MAX_AUTOTUNE=0
+export TORCHINDUCTOR_COORDINATE_DESCENT_TUNING=0
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 uv sync --extra gpu

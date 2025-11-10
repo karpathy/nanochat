@@ -12,6 +12,10 @@ torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_
 from collections import deque
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# Fix for H100 CUDA error during Triton autotuning (GitHub Issue #257)
+# Disable aggressive autotuning that can cause invalid tensor configurations
+os.environ["TORCHINDUCTOR_MAX_AUTOTUNE"] = "0"
+os.environ["TORCHINDUCTOR_COORDINATE_DESCENT_TUNING"] = "0"
 import time
 import wandb
 import torch

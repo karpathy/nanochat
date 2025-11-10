@@ -13,6 +13,10 @@ python -m scripts.base_train --depth=4 --max_seq_len=512 --device_batch_size=1 -
 
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# Fix for H100 CUDA error during Triton autotuning (GitHub Issue #257)
+# Disable aggressive autotuning that can cause invalid tensor configurations
+os.environ["TORCHINDUCTOR_MAX_AUTOTUNE"] = "0"
+os.environ["TORCHINDUCTOR_COORDINATE_DESCENT_TUNING"] = "0"
 import time
 from contextlib import nullcontext
 
