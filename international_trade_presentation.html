@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Benefits of International Trade - IB Economics HL</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            overflow: hidden;
+        }
+
+        .presentation-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .slide {
+            width: 90%;
+            max-width: 1200px;
+            height: 85vh;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 60px;
+            display: none;
+            flex-direction: column;
+            position: relative;
+            animation: slideIn 0.5s ease-out;
+        }
+
+        .slide.active {
+            display: flex;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .slide-header {
+            border-bottom: 4px solid #667eea;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            color: #2d3748;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        h2 {
+            color: #667eea;
+            font-size: 2em;
+            margin-bottom: 20px;
+        }
+
+        h3 {
+            color: #4a5568;
+            font-size: 1.5em;
+            margin-bottom: 15px;
+            margin-top: 20px;
+        }
+
+        .subtitle {
+            color: #718096;
+            font-size: 1.2em;
+            font-style: italic;
+        }
+
+        .content {
+            flex: 1;
+            overflow-y: auto;
+            padding-right: 20px;
+        }
+
+        .content::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .content::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+
+        .content::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 10px;
+        }
+
+        ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        li {
+            padding: 15px 0;
+            padding-left: 40px;
+            position: relative;
+            color: #2d3748;
+            font-size: 1.1em;
+            line-height: 1.6;
+        }
+
+        li:before {
+            content: "→";
+            position: absolute;
+            left: 10px;
+            color: #667eea;
+            font-weight: bold;
+            font-size: 1.3em;
+        }
+
+        .benefit-box {
+            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+            border-left: 5px solid #667eea;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 10px;
+        }
+
+        .benefit-box h3 {
+            margin-top: 0;
+        }
+
+        .two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 20px;
+        }
+
+        .column {
+            background: #f7fafc;
+            padding: 25px;
+            border-radius: 10px;
+            border: 2px solid #e2e8f0;
+        }
+
+        .column h3 {
+            margin-top: 0;
+            color: #667eea;
+        }
+
+        .navigation {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 2px solid #e2e8f0;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-size: 1em;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            background: #cbd5e0;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .slide-counter {
+            color: #718096;
+            font-size: 1em;
+            font-weight: 600;
+        }
+
+        .reference {
+            background: #edf2f7;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 0.9em;
+            color: #4a5568;
+            font-style: italic;
+        }
+
+        .highlight {
+            background: #fef5e7;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            color: #d97706;
+        }
+
+        .key-term {
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .example-box {
+            background: #e6fffa;
+            border-left: 5px solid #38b2ac;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+
+        .example-box strong {
+            color: #38b2ac;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        th {
+            background: #667eea;
+            color: white;
+            font-weight: 600;
+        }
+
+        tr:hover {
+            background: #f7fafc;
+        }
+    </style>
+</head>
+<body>
+    <div class="presentation-container">
+        <!-- Slide 1: Title -->
+        <div class="slide active">
+            <div class="slide-header">
+                <h1>Benefits of International Trade</h1>
+                <p class="subtitle">IB Economics HL - Higher Level</p>
+            </div>
+            <div class="content">
+                <div style="text-align: center; margin-top: 60px;">
+                    <h2 style="font-size: 2.5em; color: #667eea;">Understanding Global Trade</h2>
+                    <p style="font-size: 1.3em; color: #4a5568; margin-top: 30px; line-height: 1.8;">
+                        Exploring the economic advantages of international exchange<br>
+                        and the theory of comparative advantage
+                    </p>
+                </div>
+                <div class="reference" style="margin-top: 100px;">
+                    <strong>Reference:</strong> Tragakes, E. (2020). <em>Economics for the IB Diploma</em> (3rd ed.). Cambridge University Press.
+                </div>
+            </div>
+            <div class="navigation">
+                <button onclick="previousSlide()" disabled>Previous</button>
+                <span class="slide-counter">Slide <span id="current">1</span> of <span id="total">8</span></span>
+                <button onclick="nextSlide()">Next</button>
+            </div>
+        </div>
+
+        <!-- Slide 2: Introduction to International Trade -->
+        <div class="slide">
+            <div class="slide-header">
+                <h2>What is International Trade?</h2>
+            </div>
+            <div class="content">
+                <p style="font-size: 1.2em; color: #2d3748; margin-bottom: 30px;">
+                    International trade involves the <span class="key-term">exchange of goods and services</span> between countries, allowing nations to specialize in production and benefit from global markets.
+                </p>
+                
+                <div class="benefit-box">
+                    <h3>Key Concept: Specialization</h3>
+                    <p>Countries focus on producing goods and services where they have a <span class="highlight">comparative advantage</span>, leading to more efficient global resource allocation.</p>
+                </div>
+
+                <h3>Why Do Countries Trade?</h3>
+                <ul>
+                    <li>Access to goods and services not available domestically</li>
+                    <li>Lower prices through competitive markets</li>
+                    <li>Increased variety and consumer choice</li>
+                    <li>Economic efficiency through specialization</li>
+                    <li>Economies of scale in production</li>
+                </ul>
+
+                <div class="example-box">
+                    <strong>Example:</strong> Saudi Arabia exports oil (abundant resource) and imports agricultural products (scarce due to climate), while Canada exports wheat and imports tropical fruits.
+                </div>
+            </div>
+            <div class="navigation">
+                <button onclick="previousSlide()">Previous</button>
+                <span class="slide-counter">Slide <span id="current">2</span> of <span id="total">8</span></span>
+                <button onclick="nextSlide()">Next</button>
+            </div>
+        </div>
+
+        <!-- Slide 3: Comparative Advantage -->
+        <div class="slide">
+            <div class="slide-header">
+                <h2>Theory of Comparative Advantage</h2>
+            </div>
+            <div class="content">
+                <div class="benefit-box">
+                    <h3>David Ricardo's Principle</h3>
+                    <p>A country should specialize in producing goods where it has the <span class="highlight">lowest opportunity cost</span>, even if it doesn't have an absolute advantage in any good.</p>
+                </div>
+
+                <h3>Key Distinctions:</h3>
+                <table>
+                    <tr>
+                        <th>Absolute Advantage</th>
+                        <th>Comparative Advantage</th>
+                    </tr>
+                    <tr>
+                        <td>Producing more output with the same inputs</td>
+                        <td>Producing at a lower opportunity cost</td>
+                    </tr>
+                    <tr>
+                        <td>Not necessary for trade benefits</td>
+                        <td>Basis for mutually beneficial trade</td>
+                    </tr>
+                    <tr>
+                        <td>Can exist in multiple goods</td>
+                        <td>Always exists in at least one good</td>
+                    </tr>
+                </table>
+
+                <div class="example-box">
+                    <strong>IB Exam Tip:</strong> Always calculate opportunity costs when analyzing comparative advantage. Show your working clearly: Opportunity Cost = What you give up ÷ What you gain
+                </div>
+
+                <h3>Benefits of Specialization:</h3>
+                <ul>
+                    <li>Increased global output and efficiency</li>
+                    <li>Lower prices for consumers worldwide</li>
+                    <li>Better allocation of world resources</li>
+                </ul>
+            </div>
+            <div class="navigation">
+                <button onclick="previousSlide()">Previous</button>
+                <span class="slide-counter">Slide <span id="current">3</span> of <span id="total">8</span></span>
+                <button onclick="nextSlide()">Next</button>
+            </div>
+        </div>
+
+        <!-- Slide 4: Economic Benefits -->
+        <div class="slide">
+            <div class="slide-header">
+                <h2>Economic Benefits of International Trade</h2>
+            </div>
+            <div class="content">
+                <div class="two-column">
+                    <div class="column">
+                        <h3>1. Lower Prices</h3>
+                        <p>International competition forces domestic producers to be more efficient, reducing prices for consumers.</p>
+                        <ul style="margin-top: 15px;">
+                            <li style="font-size: 0.95em;">Competitive pressure</li>
+                            <li style="font-size: 0.95em;">Access to cheaper imports</li>
+                            <li style="font-size: 0.95em;">Increased purchasing power</li>
+                        </ul>
+                    </div>
+                    <div class="column">
+                        <h3>2. Greater Choice</h3>
+                        <p>Consumers access a wider variety of goods and services from around the world.</p>
+                        <ul style="margin-top: 15px;">
+                            <li style="font-size: 0.95em;">Diverse products</li>
+                            <li style="font-size: 0.95em;">Different quality levels</li>
+                            <li style="font-size: 0.95em;">Seasonal availability</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="benefit-box">
+                    <h3>3. Economies of Scale</h3>
+                    <p>Access to larger international markets allows firms to increase production, reducing average costs through:</p>
+                    <ul>
+                        <li>Bulk purchasing of inputs</li>
+                        <li>Specialization of labor and machinery</li>
+                        <li>Spreading fixed costs over larger output</li>
+                        <li>Technical and managerial efficiencies</li>
+                    </ul>
+                </div>
+
+                <div class="benefit-box">
+                    <h3>4. Increased Competition & Efficiency</h3>
+                    <p>Domestic firms must innovate and improve to compete with foreign producers, leading to:</p>
+                    <ul>
+                        <li>Better quality products</li>
+                        <li>Technological advancement</li>
+                        <li>Productive efficiency gains</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="navigation">
+                <button onclick="previousSlide()">Previous</button>
+                <span class="slide-counter">Slide <span id="current">4</span> of <span id="total">8</span></span>
+                <button onclick="nextSlide()">Next</button>
+            </div>
+        </div>
+
+        <!-- Slide 5: Growth and Development Benefits -->
+        <div class="slide">
+            <div class="slide-header">
+                <h2>Trade, Growth & Development</h2>
+            </div>
+            <div class="content">
+                <div class="benefit-box">
+                    <h3>5. Economic Growth</h3>
+                    <p>International trade contributes to GDP growth through:</p>
+                    <ul>
+                        <li><span class="key-term">Export-led growth:</span> Exports increase aggregate demand (AD = C + I + G + (X-M))</li>
+                        <li><span class="key-term">Productivity improvements:</span> Competition drives innovation and efficiency</li>
+                        <li><span class="key-term">Capital accumulation:</span> Export revenues fund investment</li>
+                        <li><span class="key-term">Technology transfer:</span> Access to foreign technology and knowledge</li>
+                    </ul>
+                </div>
+
+                <div class="benefit-box">
+                    <h3>6. Employment Creation</h3>
+                    <p>Trade generates employment opportunities in:</p>
+                    <ul>
+                        <li>Export-oriented industries</li>
+                        <li>Transportation and logistics sectors</li>
+                        <li>Supporting service industries</li>
+                        <li>Foreign direct investment (FDI) projects</li>
+                    </ul>
+                </div>
+
+                <div class="example-box">
+                    <strong>Real-World Example:</strong> China's integration into global trade since the 1980s lifted over 800 million people out of poverty through export-led industrialization and employment creation.
+                </div>
+
+                <div class="benefit-box">
+                    <h3>7. Access to Resources & Technology</h3>
+                    <ul>
+                        <li>Import essential raw materials not available domestically</li>
+                        <li>Access advanced technology and capital goods</li>
+                        <li>Knowledge spillovers from multinational corporations</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="navigation">
+                <button onclick="previousSlide()">Previous</button>
+                <span class="slide-counter">Slide <span id="current">5</span> of <span id="total">8</span></span>
+                <button onclick="nextSlide()">Next</button>
+            </div>
+        </div>
+
+        <!-- Slide 6: Additional Benefits -->
+        <div class="slide">
+            <div class="slide-header">
+                <h2>Additional Benefits of Trade</h2>
+            </div>
+            <div class="content">
+                <div class="benefit-box">
+                    <h3>8. Market Access for Developing Countries</h3>
+                    <p>Trade provides developing nations with:</p>
+                    <ul>
+                        <li>Access to large, wealthy consumer markets</li>
+                        <li>Foreign exchange earnings to finance development</li>
+                        <li>Opportunities to diversify away from primary commodities</li>
+                        <li>Integration into global value chains</li>
+                    </ul>
+                </div>
+
+                <div class="two-column">
+                    <div class="column">
+                        <h3>9. Political Benefits</h3>
+                        <ul style="margin-top: 15px;">
+                            <li style="font-size: 0.95em;">Promotes international cooperation</li>
+                            <li style="font-size: 0.95em;">Reduces likelihood of conflict</li>
+                            <li style="font-size: 0.95em;">Strengthens diplomatic ties</li>
+                            <li style="font-size: 0.95em;">Encourages peace through interdependence</li>
+                        </ul>
+                    </div>
+                    <div class="column">
+                        <h3>10. Cultural Exchange</h3>
+                        <ul style="margin-top: 15px;">
+                            <li style="font-size: 0.95em;">Exposure to different cultures</li>
+                            <li style="font-size: 0.95em;">Spread of ideas and values</li>
+                            <li style="font-size: 0.95em;">Greater understanding between nations</li>
+                            <li style="font-size: 0.95em;">Cultural diversity enrichment</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="benefit-box">
+                    <h3>11. Improved Allocation of Resources</h3>
+                    <p>Trade allows countries to:</p>
+                    <ul>
+                        <li>Focus on their most efficient industries</li>
+                        <li>Avoid wasting resources on inefficient production</li>
+                        <li>Achieve <span class="key-term">allocative efficiency</span> globally</li>
+                        <li>Maximize world output from limited resources</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="navigation">
+                <button onclick="previousSlide()">Previous</button>
+                <span class="slide-counter">Slide <span id="current">6</span> of <span id="total">8</span></span>
+                <button onclick="nextSlide()">Next</button>
+            </div>
+        </div>
+
+        <!-- Slide 7: IB Evaluation Points -->
+        <div class="slide">
+            <div class="slide-header">
+                <h2>Evaluation & Critical Analysis (HL)</h2>
+            </div>
+            <div class="content">
+                <p style="font-size: 1.1em; color: #2d3748; margin-bottom: 20px;">
+                    <strong>For IB HL essays, always evaluate the benefits with limitations:</strong>
+                </p>
+
+                <div class="benefit-box" style="background: #fff5f5; border-left-color: #e53e3e;">
+                    <h3 style="color: #e53e3e;">Potential Limitations to Consider:</h3>
+                    <ul>
+                        <li><span class="highlight">Structural unemployment:</span> Workers in declining industries may lose jobs</li>
+                        <li><span class="highlight">Over-dependence:</span> Reliance on few export products creates vulnerability</li>
+                        <li><span class="highlight">Inequality:</span> Benefits may not be evenly distributed within countries</li>
+                        <li><span class="highlight">Environmental concerns:</span> Increased transportation and production pollution</li>
+                        <li><span class="highlight">Infant industry argument:</span> Developing industries need protection to grow</li>
+                        <li><span class="highlight">Market failures:</span> Externalities and information asymmetries</li>
+                    </ul>
+                </div>
+
+                <div class="example-box">
+                    <strong>IB Exam Strategy:</strong> Use phrases like "However, it depends on...", "The extent of benefits varies based on...", "While trade brings benefits, we must consider..."
+                </div>
+
+                <h3>Factors Affecting Trade Benefits:</h3>
+                <ul>
+                    <li>Level of economic development</li>
+                    <li>Quality of institutions and governance</li>
+                    <li>Infrastructure and human capital</li>
+                    <li>Terms of trade and exchange rates</li>
+                    <li>Trade policies and agreements</li>
+                    <li>Global economic conditions</li>
+                </ul>
+
+                <div class="reference">
+                    <strong>HL Tip:</strong> Always provide balanced analysis showing both benefits and limitations, then conclude with a reasoned judgment based on context.
+                </div>
+            </div>
+            <div class="navigation">
+                <button onclick="previousSlide()">Previous</button>
+                <span class="slide-counter">Slide <span id="current">7</span> of <span id="total">8</span></span>
+                <button onclick="nextSlide()">Next</button>
+            </div>
+        </div>
+
+        <!-- Slide 8: Summary -->
+        <div class="slide">
+            <div class="slide-header">
+                <h2>Summary: Benefits of International Trade</h2>
+            </div>
+            <div class="content">
+                <div style="background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); padding: 30px; border-radius: 15px; margin-bottom: 20px;">
+                    <h3 style="text-align: center; color: #667eea; margin-bottom: 20px;">Key Takeaways</h3>
+                    <table>
+                        <tr>
+                            <th style="width: 40%;">Benefit</th>
+                            <th>Impact</th>
+                        </tr>
+                        <tr>
+                            <td><strong>Comparative Advantage</strong></td>
+                            <td>Efficient resource allocation & specialization</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Lower Prices</strong></td>
+                            <td>Increased consumer welfare & purchasing power</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Economies of Scale</strong></td>
+                            <td>Reduced costs & increased competitiveness</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Economic Growth</strong></td>
+                            <td>Higher GDP & living standards</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Employment</strong></td>
+                            <td>Job creation in export sectors</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Technology Transfer</strong></td>
+                            <td>Innovation & productivity improvements</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Greater Choice</strong></td>
+                            <td>Variety & quality for consumers</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Competition</strong></td>
+                            <td>Efficiency & quality improvements</td>
+                        </tr>
+                    </table>
+                </div>
+
+                <div class="benefit-box">
+                    <h3>Remember for IB Exams:</h3>
+                    <ul>
+                        <li>Always define key terms (comparative advantage, specialization, etc.)</li>
+                        <li>Use diagrams where appropriate (PPF curves, supply/demand)</li>
+                        <li>Provide real-world examples to support arguments</li>
+                        <li>Evaluate with limitations and contextual factors</li>
+                        <li>Structure essays clearly: Introduction → Analysis → Evaluation → Conclusion</li>
+                    </ul>
+                </div>
+
+                <div class="reference">
+                    <strong>Source:</strong> Tragakes, E. (2020). <em>Economics for the IB Diploma</em> (3rd ed.). Cambridge University Press. Chapter on International Trade.
+                </div>
+            </div>
+            <div class="navigation">
+                <button onclick="previousSlide()">Previous</button>
+                <span class="slide-counter">Slide <span id="current">8</span> of <span id="total">8</span></span>
+                <button onclick="nextSlide()" disabled>Next</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentSlide = 0;
+        const slides = document.querySelectorAll('.slide');
+        const totalSlides = slides.length;
+
+        function showSlide(n) {
+            slides[currentSlide].classList.remove('active');
+            currentSlide = n;
+            slides[currentSlide].classList.add('active');
+            updateNavigation();
+        }
+
+        function nextSlide() {
+            if (currentSlide < totalSlides - 1) {
+                showSlide(currentSlide + 1);
+            }
+        }
+
+        function previousSlide() {
+            if (currentSlide > 0) {
+                showSlide(currentSlide - 1);
+            }
+        }
+
+        function updateNavigation() {
+            const prevButtons = document.querySelectorAll('.navigation button:first-child');
+            const nextButtons = document.querySelectorAll('.navigation button:last-child');
+            const currentCounters = document.querySelectorAll('#current');
+            
+            prevButtons.forEach(btn => {
+                btn.disabled = currentSlide === 0;
+            });
+            
+            nextButtons.forEach(btn => {
+                btn.disabled = currentSlide === totalSlides - 1;
+            });
+            
+            currentCounters.forEach(counter => {
+                counter.textContent = currentSlide + 1;
+            });
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight') nextSlide();
+            if (e.key === 'ArrowLeft') previousSlide();
+        });
+
+        // Initialize
+        updateNavigation();
+    </script>
+</body>
+</html>
