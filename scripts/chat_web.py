@@ -243,7 +243,7 @@ app.add_middleware(
 async def root():
     """Serve the chat UI."""
     ui_html_path = os.path.join("nanochat", "ui.html")
-    with open(ui_html_path, "r") as f:
+    with open(ui_html_path, "r", encoding="utf-8") as f:
         html_content = f.read()
     # Replace the API_URL to use the same origin
     html_content = html_content.replace(

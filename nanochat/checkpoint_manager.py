@@ -34,7 +34,7 @@ def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data)
         log0(f"Saved optimizer file to: {optimizer_path}")
     # Save the metadata dict as json
     meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
-    with open(meta_path, "w") as f:
+    with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta_data, f, indent=2)
     log0(f"Saved metadata file to: {meta_path}")
 
@@ -50,7 +50,7 @@ def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False):
         optimizer_data = torch.load(optimizer_path, map_location=device)
     # Load the metadata
     meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
-    with open(meta_path, "r") as f:
+    with open(meta_path, "r", encoding="utf-8") as f:
         meta_data = json.load(f)
     return model_data, optimizer_data, meta_data
 
@@ -65,8 +65,14 @@ def build_model(checkpoint_dir, step, device, phase):
     """
     assert phase in ["train", "eval"], f"Invalid phase: {phase}"
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, device, load_optimizer=False)
+    if device.type in {"cpu", "mps"}:
+        # Convert bfloat16 tensors to float for CPU inference
+        model_data = {
+            k: v.float() if v.dtype == torch.bfloat16 else v
+            for k, v in model_data.items()
+        }
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
-    model_data = {k.lstrip("_orig_mod."): v for k, v in model_data.items()}
+    model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)

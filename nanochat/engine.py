@@ -48,7 +48,7 @@ def eval_with_timeout(formula, max_time=3):
         with timeout(max_time, formula):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
-                return eval(formula)
+                return eval(formula, {"__builtins__": {}}, {})
     except Exception as e:
         signal.alarm(0)
         return None

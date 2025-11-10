@@ -65,7 +65,7 @@ def get_base_dir():
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
-def download_file_with_lock(url, filename):
+def download_file_with_lock(url, filename, postprocess_fn=None):
     """
     Downloads a file from a URL to a local path in the base directory.
     Uses a lock file to prevent concurrent downloads among multiple ranks.
@@ -107,11 +107,9 @@ def download_file_with_lock(url, filename):
             else:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
-    # Clean up the lock file after the lock is released
-    try:
-        os.remove(lock_path)
-    except OSError:
-        pass  # Ignore if already removed by another process
+        # Run the postprocess function if provided
+        if postprocess_fn is not None:
+            postprocess_fn(file_path)
 
     return file_path
 
@@ -123,15 +121,15 @@ def print0(s="",**kwargs):
 def print_banner():
     # Cool DOS Rebel font ASCII banner made with https://manytools.org/hacker-tools/ascii-banner/
     banner = """
-                                                   █████                 █████
-                                                  ░░███                 ░░███
- ████████    ██████   ████████    ██████   ██████  ░███████    ██████   ███████
-░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███ ░░░███░
- ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████   ░███
- ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███   ░███ ███
- ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░████████  ░░█████
-░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░    ░░░░░
-"""
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    """
     print0(banner)
 
 def is_ddp():
@@ -183,7 +181,7 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     if ddp and device_type == "cuda":
         device = torch.device("cuda", ddp_local_rank)
-        torch.cuda.set_device(device) # make "cuda" default to this device
+        torch.cuda.set_device(device)  # make "cuda" default to this device
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
     else:

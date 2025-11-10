@@ -37,7 +37,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from nanochat.common import get_base_dir
 
-api_key = open("openroutertoken.txt").read().strip()
+api_key = open("openroutertoken.txt", "r", encoding="utf-8").read().strip()
 
 url = "https://openrouter.ai/api/v1/chat/completions"
 headers = {
@@ -45,7 +45,7 @@ headers = {
   "Content-Type": "application/json"
 }
 
-readme = open("README.md").read().strip()
+readme = open("README.md", "r", encoding="utf-8").read().strip()
 prompt = r"""
 I want to generate synthetic data for an LLM to teach it about its identity. Here is the identity I want:
 
