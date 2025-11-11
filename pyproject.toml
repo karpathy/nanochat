@@ -11,7 +11,7 @@ dependencies = [
     "psutil>=7.1.0",
     "regex>=2025.9.1",
     "setuptools>=80.9.0",
-    "tiktoken>=0.11.0",
+    "tiktoken",
     "tokenizers>=0.22.0",
     "torch>=2.8.0",
     "uvicorn>=0.36.0",
@@ -49,6 +49,7 @@ torch = [
     { index = "pytorch-cpu", extra = "cpu" },  
     { index = "pytorch-cu128", extra = "gpu" },  
 ]
+tiktoken = { git = "https://github.com/Majdoddin/tiktoken", rev = "d51dde13f91c5fa0957f1312f7521a9f1906338f" }
 
 [[tool.uv.index]]  
 name = "pytorch-cpu"  
