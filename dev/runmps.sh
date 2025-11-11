@@ -238,6 +238,13 @@ python -m scripts.tok_eval
         export WANDB_EVAL_RUN=$WANDB_RUN
         export WANDB_PROJECT
     fi
+    if [ "$WANDB_RUN" != "dummy" ]; then
+        BASE_MODEL_TAG_FLAG="--model_tag=$WANDB_RUN"
+        BASE_MODEL_TAG_FLAG_HYPHEN="--model-tag=$WANDB_RUN"
+    else
+        BASE_MODEL_TAG_FLAG=""
+        BASE_MODEL_TAG_FLAG_HYPHEN=""
+    fi
 
     python -m scripts.base_train \
         --depth=$BASE_DEPTH \
@@ -251,7 +258,8 @@ python -m scripts.tok_eval
         --eval_tokens=$EVAL_TOKENS \
         --core_metric_every=-1 \
         --sample_every=-1 \
-        --checkpoint_every_steps=$BASE_CHECKPOINT_STEPS
+        --checkpoint_every_steps=$BASE_CHECKPOINT_STEPS \
+        $BASE_MODEL_TAG_FLAG
 
     if [ "$WANDB_RUN" != "dummy" ]; then
         unset WANDB_RUN_ID
@@ -259,8 +267,8 @@ python -m scripts.tok_eval
     fi
 
     if [ "$RUN_STAGE_EVALS" = "1" ]; then
-        python -m scripts.base_loss --device_batch_size=$DEVICE_BATCH --split_tokens=$EVAL_TOKENS
-        python -m scripts.base_eval --max-per-task=16
+        python -m scripts.base_loss --device_batch_size=$DEVICE_BATCH --split_tokens=$EVAL_TOKENS $BASE_MODEL_TAG_FLAG
+        python -m scripts.base_eval --max-per-task=16 $BASE_MODEL_TAG_FLAG_HYPHEN
     fi
 fi
 
@@ -274,6 +282,15 @@ if (( RUN_MID )); then
         export WANDB_EVAL_RUN="${WANDB_RUN}-mid"
         export WANDB_PROJECT
     fi
+    if [ "$WANDB_RUN" != "dummy" ]; then
+        MID_MODEL_TAG_FLAG="--model_tag=$WANDB_RUN"
+        MID_OUTPUT_MODEL_TAG_FLAG="--output_model_tag=${WANDB_RUN}-mid"
+        MID_EVAL_MODEL_TAG_FLAG="--model_tag=${WANDB_RUN}-mid"
+    else
+        MID_MODEL_TAG_FLAG=""
+        MID_OUTPUT_MODEL_TAG_FLAG=""
+        MID_EVAL_MODEL_TAG_FLAG=""
+    fi
 
     python -m scripts.mid_train \
         --max_seq_len=$SEQ_LEN \
@@ -283,7 +300,9 @@ if (( RUN_MID )); then
         --eval_every=$EVAL_STEPS \
         --eval_tokens=$EVAL_TOKENS \
         --checkpoint_every_steps=$MID_CHECKPOINT_STEPS \
-        --num_iterations=$MID_NUM_STEPS
+        --num_iterations=$MID_NUM_STEPS \
+        $MID_MODEL_TAG_FLAG \
+        $MID_OUTPUT_MODEL_TAG_FLAG
     if [ "$WANDB_RUN" != "dummy" ]; then
         unset WANDB_RUN_ID
         unset WANDB_EVAL_RUN
@@ -291,7 +310,7 @@ if (( RUN_MID )); then
     if [ "$RUN_STAGE_EVALS" = "1" ]; then
         # eval results will be terrible, this is just to execute the code paths.
         # note that we lower the execution memory limit to 1MB to avoid warnings on smaller systems
-        python -m scripts.chat_eval --source=mid --max-new-tokens=128 --max-problems=20
+        python -m scripts.chat_eval --source=mid --max-new-tokens=128 --max-problems=20 $MID_EVAL_MODEL_TAG_FLAG
     fi
 fi
 
@@ -305,6 +324,13 @@ if (( RUN_SFT )); then
         export WANDB_EVAL_RUN="${WANDB_RUN}-sft"
         export WANDB_PROJECT
     fi
+    if [ "$WANDB_RUN" != "dummy" ]; then
+        SFT_MODEL_TAG_FLAG="--model_tag=${WANDB_RUN}-mid"
+        SFT_OUTPUT_MODEL_TAG_FLAG="--output_model_tag=${WANDB_RUN}-sft"
+    else
+        SFT_MODEL_TAG_FLAG=""
+        SFT_OUTPUT_MODEL_TAG_FLAG=""
+    fi
 
     python -m scripts.chat_sft \
         --device_batch_size=$SFT_DEVICE_BATCH \
@@ -315,7 +341,9 @@ if (( RUN_SFT )); then
         --eval_steps=$SFT_EVAL_STEPS \
         --eval_metrics_every=$SFT_EVAL_METRICS_EVERY \
         --eval_metrics_max_problems=$SFT_EVAL_METRICS_MAX \
-        --checkpoint_every_steps=$SFT_CHECKPOINT_STEPS
+        --checkpoint_every_steps=$SFT_CHECKPOINT_STEPS \
+        $SFT_MODEL_TAG_FLAG \
+        $SFT_OUTPUT_MODEL_TAG_FLAG
 
     if [ "$WANDB_RUN" != "dummy" ]; then
         unset WANDB_RUN_ID

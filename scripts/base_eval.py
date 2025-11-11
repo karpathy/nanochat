@@ -125,6 +125,7 @@ def main():
     parser.add_argument('--hf-path', type=str, default=None, help='HuggingFace model path to evaluate')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per task to evaluate (-1 = disable)')
     parser.add_argument('--model-step', type=int, default=None, help='Checkpoint step to evaluate when using local models')
+    parser.add_argument('--model-tag', type=str, default=None, help='Model tag to load from base_checkpoints when evaluating local models')
     args = parser.parse_args()
 
     # distributed / precision setup
@@ -144,7 +145,7 @@ def main():
         model_slug = hf_path.replace("/", "-") # for the output csv file
     else:
         # load a local model from the file system
-        model, tokenizer, meta = load_model("base", device, phase="eval", step=args.model_step)
+        model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
         model_name = f"base_model (step {meta['step']})" # just for logging
         model_slug = f"base_model_{meta['step']:06d}" # for the output csv file
         if use_wandb:

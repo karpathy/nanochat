@@ -35,6 +35,7 @@ run = "dummy" # wandb run name default ("dummy" is special - we won't log to wan
 device_type = "" # cuda|cpu|mps (empty => autodetect)
 model_tag = None # model tag to load the model from (base model or midtrained model)
 step = None # step to load the model from (base model or midtrained model)
+output_model_tag = "" # optional override for the checkpoint directory name we save midtraining snapshots to
 dtype = "bfloat16"
 num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
 max_seq_len = 2048
@@ -86,6 +87,14 @@ if pretrain_batch_size is not None and device_batch_size > pretrain_batch_size:
 orig_model = model
 model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
+def _resolve_checkpoint_tag(tag, run_name, depth_value):
+    if tag:
+        return tag
+    run_name = run_name or ""
+    if run_name and run_name != "dummy":
+        return run_name
+    return f"d{depth_value}"
+checkpoint_tag = _resolve_checkpoint_tag(output_model_tag, run, depth)
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration for a single rank
 world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
@@ -110,6 +119,7 @@ for opt in optimizers:
         group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
 
 # Midtraining data mixture and DataLoader
+print0(f"Checkpoint tag: {checkpoint_tag}")
 base_dir = get_base_dir()
 identity_conversations_filepath = os.path.join(base_dir, "identity_conversations.jsonl")
 train_dataset = TaskMixture([
@@ -176,8 +186,7 @@ train_loader = mid_data_generator("train")
 build_val_loader = lambda: mid_data_generator("val")
 progress = 0 # will go from 0 to 1 over the course of the epoch
 
-checkpoint_dirname = f"d{depth}"
-checkpoint_dir = os.path.join(base_dir, "mid_checkpoints", checkpoint_dirname)
+checkpoint_dir = os.path.join(base_dir, "mid_checkpoints", checkpoint_tag)
 
 # Learning rate scheduler
 def get_lr_multiplier(progress):

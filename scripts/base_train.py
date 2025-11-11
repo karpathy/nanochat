@@ -105,11 +105,21 @@ num_heads = max(1, (model_dim + 127) // 128) # head dim 128 (the division here i
 assert kv_head_mult >= 1, "kv_head_mult must be >= 1"
 assert num_heads % kv_head_mult == 0, f"num_heads ({num_heads}) must be divisible by kv_head_mult ({kv_head_mult})"
 num_kv_heads = max(1, num_heads // kv_head_mult)
+def _resolve_checkpoint_tag(tag, run_name, depth_value):
+    if tag:
+        return tag
+    run_name = run_name or ""
+    if run_name and run_name != "dummy":
+        return run_name
+    return f"d{depth_value}"
+model_tag = _resolve_checkpoint_tag(model_tag, run, depth)
+user_config["model_tag"] = model_tag
 print0(f"num_layers: {num_layers}")
 print0(f"model_dim: {model_dim}")
 print0(f"kv_head_mult: {kv_head_mult}")
 print0(f"num_heads: {num_heads}")
 print0(f"num_kv_heads: {num_kv_heads}")
+print0(f"Checkpoint tag: {model_tag}")
 
 # Optimizer / data / training length related hyperparameters
 # figure out the needed gradient accumulation to reach the desired total batch size
@@ -172,8 +182,7 @@ build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size,
 x, y = next(train_loader) # kick off load of the very first batch of data
 
 # Checkpoint output location
-checkpoint_dirname = model_tag if model_tag else f"d{depth}"
-checkpoint_dir = os.path.join(base_dir, "base_checkpoints", checkpoint_dirname)
+checkpoint_dir = os.path.join(base_dir, "base_checkpoints", model_tag)
 
 # -----------------------------------------------------------------------------
 # Set up hyperparameter schedulers
@@ -209,8 +218,6 @@ total_sequences_seen = 0
 last_val_bpb = None
 
 def save_base_checkpoint(step_idx):
-    output_dirname = model_tag if model_tag else f"d{depth}"
-    checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
     optimizer_state = [opt.state_dict() for opt in optimizers]
     meta = {
         "step": step_idx,

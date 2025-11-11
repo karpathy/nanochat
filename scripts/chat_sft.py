@@ -37,6 +37,7 @@ run = "dummy" # wandb run name default ("dummy" is special - we won't log to wan
 source = "mid" # base|mid , which checkpoint to load the model from (base model or midtrained model)
 model_tag = None # model tag to load the model from (base model or midtrained model)
 step = None # step to load the model from (base model or midtrained model)
+output_model_tag = "" # optional override for the checkpoint directory where SFT checkpoints are saved
 # compute/precision
 device_type = "" # cuda|cpu|mps (empty => autodetect)
 dtype = "bfloat16"
@@ -102,6 +103,13 @@ orig_model = model # original, uncompiled model
 # model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs
 engine = Engine(model, tokenizer) # will be used for inline model evaluation only
 model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
+def _resolve_checkpoint_tag(tag, run_name, fallback_tag):
+    if tag:
+        return tag
+    run_name = run_name or ""
+    if run_name and run_name != "dummy":
+        return run_name
+    return fallback_tag
 
 # -----------------------------------------------------------------------------
 # Task data mixture we'll train on
@@ -172,8 +180,10 @@ checkpoint_every_steps = int(checkpoint_every_steps)
 checkpoint_enabled = checkpoint_every_steps > 0
 
 base_dir = get_base_dir()
-checkpoint_dirname = model_tag if model_tag else f"d{model.config.n_layer}"
-checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", checkpoint_dirname)
+fallback_checkpoint_tag = model_tag if model_tag else f"d{model.config.n_layer}"
+checkpoint_tag = _resolve_checkpoint_tag(output_model_tag, run, fallback_checkpoint_tag)
+print0(f"Checkpoint tag: {checkpoint_tag}")
+checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", checkpoint_tag)
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer
