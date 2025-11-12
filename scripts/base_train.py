@@ -38,6 +38,13 @@ device_type = "" # cuda|cpu|mps (empty => autodetect good device type default, i
 depth = 20 # the depth of the Transformer model to train, rest of the kwargs are derived
 max_seq_len = 2048 # max context length
 kv_head_mult = 1 # number of query heads that share a single key/value head (1 disables GQA)
+moe_num_experts = 0 # routed experts per MoE layer (0 disables MoE)
+moe_num_shared_experts = -1 # -1 => derive (defaults to 1 shared expert)
+moe_experts_per_token = -1 # -1 => derive using Ling-style sparsity (≈1/32 active)
+moe_expert_ffn_mult = -1.0 # -1 => derive from granularity target (defaults to 12)
+dense_layers_before_moe = -1 # -1 => derive (≈10% of layers, min 1) before switching to MoE
+moe_granularity_target = 12.0 # Ling guidance: target granularity per layer (2*d_model/d_expert)
+moe_activation_denominator = 32 # derive top-k as num_experts / denominator (~3% activation)
 # Training horizon. Only one of these 3 will be used, in this order of precedence.
 num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
 target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
@@ -105,6 +112,33 @@ num_heads = max(1, (model_dim + 127) // 128) # head dim 128 (the division here i
 assert kv_head_mult >= 1, "kv_head_mult must be >= 1"
 assert num_heads % kv_head_mult == 0, f"num_heads ({num_heads}) must be divisible by kv_head_mult ({kv_head_mult})"
 num_kv_heads = max(1, num_heads // kv_head_mult)
+activation_denom = max(1, int(round(moe_activation_denominator)))
+granularity_target = moe_granularity_target if moe_granularity_target > 0 else 12.0
+auto_dense_layers = max(1, num_layers // 10) if moe_num_experts > 0 else num_layers
+if dense_layers_before_moe < 0:
+    dense_layers_before_moe = auto_dense_layers
+dense_layers_before_moe = max(0, min(dense_layers_before_moe, num_layers))
+if moe_num_experts <= 0:
+    dense_layers_before_moe = num_layers
+
+if moe_num_experts > 0:
+    derived_top_k = max(1, round(moe_num_experts / activation_denom))
+    moe_experts_per_token = moe_experts_per_token if moe_experts_per_token > 0 else derived_top_k
+    moe_num_shared_experts = moe_num_shared_experts if moe_num_shared_experts >= 0 else 1
+    if moe_expert_ffn_mult <= 0:
+        moe_expert_ffn_mult = max(1e-6, 2.0 / granularity_target)
+    assert moe_experts_per_token > 0, "moe_experts_per_token must be > 0 when MoE is enabled"
+    assert moe_num_experts >= moe_experts_per_token, "moe_num_experts must be >= moe_experts_per_token"
+    assert moe_num_shared_experts >= 0, "moe_num_shared_experts must be >= 0"
+    assert moe_expert_ffn_mult > 0, "moe_expert_ffn_mult must be > 0"
+    moe_activation_ratio = moe_experts_per_token / (moe_num_experts + moe_num_shared_experts)
+    moe_granularity_actual = 2.0 / moe_expert_ffn_mult
+else:
+    moe_num_shared_experts = 0
+    moe_experts_per_token = 0
+    moe_expert_ffn_mult = 4.0 if moe_expert_ffn_mult <= 0 else moe_expert_ffn_mult
+    moe_activation_ratio = 0.0
+    moe_granularity_actual = 0.0
 def _resolve_checkpoint_tag(tag, run_name, depth_value):
     if tag:
         return tag
@@ -119,6 +153,18 @@ print0(f"model_dim: {model_dim}")
 print0(f"kv_head_mult: {kv_head_mult}")
 print0(f"num_heads: {num_heads}")
 print0(f"num_kv_heads: {num_kv_heads}")
+if moe_num_experts > 0:
+    print0(
+        "MoE config: experts=%d shared=%d topk=%d granularity=%.1f (mult=%.3f) sparsity=%.2f%% dense_preface=%d" % (
+            moe_num_experts,
+            moe_num_shared_experts,
+            moe_experts_per_token,
+            moe_granularity_actual,
+            moe_expert_ffn_mult,
+            moe_activation_ratio * 100,
+            dense_layers_before_moe,
+        )
+    )
 print0(f"Checkpoint tag: {model_tag}")
 
 # Optimizer / data / training length related hyperparameters
@@ -132,18 +178,63 @@ print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 # -----------------------------------------------------------------------------
 # Initialize the Model
-model_config_kwargs = dict(sequence_len=max_seq_len, vocab_size=vocab_size, n_layer=num_layers, n_head=num_heads, n_kv_head=num_kv_heads, n_embd=model_dim)
+model_config_kwargs = dict(
+    sequence_len=max_seq_len,
+    vocab_size=vocab_size,
+    n_layer=num_layers,
+    n_head=num_heads,
+    n_kv_head=num_kv_heads,
+    n_embd=model_dim,
+    moe_num_experts=moe_num_experts,
+    moe_num_shared_experts=moe_num_shared_experts,
+    moe_experts_per_token=moe_experts_per_token,
+    moe_expert_ffn_mult=moe_expert_ffn_mult,
+    dense_layers_before_moe=dense_layers_before_moe,
+    moe_granularity_target=granularity_target,
+    moe_activation_denominator=activation_denom,
+)
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
     model = GPT(model_config)
 model.to_empty(device=device)
 model.init_weights()
 orig_model = model # original, uncompiled model, for saving raw model state_dict
+dense_like_flops = model.estimate_flops()
+active_flops_per_token, dense_ref_flops = model.estimate_moe_active_flops()
+num_flops_per_token = active_flops_per_token
 model = torch.compile(model, dynamic=False) # TODO: dynamic True/False think through
 num_params = sum(p.numel() for p in model.parameters())
 print0(f"Number of parameters: {num_params:,}")
-num_flops_per_token = model.estimate_flops()
-print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
+print0(f"Estimated FLOPs per token (dense-like): {dense_like_flops:e}")
+if active_flops_per_token != dense_like_flops:
+    print0(f"Estimated FLOPs per token (MoE active): {active_flops_per_token:e}")
+    print0(f"Estimated FLOPs per token (dense reference): {dense_ref_flops:e}")
+
+user_config.update({
+    "moe_num_experts": moe_num_experts,
+    "moe_num_shared_experts": moe_num_shared_experts,
+    "moe_experts_per_token": moe_experts_per_token,
+    "moe_expert_ffn_mult": moe_expert_ffn_mult,
+    "moe_dense_layers": dense_layers_before_moe,
+    "moe_activation_ratio": moe_activation_ratio,
+    "moe_granularity_actual": moe_granularity_actual,
+    "flops_per_token_dense_like": dense_like_flops,
+    "flops_per_token_moe_active": active_flops_per_token,
+    "flops_per_token_dense_reference": dense_ref_flops,
+})
+if not use_dummy_wandb:
+    wandb_run.config.update({
+        "moe_num_experts": moe_num_experts,
+        "moe_num_shared_experts": moe_num_shared_experts,
+        "moe_experts_per_token": moe_experts_per_token,
+        "moe_expert_ffn_mult": moe_expert_ffn_mult,
+        "moe_dense_layers": dense_layers_before_moe,
+        "moe_activation_ratio": moe_activation_ratio,
+        "moe_granularity_actual": moe_granularity_actual,
+        "flops_per_token_dense_like": dense_like_flops,
+        "flops_per_token_moe_active": active_flops_per_token,
+        "flops_per_token_dense_reference": dense_ref_flops,
+    }, allow_val_change=True)
 
 # Calculate number of iterations. Either it is given, or from target flops, or from target data:param ratio (in that order)
 assert num_iterations > 0 or target_param_data_ratio > 0 or target_flops > 0
@@ -164,6 +255,9 @@ total_tokens = total_batch_size * num_iterations
 print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params:.2f}") # Chinchilla is ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
+if eval_every <= 0:
+    eval_every = max(1, num_iterations // 100)
+    print0(f"Auto-setting eval_every to {eval_every} (~1% of training)")
 
 sequences_per_step = max(1, total_batch_size // max_seq_len)
 checkpoint_every_steps = int(checkpoint_every_steps)
@@ -357,7 +451,7 @@ for step in range(num_iterations + 1):
         total_training_time += dt # only count the time after the first 10 steps
     print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec (micro): {tok_per_sec:,} | tok/sec (global): {global_tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
     if step % 100 == 0:
-        wandb_run.log({
+        log_payload = {
             "step": step,
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
@@ -369,7 +463,10 @@ for step in range(num_iterations + 1):
             "train/mfu": mfu,
             "train/total_tokens": total_tokens_seen,
             "train/total_sequences": total_sequences_seen,
-        })
+        }
+        if hasattr(orig_model, "get_moe_stats"):
+            log_payload.update(orig_model.get_moe_stats())
+        wandb_run.log(log_payload)
 
 # print a few more stats
 print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
@@ -382,7 +479,9 @@ get_report().log(section="Base model training", data=[
     user_config, # CLI args
     { # stats about the training setup
         "Number of parameters": num_params,
-        "Number of FLOPs per token": f"{num_flops_per_token:e}",
+        "FLOPs per token (MoE active)": f"{num_flops_per_token:e}",
+        "FLOPs per token (dense-like)": f"{dense_like_flops:e}",
+        "FLOPs per token (dense reference)": f"{dense_ref_flops:e}",
         "Calculated number of iterations": num_iterations,
         "Number of training tokens": total_tokens,
         "Tokens : Params ratio": total_batch_size * num_iterations / num_params,

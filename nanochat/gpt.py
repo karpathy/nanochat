@@ -31,6 +31,13 @@ class GPTConfig:
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (MQA)
     n_embd: int = 768
+    moe_num_experts: int = 0
+    moe_num_shared_experts: int = 0
+    moe_experts_per_token: int = 2
+    moe_expert_ffn_mult: float = 4.0
+    dense_layers_before_moe: int = 0
+    moe_granularity_target: float = 12.0
+    moe_activation_denominator: int = 32
 
 
 def norm(x):
@@ -123,11 +130,155 @@ class MLP(nn.Module):
         return x
 
 
+class ExpertFFN(nn.Module):
+    def __init__(self, input_dim, ffn_mult):
+        super().__init__()
+        hidden_dim = max(1, int(round(ffn_mult * input_dim)))
+        self.c_fc = nn.Linear(input_dim, hidden_dim, bias=False)
+        self.c_proj = nn.Linear(hidden_dim, input_dim, bias=False)
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = F.relu(x).square()
+        x = self.c_proj(x)
+        return x
+
+
+class MoEFeedForward(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.model_dim = config.n_embd
+        self.num_routed_experts = config.moe_num_experts
+        self.num_shared_experts = config.moe_num_shared_experts
+        self.top_k = max(1, min(config.moe_experts_per_token, self.num_routed_experts))
+        self.ffn_mult = config.moe_expert_ffn_mult
+        assert self.num_routed_experts > 0, "MoE requires at least one routed expert"
+        assert self.top_k <= self.num_routed_experts, "experts_per_token must be <= num_experts"
+        self.router = nn.Linear(self.model_dim, self.num_routed_experts, bias=False)
+        self.hidden_dim = max(1, int(round(self.ffn_mult * self.model_dim)))
+        self.routed_w1 = nn.Parameter(torch.empty(self.num_routed_experts, self.hidden_dim, self.model_dim))
+        self.routed_w2 = nn.Parameter(torch.empty(self.num_routed_experts, self.model_dim, self.hidden_dim))
+        self.shared_experts = nn.ModuleList(
+            [ExpertFFN(self.model_dim, self.ffn_mult) for _ in range(self.num_shared_experts)]
+        )
+        self.register_buffer("router_bias", torch.zeros(self.num_routed_experts, dtype=torch.float32))
+        self.register_buffer("ema_load", torch.zeros(self.num_routed_experts, dtype=torch.float32))
+        self.balance_strength = 0.001
+        self.balance_decay = 0.99
+        self.bias_clamp = 0.2
+        self._last_stats = None
+        self.last_entropy = None
+        self.last_load = None
+        self._init_experts()
+
+    def _balance_router(self, assignments, probs):
+        if not self.training:
+            self.last_load = None
+            self.last_entropy = None
+            self._last_stats = None
+            return
+        with torch.no_grad():
+            load = torch.bincount(assignments, minlength=self.num_routed_experts).float()
+            tokens = max(1, assignments.numel())
+            load = load / tokens
+            target = load.new_full((self.num_routed_experts,), 1.0 / self.num_routed_experts)
+            self.ema_load.mul_(self.balance_decay).add_((1 - self.balance_decay) * load)
+            balance = target - self.ema_load
+            self.router_bias.add_(self.balance_strength * balance)
+            self.router_bias.clamp_(-self.bias_clamp, self.bias_clamp)
+        entropy = (-probs * torch.log(probs + 1e-9)).sum(dim=-1).mean()
+        load_cpu = load.detach().cpu()
+        stats = {
+            "tokens": probs.size(0),
+            "load_std": load_cpu.std(unbiased=False).item(),
+            "load_max": load_cpu.max().item(),
+            "load_min": load_cpu.min().item(),
+            "load_active_frac": (load_cpu > 0).float().mean().item(),
+            "load_imbalance": torch.abs(load_cpu - (1.0 / self.num_routed_experts)).mean().item(),
+        }
+        self._last_stats = stats
+        self.last_load = load_cpu
+        self.last_entropy = entropy.item()
+
+    def forward(self, x):
+        B, T, C = x.shape
+        x_flat = x.view(B * T, C)
+        router_logits = self.router(x_flat).float()
+        router_logits = router_logits + self.router_bias.to(router_logits.device)
+        probs = torch.softmax(router_logits, dim=-1)
+        topk_scores, topk_idx = torch.topk(probs, k=self.top_k, dim=-1)
+        topk_scores = topk_scores / torch.clamp(topk_scores.sum(dim=-1, keepdim=True), min=1e-9)
+        flat_assignments = topk_idx.reshape(-1)
+        self._balance_router(flat_assignments, probs)
+
+        mixture = self._dispatch_batched(flat_assignments, x_flat, topk_scores)
+
+        if self._last_stats is not None:
+            self._last_stats["gate_mean"] = topk_scores.mean().item()
+            self._last_stats["gate_std"] = topk_scores.std(unbiased=False).item()
+            confident = probs.max(dim=-1).values
+            self._last_stats["router_confidence"] = confident.mean().item()
+            self._last_stats["tokens"] = x_flat.size(0)
+            self._last_stats["entropy"] = self.last_entropy if self.last_entropy is not None else 0.0
+
+        if self.num_shared_experts > 0:
+            shared_sum = None
+            for shared in self.shared_experts:
+                out = shared(x_flat)
+                shared_sum = out if shared_sum is None else shared_sum + out
+            mixture = mixture + shared_sum / self.num_shared_experts
+
+        return mixture.view(B, T, C)
+
+    def _dispatch_batched(self, flat_assignments, x_flat, topk_scores):
+        num_tokens, model_dim = x_flat.shape
+        total = num_tokens * self.top_k
+        if total == 0:
+            return torch.zeros_like(x_flat)
+
+        token_idx = torch.arange(num_tokens, device=x_flat.device).repeat_interleave(self.top_k)
+        selected_inputs = x_flat[token_idx]
+        expert_ids = flat_assignments
+
+        w1 = torch.index_select(self.routed_w1, 0, expert_ids)
+        hidden = torch.bmm(w1, selected_inputs.unsqueeze(-1)).squeeze(-1)
+        hidden = F.relu(hidden).square()
+
+        w2 = torch.index_select(self.routed_w2, 0, expert_ids)
+        routed = torch.bmm(w2, hidden.unsqueeze(-1)).squeeze(-1)
+        routed = routed.view(num_tokens, self.top_k, model_dim)
+        weights = topk_scores.unsqueeze(-1).to(routed.dtype)
+        return torch.sum(routed * weights, dim=1)
+
+    def _init_experts(self):
+        self._init_linear(self.routed_w1, fan_in=self.model_dim, fan_out=self.hidden_dim)
+        self._init_linear(self.routed_w2, fan_in=self.hidden_dim, fan_out=self.model_dim)
+
+    @staticmethod
+    def _init_linear(weight, fan_in, fan_out):
+        std = 1.0 / math.sqrt(fan_in) * min(1.0, math.sqrt(fan_out / fan_in))
+        torch.nn.init.normal_(weight, mean=0.0, std=std)
+
+    def get_stats(self):
+        if self._last_stats is None:
+            return None
+        return dict(self._last_stats)
+
+    def count_parameters(self):
+        total = self.routed_w1.numel() + self.routed_w2.numel()
+        total += sum(p.numel() for expert in self.shared_experts for p in expert.parameters())
+        return total
+
+
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
-        self.mlp = MLP(config)
+        use_moe = (
+            config.moe_num_experts > 0
+            and layer_idx >= config.dense_layers_before_moe
+        )
+        self.mlp = MoEFeedForward(config) if use_moe else MLP(config)
 
     def forward(self, x, cos_sin, kv_cache):
         x = x + self.attn(norm(x), cos_sin, kv_cache)
@@ -160,7 +311,13 @@ class GPT(nn.Module):
         torch.nn.init.zeros_(self.lm_head.weight)
         # zero out c_proj weights in all blocks
         for block in self.transformer.h:
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            if hasattr(block.mlp, "c_proj"):
+                torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            elif isinstance(block.mlp, MoEFeedForward):
+                with torch.no_grad():
+                    block.mlp.routed_w2.zero_()
+                for expert in block.mlp.shared_experts:
+                    torch.nn.init.zeros_(expert.c_proj.weight)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
         # init the rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
@@ -209,6 +366,53 @@ class GPT(nn.Module):
         l, h, q, t = self.config.n_layer, self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
         num_flops_per_token = 6 * (nparams - nparams_embedding) + 12 * l * h * q * t
         return num_flops_per_token
+
+    def estimate_moe_active_flops(self):
+        if self.config.moe_num_experts <= 0:
+            dense_like = self.estimate_flops()
+            return dense_like, dense_like
+        total_params = sum(p.numel() for p in self.parameters())
+        embed_params = self.transformer.wte.weight.numel()
+        linear_params = total_params - embed_params
+        moe_params = 0
+        moe_layers = 0
+        for block in self.transformer.h:
+            if isinstance(block.mlp, MoEFeedForward):
+                moe_layers += 1
+                moe_params += block.mlp.count_parameters()
+        residual_linear = linear_params - moe_params
+        n = self.config.n_embd
+        dense_hidden = 4 * n
+        dense_mlp_params = 2 * n * dense_hidden
+        moe_hidden = max(1, int(round(self.config.moe_expert_ffn_mult * n)))
+        active_experts = max(1, self.config.moe_experts_per_token) + self.config.moe_num_shared_experts
+        active_mlp_params = 2 * n * moe_hidden * active_experts
+        dense_linear_equiv = residual_linear + moe_layers * dense_mlp_params
+        active_linear_equiv = residual_linear + moe_layers * active_mlp_params
+        l, h, q, t = self.config.n_layer, self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
+        attn_term = 12 * l * h * q * t
+        dense_ref = 6 * dense_linear_equiv + attn_term
+        active = 6 * active_linear_equiv + attn_term
+        return active, dense_ref
+
+    def get_moe_stats(self):
+        stats = {}
+        aggregates = {}
+        counts = {}
+        for layer_idx, block in enumerate(self.transformer.h):
+            mlp = block.mlp
+            if isinstance(mlp, MoEFeedForward):
+                layer_stats = mlp.get_stats()
+                if not layer_stats:
+                    continue
+                for key, value in layer_stats.items():
+                    stats[f"moe/layer{layer_idx}/{key}"] = value
+                    aggregates.setdefault(key, 0.0)
+                    counts[key] = counts.get(key, 0) + 1
+                    aggregates[key] += value
+        for key, total in aggregates.items():
+            stats[f"moe/{key}_mean"] = total / counts[key]
+        return stats
 
     def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0):
         model_dim = self.config.n_embd

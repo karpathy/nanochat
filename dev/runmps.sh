@@ -130,6 +130,13 @@ SEQ_LEN=${SEQ_LEN:-1024}
 DEVICE_BATCH=${DEVICE_BATCH:-16}
 TOTAL_BATCH=${TOTAL_BATCH:-$((DEVICE_BATCH * SEQ_LEN))} # tokens per optimizer step
 KV_HEAD_MULT=${KV_HEAD_MULT:-1}
+MOE_NUM_EXPERTS=${MOE_NUM_EXPERTS:-0}
+MOE_NUM_SHARED=${MOE_NUM_SHARED:--1}
+MOE_EXPERTS_PER_TOKEN=${MOE_EXPERTS_PER_TOKEN:--1}
+MOE_EXPERT_FFN_MULT=${MOE_EXPERT_FFN_MULT:--1}
+MOE_DENSE_LAYERS=${MOE_DENSE_LAYERS:--1}
+MOE_GRANULARITY_TARGET=${MOE_GRANULARITY_TARGET:-12}
+MOE_ACTIVATION_DEN=${MOE_ACTIVATION_DEN:-32}
 EVAL_SEQUENCES=10000
 EVAL_STEPS=$(((EVAL_SEQUENCES + DEVICE_BATCH - 1) / DEVICE_BATCH))
 EVAL_BATCH_MULT=4 # evaluate on 4 full batches
@@ -246,6 +253,29 @@ python -m scripts.tok_eval
         BASE_MODEL_TAG_FLAG_HYPHEN=""
     fi
 
+    MOE_FLAGS=()
+    if [ "$MOE_NUM_EXPERTS" -gt 0 ]; then
+        MOE_FLAGS+=("--moe_num_experts=$MOE_NUM_EXPERTS")
+        if [ "$MOE_NUM_SHARED" -ge 0 ]; then
+            MOE_FLAGS+=("--moe_num_shared_experts=$MOE_NUM_SHARED")
+        fi
+        if [ "$MOE_EXPERTS_PER_TOKEN" -ge 0 ]; then
+            MOE_FLAGS+=("--moe_experts_per_token=$MOE_EXPERTS_PER_TOKEN")
+        fi
+        if [ "$MOE_EXPERT_FFN_MULT" != "-1" ]; then
+            MOE_FLAGS+=("--moe_expert_ffn_mult=$MOE_EXPERT_FFN_MULT")
+        fi
+        if [ "$MOE_DENSE_LAYERS" -ge 0 ]; then
+            MOE_FLAGS+=("--dense_layers_before_moe=$MOE_DENSE_LAYERS")
+        fi
+        if [ "$MOE_GRANULARITY_TARGET" != "" ]; then
+            MOE_FLAGS+=("--moe_granularity_target=$MOE_GRANULARITY_TARGET")
+        fi
+        if [ "$MOE_ACTIVATION_DEN" -gt 0 ]; then
+            MOE_FLAGS+=("--moe_activation_denominator=$MOE_ACTIVATION_DEN")
+        fi
+    fi
+
     python -m scripts.base_train \
         --depth=$BASE_DEPTH \
         --max_seq_len=$SEQ_LEN \
@@ -254,12 +284,12 @@ python -m scripts.tok_eval
         --kv_head_mult=$KV_HEAD_MULT \
         --target_param_data_ratio=$TARGET_PARAM_DATA_RATIO \
         --run="$WANDB_RUN" \
-        --eval_every=$EVAL_STEPS \
         --eval_tokens=$EVAL_TOKENS \
         --core_metric_every=-1 \
         --sample_every=-1 \
         --checkpoint_every_steps=$BASE_CHECKPOINT_STEPS \
-        $BASE_MODEL_TAG_FLAG
+        $BASE_MODEL_TAG_FLAG \
+        ${MOE_FLAGS[@]}
 
     if [ "$WANDB_RUN" != "dummy" ]; then
         unset WANDB_RUN_ID
