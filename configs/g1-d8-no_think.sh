@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# Example run for 1 GPU, depth 8, no RL training.
+
+# all the setup stuff
+export OMP_NUM_THREADS=1
+export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
+mkdir -p $NANOCHAT_BASE_DIR
+command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+[ -d ".venv" ] || uv venv
+uv sync --extra gpu
+source .venv/bin/activate
+if [ -z "$WANDB_RUN" ]; then
+    WANDB_RUN=dummy
+fi
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+
+# wipe the report
+python -m nanochat.report reset
+
+# train tokenizer on ~1B characters
+python -m nanochat.dataset -n 4
+python -m scripts.tok_train --max_chars=1000000000
+python -m scripts.tok_eval
+
+# Number of processes/GPUs to use
+NPROC_PER_NODE=1
+
+# train a very small 8 layer model on 1 GPU
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train \
+    --depth=8 \
+    --max_seq_len=1024 \
+    --device_batch_size=1 \
+    --total_batch_size=1024 \
+    --eval_every=50 \
+    --eval_tokens=4096 \
+    --core_metric_every=50 \
+    --core_metric_max_per_task=12 \
+    --sample_every=50 \
+    --num_iterations=50
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss --device_batch_size=1 --split_tokens=4096
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval --max-per-task=16
+
+# midtraining
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train \
+    --max_seq_len=1024 \
+    --device_batch_size=1 \
+    --eval_every=50 \
+    --eval_tokens=4096 \
+    --total_batch_size=1024 \
+    --num_iterations=100
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval --source=mid --max-new-tokens=128 --max-problems=20
+
+# SFT
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_sft \
+    --device_batch_size=1 \
+    --target_examples_per_step=4 \
+    --num_iterations=100 \
+    --eval_steps=4 \
+    --eval_metrics_max_problems=16
+
+python -m nanochat.report generate
+
+# talk to it
+python -m scripts.chat_web

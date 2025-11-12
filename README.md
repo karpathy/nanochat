@@ -184,6 +184,7 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── smoltalk.py                 # Conglomerate dataset of SmolTalk from HF
 │   └── spellingbee.py              # Task teaching model to spell/count letters
 ├── tests
+│   ├── test_engine.py
 │   └── test_rustbpe.py
 └── uv.lock
 ```

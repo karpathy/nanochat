@@ -111,6 +111,15 @@ torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_sft -- --
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i sft
 
 # -----------------------------------------------------------------------------
+# Reinforcement Learning. Optional, and currently only on GSM8K
+# (optional)
+
+# run reinforcement learning
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_rl -- --run=$WANDB_RUN
+# eval the RL model only on GSM8K
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i rl -a GSM8K
+
+# -----------------------------------------------------------------------------
 # Generate the full report by putting together all the sections
 # report.md is the output and will be copied to current directory for convenience
 python -m nanochat.report generate
