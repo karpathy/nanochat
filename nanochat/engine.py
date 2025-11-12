@@ -108,7 +108,7 @@ class KVCache:
         assert other.kv_cache is not None, "Cannot prefill with a None KV cache"
         for ix, (dim1, dim2) in enumerate(zip(self.kv_shape, other.kv_shape)):
             if ix in [0, 1, 3, 5]:
-                # num_layers, batch_size, num_heads, head_dim must match
+                # num_layers, num_heads, head_dim must match, ix=1 should always be 2.
                 assert dim1 == dim2, f"Dim {ix} mismatch: {dim1} != {dim2}"
             elif ix == 2:
                 # batch_size can be expanded
