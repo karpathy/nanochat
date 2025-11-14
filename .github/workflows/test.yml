@@ -1,0 +1,43 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]   
+        python-version: ['3.10'] 
+      fail-fast: false
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v5
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
+
+    - name: Install dependencies with uv
+      run: |
+        uv sync --extra cpu 
+        uv pip install transformers>=4.0.0
+
+    - name: Add nanochat to PYTHONPATH (Unix)
+      run: |
+        echo "PYTHONPATH=$(pwd):$PYTHONPATH" >> $GITHUB_ENV
+
+    - name: Run pytest
+      run: |
+        uv run pytest tests/
