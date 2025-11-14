@@ -151,10 +151,7 @@ class MoEFeedForward(nn.Module):
             self.register_parameter("shared_w1", None)
             self.register_parameter("shared_w2", None)
         self.register_buffer("router_bias", torch.zeros(self.num_routed_experts, dtype=torch.float32))
-        self.register_buffer("ema_load", torch.zeros(self.num_routed_experts, dtype=torch.float32))
         self.balance_strength = 0.001
-        self.balance_decay = 0.99
-        self.bias_clamp = 0.2
         self._last_stats = None
         self.last_entropy = None
         self.last_load = None
@@ -203,10 +200,10 @@ class MoEFeedForward(nn.Module):
             tokens = max(1, assignments.numel())
             load = load / tokens
             target = load.new_full((self.num_routed_experts,), 1.0 / self.num_routed_experts)
-            self.ema_load.mul_(self.balance_decay).add_((1 - self.balance_decay) * load)
-            balance = target - self.ema_load
-            self.router_bias.add_(self.balance_strength * balance)
-            self.router_bias.clamp_(-self.bias_clamp, self.bias_clamp)
+            balance = target - load
+            if self.balance_strength != 0:
+                direction = torch.sign(balance)
+                self.router_bias.add_(self.balance_strength * direction)
         entropy = (-probs * torch.log(probs + 1e-9)).sum(dim=-1).mean()
         load_cpu = load.detach().cpu()
         entropy_cpu = entropy.detach().cpu()

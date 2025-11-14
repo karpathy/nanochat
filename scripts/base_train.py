@@ -310,6 +310,7 @@ tokens_per_step = total_batch_size
 total_tokens_seen = 0
 total_sequences_seen = 0
 last_val_bpb = None
+moe_debug_interval = int(os.environ.get("MOE_DEBUG_INTERVAL", "0") or 0)
 
 def save_base_checkpoint(step_idx):
     optimizer_state = [opt.state_dict() for opt in optimizers]
@@ -414,6 +415,32 @@ for step in range(num_iterations + 1):
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         loss.backward()
         x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+    if (
+        moe_debug_interval > 0
+        and master_process
+        and step % moe_debug_interval == 0
+    ):
+        from nanochat.gpt import MoEFeedForward
+
+        grad_lines = []
+        for layer_idx, block in enumerate(orig_model.transformer.h):
+            mlp = getattr(block, "mlp", None)
+            if isinstance(mlp, MoEFeedForward):
+                routed_grad = (
+                    mlp.routed_w2.grad.detach().abs().mean().item()
+                    if mlp.routed_w2.grad is not None else 0.0
+                )
+                shared_grad = (
+                    mlp.shared_w2.grad.detach().abs().mean().item()
+                    if mlp.shared_w2 is not None and mlp.shared_w2.grad is not None else 0.0
+                )
+                grad_lines.append(
+                    f"layer{layer_idx}: |grad routed_w2|={routed_grad:.3e} |grad shared_w2|={shared_grad:.3e}"
+                )
+        if grad_lines:
+            print0(f"[MOE-GRAD] step {step:05d}")
+            for line in grad_lines:
+                print0(f"  {line}")
     # gradient clipping (TODO possibly expertiment with)
     if grad_clip > 0.0:
         torch.nn.utils.clip_grad_norm_(orig_model.parameters(), grad_clip)
@@ -467,6 +494,31 @@ for step in range(num_iterations + 1):
         if hasattr(orig_model, "get_moe_stats"):
             log_payload.update(orig_model.get_moe_stats())
         wandb_run.log(log_payload)
+
+    if (
+        moe_debug_interval > 0
+        and master_process
+        and step % moe_debug_interval == 0
+    ):
+        from nanochat.gpt import MoEFeedForward
+
+        debug_lines = []
+        for layer_idx, block in enumerate(orig_model.transformer.h):
+            mlp = getattr(block, "mlp", None)
+            if isinstance(mlp, MoEFeedForward):
+                routed_norm = mlp.routed_w2.detach().abs().mean().item()
+                shared_norm = (
+                    mlp.shared_w2.detach().abs().mean().item()
+                    if mlp.shared_w2 is not None else 0.0
+                )
+                bias_norm = mlp.router_bias.detach().abs().mean().item()
+                debug_lines.append(
+                    f"layer{layer_idx}: |routed_w2|={routed_norm:.3e} |shared_w2|={shared_norm:.3e} |router_bias|={bias_norm:.3e}"
+                )
+        if debug_lines:
+            print0(f"[MOE-DEBUG] step {step:05d}")
+            for line in debug_lines:
+                print0(f"  {line}")
 
 # print a few more stats
 print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")

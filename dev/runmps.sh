@@ -137,6 +137,7 @@ MOE_EXPERT_FFN_MULT=${MOE_EXPERT_FFN_MULT:--1}
 MOE_DENSE_LAYERS=${MOE_DENSE_LAYERS:--1}
 MOE_GRANULARITY_TARGET=${MOE_GRANULARITY_TARGET:-12}
 MOE_ACTIVATION_DEN=${MOE_ACTIVATION_DEN:-32}
+MOE_DEBUG_INTERVAL=${MOE_DEBUG_INTERVAL:-0}
 EVAL_SEQUENCES=10000
 EVAL_STEPS=$(((EVAL_SEQUENCES + DEVICE_BATCH - 1) / DEVICE_BATCH))
 EVAL_BATCH_MULT=4 # evaluate on 4 full batches
@@ -276,7 +277,7 @@ python -m scripts.tok_eval
         fi
     fi
 
-    python -m scripts.base_train \
+    MOE_DEBUG_INTERVAL=$MOE_DEBUG_INTERVAL python -m scripts.base_train \
         --depth=$BASE_DEPTH \
         --max_seq_len=$SEQ_LEN \
         --device_batch_size=$DEVICE_BATCH \
