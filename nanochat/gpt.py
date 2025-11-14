@@ -160,6 +160,11 @@ class MoEFeedForward(nn.Module):
         self._token_idx_cache = None
         self._init_experts()
 
+    def reset_parameters(self):
+        if self.routed_w1.device.type == "meta":
+            return
+        self._init_experts()
+
     def _load_from_state_dict(
         self,
         state_dict,
@@ -372,6 +377,8 @@ class GPT(nn.Module):
         torch.nn.init.zeros_(self.lm_head.weight)
         # zero out c_proj weights in all blocks
         for block in self.transformer.h:
+            if isinstance(block.mlp, MoEFeedForward):
+                block.mlp.reset_parameters()
             if hasattr(block.mlp, "c_proj"):
                 torch.nn.init.zeros_(block.mlp.c_proj.weight)
             elif isinstance(block.mlp, MoEFeedForward):

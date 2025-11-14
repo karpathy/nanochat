@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from nanochat.gpt import GPTConfig, MoEFeedForward
+from nanochat.gpt import GPTConfig, MoEFeedForward, GPT
 
 
 def _make_moe(num_experts: int, top_k: int, shared: int = 0) -> MoEFeedForward:
@@ -156,3 +156,65 @@ def test_moe_gradients_match_loop_reference():
         assert torch.allclose(p_fast.grad, p_loop.grad, atol=1e-6, rtol=1e-5), f"gradient mismatch for {name_fast}"
 
     assert torch.allclose(x_fast.grad, x_loop.grad, atol=1e-6, rtol=1e-5)
+
+
+def test_moe_experts_get_gradients_and_update():
+    torch.manual_seed(0)
+    config = GPTConfig(
+        sequence_len=8,
+        vocab_size=32,
+        n_layer=2,
+        n_head=2,
+        n_kv_head=2,
+        n_embd=16,
+        moe_num_experts=4,
+        moe_num_shared_experts=1,
+        moe_experts_per_token=2,
+        moe_expert_ffn_mult=2.0,
+        dense_layers_before_moe=0,
+    )
+    model = GPT(config)
+    model.init_weights()
+    adamw_opt, muon_opt = model.setup_optimizers()
+
+    def train_step():
+        x = torch.randint(0, config.vocab_size, (2, config.sequence_len))
+        y = torch.randint(0, config.vocab_size, (2, config.sequence_len))
+        loss = model(x, y)
+        loss.backward()
+
+    # Warmup step: lm_head starts at zero, so the first backward pass
+    # leaves trunk gradients at zero. Step once to propagate signal.
+    train_step()
+    for opt in (adamw_opt, muon_opt):
+        opt.step()
+    model.zero_grad(set_to_none=True)
+
+    # Second step should yield non-zero gradients for the experts.
+    train_step()
+    routed_grad_norms = []
+    shared_grad_norms = []
+    routed_param_norms = []
+    for block in model.transformer.h:
+        mlp = getattr(block, "mlp", None)
+        if hasattr(mlp, "routed_w2"):
+            routed_grad = mlp.routed_w2.grad
+            assert routed_grad is not None
+            routed_grad_norms.append(routed_grad.abs().mean().item())
+            routed_param_norms.append(mlp.routed_w2.abs().mean().item())
+            if mlp.shared_w2 is not None:
+                shared_grad = mlp.shared_w2.grad
+                assert shared_grad is not None
+                shared_grad_norms.append(shared_grad.abs().mean().item())
+    assert all(norm > 0.0 for norm in routed_grad_norms)
+    assert all(norm > 0.0 for norm in shared_grad_norms)
+
+    for opt in (adamw_opt, muon_opt):
+        opt.step()
+    model.zero_grad(set_to_none=True)
+    routed_param_norms_after = []
+    for block in model.transformer.h:
+        mlp = getattr(block, "mlp", None)
+        if hasattr(mlp, "routed_w2"):
+            routed_param_norms_after.append(mlp.routed_w2.abs().mean().item())
+    assert all(after > before for before, after in zip(routed_param_norms, routed_param_norms_after))
