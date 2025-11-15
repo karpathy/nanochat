@@ -103,6 +103,63 @@ To customize your nanochat, see [Guide: infusing identity to your nanochat](http
 
 Additionally, to add new abilities to nanochat, see [Guide: counting r in strawberry (and how to add abilities generally)](https://github.com/karpathy/nanochat/discussions/164).
 
+## Model Export (TorchScript/ONNX)
+
+nanochat models can be exported to TorchScript and ONNX formats for inference in C++, C#, Java, and other languages. This enables deployment in production environments without Python dependencies.
+
+### Exporting Models
+
+Use the export script to convert trained models:
+
+```bash
+# Export to TorchScript (for LibTorch C++ API)
+python -m scripts.export_model --source sft --format torchscript --output model.pt
+
+# Export to ONNX (for ONNX Runtime)
+python -m scripts.export_model --source sft --format onnx --output model.onnx
+
+# Export both formats at once
+python -m scripts.export_model --source sft --format both
+
+# Export specific model checkpoint
+python -m scripts.export_model --source mid --model-tag d20 --step 10000 --format torchscript
+```
+
+### C++ Inference Examples
+
+Complete C++ examples are provided in `examples/cpp_inference/`:
+
+- **LibTorch (TorchScript)**: Uses PyTorch's C++ API for inference
+- **ONNX Runtime**: Cross-platform inference with ONNX Runtime
+
+See [examples/cpp_inference/README.md](examples/cpp_inference/README.md) for build instructions and usage examples.
+
+### Quick Start with C++
+
+```bash
+# 1. Export your trained model
+python -m scripts.export_model --source sft --format torchscript --output model.pt
+
+# 2. Build the C++ example
+cd examples/cpp_inference
+mkdir build && cd build
+cmake -DCMAKE_PREFIX_PATH=/path/to/libtorch ..
+make
+
+# 3. Run inference
+./libtorch_inference ../../../model.pt
+```
+
+### Limitations
+
+Exported models have some limitations compared to the Python version:
+
+- **No Tool Use**: Calculator and other Python-based tools are not included
+- **No Special Token Handling**: Special tokens like `<|python_start|>` must be handled manually
+- **Tokenization**: You'll need to implement tokenization in C++ or use Python for preprocessing
+
+The exported models provide the core transformer inference functionality, which is typically the performance-critical component in production deployments.
+
 ## Questions
 
 nanochat is designed to be short and sweet. One big advantage of this is that we can package up all of the files together and copy paste them to your favorite LLM to ask arbitrary questions. As an example, I like to package up the repo using the [files-to-prompt](https://github.com/simonw/files-to-prompt) utility like so:
@@ -135,6 +192,12 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── nanochat.png
 │   ├── repackage_data_reference.py # Pretraining data shard generation
 │   └── runcpu.sh                   # Small example of how to run on CPU/MPS
+├── examples
+│   └── cpp_inference               # C++ inference examples
+│       ├── CMakeLists.txt          # CMake build configuration
+│       ├── README.md               # C++ examples documentation
+│       ├── libtorch_inference.cpp  # LibTorch (TorchScript) example
+│       └── onnx_inference.cpp      # ONNX Runtime example
 ├── nanochat
 │   ├── __init__.py                 # empty
 │   ├── adamw.py                    # Distributed AdamW optimizer
@@ -146,6 +209,7 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── dataset.py                  # Download/read utils for pretraining data
 │   ├── engine.py                   # Efficient model inference with KV Cache
 │   ├── execution.py                # Allows the LLM to execute Python code as tool
+│   ├── export_wrapper.py           # Export-friendly model wrappers
 │   ├── gpt.py                      # The GPT nn.Module Transformer
 │   ├── logo.svg
 │   ├── loss_eval.py                # Evaluate bits per byte (instead of loss)
@@ -170,6 +234,7 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── chat_rl.py                  # Chat model (SFT/Mid): reinforcement learning
 │   ├── chat_sft.py                 # Chat model: train SFT
 │   ├── chat_web.py                 # Chat model (SFT/Mid): talk to over WebUI
+│   ├── export_model.py             # Export models to TorchScript/ONNX
 │   ├── mid_train.py                # Chat model: midtraining
 │   ├── tok_eval.py                 # Tokenizer: evaluate compression rate
 │   └── tok_train.py                # Tokenizer: train it
