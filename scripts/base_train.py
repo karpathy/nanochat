@@ -234,7 +234,6 @@ while True:
         model.train()
 
     # save checkpoint: at the last step, or every save_every steps, except at the first step or the resume step
-    # save progress before possible OOM in CORE metric
     if last_step or (step > 0 and step != resume_from_step and save_every > 0 and step % save_every == 0):
         save_checkpoint(
             checkpoint_dir,
