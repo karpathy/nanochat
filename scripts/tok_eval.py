@@ -165,11 +165,14 @@ tokenizer_results = {}
 vocab_sizes = {}
 
 for tokenizer_name in ["gpt2", "gpt4", "ours"]:
-
     if tokenizer_name == "gpt2":
-        tokenizer = RustBPETokenizer.from_pretrained("gpt2") # gpt-2 base model tokenizer
+        tokenizer = RustBPETokenizer.from_pretrained(
+            "gpt2"
+        )  # gpt-2 base model tokenizer
     elif tokenizer_name == "gpt4":
-        tokenizer = RustBPETokenizer.from_pretrained("cl100k_base") # gpt-4 base model tokenizer
+        tokenizer = RustBPETokenizer.from_pretrained(
+            "cl100k_base"
+        )  # gpt-4 base model tokenizer
     else:
         tokenizer = get_tokenizer()
 
@@ -181,18 +184,18 @@ for tokenizer_name in ["gpt2", "gpt4", "ours"]:
         decoded = tokenizer.decode(encoded)
         assert decoded == text
 
-        encoded_bytes = text.encode('utf-8')
+        encoded_bytes = text.encode("utf-8")
         ratio = len(encoded_bytes) / len(encoded)
         tokenizer_results[tokenizer_name][name] = {
-            'bytes': len(encoded_bytes),
-            'tokens': len(encoded),
-            'ratio': ratio
+            "bytes": len(encoded_bytes),
+            "tokens": len(encoded),
+            "ratio": ratio,
         }
 
 # ANSI color codes
-GREEN = '\033[92m'
-RED = '\033[91m'
-RESET = '\033[0m'
+GREEN = "\033[92m"
+RED = "\033[91m"
+RESET = "\033[0m"
 
 # Print vocab sizes
 print(f"\nVocab sizes:")
@@ -200,12 +203,17 @@ print(f"GPT-2: {vocab_sizes['gpt2']}")
 print(f"GPT-4: {vocab_sizes['gpt4']}")
 print(f"Ours: {vocab_sizes['ours']}")
 
+
 def print_comparison(baseline_name, baseline_results, ours_results, all_text):
     """Print comparison table between baseline tokenizer and ours."""
     print(f"\nComparison with {baseline_name}:")
     print("=" * 95)
-    print(f"{'Text Type':<10} {'Bytes':<8} {baseline_name:<15} {'Ours':<15} {'Relative':<12} {'Better':<10}")
-    print(f"{'':10} {'':8} {'Tokens':<7} {'Ratio':<7} {'Tokens':<7} {'Ratio':<7} {'Diff %':<12}")
+    print(
+        f"{'Text Type':<10} {'Bytes':<8} {baseline_name:<15} {'Ours':<15} {'Relative':<12} {'Better':<10}"
+    )
+    print(
+        f"{'':10} {'':8} {'Tokens':<7} {'Ratio':<7} {'Tokens':<7} {'Ratio':<7} {'Diff %':<12}"
+    )
     print("-" * 95)
 
     for name, text in all_text:
@@ -214,14 +222,16 @@ def print_comparison(baseline_name, baseline_results, ours_results, all_text):
 
         # Calculate relative difference (positive means ours is better, negative means worse)
         # Using tokens: fewer tokens is better, so we calculate (baseline_tokens - ours_tokens) / baseline_tokens
-        relative_diff = ((baseline_data['tokens'] - ours_data['tokens']) / baseline_data['tokens']) * 100
+        relative_diff = (
+            (baseline_data["tokens"] - ours_data["tokens"]) / baseline_data["tokens"]
+        ) * 100
 
         # Determine which has better compression (higher ratio = better)
-        if baseline_data['ratio'] > ours_data['ratio']:
+        if baseline_data["ratio"] > ours_data["ratio"]:
             baseline_color, ours_color = GREEN, RED
             better = baseline_name
             diff_color = RED
-        elif ours_data['ratio'] > baseline_data['ratio']:
+        elif ours_data["ratio"] > baseline_data["ratio"]:
             baseline_color, ours_color = RED, GREEN
             better = "Ours"
             diff_color = GREEN
@@ -230,36 +240,59 @@ def print_comparison(baseline_name, baseline_results, ours_results, all_text):
             better = "Tie"
             diff_color = ""
 
-        print(f"{name:<10} {baseline_data['bytes']:<8} "
-              f"{baseline_color}{baseline_data['tokens']:<7}{RESET} "
-              f"{baseline_color}{baseline_data['ratio']:<7.2f}{RESET} "
-              f"{ours_color}{ours_data['tokens']:<7}{RESET} "
-              f"{ours_color}{ours_data['ratio']:<7.2f}{RESET} "
-              f"{diff_color}{relative_diff:+7.1f}%{RESET}     "
-              f"{better:<10}")
+        print(
+            f"{name:<10} {baseline_data['bytes']:<8} "
+            f"{baseline_color}{baseline_data['tokens']:<7}{RESET} "
+            f"{baseline_color}{baseline_data['ratio']:<7.2f}{RESET} "
+            f"{ours_color}{ours_data['tokens']:<7}{RESET} "
+            f"{ours_color}{ours_data['ratio']:<7.2f}{RESET} "
+            f"{diff_color}{relative_diff:+7.1f}%{RESET}     "
+            f"{better:<10}"
+        )
+
 
 # Print comparisons
-print_comparison("GPT-2", tokenizer_results['gpt2'], tokenizer_results['ours'], all_text)
-print_comparison("GPT-4", tokenizer_results['gpt4'], tokenizer_results['ours'], all_text)
+print_comparison(
+    "GPT-2", tokenizer_results["gpt2"], tokenizer_results["ours"], all_text
+)
+print_comparison(
+    "GPT-4", tokenizer_results["gpt4"], tokenizer_results["ours"], all_text
+)
 
 # Log to report
 from nanochat.report import get_report
+
 lines = []
 for baseline_name in ["GPT-2", "GPT-4"]:
-    baseline_key = baseline_name.lower().replace('-', '')
+    baseline_key = baseline_name.lower().replace("-", "")
     baseline_results = tokenizer_results[baseline_key]
-    ours_results = tokenizer_results['ours']
+    ours_results = tokenizer_results["ours"]
     lines.append(f"### Comparison with {baseline_name}")
     lines.append("")
-    lines.append("| Text Type | Bytes | " + baseline_name + " Tokens | " + baseline_name + " Ratio | Ours Tokens | Ours Ratio | Relative Diff % |")
-    lines.append("|-----------|-------|--------------|--------------|-------------|------------|-----------------|")
+    lines.append(
+        "| Text Type | Bytes | "
+        + baseline_name
+        + " Tokens | "
+        + baseline_name
+        + " Ratio | Ours Tokens | Ours Ratio | Relative Diff % |"
+    )
+    lines.append(
+        "|-----------|-------|--------------|--------------|-------------|------------|-----------------|"
+    )
     for name, text in all_text:
         baseline_data = baseline_results[name]
         ours_data = ours_results[name]
-        relative_diff = ((baseline_data['tokens'] - ours_data['tokens']) / baseline_data['tokens']) * 100
-        lines.append(f"| {name} | {baseline_data['bytes']} | {baseline_data['tokens']} | {baseline_data['ratio']:.2f} | {ours_data['tokens']} | {ours_data['ratio']:.2f} | {relative_diff:+.1f}% |")
+        relative_diff = (
+            (baseline_data["tokens"] - ours_data["tokens"]) / baseline_data["tokens"]
+        ) * 100
+        lines.append(
+            f"| {name} | {baseline_data['bytes']} | {baseline_data['tokens']} | {baseline_data['ratio']:.2f} | {ours_data['tokens']} | {ours_data['ratio']:.2f} | {relative_diff:+.1f}% |"
+        )
     lines.append("")
 report_markdown = "\n".join(lines)
-get_report().log(section="Tokenizer evaluation", data=[
-    report_markdown,
-])
+get_report().log(
+    section="Tokenizer evaluation",
+    data=[
+        report_markdown,
+    ],
+)

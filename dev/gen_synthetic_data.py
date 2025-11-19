@@ -28,6 +28,7 @@ NOTE: You need OpenRouter API key in a file called "openroutertoken.txt" in the 
       (obviously you can tune this arbitrarily to your liking)
 NOTE: For more details see this discussion: https://github.com/karpathy/nanochat/discussions/139
 """
+
 import requests
 import json
 import os
@@ -40,10 +41,7 @@ from nanochat.common import get_base_dir
 api_key = open("openroutertoken.txt", "r", encoding="utf-8").read().strip()
 
 url = "https://openrouter.ai/api/v1/chat/completions"
-headers = {
-  "Authorization": f"Bearer {api_key}",
-  "Content-Type": "application/json"
-}
+headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
 readme = open("README.md", "r", encoding="utf-8").read().strip()
 prompt = r"""
@@ -276,47 +274,48 @@ prompt = prompt.replace("%README%", readme)
 
 # Define the JSON schema for structured output
 response_format = {
-  "type": "json_schema",
-  "json_schema": {
-    "name": "conversation",
-    "strict": True,
-    "schema": {
-      "type": "object",
-      "properties": {
-        "messages": {
-          "type": "array",
-          "description": "A list of conversation messages alternating between user and assistant, with the first message being a user message",
-          "items": {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "conversation",
+        "strict": True,
+        "schema": {
             "type": "object",
             "properties": {
-              "role": {
-                "type": "string",
-                "description": "The role of the speaker, either 'user' or 'assistant'"
-              },
-              "content": {
-                "type": "string",
-                "description": "The message content"
-              }
+                "messages": {
+                    "type": "array",
+                    "description": "A list of conversation messages alternating between user and assistant, with the first message being a user message",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {
+                                "type": "string",
+                                "description": "The role of the speaker, either 'user' or 'assistant'",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "The message content",
+                            },
+                        },
+                        "required": ["role", "content"],
+                        "additionalProperties": False,
+                    },
+                }
             },
-            "required": ["role", "content"],
-            "additionalProperties": False
-          }
-        }
-      },
-      "required": ["messages"],
-      "additionalProperties": False
-    }
-  }
+            "required": ["messages"],
+            "additionalProperties": False,
+        },
+    },
 }
 
 # Sadly it doesn't seem like Chat completions support `n`
 # to generate multiple completions per prompt.
 base_payload = {
-  "model": "google/gemini-2.5-flash",
-  "stream": False,
-  "response_format": response_format,
-  "temperature": 1.0,
+    "model": "google/gemini-2.5-flash",
+    "stream": False,
+    "response_format": response_format,
+    "temperature": 1.0,
 }
+
 
 def generate_conversation(idx: int):
     """
@@ -325,19 +324,19 @@ def generate_conversation(idx: int):
     """
 
     # pick 5 example user first messages and insert them into prompt as inspiration
-    rng = random.Random(idx) # use idx as seed to the rng
+    rng = random.Random(idx)  # use idx as seed to the rng
     user_first_prompt = "\n".join(rng.choice(user_first_prompts) for _ in range(5))
     payload = copy.deepcopy(base_payload)
     modified_prompt = prompt.replace("%USER_FIRST_PROMPTS%", user_first_prompt)
-    payload['messages'] = [{"role": "user", "content": modified_prompt}]
+    payload["messages"] = [{"role": "user", "content": modified_prompt}]
 
     response = requests.post(url, headers=headers, json=payload)
     result = response.json()
-    content = result['choices'][0]['message']['content']
+    content = result["choices"][0]["message"]["content"]
 
     # Parse the JSON response and unpack the messages
     conversation_data = json.loads(content)
-    messages = conversation_data['messages']
+    messages = conversation_data["messages"]
 
     return messages
 
@@ -357,9 +356,10 @@ print(f"Generating {num_conversations} conversations with {num_workers} workers.
 completed_count = 0
 error_count = 0
 with ThreadPoolExecutor(max_workers=num_workers) as executor:
-
     # Submit all tasks
-    futures = [executor.submit(generate_conversation, idx) for idx in range(num_conversations)]
+    futures = [
+        executor.submit(generate_conversation, idx) for idx in range(num_conversations)
+    ]
 
     # Process results as they complete
     for future in as_completed(futures):
@@ -369,11 +369,13 @@ with ThreadPoolExecutor(max_workers=num_workers) as executor:
             # Lightly validate the conversation structure
             for i, message in enumerate(messages):
                 expected_role = "user" if i % 2 == 0 else "assistant"
-                assert message['role'] == expected_role, f"Message {i} has role {message['role']} but should be {expected_role}"
+                assert message["role"] == expected_role, (
+                    f"Message {i} has role {message['role']} but should be {expected_role}"
+                )
 
             # If all looks good, write the messages to file
-            with open(output_file, 'a') as f:
-                f.write(json.dumps(messages) + '\n')
+            with open(output_file, "a") as f:
+                f.write(json.dumps(messages) + "\n")
             completed_count += 1
             print(f"✓ Saved conversation {completed_count}/{num_conversations}")
 
@@ -384,4 +386,3 @@ with ThreadPoolExecutor(max_workers=num_workers) as executor:
 print(f"\nDone! Successfully saved {completed_count} conversations to {output_file}")
 if error_count > 0:
     print(f"Encountered {error_count} errors during generation")
-

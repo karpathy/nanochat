@@ -5,6 +5,7 @@ https://arxiv.org/abs/2406.11794
 TODOs:
 - All tasks ~match except for squad. We get 31% reference is 37%. Figure out why.
 """
+
 import random
 
 from jinja2 import Template
@@ -13,6 +14,7 @@ import torch.distributed as dist
 
 # -----------------------------------------------------------------------------
 # Prompt rendering utilities
+
 
 def render_prompts_mc(item, continuation_delimiter, fewshot_examples=None):
     """Render complete prompts for a multiple choice question"""
@@ -25,11 +27,11 @@ def render_prompts_mc(item, continuation_delimiter, fewshot_examples=None):
     template = Template(template_str)
     fewshot_examples = fewshot_examples or []
     context = {
-        'fewshot_examples': fewshot_examples,
-        'continuation_delimiter': continuation_delimiter,
-        'item': item
+        "fewshot_examples": fewshot_examples,
+        "continuation_delimiter": continuation_delimiter,
+        "item": item,
     }
-    prompts = [template.render(choice=choice, **context) for choice in item['choices']]
+    prompts = [template.render(choice=choice, **context) for choice in item["choices"]]
     return prompts
 
 
@@ -44,12 +46,14 @@ def render_prompts_schema(item, continuation_delimiter, fewshot_examples=None):
     template = Template(template_str)
     fewshot_examples = fewshot_examples or []
     context = {
-        'fewshot_examples': fewshot_examples,
-        'continuation_delimiter': continuation_delimiter,
-        'item': item
+        "fewshot_examples": fewshot_examples,
+        "continuation_delimiter": continuation_delimiter,
+        "item": item,
     }
-    prompts = [template.render(context=context_option, **context)
-               for context_option in item['context_options']]
+    prompts = [
+        template.render(context=context_option, **context)
+        for context_option in item["context_options"]
+    ]
     return prompts
 
 
@@ -68,9 +72,9 @@ def render_prompts_lm(item, continuation_delimiter, fewshot_examples=None):
     template = Template(template_str)
     fewshot_examples = fewshot_examples or []
     context = {
-        'fewshot_examples': fewshot_examples,
-        'continuation_delimiter': continuation_delimiter,
-        'item': item
+        "fewshot_examples": fewshot_examples,
+        "continuation_delimiter": continuation_delimiter,
+        "item": item,
     }
     # Return two prompts: without and with the continuation
     prompt_without = template.render(include_continuation=False, **context)
@@ -83,16 +87,13 @@ def render_prompts_lm(item, continuation_delimiter, fewshot_examples=None):
     return [prompt_without, prompt_with]
 
 
-def find_common_length(token_sequences, direction='left'):
+def find_common_length(token_sequences, direction="left"):
     """
     Find the length of the common prefix or suffix across token sequences
     - direction: 'left' for prefix, 'right' for suffix
     """
     min_len = min(len(seq) for seq in token_sequences)
-    indices = {
-        'left': range(min_len),
-        'right': range(-1, -min_len-1, -1)
-    }[direction]
+    indices = {"left": range(min_len), "right": range(-1, -min_len - 1, -1)}[direction]
     # Find the first position where the token sequences differ
     for i, idx in enumerate(indices):
         token = token_sequences[0][idx]
@@ -106,7 +107,7 @@ def stack_sequences(tokens, pad_token_id):
     bsz, seq_len = len(tokens), max(len(x) for x in tokens)
     input_ids = torch.full((bsz, seq_len), pad_token_id, dtype=torch.long)
     for i, x in enumerate(tokens):
-        input_ids[i, :len(x)] = torch.tensor(x, dtype=torch.long)
+        input_ids[i, : len(x)] = torch.tensor(x, dtype=torch.long)
     return input_ids
 
 
@@ -114,7 +115,7 @@ def batch_sequences_mc(tokenizer, prompts):
     # In multiple choice, contexts are the same but the continuation is different (common prefix)
     tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
     # figure out the start and end of each continuation
-    answer_start_idx = find_common_length(tokens, direction='left')
+    answer_start_idx = find_common_length(tokens, direction="left")
     start_indices = [answer_start_idx] * len(prompts)
     end_indices = [len(x) for x in tokens]
     return tokens, start_indices, end_indices
@@ -124,7 +125,7 @@ def batch_sequences_schema(tokenizer, prompts):
     # In schema tasks, contexts vary but continuation is the same (common suffix)
     tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
     # figure out the start and end of each context
-    suffix_length = find_common_length(tokens, direction='right')
+    suffix_length = find_common_length(tokens, direction="right")
     end_indices = [len(x) for x in tokens]
     start_indices = [ei - suffix_length for ei in end_indices]
     return tokens, start_indices, end_indices
@@ -135,8 +136,12 @@ def batch_sequences_lm(tokenizer, prompts):
     tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
     tokens_without, tokens_with = tokens
     start_idx, end_idx = len(tokens_without), len(tokens_with)
-    assert start_idx < end_idx, "prompt without is supposed to be a prefix of prompt with"
-    assert tokens_without == tokens_with[:start_idx], "prompt without is supposed to be a prefix of prompt with"
+    assert start_idx < end_idx, (
+        "prompt without is supposed to be a prefix of prompt with"
+    )
+    assert tokens_without == tokens_with[:start_idx], (
+        "prompt without is supposed to be a prefix of prompt with"
+    )
     # we only need the with continuation prompt in the LM task, i.e. batch size of 1
     return [tokens_with], [start_idx], [end_idx]
 
@@ -155,10 +160,10 @@ def forward_model(model, input_ids):
     losses = torch.nn.functional.cross_entropy(
         outputs.view(batch_size * seq_len, -1),
         target_ids.view(batch_size * seq_len),
-        reduction='none'
+        reduction="none",
     ).view(batch_size, seq_len)
     # Set the last column to be nan because there is no autoregressive loss there
-    losses[:, -1] = float('nan')
+    losses[:, -1] = float("nan")
     # Get the argmax predictions at each position
     predictions = outputs.argmax(dim=-1)
     return losses, predictions
@@ -168,9 +173,9 @@ def forward_model(model, input_ids):
 def evaluate_example(idx, model, tokenizer, data, device, task_meta):
     """Evaluate a single example, return True if correct, False otherwise"""
     item = data[idx]
-    task_type = task_meta['task_type']
-    num_fewshot = task_meta['num_fewshot']
-    continuation_delimiter = task_meta['continuation_delimiter']
+    task_type = task_meta["task_type"]
+    num_fewshot = task_meta["num_fewshot"]
+    continuation_delimiter = task_meta["continuation_delimiter"]
 
     # Sample few-shot examples (excluding current item)
     fewshot_examples = []
@@ -181,13 +186,13 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
         fewshot_examples = [data[i] for i in fewshot_indices]
 
     # Render prompts and batch sequences based on task type
-    if task_type == 'multiple_choice':
+    if task_type == "multiple_choice":
         prompts = render_prompts_mc(item, continuation_delimiter, fewshot_examples)
         tokens, start_idxs, end_idxs = batch_sequences_mc(tokenizer, prompts)
-    elif task_type == 'schema':
+    elif task_type == "schema":
         prompts = render_prompts_schema(item, continuation_delimiter, fewshot_examples)
         tokens, start_idxs, end_idxs = batch_sequences_schema(tokenizer, prompts)
-    elif task_type == 'language_modeling':
+    elif task_type == "language_modeling":
         prompts = render_prompts_lm(item, continuation_delimiter, fewshot_examples)
         tokens, start_idxs, end_idxs = batch_sequences_lm(tokenizer, prompts)
     else:
@@ -195,25 +200,25 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
 
     # Some models can't forward sequences beyond a certain length (e.g. GPT-2)
     # In these cases, we have to truncate sequences to max length and adjust the indices
-    if hasattr(model, 'max_seq_len') and model.max_seq_len is not None:
+    if hasattr(model, "max_seq_len") and model.max_seq_len is not None:
         max_tokens = model.max_seq_len
         new_tokens, new_start_idxs, new_end_idxs = [], [], []
         for t, s, e in zip(tokens, start_idxs, end_idxs):
             if len(t) > max_tokens:
                 num_to_crop = len(t) - max_tokens
-                new_tokens.append(t[-max_tokens:]) # take the last max_tokens tokens
-                new_start_idxs.append(s - num_to_crop) # shift the indices down
+                new_tokens.append(t[-max_tokens:])  # take the last max_tokens tokens
+                new_start_idxs.append(s - num_to_crop)  # shift the indices down
                 new_end_idxs.append(e - num_to_crop)
                 assert s - num_to_crop >= 0, "this should never happen right?"
                 assert e - num_to_crop >= 0, "this should never happen right?"
             else:
-                new_tokens.append(t) # keep unchanged
+                new_tokens.append(t)  # keep unchanged
                 new_start_idxs.append(s)
                 new_end_idxs.append(e)
         tokens, start_idxs, end_idxs = new_tokens, new_start_idxs, new_end_idxs
 
     # Stack up all the sequences into a batch
-    pad_token_id = tokenizer.get_bos_token_id() # use BOS as pad token is ok
+    pad_token_id = tokenizer.get_bos_token_id()  # use BOS as pad token is ok
     input_ids = stack_sequences(tokens, pad_token_id)
     input_ids = input_ids.to(device)
 
@@ -221,20 +226,22 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
     losses, predictions = forward_model(model, input_ids)
 
     # See if the losses/predictions come out correctly
-    if task_type == 'language_modeling':
+    if task_type == "language_modeling":
         # language modeling task is currently always batch size 1
         si = start_idxs[0]
         ei = end_idxs[0]
         # predictions[i] predict input_ids[i+1] autoregressively
-        predicted_tokens = predictions[0, si-1:ei-1]
+        predicted_tokens = predictions[0, si - 1 : ei - 1]
         actual_tokens = input_ids[0, si:ei]
         is_correct = torch.all(predicted_tokens == actual_tokens).item()
-    elif task_type in ['multiple_choice', 'schema']:
+    elif task_type in ["multiple_choice", "schema"]:
         # For MC/schema: find the option with lowest average loss
-        mean_losses = [losses[i, si-1:ei-1].mean().item()
-                        for i, (si, ei) in enumerate(zip(start_idxs, end_idxs))]
+        mean_losses = [
+            losses[i, si - 1 : ei - 1].mean().item()
+            for i, (si, ei) in enumerate(zip(start_idxs, end_idxs))
+        ]
         pred_idx = mean_losses.index(min(mean_losses))
-        is_correct = pred_idx == item['gold']
+        is_correct = pred_idx == item["gold"]
     else:
         raise ValueError(f"Unsupported task type: {task_type}")
 
