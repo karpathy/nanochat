@@ -118,7 +118,16 @@ def find_last_step(checkpoint_dir):
     checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "model_*.pt"))
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
-    last_step = int(max(os.path.basename(f).split("_")[-1].split(".")[0] for f in checkpoint_files))
+    # Use regex to match only valid checkpoint files (model_<digits>.pt) and ignore malformed files
+    # This prevents crashes when files like model_000200_backup.pt exist in the directory
+    steps = []
+    for f in checkpoint_files:
+        match = re.match(r"model_(\d+)\.pt$", os.path.basename(f))
+        if match:
+            steps.append(int(match.group(1)))
+    if not steps:
+        raise ValueError(f"No valid checkpoint files found in {checkpoint_dir}")
+    last_step = max(steps)
     return last_step
 
 # -----------------------------------------------------------------------------
