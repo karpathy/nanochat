@@ -81,7 +81,8 @@ def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads
         state_dict = {"pq_idx": pq_idx, "rg_idx": rg_idx} # we need this in case we wish to approximately resume training
         yield inputs, targets, state_dict
 
-def tokenizing_distributed_data_loader(*args, **kwargs):
+def tokenizing_distributed_data_loader(*args, device="cuda", **kwargs):
     # helper function that only emits the inputs/targets and not the state_dict
+    kwargs["device"] = device
     for inputs, targets, state_dict in tokenizing_distributed_data_loader_with_state(*args, **kwargs):
         yield inputs, targets
