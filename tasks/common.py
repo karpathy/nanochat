@@ -36,12 +36,14 @@ class Task:
         start = self.start
         if self.stop is not None:
             num_ex = self.num_examples()
+            stop = min(self.stop, num_ex)  # Gracefully cap at dataset size
             if self.stop > num_ex:
-                raise ValueError(
+                import warnings
+                warnings.warn(
                     f"Stop parameter ({self.stop}) exceeds dataset size ({num_ex}). "
-                    f"Please use stop <= {num_ex} or remove the stop parameter to use the full dataset."
+                    f"Using {num_ex} examples instead.",
+                    UserWarning
                 )
-            stop = self.stop
         else:
             stop = self.num_examples()
         step = self.step
