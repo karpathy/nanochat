@@ -15,8 +15,8 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
 import torch
-
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir
+from contextlib import nullcontext
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -27,12 +27,16 @@ from tasks.common import TaskMixture
 from tasks.gsm8k import GSM8K
 from tasks.mmlu import MMLU
 from tasks.smoltalk import SmolTalk
+from tasks.customjson import CustomJSON
+from tasks.spellingbee import SimpleSpelling, SpellingBee
 
 # -----------------------------------------------------------------------------
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
+device_type = "" # cuda|cpu|mps (empty => autodetect)
 model_tag = None # model tag to load the model from (base model or midtrained model)
 step = None # step to load the model from (base model or midtrained model)
 dtype = "bfloat16"
+num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
 max_seq_len = 2048
 device_batch_size = 32
 unembedding_lr = 0.004
@@ -40,7 +44,7 @@ embedding_lr = 0.2
 matrix_lr = 0.02
 init_lr_frac = 1.0 # initial learning rate is this fraction of the base learning rate
 weight_decay = 0.0
-eval_every = 150
+eval_every = 150 # -1 = disable
 eval_tokens = 20*524288
 total_batch_size = 524288
 dry_run = 0 # dry_run=1 is for experiments: we will log to wandb but we won't write checkpoints or report
@@ -50,10 +54,12 @@ user_config = {k: globals()[k] for k in config_keys} # possibly useful for loggi
 # -----------------------------------------------------------------------------
 
 # Compute init
-ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
+device_type = autodetect_device_type() if device_type == "" else device_type
+ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0
-dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=dtype)
+autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
+get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
@@ -88,11 +94,16 @@ for opt in optimizers:
 
 # Midtraining data mixture and DataLoader
 base_dir = get_base_dir()
+identity_conversations_filepath = os.path.join(base_dir, "identity_conversations.jsonl")
 train_dataset = TaskMixture([
     SmolTalk(split="train"), # 460K rows of general conversations
     MMLU(subset="auxiliary_train", split="train"), # 100K rows of multiple choice problems drawn from ARC, MC_TEST, OBQA, RACE
     GSM8K(subset="main", split="train"), # 8K rows teaching simple math and (calculator) tool use
-]) # total: 460K + 100K + 8K = 568K rows
+    CustomJSON(filepath=identity_conversations_filepath), # 1000 rows of synthetic identity conversations
+    CustomJSON(filepath=identity_conversations_filepath), # let's do 2 epochs of these
+    SimpleSpelling(size=200000, split="train"), # 200K rows of Simple Spelling (e.g. spell the word 'apple')
+    SpellingBee(size=80000, split="train"), # 80K rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
+]) # total: 460K + 100K + 8K + 200K + 80K = 848K rows
 val_dataset = TaskMixture([
     SmolTalk(split="test"), # 24K rows in test set
     MMLU(subset="all", split="test", stop=5200), # 14K rows in test set, use only 5.2K to match the train ratios
@@ -111,8 +122,10 @@ def mid_data_generator(split):
     assert dataset_size > 0
     needed_tokens = device_batch_size * max_seq_len + 1 # to form one training batch of inputs,targets
     token_buffer = deque()
-    scratch = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=True)
+    # CUDA supports memory pinning for faster transfers between CPU and GPU:
+    scratch = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=(device_type == "cuda"))
     cursor = ddp_rank # increments by ddp_world_size each time, so each rank processes unique documents
+    it = 0 # iteration counter
     while True:
         # Accumulate enough tokens for one iteration before yielding
         while len(token_buffer) < needed_tokens:
@@ -124,6 +137,10 @@ def mid_data_generator(split):
                 cursor -= dataset_size # wrap around for another epoch
                 if split == "train":
                     last_step = True # toggle last_step to True, which will terminate the training loop
+        # Stopping condition to respect num_iterations, if given
+        it += 1
+        if num_iterations > 0 and it >= num_iterations:
+            last_step = True # toggle last_step to True, which will terminate the training loop
         # Build up inputs/targets and yield
         for i in range(needed_tokens):
             scratch[i] = token_buffer.popleft()
@@ -132,7 +149,10 @@ def mid_data_generator(split):
         inputs = inputs_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int32, non_blocking=True)
         targets = targets_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int64, non_blocking=True)
         if split == "train":
-            approx_progress = cursor / dataset_size # approximate progress as a fraction of the dataset
+            if num_iterations > 0:
+                approx_progress = it / num_iterations # calculate progress from the max number of iterations
+            else:
+                approx_progress = cursor / dataset_size # approximate progress as a fraction of the dataset
         yield inputs, targets
 
 train_loader = mid_data_generator("train")
@@ -168,7 +188,7 @@ while True:
         last_step = bool(last_step_tensor.item())
 
     # once in a while: evaluate the val bpb (all ranks participate)
-    if last_step or step % eval_every == 0:
+    if eval_every > 0 and (last_step or step % eval_every == 0):
         model.eval()
         val_loader = build_val_loader()
         eval_steps = eval_tokens // (device_batch_size * max_seq_len * ddp_world_size)
@@ -215,7 +235,7 @@ while True:
     # -------------------------------------------------------------------------
     # single training step
     # evaluate the gradient
-    torch.cuda.synchronize()
+    synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
@@ -236,7 +256,7 @@ while True:
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
-    torch.cuda.synchronize()
+    synchronize()
     t1 = time.time()
     dt = t1 - t0
     # -------------------------------------------------------------------------
@@ -248,7 +268,7 @@ while True:
     smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss.item() # EMA the training loss
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1)) # debias the EMA
     pct_done = 100 * progress
-    tok_per_sec = int(world_tokens_per_fwdbwd / dt)
+    tok_per_sec = int(total_batch_size / dt)
     flops_per_sec = num_flops_per_token * total_batch_size / dt
     promised_flops_per_sec_h100 = 989e12 * ddp_world_size # bfloat16 H100 SXM and without 2:4 sparsity
     mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
@@ -268,7 +288,7 @@ while True:
         })
 
 # print a few more stats
-print0(f"Peak memory usage: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MiB")
+print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
