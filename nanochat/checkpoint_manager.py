@@ -3,7 +3,6 @@ Utilities for saving and loading model/optim/state checkpoints.
 """
 import os
 import re
-import glob
 import json
 import logging
 import torch
@@ -115,19 +114,10 @@ def find_largest_model(checkpoint_dir):
 
 def find_last_step(checkpoint_dir):
     # Look into checkpoint_dir and find model_<step>.pt with the highest step
-    checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "model_*.pt"))
+    checkpoint_files = [f for f in os.listdir(checkpoint_dir) if re.search(r'model_(\d+)\.pt$', f)]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
-    # Use regex to match only valid checkpoint files (model_<digits>.pt) and ignore malformed files
-    # This prevents crashes when files like model_000200_backup.pt exist in the directory
-    steps = []
-    for f in checkpoint_files:
-        match = re.match(r"model_(\d+)\.pt$", os.path.basename(f))
-        if match:
-            steps.append(int(match.group(1)))
-    if not steps:
-        raise ValueError(f"No valid checkpoint files found in {checkpoint_dir}")
-    last_step = max(steps)
+    last_step = int(max(re.search(r'model_(\d+)\.pt$', f).group(1) for f in checkpoint_files))
     return last_step
 
 # -----------------------------------------------------------------------------
