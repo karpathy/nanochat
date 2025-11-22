@@ -205,6 +205,7 @@ if not resuming:
 else:
     step = meta_data["step"]
     loop_state = meta_data["loop_state"]
+    val_bpb = meta_data["val_bpb"]
     min_val_bpb = loop_state["min_val_bpb"]
     smooth_train_loss = loop_state["smooth_train_loss"]
     total_training_time = loop_state["total_training_time"]
