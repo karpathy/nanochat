@@ -1,0 +1,34 @@
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+
+Overriding: depth = 2
+Overriding: device_batch_size = 2
+Overriding: max_seq_len = 128
+Overriding: num_iterations = 10
+Overriding: run = dummy
+Autodetected device type: cpu
+2025-11-22 17:01:10,440 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+/app/nanochat/tokenizer.py:397: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  token_bytes = torch.load(f, map_location=device)
+Vocab size: 265
+num_layers: 2
+model_dim: 128
+num_heads: 1
+num_kv_heads: 1
+Tokens / micro-batch / rank: 2 x 128 = 256
+Tokens / micro-batch: 256
+Total batch size 524,288 => gradient accumulation steps: 2048
+Number of parameters: 461,056
+Estimated FLOPs per token: 2.956032e+06
+Using user-provided number of iterations: 10
+Total number of training tokens: 5,242,880
+Tokens : Params ratio: 11.37
+Total training FLOPs estimate: 1.549812e+13
+Scaling the LR for the AdamW parameters ∝1/√(128/768) = 2.449490

@@ -228,11 +228,13 @@ class GPT(nn.Module):
             dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
         ]
         adamw_kwargs = dict(betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay)
-        AdamWFactory = DistAdamW if ddp else partial(torch.optim.AdamW, fused=True)
+        # Use distributed optimizers only if we are actually distributed (world_size > 1)
+        use_dist_optim = ddp and world_size > 1
+        AdamWFactory = DistAdamW if use_dist_optim else partial(torch.optim.AdamW, fused=True)
         adamw_optimizer = AdamWFactory(adam_groups, **adamw_kwargs)
         # Create the Muon optimizer for the linear layers
         muon_kwargs = dict(lr=matrix_lr, momentum=0.95)
-        MuonFactory = DistMuon if ddp else Muon
+        MuonFactory = DistMuon if use_dist_optim else Muon
         muon_optimizer = MuonFactory(matrix_params, **muon_kwargs)
         # Combine them the two optimizers into one list
         optimizers = [adamw_optimizer, muon_optimizer]
