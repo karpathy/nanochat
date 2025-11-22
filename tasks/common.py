@@ -39,12 +39,12 @@ class Task:
         start = self.start
         num_ex = self.num_examples()
         if self.stop is not None and self.stop > num_ex:
-                # Warn once, then cap stop
-                logger.warning(
-                    f"Stop parameter ({self.stop}) exceeds dataset size ({num_ex}). "
-                    f"Using {num_ex} examples instead."
-                )
-                self.stop = num_ex
+            # Warn once, then cap stop
+            logger.warning(
+                f"Stop parameter ({self.stop}) exceeds dataset size ({num_ex}). "
+                f"Using {num_ex} examples instead."
+            )
+            self.stop = num_ex
         stop = num_ex if self.stop is None else self.stop
         step = self.step
         span = stop - start
