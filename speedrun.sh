@@ -23,8 +23,21 @@ mkdir -p $NANOCHAT_BASE_DIR
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
+
 # install the repo dependencies
-uv sync --extra gpu
+# Detect hardware to install the correct torch version
+if command -v nvidia-smi &> /dev/null; then
+    echo "NVIDIA GPU detected. Installing CUDA dependencies..."
+    EXTRAS="gpu"
+elif [ -e /dev/kfd ]; then
+    echo "AMD GPU detected. Installing ROCm dependencies..."
+    EXTRAS="amd"
+else
+    echo "No dedicated GPU detected. Installing CPU dependencies..."
+    EXTRAS="cpu"
+fi
+uv sync --extra $EXTRAS
+
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
 
