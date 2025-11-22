@@ -37,16 +37,15 @@ class Task:
 
     def __len__(self):
         start = self.start
-        if self.stop is not None:
-            num_ex = self.num_examples()
-            if self.stop > num_ex:
+        num_ex = self.num_examples()
+        if self.stop is not None and self.stop > num_ex:
                 # Warn once, then cap stop
                 logger.warning(
                     f"Stop parameter ({self.stop}) exceeds dataset size ({num_ex}). "
                     f"Using {num_ex} examples instead."
                 )
                 self.stop = num_ex
-        stop = self.num_examples() if self.stop is None else self.stop
+        stop = num_ex if self.stop is None else self.stop
         step = self.step
         span = stop - start
         num = (span + step - 1) // step # ceil_div(span, step)
