@@ -47,7 +47,8 @@ python_functions = ["test_*"]
 [tool.uv.sources]
 torch = [  
     { index = "pytorch-cpu", extra = "cpu" },  
-    { index = "pytorch-cu128", extra = "gpu" },  
+    { index = "pytorch-cu128", extra = "gpu" },
+    { index = "pytorch-rocm", extra = "amd" },
 ]
 
 [[tool.uv.index]]  
@@ -60,6 +61,11 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"  
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://repo.amd.com/rocm/whl/"
+explicit = true
+
 [project.optional-dependencies]  
 cpu = [  
     "torch>=2.8.0",  
@@ -67,11 +73,15 @@ cpu = [
 gpu = [  
     "torch>=2.8.0",  
 ]  
+amd = [
+    "torch>=2.8.0",
+]
   
 [tool.uv]  
 conflicts = [  
     [  
         { extra = "cpu" },  
-        { extra = "gpu" },  
+        { extra = "gpu" },
+        { extra = "amd" },
     ],  
 ]  
