@@ -84,8 +84,8 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # Number of processes/GPUs to use
-# Auto-detect if we have GPUs
-if python -c "import torch; exit(0) if torch.cuda.is_available() else exit(1)"; then
+# Auto-detect if we have GPUs (including ROCm)
+if python -c "import torch; exit(0) if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version.hip) else exit(1)"; then
     NPROC_PER_NODE=8
 else
     echo "No GPU detected. Defaulting to NPROC_PER_NODE=1 to avoid OOM and using multi-threading."
