@@ -46,9 +46,7 @@ class Task:
                     f"Using {num_ex} examples instead."
                 )
                 self.stop = num_ex
-            stop = self.stop
-        else:
-            stop = self.num_examples()
+        stop = self.num_examples() if self.stop is None else self.stop
         step = self.step
         span = stop - start
         num = (span + step - 1) // step # ceil_div(span, step)
