@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # This script is the "Best ChatGPT clone that $100 can buy",
 # It is designed to run in ~4 hours on 8XH100 node at $3/GPU/hour.
@@ -83,7 +84,15 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # Number of processes/GPUs to use
-NPROC_PER_NODE=8
+# Auto-detect if we have GPUs
+if python -c "import torch; exit(0) if torch.cuda.is_available() else exit(1)"; then
+    NPROC_PER_NODE=8
+else
+    echo "No GPU detected. Defaulting to NPROC_PER_NODE=1 to avoid OOM and using multi-threading."
+    NPROC_PER_NODE=1
+    # If running on CPU, let PyTorch use all available cores for the single process
+    unset OMP_NUM_THREADS
+fi
 
 # pretrain the d20 model
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=20 --run=$WANDB_RUN

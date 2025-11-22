@@ -12,12 +12,13 @@ python -m scripts.base_train --depth=4 --max_seq_len=512 --device_batch_size=1 -
 """
 
 import os
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import time
 from contextlib import nullcontext
 
 import wandb
 import torch
+if torch.cuda.is_available():
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader, tokenizing_distributed_data_loader_with_state
