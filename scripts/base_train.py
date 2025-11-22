@@ -17,7 +17,7 @@ from contextlib import nullcontext
 
 import wandb
 import torch
-if torch.cuda.is_available():
+if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version.hip):
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 from nanochat.gpt import GPT, GPTConfig

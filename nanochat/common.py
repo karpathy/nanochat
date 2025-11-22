@@ -129,7 +129,7 @@ def get_dist_info():
 
 def autodetect_device_type():
     # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() or (hasattr(torch.version, "hip") and torch.version.hip):
         device_type = "cuda"
     elif torch.backends.mps.is_available():
         device_type = "mps"
@@ -143,7 +143,11 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
 
     assert device_type in ["cuda", "mps", "cpu"], "Invalid device type atm"
     if device_type == "cuda":
-        assert torch.cuda.is_available(), "Your PyTorch installation is not configured for CUDA but device_type is 'cuda'"
+        if not torch.cuda.is_available():
+            if hasattr(torch.version, "hip") and torch.version.hip:
+                print("WARNING: CUDA not available but ROCm detected. Proceeding with 'cuda' device. You might need to set HSA_OVERRIDE_GFX_VERSION if on an APU.")
+            else:
+                assert False, "Your PyTorch installation is not configured for CUDA but device_type is 'cuda'"
     if device_type == "mps":
         assert torch.backends.mps.is_available(), "Your PyTorch installation is not configured for MPS but device_type is 'mps'"
 
