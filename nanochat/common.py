@@ -129,7 +129,10 @@ def get_dist_info():
 
 def autodetect_device_type():
     # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
-    if torch.cuda.is_available() or (hasattr(torch.version, "hip") and torch.version.hip):
+    # Check for CUDA/ROCm but also ensure we actually have devices (device_count > 0)
+    has_cuda = torch.cuda.is_available()
+    has_rocm = hasattr(torch.version, "hip") and torch.version.hip
+    if (has_cuda or has_rocm) and torch.cuda.device_count() > 0:
         device_type = "cuda"
     elif torch.backends.mps.is_available():
         device_type = "mps"
