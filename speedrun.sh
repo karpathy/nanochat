@@ -49,6 +49,13 @@ if [ "$EXTRAS" == "amd" ]; then
     # Uninstalling triton may have deleted the shared 'triton' directory, breaking pytorch-triton-rocm.
     # Reinstall pytorch-triton-rocm to ensure it's intact.
     uv pip install --force-reinstall --index-url https://repo.amd.com/rocm/whl/gfx1151 pytorch-triton-rocm
+
+    # Find and export the path to ld.lld from rocm-sdk-core if available, as torch.compile/triton needs it
+    ROCM_LLD_PATH=$(python -c "import sysconfig; import os; p = f\"{sysconfig.get_paths()['purelib']}/_rocm_sdk_core/lib/llvm/bin/ld.lld\"; print(p) if os.path.exists(p) else print('')")
+    if [ -n "$ROCM_LLD_PATH" ]; then
+        export TRITON_HIP_LLD_PATH=$ROCM_LLD_PATH
+        echo "Exported TRITON_HIP_LLD_PATH=$TRITON_HIP_LLD_PATH"
+    fi
 fi
 
 # -----------------------------------------------------------------------------
