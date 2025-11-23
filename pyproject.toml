@@ -3,7 +3,7 @@ name = "nanochat"
 version = "0.1.0"
 description = "the minimal full-stack ChatGPT clone"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "datasets>=4.0.0",
     "fastapi>=0.117.1",
@@ -13,7 +13,7 @@ dependencies = [
     "setuptools>=80.9.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
-    "torch>=2.8.0",
+    "torch>=2.7.0,<2.9.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
 ]
@@ -45,43 +45,62 @@ python_functions = ["test_*"]
 
 # target torch to cuda 12.8 or CPU
 [tool.uv.sources]
-torch = [  
-    { index = "pytorch-cpu", extra = "cpu" },  
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu128", extra = "gpu" },
     { index = "pytorch-rocm", extra = "amd" },
 ]
 
-[[tool.uv.index]]  
-name = "pytorch-cpu"  
-url = "https://download.pytorch.org/whl/cpu"  
-explicit = true  
-  
-[[tool.uv.index]]  
-name = "pytorch-cu128"  
-url = "https://download.pytorch.org/whl/cu128"  
+rocm = [
+    { index = "pytorch-rocm", extra = "amd" },
+]
+pytorch-triton-rocm = [
+    { index = "pytorch-rocm", extra = "amd" },
+]
+rocm-sdk-core = [
+    { index = "pytorch-rocm", extra = "amd" },
+]
+rocm-sdk-libraries-gfx1151 = [
+    { index = "pytorch-rocm", extra = "amd" },
+]
+
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-rocm"
-url = "https://repo.amd.com/rocm/whl/"
+url = "https://repo.amd.com/rocm/whl/gfx1151"
 explicit = true
 
-[project.optional-dependencies]  
-cpu = [  
-    "torch>=2.8.0",  
-]  
-gpu = [  
-    "torch>=2.8.0",  
-]  
-amd = [
-    "torch>=2.8.0",
+[project.optional-dependencies]
+cpu = [
+    "torch>=2.7.0,<2.9.0",
 ]
-  
-[tool.uv]  
-conflicts = [  
-    [  
-        { extra = "cpu" },  
+gpu = [
+    "torch>=2.7.0,<2.9.0",
+]
+amd = [
+    "torch>=2.7.0,<2.9.0",
+    "rocm",
+    "pytorch-triton-rocm",
+    "rocm-sdk-core",
+    "rocm-sdk-libraries-gfx1151",
+]
+
+[tool.uv]
+prerelease = "allow"
+conflicts = [
+    [
+        { extra = "cpu" },
         { extra = "gpu" },
         { extra = "amd" },
-    ],  
-]  
+    ],
+]
