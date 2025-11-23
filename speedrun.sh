@@ -46,6 +46,9 @@ source .venv/bin/activate
 # if the NVIDIA version of triton (e.g. 3.4.0) is accidentally installed.
 if [ "$EXTRAS" == "amd" ]; then
     uv pip uninstall -q triton || true
+    # Uninstalling triton may have deleted the shared 'triton' directory, breaking pytorch-triton-rocm.
+    # Reinstall pytorch-triton-rocm to ensure it's intact.
+    uv pip install --force-reinstall --index-url https://repo.amd.com/rocm/whl/gfx1151 pytorch-triton-rocm
 fi
 
 # -----------------------------------------------------------------------------
