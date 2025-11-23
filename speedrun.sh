@@ -110,7 +110,15 @@ wait $DATASET_DOWNLOAD_PID
 # Number of processes/GPUs to use
 # Auto-detect if we have GPUs (including ROCm)
 if python -c "import torch; exit(0) if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version.hip) else exit(1)"; then
-    NPROC_PER_NODE=8
+    # Detected GPU capability. Now get the actual count to avoid launching too many processes.
+    NPROC_PER_NODE=$(python -c "import torch; print(torch.cuda.device_count())")
+    # If for some reason it returns 0 (e.g. weird ROCm state), default to 1 to be safe.
+    if [ "$NPROC_PER_NODE" -eq "0" ]; then
+        echo "GPU detected but torch.cuda.device_count() is 0. Defaulting to NPROC_PER_NODE=1."
+        NPROC_PER_NODE=1
+    else
+        echo "Detected $NPROC_PER_NODE GPUs."
+    fi
 else
     echo "No GPU detected. Defaulting to NPROC_PER_NODE=1 to avoid OOM and using multi-threading."
     NPROC_PER_NODE=1
