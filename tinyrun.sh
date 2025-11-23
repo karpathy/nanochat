@@ -61,6 +61,19 @@ if [ "$EXTRAS" == "amd" ]; then
         export TRITON_HIP_LLD_PATH=$ROCM_LLD_PATH
         echo "Exported TRITON_HIP_LLD_PATH=$TRITON_HIP_LLD_PATH"
     fi
+
+    # AMD Strix Halo / APU specific settings
+    # Many APUs need this override to work with ROCm if the reported GFX version
+    # doesn't match the installed kernels exactly. Strix Halo is gfx1151.
+    # If users face issues, they might need to tweak this or use 11.0.0.
+    if [ -z "$HSA_OVERRIDE_GFX_VERSION" ]; then
+        export HSA_OVERRIDE_GFX_VERSION=11.5.1
+        echo "Exported HSA_OVERRIDE_GFX_VERSION=$HSA_OVERRIDE_GFX_VERSION (Strix Halo/APU compat)"
+    fi
+
+    # Disable SDMA to prevent system hangs on some APUs (common fix for Ryzen AI)
+    export HSA_ENABLE_SDMA=0
+    echo "Exported HSA_ENABLE_SDMA=0 (APU stability)"
 fi
 
 # -----------------------------------------------------------------------------
