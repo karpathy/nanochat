@@ -173,7 +173,16 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
         if device_type == "cuda":
             device = torch.device("cuda", ddp_local_rank)
             torch.cuda.set_device(device)  # make "cuda" default to this device
-            dist.init_process_group(backend="nccl", device_id=device)
+            # On AMD ROCm (especially consumer/APU hardware), NCCL/RCCL can be unstable or mismatched.
+            # Fallback to gloo if HIP is detected to avoid "invalid device function" crashes.
+            # While slower than NCCL, it ensures functionality on a wider range of AMD hardware.
+            is_rocm = hasattr(torch.version, "hip") and torch.version.hip
+            backend = "gloo" if is_rocm else "nccl"
+            # gloo backend does not accept 'device_id' argument
+            if backend == "gloo":
+                dist.init_process_group(backend=backend)
+            else:
+                dist.init_process_group(backend=backend, device_id=device)
             dist.barrier()
         elif device_type == "cpu":
             device = torch.device("cpu")
