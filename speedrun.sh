@@ -32,6 +32,11 @@ if command -v nvidia-smi &> /dev/null; then
 elif [ -e /dev/kfd ]; then
     echo "AMD GPU detected. Installing ROCm dependencies..."
     EXTRAS="amd"
+    # Explicitly uninstall triton if present, as it conflicts with pytorch-triton-rocm
+    # and can cause "ImportError: cannot import name 'Config' from 'triton'" errors
+    # if the NVIDIA version of triton (e.g. 3.4.0) is accidentally installed.
+    source .venv/bin/activate 2>/dev/null || true
+    uv pip uninstall -q triton || true
 else
     echo "No dedicated GPU detected. Installing CPU dependencies..."
     EXTRAS="cpu"
