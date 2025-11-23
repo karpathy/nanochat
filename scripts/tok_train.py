@@ -77,8 +77,7 @@ vocab_size = tokenizer.get_vocab_size()
 special_set = set(tokenizer.get_special_tokens())
 token_strings = [tokenizer.decode([token_id]) for token_id in range(vocab_size)]
 token_bytes = []
-for token_id in range(vocab_size):
-    token_str = token_strings[token_id] # the Python string representation of this token
+for token_str in token_strings:
     if token_str in special_set:
         token_bytes.append(0) # special characters are not counted
     else:
