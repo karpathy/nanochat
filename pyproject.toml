@@ -8,7 +8,6 @@ dependencies = [
     "datasets>=4.0.0",
     "fastapi>=0.117.1",
     "files-to-prompt>=0.6",
-    "numpy==1.26.4",
     "psutil>=7.1.0",
     "regex>=2025.9.1",
     "setuptools>=80.9.0",

@@ -47,15 +47,6 @@ source "$HOME/.cargo/env"
 # Build the Rust-based BPE tokenizer.
 uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 
-# Download and set up the evaluation bundle if it's not already cached.
-EVAL_BUNDLE_URL=https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip
-if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
-    curl -L -o eval_bundle.zip $EVAL_BUNDLE_URL
-    unzip -q eval_bundle.zip
-    rm eval_bundle.zip
-    mv eval_bundle $NANOCHAT_BASE_DIR
-fi
-
 # --- Training and Evaluation Pipeline ---
 # Reset any previous reports to start fresh.
 python -m nanochat.report reset

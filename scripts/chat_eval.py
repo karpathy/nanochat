@@ -1,7 +1,7 @@
 """
-This script evaluates a trained chat model on various downstream tasks, such as
-MMLU, GSM8K, and HumanEval. It supports both generative and categorical evaluation
-modes, depending on the task.
+Evaluate the Chat model.
+All the generic code lives here, and all the evaluation-specific
+code lives in nanochat directory and is imported from here.
 
 The script can be run in both single-GPU and distributed (DDP) modes.
 

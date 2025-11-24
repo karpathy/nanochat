@@ -10,7 +10,12 @@ import torch.distributed as dist
 @torch.no_grad()
 def evaluate_bpb(model, batches, steps, token_bytes):
     """
-    Evaluates the model's performance using the bits-per-byte (BPB) metric.
+    Instead of the naive 'mean loss', this function returns the bits per byte (bpb),
+    which is a tokenization vocab size-independent metric, meaning you are still comparing
+    apples:apples if you change the vocab size. The way this works is that instead of just
+    calculating the average loss as usual, you calculate the sum loss, and independently
+    also the sum bytes (of all the target tokens), and divide. This normalizes the loss by
+    the number of bytes that the target tokens represent.
 
     Args:
         model (torch.nn.Module): The language model to evaluate.

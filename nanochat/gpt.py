@@ -1,11 +1,14 @@
 """
-This module implements the GPT (Generative Pre-trained Transformer) model for nanochat.
-It features several modern architectural choices for improved performance and efficiency:
-- Rotary Positional Embeddings (RoPE)
-- QK Norm for attention stabilization
-- SwiGLU activation in the MLP
-- RMSNorm for normalization
-- Multi-Query Attention (MQA) for efficient inference
+GPT model (rewrite, a lot simpler)
+Notable features:
+- rotary embeddings (and no positional embeddings)
+- QK norm
+- untied weights for token embedding and lm_head
+- relu^2 activation in MLP
+- norm after token embedding
+- no learnable params in rmsnorm
+- no bias in linear layers
+- Group-Query Attention (GQA) support for more efficient inference
 """
 
 import math
@@ -34,7 +37,7 @@ class GPTConfig:
     vocab_size: int = 50304
     n_layer: int = 12
     n_head: int = 6 # number of query heads
-    n_kv_head: int = 6 # number of key/value heads (MQA)
+    n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
 
 
@@ -258,7 +261,7 @@ class GPT(nn.Module):
         """The forward pass of the model."""
         B, T = idx.size()
 
-        # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim))
+        # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
         assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
