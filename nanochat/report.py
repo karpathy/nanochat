@@ -1,5 +1,14 @@
 """
-Utilities for generating training report cards. More messy code than usual, will fix.
+This module provides utilities for generating comprehensive training reports for
+nanochat. The reports are designed to be "report cards" for a training run,
+capturing key information about the environment, hardware, software, and model
+performance at various stages.
+
+The main components are:
+- `Report`: A class that manages the logging of different sections of the report
+  and generates a final Markdown report.
+- Helper functions to gather system information, such as Git status, GPU details,
+  and package dependencies.
 """
 
 import os
@@ -13,7 +22,7 @@ import psutil
 import torch
 
 def run_command(cmd):
-    """Run a shell command and return output, or None if it fails."""
+    """Executes a shell command and returns its output."""
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
@@ -23,7 +32,7 @@ def run_command(cmd):
         return None
 
 def get_git_info():
-    """Get current git commit, branch, and dirty status."""
+    """Gathers information about the current Git repository."""
     info = {}
     info['commit'] = run_command("git rev-parse --short HEAD") or "unknown"
     info['branch'] = run_command("git rev-parse --abbrev-ref HEAD") or "unknown"
@@ -39,7 +48,7 @@ def get_git_info():
     return info
 
 def get_gpu_info():
-    """Get GPU information."""
+    """Gathers information about the available GPUs."""
     if not torch.cuda.is_available():
         return {"available": False}
 
@@ -62,7 +71,7 @@ def get_gpu_info():
     return info
 
 def get_system_info():
-    """Get system information."""
+    """Gathers general system information."""
     info = {}
 
     # Basic system info
@@ -84,7 +93,7 @@ def get_system_info():
     return info
 
 def estimate_cost(gpu_info, runtime_hours=None):
-    """Estimate training cost based on GPU type and runtime."""
+    """Estimates the training cost based on GPU type and runtime."""
 
     # Rough pricing, from Lambda Cloud
     default_rate = 2.0
@@ -115,7 +124,7 @@ def estimate_cost(gpu_info, runtime_hours=None):
     }
 
 def generate_header():
-    """Generate the header for a training report."""
+    """Generates the header section of the report."""
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     git_info = get_git_info()
@@ -187,7 +196,7 @@ Generated: {timestamp}
 # -----------------------------------------------------------------------------
 
 def slugify(text):
-    """Slugify a text string."""
+    """Converts a string into a URL-friendly slug."""
     return text.lower().replace(" ", "-")
 
 # the expected files and their order
@@ -208,7 +217,7 @@ EXPECTED_FILES = [
 chat_metrics = ["ARC-Easy", "ARC-Challenge", "MMLU", "GSM8K", "HumanEval", "ChatCORE"]
 
 def extract(section, keys):
-    """simple def to extract a single key from a section"""
+    """Extracts values for the given keys from a section of text."""
     if not isinstance(keys, list):
         keys = [keys] # convenience
     out = {}
@@ -219,7 +228,7 @@ def extract(section, keys):
     return out
 
 def extract_timestamp(content, prefix):
-    """Extract timestamp from content with given prefix."""
+    """Extracts a timestamp from a string with a given prefix."""
     for line in content.split('\n'):
         if line.startswith(prefix):
             time_str = line.split(":", 1)[1].strip()
@@ -230,14 +239,25 @@ def extract_timestamp(content, prefix):
     return None
 
 class Report:
-    """Maintains a bunch of logs, generates a final markdown report."""
+    """
+    Manages the creation and generation of a training report.
+
+    Args:
+        report_dir (str): The directory to store report files.
+    """
 
     def __init__(self, report_dir):
         os.makedirs(report_dir, exist_ok=True)
         self.report_dir = report_dir
 
     def log(self, section, data):
-        """Log a section of data to the report."""
+        """
+        Logs a section of data to a Markdown file in the report directory.
+
+        Args:
+            section (str): The title of the section (e.g., "Base model training").
+            data (list): A list of items to log. Items can be strings or dicts.
+        """
         slug = slugify(section)
         file_name = f"{slug}.md"
         file_path = os.path.join(self.report_dir, file_name)
@@ -265,7 +285,11 @@ class Report:
         return file_path
 
     def generate(self):
-        """Generate the final report."""
+        """
+        Generates the final consolidated report by combining all the logged
+        Markdown files into a single `report.md` file. It also creates a
+        summary table of the key metrics.
+        """
         report_dir = self.report_dir
         report_file = os.path.join(report_dir, "report.md")
         print(f"Generating report to {report_file}")
@@ -359,7 +383,11 @@ class Report:
         return report_file
 
     def reset(self):
-        """Reset the report."""
+        """
+        Resets the report directory by deleting all the section files and the
+        main `report.md` file. It then creates a new header file with the
+        current environment information.
+        """
         # Remove section files
         for file_name in EXPECTED_FILES:
             file_path = os.path.join(self.report_dir, file_name)
@@ -382,12 +410,22 @@ class Report:
 # nanochat-specific convenience functions
 
 class DummyReport:
+    """
+    A dummy report class that does nothing, for use on non-rank-0 processes in a
+    distributed setting. This prevents processes other than the master from
+    writing to the report files.
+    """
     def log(self, *args, **kwargs):
         pass
     def reset(self, *args, **kwargs):
         pass
 
 def get_report():
+    """
+    Returns a `Report` instance on the master process (rank 0) and a `DummyReport`
+    instance on all other processes. This ensures that only the master process
+    handles report generation.
+    """
     # just for convenience, only rank 0 logs to report
     from nanochat.common import get_base_dir, get_dist_info
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()

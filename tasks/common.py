@@ -1,15 +1,22 @@
 """
-Base class for all Tasks.
-A Task is basically a dataset of conversations, together with some
-metadata and often also evaluation criteria.
-Example tasks: MMLU, ARC-Easy, ARC-Challenge, GSM8K, HumanEval, SmolTalk.
+This module provides the base classes and common utilities for defining evaluation
+and training tasks in nanochat.
+
+The core components are:
+- `Task`: An abstract base class that represents a dataset of conversations.
+- `TaskMixture`: A class for combining multiple tasks into a single, shuffled dataset.
+- `TaskSequence`: A class for combining multiple tasks in a sequential manner.
+- `render_mc`: A helper function for formatting multiple-choice questions.
 """
 
 import random
 
 class Task:
     """
-    Base class of a Task. Allows for lightweight slicing of the underlying dataset.
+    Abstract base class for a task, which is essentially a dataset of conversations.
+
+    This class supports lightweight slicing of the underlying dataset using `start`,
+    `stop`, and `step` parameters, similar to Python's list slicing.
     """
 
     def __init__(self, start=0, stop=None, step=1):
@@ -23,16 +30,20 @@ class Task:
 
     @property
     def eval_type(self):
+        """The type of evaluation for this task, either 'generative' or 'categorical'."""
         # one of 'generative' | 'categorical'
         raise NotImplementedError
 
     def num_examples(self):
+        """Returns the total number of examples in the underlying dataset."""
         raise NotImplementedError
 
     def get_example(self, index):
+        """Retrieves a single example from the underlying dataset by its physical index."""
         raise NotImplementedError
 
     def __len__(self):
+        """Returns the number of examples in the (potentially sliced) view of the dataset."""
         start = self.start
         stop = self.num_examples() if self.stop is None else self.stop
         step = self.step
@@ -42,19 +53,22 @@ class Task:
         return num
 
     def __getitem__(self, index: int):
+        """Retrieves an example by its logical index in the (sliced) view."""
         assert isinstance(index, int), f"Index must be an integer, got {type(index)}"
         physical_index = self.start + index * self.step
         conversation = self.get_example(physical_index)
         return conversation
 
     def evaluate(self, problem, completion):
+        """Evaluates a model's completion for a given problem."""
         raise NotImplementedError
 
 
 class TaskMixture(Task):
     """
-    For SFT Training it becomes useful to train on a tax mixture of datasets.
-    Fun trick: if you wish to oversample any task, just pass it in multiple times in the list.
+    Combines multiple tasks into a single, deterministically shuffled dataset.
+    This is useful for creating a diverse training mixture for SFT. To oversample
+    a task, simply include it multiple times in the `tasks` list.
     """
 
     def __init__(self, tasks, **kwargs):
@@ -88,8 +102,8 @@ class TaskMixture(Task):
 
 class TaskSequence(Task):
     """
-    For SFT Training sometimes we want to sequentially train on a list of tasks.
-    This is useful for cases that require a training curriculum.
+    Combines multiple tasks sequentially, which is useful for creating a
+    training curriculum.
     """
 
     def __init__(self, tasks, **kwargs):
@@ -111,19 +125,15 @@ class TaskSequence(Task):
 
 def render_mc(question, letters, choices):
     """
-    The common multiple choice rendering format we will use.
+    Formats a multiple-choice question into a standardized prompt.
 
-    Note two important design decisions:
-    1)
-    Bigger models don't care as much, but smaller models prefer to have
-    the letter *after* the choice, which results in better binding.
-    2)
-    There is no whitespace between the delimiter (=) and the letter.
-    This is actually critical because the tokenizer has different token ids
-    for " A" vs. "A". The assistant responses will be just the letter itself,
-    i.e. "A", so it is important that here in the prompt it is the exact same
-    token, i.e. "A" with no whitespace before it. Again, bigger models don't care
-    about this too much, but smaller models do care about some of these details.
+    Args:
+        question (str): The question text.
+        letters (list[str]): The letters for the choices (e.g., ['A', 'B', 'C']).
+        choices (list[str]): The text of the choices.
+
+    Returns:
+        str: The formatted prompt.
     """
     query = f"Multiple Choice question: {question}\n"
     query += "".join([f"- {choice}={letter}\n" for letter, choice in zip(letters, choices)])

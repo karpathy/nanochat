@@ -1,12 +1,13 @@
 """
-Finetune a base model to be a chat model.
-Run on one GPU e.g. for debugging:
+This script performs supervised fine-tuning (SFT) on a base or mid-trained model
+to adapt it for chat-based interactions.
 
-python -m scripts.chat_sft
+The script trains the model on a mixture of conversational and task-specific datasets,
+using a masked loss function that only penalizes errors in the assistant's turns.
 
-Or torchrun for training:
-
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft
+Usage:
+- Single GPU: `python scripts/chat_sft.py`
+- Distributed: `torchrun --nproc_per_node=<gpus> scripts/chat_sft.py`
 """
 
 import os
@@ -96,6 +97,7 @@ val_ds = SmolTalk(split="test") # general conversations, 24K rows (though we don
 # DataLoader
 
 def sft_data_generator(dataset, batch_size):
+    """A generator that yields batches of tokenized and collated SFT data."""
     pad_token_id = tokenizer.encode_special("<|assistant_end|>") # use <|assistant_end|> as the pad token is ok, these positions are masked in the loss
     # prepares a list of tokenized conversations into a batch and yields
     def collate_and_yield(batch):

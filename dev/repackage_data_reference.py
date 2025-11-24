@@ -1,17 +1,36 @@
+#--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*#
+#_-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*#
+#                                                                           #
+#            Dataset Preparation Reference: FineWebEdu-100B                 #
+#                                                                           #
+#_-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*#
+#--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*#
 """
-Repackage the FinewebEdu-100B dataset into shards:
+This script serves as a reference and documentation for the preparation of the
+`FinewebEdu-100B` dataset.
 
-- each shard is ~100MB in size (after zstd compression)
-- parquets are written with row group size of 1000
-- shuffle the dataset
+**NOTE: This file is not intended to be executed during the project's runtime.**
 
-This will be uploaded to HuggingFace for hosting.
-The big deal is that our DataLoader will be able to stream
-the data and cache it along the way on disk, decreasing the
-training latency.
+Purpose of this Script:
+The primary goal of this script is to transform the raw `FinewebEdu-100B` dataset into a more
+efficient format for large-scale model training. The key steps are:
 
-NOTE: This file is meant only as reference/documentation of the
-dataset preparation and it is not used during the project runtime.
+1.  **Shuffling:** The entire dataset is shuffled to ensure that the data is presented to the
+    model in a random order, which is crucial for effective training.
+
+2.  **Repackaging into Shards:** The shuffled dataset is broken down into smaller chunks, or "shards."
+    - Each shard is saved as a Parquet file.
+    - The target size for each compressed shard is approximately 100MB.
+    - This sharding strategy is vital for performance. It allows the DataLoader to stream the
+      dataset from a source (like the Hugging Face Hub) and cache it locally. This "just-in-time"
+      data loading significantly reduces training latency, as the model doesn't have to wait for
+      the entire massive dataset to be downloaded.
+
+3.  **Uploading to Hugging Face:** After processing, the shards are uploaded to the Hugging Face Hub,
+    making them easily accessible for training runs.
+
+This preparation process is a critical step in enabling efficient and scalable training
+for the nanochat project.
 """
 import os
 import time

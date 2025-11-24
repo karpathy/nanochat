@@ -1,6 +1,15 @@
 """
-Train a tokenizer using the HuggingFace Tokenizers library.
-In the style of GPT-4 tokenizer.
+This script trains a Byte Pair Encoding (BPE) tokenizer from the pretraining dataset.
+
+The training process involves:
+1.  Iterating through the text data from the Parquet files.
+2.  Using the `rustbpe` library to learn a vocabulary and merge rules.
+3.  Saving the trained tokenizer to disk.
+4.  Creating a `token_bytes.pt` file for calculating the bits-per-byte (BPB) metric.
+
+Usage:
+- Default: `python scripts/tok_train.py`
+- Custom vocab size: `python scripts/tok_train.py --vocab_size 32768`
 """
 import os
 import time
@@ -27,9 +36,8 @@ print(f"vocab_size: {args.vocab_size:,}")
 
 def text_iterator():
     """
-    1) Flatten the batches into a single iterator
-    2) Crop every document to args.doc_cap characters
-    3) Break when we've seen args.max_chars characters
+    An iterator that yields documents from the pretraining dataset, capped at
+    the specified character limits.
     """
     nchars = 0
     for batch in parquets_iter_batched(split="train"):

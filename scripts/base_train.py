@@ -1,14 +1,21 @@
 """
-Train model. Run as:
+This script trains a base GPT model from scratch on the pretraining dataset.
+It is the first stage in the nanochat pipeline, responsible for learning fundamental
+language representations.
 
-python base_train.py
+The script supports:
+- Distributed training with `torchrun`.
+- Mixed-precision training (`bfloat16`).
+- A composite optimizer (Muon + AdamW).
+- Learning rate and momentum scheduling.
+- Periodic evaluation on validation data and the CORE benchmark.
+- Logging to Weights & Biases.
+- Checkpointing the final model.
 
-or distributed as:
-
-torchrun --nproc_per_node=8 base_train.py
-
-If you are only on CPU/Macbook, you'll want to train a much much smaller LLM. Example:
-python -m scripts.base_train --depth=4 --max_seq_len=512 --device_batch_size=1 --eval_tokens=512 --core_metric_every=-1 --total_batch_size=512 --num_iterations=20
+Usage:
+- Single GPU: `python scripts/base_train.py`
+- Distributed: `torchrun --nproc_per_node=<gpus> scripts/base_train.py`
+- CPU/MPS (for testing): `python scripts/base_train.py --depth=4 --num_iterations=20`
 """
 
 import os

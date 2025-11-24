@@ -1,5 +1,23 @@
 """
-Utilities for saving and loading model/optim/state checkpoints.
+This module provides utilities for saving and loading model, optimizer, and training state
+checkpoints. It is essential for resuming training and for deploying models for inference.
+
+A typical use case involves:
+1.  Calling `save_checkpoint` periodically during training.
+2.  Calling `load_checkpoint` to resume training or for inference.
+3.  Using `build_model` to reconstruct a model from a checkpoint.
+
+Python equivalent for basic checkpointing:
+import torch
+# Saving
+torch.save({
+    'model_state_dict': model.state_dict(),
+    'optimizer_state_dict': optimizer.state_dict(),
+}, "checkpoint.pt")
+# Loading
+checkpoint = torch.load("checkpoint.pt")
+model.load_state_dict(checkpoint['model_state_dict'])
+optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 """
 import os
 import re
@@ -17,10 +35,21 @@ from nanochat.common import setup_default_logging
 setup_default_logging()
 logger = logging.getLogger(__name__)
 def log0(message):
+    """Logs a message only on the main process (rank 0)."""
     if int(os.environ.get('RANK', 0)) == 0:
         logger.info(message)
 
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data):
+    """
+    Saves a checkpoint to the specified directory.
+
+    Args:
+        checkpoint_dir (str): The directory to save the checkpoint to.
+        step (int): The current training step.
+        model_data (dict): The model's state_dict.
+        optimizer_data (dict): The optimizer's state_dict.
+        meta_data (dict): A dictionary of metadata to save.
+    """
     assert int(os.environ.get('RANK', 0)) == 0 # prevent footguns for now
     os.makedirs(checkpoint_dir, exist_ok=True)
     # Save the model state (parameters)
@@ -40,6 +69,18 @@ def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data)
 
 
 def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False):
+    """
+    Loads a checkpoint from the specified directory.
+
+    Args:
+        checkpoint_dir (str): The directory to load the checkpoint from.
+        step (int): The training step of the checkpoint to load.
+        device (str): The device to load the tensors onto.
+        load_optimizer (bool, optional): Whether to load the optimizer state. Defaults to False.
+
+    Returns:
+        tuple: A tuple containing the model data, optimizer data, and metadata.
+    """
     # Load the model state
     model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
     model_data = torch.load(model_path, map_location=device)
@@ -57,11 +98,16 @@ def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False):
 
 def build_model(checkpoint_dir, step, device, phase):
     """
-    A bunch of repetitive code to build a model from a given checkpoint.
+    Builds a model from a given checkpoint.
+
+    Args:
+        checkpoint_dir (str): The directory of the checkpoint.
+        step (int): The training step of the checkpoint.
+        device (str): The device to build the model on.
+        phase (str): The phase, either "train" or "eval".
+
     Returns:
-    - base model - uncompiled, not wrapped in DDP
-    - tokenizer
-    - meta data saved during base model training
+        tuple: A tuple containing the model, tokenizer, and metadata.
     """
     assert phase in ["train", "eval"], f"Invalid phase: {phase}"
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, device, load_optimizer=False)
@@ -89,6 +135,15 @@ def build_model(checkpoint_dir, step, device, phase):
 
 
 def find_largest_model(checkpoint_dir):
+    """
+    Finds the largest model in a checkpoint directory, assuming a "d<number>" naming convention.
+
+    Args:
+        checkpoint_dir (str): The directory to search for models.
+
+    Returns:
+        str: The tag of the largest model found.
+    """
     # attempt to guess the model tag: take the biggest model available
     model_tags = [f for f in os.listdir(checkpoint_dir) if os.path.isdir(os.path.join(checkpoint_dir, f))]
     if not model_tags:
@@ -109,6 +164,15 @@ def find_largest_model(checkpoint_dir):
 
 
 def find_last_step(checkpoint_dir):
+    """
+    Finds the last training step in a checkpoint directory.
+
+    Args:
+        checkpoint_dir (str): The directory to search for checkpoints.
+
+    Returns:
+        int: The last training step found.
+    """
     # Look into checkpoint_dir and find model_<step>.pt with the highest step
     checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "model_*.pt"))
     if not checkpoint_files:
@@ -120,6 +184,19 @@ def find_last_step(checkpoint_dir):
 # convenience functions that take into account nanochat's directory structure
 
 def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None):
+    """
+    Loads a model from a directory, automatically detecting the model tag and step if not provided.
+
+    Args:
+        checkpoints_dir (str): The directory containing model checkpoints.
+        device (str): The device to load the model on.
+        phase (str): The phase, either "train" or "eval".
+        model_tag (str, optional): The model tag to load. Defaults to None.
+        step (int, optional): The step to load. Defaults to None.
+
+    Returns:
+        tuple: A tuple containing the model, tokenizer, and metadata.
+    """
     if model_tag is None:
         # guess the model tag by defaulting to the largest model
         model_tag = find_largest_model(checkpoints_dir)
@@ -135,6 +212,17 @@ def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=Non
     return model, tokenizer, meta_data
 
 def load_model(source, *args, **kwargs):
+    """
+    Loads a model from a specific source directory within the nanochat project.
+
+    Args:
+        source (str): The source of the model, one of "base", "mid", "sft", or "rl".
+        *args: Positional arguments to pass to `load_model_from_dir`.
+        **kwargs: Keyword arguments to pass to `load_model_from_dir`.
+
+    Returns:
+        tuple: A tuple containing the model, tokenizer, and metadata.
+    """
     model_dir = {
         "base": "base_checkpoints",
         "mid": "mid_checkpoints",

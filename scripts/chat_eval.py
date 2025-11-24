@@ -1,11 +1,14 @@
 """
-Evaluate the Chat model.
-All the generic code lives here, and all the evlauation-specific
-code lives in nanochat directory and is imported from here.
+This script evaluates a trained chat model on various downstream tasks, such as
+MMLU, GSM8K, and HumanEval. It supports both generative and categorical evaluation
+modes, depending on the task.
 
-Example runs:
-python -m scripts.chat_eval -a ARC-Easy
-torchrun --nproc_per_node=8 -m scripts.chat_eval -- -a ARC-Easy
+The script can be run in both single-GPU and distributed (DDP) modes.
+
+Usage:
+- Evaluate on a single task: `python scripts/chat_eval.py --source sft -a ARC-Easy`
+- Evaluate on multiple tasks: `python scripts/chat_eval.py -a "ARC-Easy|GSM8K"`
+- Distributed evaluation: `torchrun --nproc_per_node=<gpus> scripts/chat_eval.py -a ARC-Easy`
 """
 
 import argparse
@@ -29,7 +32,9 @@ from tasks.spellingbee import SpellingBee
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
 
 def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_new_tokens, temperature, top_k, max_problems=None):
-
+    """
+    Runs a generative evaluation task, where the model generates a free-form response.
+    """
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     device = model.get_device()
 
@@ -88,7 +93,10 @@ def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_
 # batches at a time and just check the logits for correct answer choices.
 
 def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems=None):
-
+    """
+    Runs a categorical evaluation task, where the model chooses from a set of options.
+    This is more efficient than generative evaluation as it can be done in batches.
+    """
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     device = model.get_device()
     bos = tokenizer.get_bos_token_id() # use BOS as pad token is ok, these positions are ignored
@@ -159,6 +167,7 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
 def run_chat_eval(task_name, model, tokenizer, engine,
                    batch_size=1, num_samples=1, max_new_tokens=512, temperature=0.0, top_k=50,
                    max_problems=None):
+    """Initializes and runs a specific chat evaluation task."""
     # Create the evaluation object
     task_module = {
         'HumanEval': HumanEval,

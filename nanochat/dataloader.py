@@ -7,7 +7,25 @@ from nanochat.dataset import parquets_iter_batched
 from nanochat.tokenizer import get_tokenizer
 
 def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda"):
-    """Stream pretraining text from parquet files, tokenize, yield training batches."""
+    """
+    Streams text from Parquet files, tokenizes it, and yields training batches.
+
+    This data loader is designed for large-scale pretraining, where the entire dataset
+    cannot fit into memory. It streams data from disk, tokenizes it on the fly, and
+    yields batches of data indefinitely. It also supports distributed training by
+    sharding the data across multiple devices.
+
+    Args:
+        B (int): The batch size.
+        T (int): The sequence length.
+        split (str): The data split to use, either "train" or "val".
+        tokenizer_threads (int, optional): The number of threads for tokenization.
+        tokenizer_batch_size (int, optional): The number of documents to tokenize at once.
+        device (str, optional): The device to move the batches to.
+
+    Yields:
+        tuple: A tuple containing the input and target tensors.
+    """
     assert split in ["train", "val"], "split must be 'train' or 'val'"
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     needed_tokens = B * T + 1 # +1 is because we also need the target at the last token

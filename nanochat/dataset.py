@@ -1,10 +1,11 @@
 """
-The base/pretraining dataset is a set of parquet files.
-This file contains utilities for:
-- iterating over the parquet files and yielding documents from it
-- download the files on demand if they are not on disk
+This module provides utilities for managing the pretraining dataset, which consists of
+a collection of Parquet files. It handles on-demand downloading of the dataset shards
+from a remote URL and provides an iterator for streaming the data efficiently.
 
-For details of how the dataset was prepared, see `repackage_data_reference.py`.
+The script can also be run directly to download the dataset shards in parallel.
+
+For details on how the dataset was created, see `dev/repackage_data_reference.py`.
 """
 
 import os
@@ -31,7 +32,15 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # These functions are useful utilities to other modules, can/should be imported
 
 def list_parquet_files(data_dir=None):
-    """ Looks into a data dir and returns full paths to all parquet files. """
+    """
+    Lists all Parquet files in a given directory.
+
+    Args:
+        data_dir (str, optional): The directory to search. Defaults to DATA_DIR.
+
+    Returns:
+        list: A sorted list of full paths to the Parquet files.
+    """
     data_dir = DATA_DIR if data_dir is None else data_dir
     parquet_files = sorted([
         f for f in os.listdir(data_dir)
@@ -42,9 +51,16 @@ def list_parquet_files(data_dir=None):
 
 def parquets_iter_batched(split, start=0, step=1):
     """
-    Iterate through the dataset, in batches of underlying row_groups for efficiency.
-    - split can be "train" or "val". the last parquet file will be val.
-    - start/step are useful for skipping rows in DDP. e.g. start=rank, step=world_size
+    Iterates through the dataset in batches of row groups for efficiency.
+
+    Args:
+        split (str): "train" or "val". The last Parquet file is used for validation.
+        start (int, optional): The starting row group index. Defaults to 0.
+        step (int, optional): The step size for iterating through row groups.
+            Useful for distributed training. Defaults to 1.
+
+    Yields:
+        list: A list of texts from a row group.
     """
     assert split in ["train", "val"], "split must be 'train' or 'val'"
     parquet_paths = list_parquet_files()
@@ -58,7 +74,15 @@ def parquets_iter_batched(split, start=0, step=1):
 
 # -----------------------------------------------------------------------------
 def download_single_file(index):
-    """ Downloads a single file index, with some backoff """
+    """
+    Downloads a single dataset shard with retries and exponential backoff.
+
+    Args:
+        index (int): The index of the shard to download.
+
+    Returns:
+        bool: True if the download was successful, False otherwise.
+    """
 
     # Construct the local filepath for this file and skip if it already exists
     filename = index_to_filename(index)

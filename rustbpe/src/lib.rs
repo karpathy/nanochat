@@ -1,3 +1,7 @@
+//! This module provides a fast, parallel implementation of the Byte Pair Encoding (BPE)
+//! algorithm, specifically tailored to match the GPT-4 style of tokenization. It is
+//! written in Rust for performance and safety, and exposed to Python using PyO3.
+
 use std::cmp::Ordering;
 use std::collections::HashMap as StdHashMap;
 
@@ -158,9 +162,9 @@ fn count_pairs_parallel(
 
 impl Tokenizer {
 
-    /// Core incremental BPE training given unique words and their counts.
-    /// `words`: one entry per unique chunk (Vec<u32> of token-ids/bytes).
-    /// `counts`: same length as `words`, count per chunk.
+    /// The core BPE training algorithm. It iteratively finds the most frequent
+    /// pair of tokens and merges them into a new token, repeating this process
+    /// until the desired vocabulary size is reached.
     fn train_core_incremental(&mut self, mut words: Vec<Word>, counts: Vec<i32>, vocab_size: u32) {
         assert!(vocab_size >= 256, "vocab_size must be at least 256");
         let num_merges = vocab_size - 256;
@@ -259,7 +263,7 @@ impl Tokenizer {
 /// Public methods for the Tokenizer class that will be exposed to Python.
 #[pymethods]
 impl Tokenizer {
-    /// Create a new Tokenizer
+    /// Creates a new `Tokenizer`.
     #[new]
     pub fn new() -> Self {
         Self {
@@ -269,9 +273,7 @@ impl Tokenizer {
         }
     }
 
-    /// Train from a streaming iterator (parallel ingestion).
-    /// We refill a Rust Vec<String> buffer under the GIL, then release the GIL
-    /// to do the heavy splitting and counting **in parallel** with rayon.
+    /// Trains the tokenizer from a Python iterator of text.
     #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None))]
     #[pyo3(text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None)")]
     pub fn train_from_iterator(
@@ -389,12 +391,12 @@ impl Tokenizer {
         Ok(())
     }
 
-    /// Return the regex pattern
+    /// Returns the regex pattern used for tokenization.
     pub fn get_pattern(&self) -> String {
         self.pattern.clone()
     }
 
-    /// Return the mergeable ranks (token bytes -> token id / rank)
+    /// Returns the mergeable ranks for creating a `tiktoken` encoder.
     pub fn get_mergeable_ranks(&self) -> Vec<(Vec<u8>, u32)> {
         let mut mergeable_ranks = Vec::new();
 
@@ -425,7 +427,7 @@ impl Tokenizer {
         mergeable_ranks
     }
 
-    /// Encode a string into token IDs
+    /// Encodes a string into a sequence of token IDs.
     pub fn encode(&self, text: &str) -> Vec<u32> {
         let mut all_ids = Vec::new();
 

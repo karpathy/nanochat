@@ -1,9 +1,13 @@
 """
-BPE Tokenizer in the style of GPT-4.
+This module provides Byte-Pair Encoding (BPE) tokenization in the style of GPT-4.
+It offers two implementations:
+1.  **HuggingFace Tokenizer:** A wrapper around the `tokenizers` library.
+2.  **RustBPE + Tiktoken:** A combination of a custom `rustbpe` tokenizer for
+    training and `tiktoken` for efficient inference. This is the default and
+    recommended implementation for nanochat.
 
-Two implementations are available:
-1) HuggingFace Tokenizer that can do both training and inference but is really confusing
-2) Our own RustBPE Tokenizer for training and tiktoken for efficient inference
+The tokenizer handles the conversion of text to token IDs and back, as well as
+special tokens for structuring conversations.
 """
 
 import os
@@ -37,19 +41,24 @@ from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
 
 class HuggingFaceTokenizer:
-    """Light wrapper around HuggingFace Tokenizer for some utilities"""
+    """
+    A wrapper around the Hugging Face `tokenizers` library, providing a consistent
+    interface for training and using BPE tokenizers.
+    """
 
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
 
     @classmethod
     def from_pretrained(cls, hf_path):
+        """Loads a tokenizer from a pre-trained Hugging Face model."""
         # init from a HuggingFace pretrained tokenizer (e.g. "gpt2")
         tokenizer = HFTokenizer.from_pretrained(hf_path)
         return cls(tokenizer)
 
     @classmethod
     def from_directory(cls, tokenizer_dir):
+        """Loads a tokenizer from a local directory."""
         # init from a local directory on disk (e.g. "out/tokenizer")
         tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
         tokenizer = HFTokenizer.from_file(tokenizer_path)
@@ -57,6 +66,7 @@ class HuggingFaceTokenizer:
 
     @classmethod
     def train_from_iterator(cls, text_iterator, vocab_size):
+        """Trains a new tokenizer from an iterator of text."""
         # train from an iterator of text
         # Configure the HuggingFace Tokenizer
         tokenizer = HFTokenizer(BPE(
@@ -93,18 +103,21 @@ class HuggingFaceTokenizer:
         return cls(tokenizer)
 
     def get_vocab_size(self):
+        """Returns the size of the vocabulary."""
         return self.tokenizer.get_vocab_size()
 
     def get_special_tokens(self):
+        """Returns a list of special tokens."""
         special_tokens_map = self.tokenizer.get_added_tokens_decoder()
         special_tokens = [w.content for w in special_tokens_map.values()]
         return special_tokens
 
     def id_to_token(self, id):
+        """Converts a token ID to its string representation."""
         return self.tokenizer.id_to_token(id)
 
     def _encode_one(self, text, prepend=None, append=None):
-        # encode a single string
+        """Encodes a single string."""
         # prepend/append can be either a string of a special token or a token id directly.
         assert isinstance(text, str)
         ids = []
@@ -118,14 +131,17 @@ class HuggingFaceTokenizer:
         return ids
 
     def encode_special(self, text):
+        """Encodes a single special token."""
         # encode a single special token via exact match
         return self.tokenizer.token_to_id(text)
 
     def get_bos_token_id(self):
+        """Returns the ID of the beginning-of-sequence token."""
         bos = self.encode_special("<|bos|>")
         return bos
 
     def encode(self, text, *args, **kwargs):
+        """Encodes a string or a list of strings."""
         if isinstance(text, str):
             return self._encode_one(text, *args, **kwargs)
         elif isinstance(text, list):
@@ -134,12 +150,15 @@ class HuggingFaceTokenizer:
             raise ValueError(f"Invalid input type: {type(text)}")
 
     def __call__(self, *args, **kwargs):
+        """A convenience method to call `encode`."""
         return self.encode(*args, **kwargs)
 
     def decode(self, ids):
+        """Decodes a sequence of token IDs into a string."""
         return self.tokenizer.decode(ids, skip_special_tokens=False)
 
     def save(self, tokenizer_dir):
+        """Saves the tokenizer to a directory."""
         # save the tokenizer to disk
         os.makedirs(tokenizer_dir, exist_ok=True)
         tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
@@ -153,7 +172,10 @@ import rustbpe
 import tiktoken
 
 class RustBPETokenizer:
-    """Light wrapper around tiktoken (for efficient inference) but train with rustbpe"""
+    """
+    A tokenizer that uses `rustbpe` for training and `tiktoken` for efficient
+    inference. This is the default tokenizer for nanochat.
+    """
 
     def __init__(self, enc, bos_token):
         self.enc = enc
@@ -161,6 +183,7 @@ class RustBPETokenizer:
 
     @classmethod
     def train_from_iterator(cls, text_iterator, vocab_size):
+        """Trains a new tokenizer from an iterator of text."""
         # 1) train using rustbpe
         tokenizer = rustbpe.Tokenizer()
         # the special tokens are inserted later in __init__, we don't train them here
@@ -183,6 +206,7 @@ class RustBPETokenizer:
 
     @classmethod
     def from_directory(cls, tokenizer_dir):
+        """Loads a tokenizer from a local directory."""
         pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
         with open(pickle_path, "rb") as f:
             enc = pickle.load(f)
@@ -190,6 +214,7 @@ class RustBPETokenizer:
 
     @classmethod
     def from_pretrained(cls, tiktoken_name):
+        """Loads a tokenizer from a pre-trained tiktoken model."""
         # https://github.com/openai/tiktoken/blob/eedc8563/tiktoken_ext/openai_public.py
         enc = tiktoken.get_encoding(tiktoken_name)
         # tiktoken calls the special document delimiter token "<|endoftext|>"
@@ -199,22 +224,39 @@ class RustBPETokenizer:
         return cls(enc, "<|endoftext|>")
 
     def get_vocab_size(self):
+        """Returns the size of the vocabulary."""
         return self.enc.n_vocab
 
     def get_special_tokens(self):
+        """Returns a set of special tokens."""
         return self.enc.special_tokens_set
 
     def id_to_token(self, id):
+        """Converts a token ID to its string representation."""
         return self.enc.decode([id])
 
     @lru_cache(maxsize=32)
     def encode_special(self, text):
+        """Encodes a single special token."""
         return self.enc.encode_single_token(text)
 
     def get_bos_token_id(self):
+        """Returns the ID of the beginning-of-sequence token."""
         return self.bos_token_id
 
     def encode(self, text, prepend=None, append=None, num_threads=8):
+        """
+        Encodes a string or a list of strings.
+
+        Args:
+            text (str or list[str]): The text to encode.
+            prepend (int or str, optional): A token to prepend to the sequence.
+            append (int or str, optional): A token to append to the sequence.
+            num_threads (int, optional): The number of threads for batch encoding.
+
+        Returns:
+            list[int] or list[list[int]]: The encoded token IDs.
+        """
         # text can be either a string or a list of strings
 
         if prepend is not None:
@@ -242,12 +284,15 @@ class RustBPETokenizer:
         return ids
 
     def __call__(self, *args, **kwargs):
+        """A convenience method to call `encode`."""
         return self.encode(*args, **kwargs)
 
     def decode(self, ids):
+        """Decodes a sequence of token IDs into a string."""
         return self.enc.decode(ids)
 
     def save(self, tokenizer_dir):
+        """Saves the tokenizer to a directory."""
         # save the encoding object to disk
         os.makedirs(tokenizer_dir, exist_ok=True)
         pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
@@ -257,10 +302,8 @@ class RustBPETokenizer:
 
     def render_conversation(self, conversation, max_tokens=2048):
         """
-        Tokenize a single Chat conversation (which we call a "doc" or "document" here).
-        Returns:
-        - ids: list[int] is a list of token ids of this rendered conversation
-        - mask: list[int] of same length, mask = 1 for tokens that the Assistant is expected to train on.
+        Renders a conversation into a sequence of token IDs and a mask for training.
+        The mask indicates which tokens the assistant should be trained on.
         """
         # ids, masks that we will return and a helper function to help build them up.
         ids, mask = [], []
@@ -342,7 +385,10 @@ class RustBPETokenizer:
         return ids, mask
 
     def visualize_tokenization(self, ids, mask, with_token_id=False):
-        """Small helper function useful in debugging: visualize the tokenization of render_conversation"""
+        """
+        A helper function for visualizing the tokenization of a conversation,
+        with colors indicating the training mask.
+        """
         RED = '\033[91m'
         GREEN = '\033[92m'
         RESET = '\033[0m'
@@ -358,9 +404,8 @@ class RustBPETokenizer:
 
     def render_for_completion(self, conversation):
         """
-        Used during Reinforcement Learning. In that setting, we want to
-        render the conversation priming the Assistant for a completion.
-        Unlike the Chat SFT case, we don't need to return the mask.
+        Renders a conversation for completion, priming the assistant to generate a
+        response. This is used during reinforcement learning.
         """
         # We have some surgery to do: we need to pop the last message (of the Assistant)
         conversation = copy.deepcopy(conversation) # avoid mutating the original
@@ -380,6 +425,7 @@ class RustBPETokenizer:
 # nanochat-specific convenience functions
 
 def get_tokenizer():
+    """Returns the default nanochat tokenizer."""
     from nanochat.common import get_base_dir
     base_dir = get_base_dir()
     tokenizer_dir = os.path.join(base_dir, "tokenizer")
@@ -387,6 +433,7 @@ def get_tokenizer():
     return RustBPETokenizer.from_directory(tokenizer_dir)
 
 def get_token_bytes(device="cpu"):
+    """Returns a tensor of byte lengths for each token in the vocabulary."""
     import torch
     from nanochat.common import get_base_dir
     base_dir = get_base_dir()
