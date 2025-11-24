@@ -1,13 +1,15 @@
 """
-Evlauate the CORE metric for a given model.
+This script evaluates a base model on the CORE (Comprehensive Overall Language Evaluation)
+metric. It can evaluate either a local nanochat model or a Hugging Face model.
 
-Run on a single GPU:
-python base_eval.py
+The CORE benchmark provides a holistic assessment of a model's capabilities. This
+script iterates through the tasks defined in `core.yaml`, evaluates the model on each,
+and reports the accuracy and a "centered" score (normalized by a random baseline).
 
-Run with torchrun on e.g. 8 GPUs:
-torchrun --nproc_per_node=8 base_eval.py
-
-The script will print the CORE metric to the console.
+Usage:
+- Evaluate a local nanochat model: `python scripts/base_eval.py`
+- Evaluate a Hugging Face model: `python scripts/base_eval.py --hf-path <model_path>`
+- Distributed evaluation: `torchrun --nproc_per_node=<gpus> scripts/base_eval.py`
 """
 import os
 import sys
@@ -30,9 +32,16 @@ from nanochat.core_eval import evaluate_task
 
 def evaluate_model(model, tokenizer, device, max_per_task=-1):
     """
-    Evaluate a base model on the CORE benchmark.
-    - max_per_task: crop the data to this many examples per task for testing (-1 = disable)
-    TODO: clean up this function, delete the need for all the files, for pandas dependency, etc.
+    Evaluates a model on the CORE benchmark.
+
+    Args:
+        model: The model to evaluate.
+        tokenizer: The tokenizer to use.
+        device (str): The device to run the evaluation on.
+        max_per_task (int, optional): Max examples per task. Defaults to -1 (no limit).
+
+    Returns:
+        dict: A dictionary containing the evaluation results.
     """
     # Load config and task metadata
     base_dir = get_base_dir()
@@ -94,7 +103,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
 # HuggingFace loading utilities and light wrappers for a model
 
 class ModelWrapper:
-    """Lightweight wrapper for a HuggingFace model"""
+    """A lightweight wrapper for Hugging Face models to match the nanochat API."""
     def __init__(self, model, max_seq_len=None):
         self.model = model
         self.max_seq_len = max_seq_len
@@ -105,6 +114,7 @@ class ModelWrapper:
         return logits
 
 def load_hf_model(hf_path: str, device):
+    """Loads a Hugging Face model and tokenizer."""
     print0(f"Loading model from: {hf_path}")
     # Load the model
     from transformers import AutoModelForCausalLM

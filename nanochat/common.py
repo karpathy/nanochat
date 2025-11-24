@@ -1,5 +1,7 @@
 """
-Common utilities for nanochat.
+This module provides common utilities for the nanochat project, including logging,
+file handling, distributed training setup, and device management. These functions are
+used across various scripts to ensure consistency and reduce code duplication.
 """
 
 import os
@@ -11,7 +13,10 @@ import torch
 import torch.distributed as dist
 
 class ColoredFormatter(logging.Formatter):
-    """Custom formatter that adds colors to log messages."""
+    """
+    A custom logging formatter that adds ANSI color codes to log messages for
+    improved readability in the console.
+    """
     # ANSI color codes
     COLORS = {
         'DEBUG': '\033[36m',    # Cyan
@@ -37,6 +42,7 @@ class ColoredFormatter(logging.Formatter):
         return message
 
 def setup_default_logging():
+    """Sets up the default logging configuration with the colored formatter."""
     handler = logging.StreamHandler()
     handler.setFormatter(ColoredFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logging.basicConfig(
@@ -48,6 +54,11 @@ setup_default_logging()
 logger = logging.getLogger(__name__)
 
 def get_base_dir():
+    """
+    Returns the base directory for nanochat data, creating it if it doesn't exist.
+    The directory is determined by the NANOCHAT_BASE_DIR environment variable, or
+    defaults to ~/.cache/nanochat.
+    """
     # co-locate nanochat intermediates with other cached data in ~/.cache (by default)
     if os.environ.get("NANOCHAT_BASE_DIR"):
         nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR")
@@ -60,8 +71,15 @@ def get_base_dir():
 
 def download_file_with_lock(url, filename):
     """
-    Downloads a file from a URL to a local path in the base directory.
-    Uses a lock file to prevent concurrent downloads among multiple ranks.
+    Downloads a file from a URL to a local path, using a lock file to prevent
+    concurrent downloads in a distributed setting.
+
+    Args:
+        url (str): The URL of the file to download.
+        filename (str): The name of the file to save locally.
+
+    Returns:
+        str: The path to the downloaded file.
     """
     base_dir = get_base_dir()
     file_path = os.path.join(base_dir, filename)
@@ -97,11 +115,13 @@ def download_file_with_lock(url, filename):
     return file_path
 
 def print0(s="",**kwargs):
+    """Prints a message only on the main process (rank 0)."""
     ddp_rank = int(os.environ.get('RANK', 0))
     if ddp_rank == 0:
         print(s, **kwargs)
 
 def print_banner():
+    """Prints the nanochat ASCII art banner."""
     # Cool DOS Rebel font ASCII banner made with https://manytools.org/hacker-tools/ascii-banner/
     banner = """
                                                    █████                 █████
@@ -116,10 +136,12 @@ def print_banner():
     print0(banner)
 
 def is_ddp():
+    """Checks if the current process is running in a DDP environment."""
     # TODO is there a proper way
     return int(os.environ.get('RANK', -1)) != -1
 
 def get_dist_info():
+    """Returns information about the DDP environment."""
     if is_ddp():
         assert all(var in os.environ for var in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE'])
         ddp_rank = int(os.environ['RANK'])
@@ -130,6 +152,9 @@ def get_dist_info():
         return False, 0, 0, 1
 
 def autodetect_device_type():
+    """
+    Autodetects the best available device (CUDA, MPS, or CPU) and returns it.
+    """
     # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
     if torch.cuda.is_available():
         device_type = "cuda"
@@ -141,7 +166,16 @@ def autodetect_device_type():
     return device_type
 
 def compute_init(device_type="cuda"): # cuda|cpu|mps
-    """Basic initialization that we keep doing over and over, so make common."""
+    """
+    Initializes the compute environment, including reproducibility settings,
+    precision, and DDP setup.
+
+    Args:
+        device_type (str): The device type to use ("cuda", "mps", or "cpu").
+
+    Returns:
+        tuple: A tuple containing DDP info and the device.
+    """
 
     assert device_type in ["cuda", "mps", "cpu"], "Invalid device type atm"
     if device_type == "cuda":
@@ -176,12 +210,15 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     return ddp, ddp_rank, ddp_local_rank, ddp_world_size, device
 
 def compute_cleanup():
-    """Companion function to compute_init, to clean things up before script exit"""
+    """Cleans up the DDP process group."""
     if is_ddp():
         dist.destroy_process_group()
 
 class DummyWandb:
-    """Useful if we wish to not use wandb but have all the same signatures"""
+    """
+    A dummy wandb class for environments where wandb is not used. It provides
+    the same method signatures as the real wandb object, but does nothing.
+    """
     def __init__(self):
         pass
     def log(self, *args, **kwargs):

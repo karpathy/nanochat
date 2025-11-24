@@ -1,33 +1,14 @@
 #!/usr/bin/env python3
 """
-Unified web chat server - serves both UI and API from a single FastAPI instance.
+This script launches a FastAPI web server for interacting with a trained nanochat model.
+It provides a web UI for chatting and an API endpoint for programmatic access.
 
-Uses data parallelism to distribute requests across multiple GPUs. Each GPU loads
-a full copy of the model, and incoming requests are distributed to available workers.
+The server uses a worker pool to manage model instances on multiple GPUs, allowing
+it to handle concurrent requests efficiently.
 
-Launch examples:
-
-- single available GPU (default)
-python -m scripts.chat_web
-
-- 4 GPUs
-python -m scripts.chat_web --num-gpus 4
-
-To chat, open the URL printed in the console. (If on cloud box, make sure to use public IP)
-
-Endpoints:
-  GET  /           - Chat UI
-  POST /chat/completions - Chat API (streaming only)
-  GET  /health     - Health check with worker pool status
-  GET  /stats      - Worker pool statistics and GPU utilization
-
-Abuse Prevention:
-  - Maximum 500 messages per request
-  - Maximum 8000 characters per message
-  - Maximum 32000 characters total conversation length
-  - Temperature clamped to 0.0-2.0
-  - Top-k clamped to 1-200
-  - Max tokens clamped to 1-4096
+Usage:
+- Single GPU: `python scripts/chat_web.py`
+- Multi-GPU: `python scripts/chat_web.py --num-gpus 4`
 """
 
 import argparse

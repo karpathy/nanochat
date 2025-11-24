@@ -1,31 +1,23 @@
 """
-GSM8K evaluation.
-https://huggingface.co/datasets/openai/gsm8k
+This module implements the GSM8K (Grade School Math 8K) task. This dataset consists
+of grade school math word problems that require multi-step reasoning.
 
-Example problem instance:
+A unique feature of this dataset is its use of "tool calls" in the answers,
+denoted by `<<expression=result>>`. This module parses these tool calls into a
+structured conversational format for fine-tuning the model's tool-use capabilities.
 
-Question:
-Weng earns $12 an hour for babysitting. Yesterday, she just did 50 minutes of babysitting. How much did she earn?
-Answer:
-Weng earns 12/60 = $<<12/60=0.2>>0.2 per minute.
-Working 50 minutes, she earned 0.2 x 50 = $<<0.2*50=10>>10.
-#### 10
-
-Notice that GSM8K uses tool calls inside << >> tags.
+**Reference:**
+- The GSM8K dataset: https://huggingface.co/datasets/openai/gsm8k
 """
 
 import re
 from datasets import load_dataset
-from tasks.common import Task
+from .common import Task
 
 
 GSM_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
 def extract_answer(completion):
-    """
-    Extract the numerical answer after #### marker.
-    Follows official code for normalization:
-    https://github.com/openai/grade-school-math/blob/3101c7d5072418e28b9008a6636bde82a006892c/grade_school_math/dataset.py#L28
-    """
+    """Extracts the numerical answer from a GSM8K completion string."""
     match = GSM_RE.search(completion)
     if match:
         match_str = match.group(1).strip()
@@ -35,6 +27,13 @@ def extract_answer(completion):
 
 
 class GSM8K(Task):
+    """
+    The GSM8K (Grade School Math 8K) task.
+
+    Args:
+        subset (str): The subset of the dataset, either "main" or "socratic".
+        split (str): The data split, either "train" or "test".
+    """
 
     def __init__(self, subset, split, **kwargs):
         super().__init__(**kwargs)
@@ -44,13 +43,17 @@ class GSM8K(Task):
 
     @property
     def eval_type(self):
+        """Specifies that this is a generative evaluation task."""
         return 'generative'
 
     def num_examples(self):
+        """Returns the total number of examples in the dataset."""
         return len(self.ds)
 
     def get_example(self, index):
-        """ Get a single problem from the dataset. """
+        """
+        Formats a single example, parsing tool calls into a structured conversation.
+        """
         row = self.ds[index]
         question = row['question'] # string of the question prompt
         answer = row['answer'] # string of the full solution and the answer after #### marker
@@ -86,13 +89,8 @@ class GSM8K(Task):
 
     def evaluate(self, conversation, assistant_response):
         """
-        Given (conversation, completion), return evaluation outcome (0 = wrong, 1 = correct)
-        Note that:
-        - the conversation has both user AND assistant message (containing the ground truth answer)
-        - the assistant_response is usually the alternative assistant message achieved via sampling
-
-        TODO: Technically, assistant_response should be a Message (either a string or a list of parts)
-              We can handle this later possibly. For now just assume string.
+        Evaluates the model's response by comparing the extracted numerical answer
+        to the ground truth.
         """
         assert isinstance(assistant_response, str), "Assuming simple string response for now"
         # First extract the ground truth answer
@@ -109,8 +107,8 @@ class GSM8K(Task):
 
     def reward(self, conversation, assistant_response):
         """
-        Used during RL. To keep things simple, just re-use the evaluation above.
-        Later this could be made more complex (e.g. format matching etc.)
+        Provides a reward for reinforcement learning, which is simply whether the
+        answer was correct or not.
         """
         is_correct = self.evaluate(conversation, assistant_response)
         is_correct_float = float(is_correct)

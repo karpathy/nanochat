@@ -1,13 +1,20 @@
 """
-Evaluate the Chat model on HumanEval dataset.
-Btw this dataset is a misnomer and has nothing to do with humans.
-It is a coding benchmark.
+This module implements the HumanEval task, a benchmark for evaluating the code
+generation capabilities of language models.
+
+The task is implemented as a `generative` evaluation. For each problem, the model
+is given a function signature and docstring and is expected to generate the body
+of the function. The generated code is then executed in a sandboxed environment
+against a set of unit tests to determine its correctness.
+
+**Reference:**
+- The HumanEval dataset: https://huggingface.co/datasets/openai/openai_humaneval
 """
 
 import re
 from datasets import load_dataset
 from nanochat.execution import execute_code
-from tasks.common import Task
+from .common import Task
 
 def extract_imports(prompt):
     """Extract import statements from the beginning of a code block."""
@@ -23,14 +30,8 @@ def extract_imports(prompt):
 
 def extract_program(completion):
     """
-    Extract Python code from LLM completion.
-
-    Handles various output formats:
-    - Code wrapped in ```python ... ``` or ``` ... ``` blocks
-    - Plain code without markdown blocks
-    - Extra text before/after code blocks
-
-    Returns the first code block if found, otherwise returns the whole completion.
+    Extracts a Python code block from a language model's completion,
+    handling markdown formatting.
     """
     # Try to find markdown code blocks (```python or just ```)
     # Match ```python\n...\n``` or ```\n...\n```
@@ -45,20 +46,26 @@ def extract_program(completion):
     return completion.strip()
 
 class HumanEval(Task):
-
+    """
+    The HumanEval code generation task.
+    """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.ds = load_dataset("openai/openai_humaneval", split="test").shuffle(seed=42)
 
     @property
     def eval_type(self):
+        """Specifies that this is a generative evaluation task."""
         return 'generative'
 
     def num_examples(self):
+        """Returns the total number of examples in the dataset."""
         return len(self.ds)
 
     def get_example(self, index):
-        """ Get a single problem from the dataset. """
+        """
+        Formats a single problem from the dataset into a conversation dictionary.
+        """
         row = self.ds[index]
         prompt = row['prompt'] # prompts in HumanEval are the beginning of the program
         solution = row['canonical_solution'] # the correct continuation of the program
@@ -77,7 +84,10 @@ class HumanEval(Task):
         return conversation
 
     def evaluate(self, conversation, completion):
-        """ Given (conversation, completion), return boolean success of the completion. """
+        """
+        Evaluates the model's generated code by running it against the problem's
+        unit tests in a sandboxed environment.
+        """
         # the prompt will contain the imports and the function signature
         imports = extract_imports(conversation['messages'][0]['content'])
         # the completion will usually contain the whole function

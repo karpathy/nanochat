@@ -1,11 +1,15 @@
 """
-CustomJSON task for loading conversations from JSONL files.
-Each line in the JSONL file should be a JSON array of messages.
+This module implements the `CustomJSON` task, which allows for loading conversational
+data from a custom JSONL file. This is useful for fine-tuning the model on specific
+datasets, such as synthetic data for instilling a persona.
+
+Each line in the JSONL file should be a JSON array of message objects, where each
+object has a "role" and a "content" field.
 """
 
 import os
 import json
-from tasks.common import Task
+from .common import Task
 
 class CustomJSON(Task):
     """
@@ -15,6 +19,12 @@ class CustomJSON(Task):
     """
 
     def __init__(self, filepath, **kwargs):
+        """
+        Initializes the CustomJSON task.
+
+        Args:
+            filepath (str): The path to the JSONL file.
+        """
         super().__init__(**kwargs)
         self.filepath = filepath
         self.conversations = []
@@ -54,9 +64,19 @@ class CustomJSON(Task):
         self.length = len(self.conversations)
 
     def num_examples(self):
+        """Returns the total number of conversations loaded from the file."""
         return self.length
 
     def get_example(self, index):
+        """
+        Retrieves a single conversation by its index.
+
+        Args:
+            index (int): The index of the conversation to retrieve.
+
+        Returns:
+            dict: A dictionary representing the conversation.
+        """
         messages = self.conversations[index]
         conversation = {
             "messages": messages,

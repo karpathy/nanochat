@@ -115,6 +115,36 @@ This includes all py, rs, html, toml, sh files, excludes the `rustbpe/target` fo
 
 Alternatively, I recommend using [DeepWiki](https://deepwiki.com/) from Devin/Cognition to ask questions of this repo. In the URL of this repo, simply change github.com to deepwiki.com, and you're off.
 
+## Codebase Overview and Data Flow
+
+This repository is structured to provide a clear, end-to-end pipeline for building a conversational LLM. The process flows from data preparation and tokenization to model training and evaluation. Below is a high-level overview of the key components and their roles in this pipeline. For more in-depth information, please refer to the extensive in-code documentation that has been added throughout the repository.
+
+### Key Components
+
+-   **`nanochat/`**: This is the core library of the project. It contains all the essential components for building and training the model, including the GPT architecture (`gpt.py`), the distributed AdamW optimizer (`adamw.py`), the data loader (`dataloader.py`), and the BPE tokenizer wrapper (`tokenizer.py`). Each module is documented with its specific purpose and implementation details.
+
+-   **`rustbpe/`**: A custom, high-performance Byte-Pair Encoding (BPE) tokenizer written in Rust. This component is crucial for efficiently converting raw text into tokens that the model can process. The `README.md` within this directory explains the rationale for using Rust and provides a detailed guide to the BPE algorithm.
+
+-   **`scripts/`**: This directory contains the scripts that drive the entire training and evaluation pipeline. The scripts are organized by their function, from training the tokenizer (`tok_train.py`) and the base model (`base_train.py`) to fine-tuning (`chat_sft.py`) and evaluation (`chat_eval.py`). Each script is documented to explain its role and usage.
+
+-   **`tasks/`**: This directory defines the various tasks used for training and evaluating the model. Each file corresponds to a specific dataset or capability, such as grade-school math (`gsm8k.py`) or code generation (`humaneval.py`). The in-code documentation details what each task evaluates and how it is implemented.
+
+-   **`dev/`**: Contains development-related scripts and resources. This includes a script for generating synthetic data to customize the model's identity (`gen_synthetic_data.py`) and a reference script for preparing the pre-training data (`repackage_data_reference.py`). The `runcpu.sh` script provides a documented example of how to run the entire pipeline on a CPU for testing and demonstration purposes.
+
+### End-to-End Data Flow
+
+1.  **Data Preparation**: The process begins with preparing the training data. For pre-training, a large corpus of text is downloaded and repackaged into efficient shards (as documented in `dev/repackage_data_reference.py`). For fine-tuning, various task-specific datasets are used, as defined in the `tasks/` directory.
+
+2.  **Tokenization**: A BPE tokenizer is trained on the prepared data using the script `scripts/tok_train.py`. This tokenizer, implemented in Rust for performance, converts the text data into a sequence of integer tokens.
+
+3.  **Base Model Training**: The core language model is trained from scratch on the tokenized pre-training data using `scripts/base_train.py`. This phase is the most computationally intensive and is where the model learns general language patterns.
+
+4.  **Mid-training and Fine-tuning**: After pre-training, the model undergoes "mid-training" (`scripts/mid_train.py`) and supervised fine-tuning (`scripts/chat_sft.py`) on a mixture of conversational and task-specific data. This is where the model learns to be a helpful assistant.
+
+5.  **Evaluation and Inference**: Throughout the training process, the model's performance is evaluated on various benchmarks defined in `tasks/`. Once training is complete, you can interact with your custom LLM through a command-line interface (`scripts/chat_cli.py`) or a web UI (`scripts/chat_web.py`).
+
+This structured approach, combined with the detailed in-code documentation, is designed to make the entire process of building a custom LLM transparent, hackable, and educational.
+
 ## Tests
 
 I haven't invested too much here but some tests exist, especially for the tokenizer. Run e.g. as:

@@ -1,8 +1,15 @@
 """
-New and upgraded chat mode because a lot of the code has changed since the last one.
+This script provides a command-line interface (CLI) for interacting with a trained
+nanochat model. It allows users to have a text-based conversation with the model
+in the terminal.
 
-Intended to be run single GPU only atm:
-python -m scripts.chat_cli -i mid
+The script can load a model from different training stages (mid-training, SFT, or RL)
+and supports various generation parameters like temperature and top-k sampling.
+
+Usage:
+- Interactive chat: `python scripts/chat_cli.py --source sft`
+- Single prompt: `python scripts/chat_cli.py --prompt "Hello, world!"`
+- Help: `python scripts/chat_cli.py --help`
 """
 import argparse
 import torch

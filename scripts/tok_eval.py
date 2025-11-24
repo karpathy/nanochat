@@ -1,5 +1,11 @@
 """
-Evaluate compression ratio of the tokenizer.
+This script evaluates the compression ratio of the nanochat tokenizer against
+standard tokenizers like GPT-2 and GPT-4. The compression ratio, defined as the
+number of bytes in the raw text divided by the number of tokens, is a key metric
+for tokenizer efficiency.
+
+Usage:
+- To run the evaluation: `python scripts/tok_eval.py`
 """
 
 from nanochat.tokenizer import get_tokenizer, RustBPETokenizer
@@ -201,7 +207,7 @@ print(f"GPT-4: {vocab_sizes['gpt4']}")
 print(f"Ours: {vocab_sizes['ours']}")
 
 def print_comparison(baseline_name, baseline_results, ours_results, all_text):
-    """Print comparison table between baseline tokenizer and ours."""
+    """Prints a formatted comparison table to the console."""
     print(f"\nComparison with {baseline_name}:")
     print("=" * 95)
     print(f"{'Text Type':<10} {'Bytes':<8} {baseline_name:<15} {'Ours':<15} {'Relative':<12} {'Better':<10}")

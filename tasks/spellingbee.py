@@ -1,29 +1,31 @@
+#--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*#
+#_-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*#
+#                                                                           #
+#                       The Spelling Bee Task                               #
+#                                                                           #
+#_-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*#
+#--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*#
 """
-Task intended to make nanochat better in spelling and counting, for example:
+This module defines tasks intended to improve a model's spelling and counting abilities.
 
-"How many r are in strawberry?" -> 3
+For example, a task might be: "How many 'r's are in strawberry?" -> 3
 
-An interesting part of this task is that we will get the assistant to
-solve the problem using a combination of manual counting and Python.
-This is a good problem solving "instinct" to mix into the model and RL
-may further refine it to trust one over the other. If we were extra fancy
-(which we could/should be) we'd add small errors here and there to allow
-the model also learn recoveries. We can do this in future versions.
+A key feature of this task is that the assistant is guided to solve the problem
+by combining manual counting with Python code verification. This promotes a robust
+problem-solving process in the model. Future versions could introduce small errors
+to train the model on error detection and recovery.
 
-There are two tasks in this file:
-1. SpellingBee: Counting the number of occurrences of a letter in a word
-2. SimpleSpelling: Simply spelling words
+This file contains two main tasks:
+1. SpellingBee: Counts the occurrences of a specific letter in a word.
+2. SimpleSpelling: A simpler task focused on correctly spelling words.
 
-(1) is the goal, but (2) exists as a highly condensed version of the part
-that makes (1) difficult, which is word spelling. This is non-trivial for an
-LLM because it has to learn how every token (a little semantic chunk/atom)
-maps to the sequence of individual characters that make it up. Larger models
-learn this eventually on their own, but if we want this capability to exist
-in smaller models, we have to actively encourage it by over-representing it
-in the training data. Midtraining is a good place to do this.
+The primary goal is (1), but (2) is included to address a fundamental challenge for LLMs:
+mapping tokens (semantic units) to the individual characters that form a word.
+While larger models often learn this implicitly, smaller models benefit from explicit
+training on this skill.
 
-To preview a few example conversations, run:
-python -m tasks.spellingbee
+To preview examples from these tasks, run this script directly:
+`python -m tasks.spellingbee`
 """
 
 import re
@@ -31,16 +33,22 @@ import random
 from tasks.common import Task
 from nanochat.common import download_file_with_lock
 
-# Letters of the alphabet
+# Define the alphabet for random letter selection.
 LETTERS = "abcdefghijklmnopqrstuvwxyz"
-# A list of 370K English words of large variety
+# URL for a comprehensive list of English words.
 WORD_LIST_URL = "https://raw.githubusercontent.com/dwyl/english-words/refs/heads/master/words_alpha.txt"
 
-# Identical to gsm8k's answer extraction
+# Regex to find the final numerical answer, same as in the gsm8k task.
 ANSWER_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
 def extract_answer(completion):
     """
-    Extract the numerical answer after #### marker.
+    Extracts the numerical answer from a string, which is marked with "####".
+    This function is designed to parse the final answer from the model's output.
+    It handles integers, floats, and commas.
+
+    For example:
+    - "The answer is #### 42." -> "42"
+    - "After calculation, we get #### 3,141.59" -> "3141.59"
     """
     match = ANSWER_RE.search(completion)
     if match:
@@ -49,7 +57,9 @@ def extract_answer(completion):
         return match_str
     return None
 
-# User message templates for data augmentation
+# A diverse set of templates for user messages to augment the training data.
+# This helps the model generalize to different ways a user might ask the same question.
+# Includes templates in multiple languages for broader applicability.
 USER_MSG_TEMPLATES = [
     "How many {letter} are in the word {word}",
     "How many {letter} are in {word}",
@@ -111,12 +121,26 @@ USER_MSG_TEMPLATES = [
 ]
 
 class SpellingBee(Task):
+    """
+    A task to count the occurrences of a letter in a word.
+    The assistant's response is structured to first perform a manual count,
+    then verify the result using a Python tool call. This encourages a
+    "show your work" and "double-check" approach.
+    """
 
     def __init__(self, size=1000, split="train", **kwargs):
+        """
+        Initializes the SpellingBee task.
+        Args:
+            size (int): The number of examples to generate for this task.
+            split (str): The dataset split, either "train" or "test".
+            **kwargs: Additional arguments for the parent Task class.
+        """
         super().__init__(**kwargs)
         assert split in ["train", "test"], "SpellingBee split must be train|test"
         self.size = size
         self.split = split
+        # Download the word list if it's not already cached.
         filename = WORD_LIST_URL.split("/")[-1]
         word_list_path = download_file_with_lock(WORD_LIST_URL, filename)
         with open(word_list_path) as f:
@@ -125,40 +149,50 @@ class SpellingBee(Task):
 
     @property
     def eval_type(self):
+        """ This task requires a generative evaluation, as the response format is complex. """
         return 'generative'
 
     def num_examples(self):
+        """ Returns the number of examples in this task. """
         return self.size
 
     def get_example(self, index):
-        seed = index if self.split == "train" else -(index + 1) # avoid collision at 0
+        """
+        Generates a single example for the SpellingBee task.
+        Args:
+            index (int): An index to seed the random number generator for reproducibility.
+        Returns:
+            dict: A conversation dictionary representing the task example.
+        """
+        # Use the index to seed the random generator for deterministic example generation.
+        seed = index if self.split == "train" else -(index + 1)
         rng = random.Random(seed)
 
-        # pick a random word
+        # Select a random word and a letter to count.
         word = rng.choice(self.words)
-        # pick a letter from it (90%) or a random letter (10%)
+        # Usually pick a letter from the word, but sometimes a random one.
         letter = rng.choice(word) if rng.random() < 0.9 else rng.choice(LETTERS)
 
-        # get the correct answer by simply counting
+        # Calculate the correct answer.
         count = word.count(letter)
 
-        # create a user message, with a bunch of variations as data augmentation
+        # Create a user message using a random template for variety.
         template = rng.choice(USER_MSG_TEMPLATES)
-        # 30% chance to lowercase the template (lazy people don't use shift)
         if rng.random() < 0.3:
             template = template.lower()
         quote_options = ['', "'", '"']
-        letter_quote = rng.choice(quote_options) # is the letter quoted?
-        word_quote = rng.choice(quote_options) # is the word quoted?
+        letter_quote = rng.choice(quote_options)
+        word_quote = rng.choice(quote_options)
         letter_wrapped = f"{letter_quote}{letter}{letter_quote}"
         word_wrapped = f"{word_quote}{word}{word_quote}"
         user_msg = template.format(letter=letter_wrapped, word=word_wrapped)
-        if rng.random() < 0.5: # 50% of people don't even use question marks
+        if rng.random() < 0.5:
             user_msg += "?"
 
-        # Now create the ideal assistant response - build as parts (text + tool calls)
+        # Construct the ideal assistant response as a series of parts.
         assistant_parts = []
         word_letters = ",".join(list(word))
+        # Part 1: Manual counting process.
         manual_text = f"""We are asked to find the number '{letter}' in the word '{word}'. Let me try a manual approach first.
 
 First spell the word out:
@@ -166,33 +200,27 @@ First spell the word out:
 
 Then count the occurrences of '{letter}':
 """
-        # Little simulated loop of the solution process
-        # TODO: This is where the fun starts, we could simulate cute little mistakes
-        # and get the model to review its work and recover from them.
-        # You might of course hope this could arise in RL too, but realistically you'd want to help it out a bit.
         running_count = 0
         for i, char in enumerate(word, 1):
             if char == letter:
                 running_count += 1
-                # note: there deliberately cannot be a space here between i and char
-                # because this would create a different token! (e.g. " a" and "a" are different tokens)
                 manual_text += f"{i}:{char} hit! count={running_count}\n"
             else:
                 manual_text += f"{i}:{char}\n"
 
         manual_text += f"\nThis gives us {running_count}."
         assistant_parts.append({"type": "text", "text": manual_text})
-        # Part 2: Python verification
+        # Part 2: Transition to Python verification.
         assistant_parts.append({"type": "text", "text": "\n\nLet me double check this using Python:\n\n"})
-        # Part 3: Python tool call
+        # Part 3: The Python tool call itself.
         python_expr = f"'{word}'.count('{letter}')"
         assistant_parts.append({"type": "python", "text": python_expr})
-        # Part 4: Python output
+        # Part 4: The output from the Python tool.
         assistant_parts.append({"type": "python_output", "text": str(count)})
-        # Part 5: Final answer
+        # Part 5: The final conclusion.
         assistant_parts.append({"type": "text", "text": f"\n\nPython gives us {count}.\n\nMy final answer is:\n\n#### {count}"})
 
-        # return the full conversation
+        # Assemble the full conversation.
         messages = [
             {"role": "user", "content": user_msg},
             {"role": "assistant", "content": assistant_parts}
@@ -204,34 +232,53 @@ Then count the occurrences of '{letter}':
 
     def evaluate(self, conversation, assistant_response):
         """
-        Given (conversation, completion), return evaluation outcome (0 = wrong, 1 = correct)
-        Identical to gsm8k's evaluation.
+        Evaluates the assistant's response to determine if it's correct.
+        This is similar to the evaluation in the gsm8k task.
+        Args:
+            conversation (dict): The original conversation.
+            assistant_response (str): The generated response from the assistant.
+        Returns:
+            int: 1 if the answer is correct, 0 otherwise.
         """
-        assert isinstance(assistant_response, str), "Assuming simple string response for now"
-        # First extract the ground truth answer from the conversation
+        assert isinstance(assistant_response, str), "Assuming a simple string response for now"
+        # Extract the ground truth answer from the original conversation.
         assistant_message = conversation['messages'][-1]
-        assert assistant_message['role'] == "assistant", "Last message must be from the Assistant"
-        assert isinstance(assistant_message['content'], list), "This is expected to be a list of parts"
-        # The last text part contains the final answer with ####
+        assert assistant_message['role'] == "assistant", "The last message should be from the assistant"
+        assert isinstance(assistant_message['content'], list), "Content is expected to be a list of parts"
         last_text_part = assistant_message['content'][-1]['text']
-        # Extract both the ground truth answer and the predicted answer
+
+        # Extract the reference number and the predicted number.
         ref_num = extract_answer(last_text_part)
         pred_num = extract_answer(assistant_response)
-        # Compare and return the success as int
+
+        # Compare and return the result.
         is_correct = int(pred_num == ref_num)
         return is_correct
 
     def reward(self, conversation, assistant_response):
-        """ Use simple 0-1 reward just like gsm8k."""
+        """
+        Provides a simple binary reward (0 or 1) based on the evaluation result.
+        This is used during reinforcement learning.
+        """
         is_correct = self.evaluate(conversation, assistant_response)
         is_correct_float = float(is_correct)
         return is_correct_float
 
 
 class SimpleSpelling(Task):
-    """Much simpler task designed to get the model to just practice spelling words."""
+    """
+    A simpler task designed to train the model on basic spelling.
+    This helps smaller models learn the correspondence between tokens and characters.
+    """
 
     def __init__(self, size=1000, split="train", **kwargs):
+        """
+        Initializes the SimpleSpelling task.
+        Args:
+            size (int): The number of examples to generate.
+            split (str): The dataset split, "train" or "test".
+            **kwargs: Additional arguments for the parent Task class.
+        """
         super().__init__(**kwargs)
         assert split in ["train", "test"], "SpellingBee split must be train|test"
         self.size = size
@@ -241,23 +288,31 @@ class SimpleSpelling(Task):
         with open(word_list_path) as f:
             words = [line.strip() for line in f]
         rng = random.Random(42)
-        rng.shuffle(words) # use a different word order than the SpellingBee task
+        rng.shuffle(words)  # Use a different word order than SpellingBee for variety.
         self.words = words
 
     @property
     def eval_type(self):
+        """ This task uses generative evaluation. """
         return 'generative'
 
     def num_examples(self):
+        """ Returns the number of examples in this task. """
         return self.size
 
     def get_example(self, index):
-        seed = index if self.split == "train" else -(index + 1) # avoid collision at 0
+        """
+        Generates a single example for the SimpleSpelling task.
+        Args:
+            index (int): An index for seeding the random number generator.
+        Returns:
+            dict: A conversation dictionary for the task.
+        """
+        seed = index if self.split == "train" else -(index + 1)
         rng = random.Random(seed)
-        # pick a random word
         word = rng.choice(self.words)
         word_letters = ",".join(list(word))
-        # return the full conversation
+
         messages = [
             {"role": "user", "content": f"Spell the word: {word}"},
             {"role": "assistant", "content": f"{word}:{word_letters}"}
@@ -269,37 +324,40 @@ class SimpleSpelling(Task):
 
 
 if __name__ == "__main__":
+    # This block allows for previewing the generated examples from the tasks.
 
-    # preview the SpellingBee task, first 10 examples
+    # Preview the SpellingBee task.
+    print("--- SpellingBee Task Preview ---")
     task = SpellingBee()
     for i in range(10):
         ex = task.get_example(i)
         print("=" * 100)
-        print(ex['messages'][0]['content'])
+        print(f"User: {ex['messages'][0]['content']}")
         print("-" * 100)
-        # Assistant content is now a list of parts
+        print("Assistant:")
         assistant_parts = ex['messages'][1]['content']
         for part in assistant_parts:
             if part['type'] == 'text':
                 print(part['text'], end='')
             elif part['type'] == 'python':
-                print(f"<<{part['text']}=", end='')
+                print(f"<<Py: {part['text']} -> ", end='')
             elif part['type'] == 'python_output':
-                print(f"{part['text']}>>", end='')
-        print()
-        print("-" * 100)
+                print(f"Out: {part['text']}>>", end='')
+        print("\n" + "-" * 100)
 
-    # # preview the SimpleSpelling task, first 10 examples
+    # # To preview the SimpleSpelling task, uncomment the following lines.
+    # print("\n\n--- SimpleSpelling Task Preview ---")
     # task = SimpleSpelling()
     # for i in range(10):
     #     ex = task.get_example(i)
     #     print("=" * 100)
-    #     print(ex['messages'][0]['content'])
+    #     print(f"User: {ex['messages'][0]['content']}")
     #     print("-" * 100)
-    #     print(ex['messages'][1]['content'])
+    #     print(f"Assistant: {ex['messages'][1]['content']}")
 
-    # # also scrutinize the tokenization (last example only)
+    # # To scrutinize the tokenization of the last example, uncomment these lines.
     # from nanochat.tokenizer import get_tokenizer
     # tokenizer = get_tokenizer()
     # ids, mask = tokenizer.render_conversation(ex)
+    # print("\n--- Tokenization of Last Example ---")
     # print(tokenizer.visualize_tokenization(ids, mask, with_token_id=True))

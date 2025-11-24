@@ -1,10 +1,17 @@
 """
-Loads a checkpoint, and:
-- Evaluates the loss on a larger chunk of train/val splits
-- Samples from the model
+This script evaluates the loss of a trained base model and generates samples from it.
+It serves as a quick sanity check to ensure the model has learned sensible
+representations.
 
-Example run as:
-torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
+The script performs two main functions:
+1.  **Loss Evaluation:** It calculates the bits-per-byte (BPB) metric on both the
+    training and validation splits of the dataset.
+2.  **Sampling:** The master process generates text samples from a set of predefined
+    prompts to provide a qualitative assessment of the model's capabilities.
+
+Usage:
+- To run on a single GPU: `python scripts/base_loss.py`
+- For distributed evaluation: `torchrun --nproc_per_node=<gpus> scripts/base_loss.py`
 """
 import os
 from contextlib import nullcontext

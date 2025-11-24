@@ -1,9 +1,14 @@
 """
-Functions for evaluating the CORE metric, as described in the DCLM paper.
-https://arxiv.org/abs/2406.11794
+This module implements the evaluation of the CORE (Comprehensive Overall Language Evaluation)
+metric, as described in the DCLM paper (https://arxiv.org/abs/2406.11794). It provides
+a standardized way to assess the performance of language models on a variety of tasks.
 
-TODOs:
-- All tasks ~match except for squad. We get 31% reference is 37%. Figure out why.
+The evaluation process involves:
+1.  Rendering prompts for each task using Jinja2 templates.
+2.  Tokenizing the prompts and preparing them for batch processing.
+3.  Forwarding the inputs through the model to get predictions.
+4.  Calculating the accuracy for each task.
+5.  Aggregating the results to compute the final CORE score.
 """
 import random
 
@@ -15,7 +20,17 @@ import torch.distributed as dist
 # Prompt rendering utilities
 
 def render_prompts_mc(item, continuation_delimiter, fewshot_examples=None):
-    """Render complete prompts for a multiple choice question"""
+    """
+    Renders prompts for a multiple-choice question.
+
+    Args:
+        item (dict): The data item containing the query, choices, and gold answer.
+        continuation_delimiter (str): The delimiter to separate context and continuation.
+        fewshot_examples (list, optional): A list of few-shot examples. Defaults to None.
+
+    Returns:
+        list: A list of rendered prompts, one for each choice.
+    """
     template_str = """
 {%- for example in fewshot_examples -%}
 {{ example.query }}{{ continuation_delimiter }}{{ example.choices[example.gold] }}
@@ -34,7 +49,17 @@ def render_prompts_mc(item, continuation_delimiter, fewshot_examples=None):
 
 
 def render_prompts_schema(item, continuation_delimiter, fewshot_examples=None):
-    """Render complete prompts for a schema question"""
+    """
+    Renders prompts for a schema-based question.
+
+    Args:
+        item (dict): The data item for the schema task.
+        continuation_delimiter (str): The delimiter.
+        fewshot_examples (list, optional): Few-shot examples. Defaults to None.
+
+    Returns:
+        list: A list of rendered prompts.
+    """
     template_str = """
 {%- for example in fewshot_examples -%}
 {{ example.context_options[example.gold] }}{{ continuation_delimiter }}{{ example.continuation }}
@@ -55,9 +80,15 @@ def render_prompts_schema(item, continuation_delimiter, fewshot_examples=None):
 
 def render_prompts_lm(item, continuation_delimiter, fewshot_examples=None):
     """
-    Render complete prompt for a language modeling task.
-    Notice that we manually trim the context in the template,
-    which in some datasets seems to have trailing whitespace (which we don't want).
+    Renders prompts for a language modeling task.
+
+    Args:
+        item (dict): The data item for the language modeling task.
+        continuation_delimiter (str): The delimiter.
+        fewshot_examples (list, optional): Few-shot examples. Defaults to None.
+
+    Returns:
+        list: A list containing two prompts: one with and one without the continuation.
     """
     template_str = """
 {%- for example in fewshot_examples -%}
@@ -85,8 +116,14 @@ def render_prompts_lm(item, continuation_delimiter, fewshot_examples=None):
 
 def find_common_length(token_sequences, direction='left'):
     """
-    Find the length of the common prefix or suffix across token sequences
-    - direction: 'left' for prefix, 'right' for suffix
+    Finds the length of the common prefix or suffix in a list of token sequences.
+
+    Args:
+        token_sequences (list): A list of token sequences.
+        direction (str): 'left' for prefix, 'right' for suffix.
+
+    Returns:
+        int: The length of the common part.
     """
     min_len = min(len(seq) for seq in token_sequences)
     indices = {
@@ -102,7 +139,16 @@ def find_common_length(token_sequences, direction='left'):
 
 
 def stack_sequences(tokens, pad_token_id):
-    """Stack up a list of token sequences, pad to longest on the right"""
+    """
+    Stacks a list of token sequences into a padded tensor.
+
+    Args:
+        tokens (list): A list of token sequences.
+        pad_token_id (int): The ID of the padding token.
+
+    Returns:
+        torch.Tensor: A padded tensor of token IDs.
+    """
     bsz, seq_len = len(tokens), max(len(x) for x in tokens)
     input_ids = torch.full((bsz, seq_len), pad_token_id, dtype=torch.long)
     for i, x in enumerate(tokens):
@@ -111,6 +157,7 @@ def stack_sequences(tokens, pad_token_id):
 
 
 def batch_sequences_mc(tokenizer, prompts):
+    """Prepares a batch of sequences for a multiple-choice task."""
     # In multiple choice, contexts are the same but the continuation is different (common prefix)
     tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
     # figure out the start and end of each continuation
@@ -121,6 +168,7 @@ def batch_sequences_mc(tokenizer, prompts):
 
 
 def batch_sequences_schema(tokenizer, prompts):
+    """Prepares a batch of sequences for a schema task."""
     # In schema tasks, contexts vary but continuation is the same (common suffix)
     tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
     # figure out the start and end of each context
@@ -131,6 +179,7 @@ def batch_sequences_schema(tokenizer, prompts):
 
 
 def batch_sequences_lm(tokenizer, prompts):
+    """Prepares a batch of sequences for a language modeling task."""
     # In LM tasks, we have two prompts: without and with continuation
     tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
     tokens_without, tokens_with = tokens
@@ -144,8 +193,14 @@ def batch_sequences_lm(tokenizer, prompts):
 @torch.no_grad()
 def forward_model(model, input_ids):
     """
-    Take BxT tensor of token ids, return BxT tensor of losses and argmax predictions.
-    The last column of losses is set to nan because we don't have autoregressive targets there.
+    Performs a forward pass through the model and computes losses and predictions.
+
+    Args:
+        model (torch.nn.Module): The language model.
+        input_ids (torch.Tensor): The input token IDs.
+
+    Returns:
+        tuple: A tuple containing the losses and predictions.
     """
     batch_size, seq_len = input_ids.size()
     outputs = model(input_ids)
@@ -166,7 +221,16 @@ def forward_model(model, input_ids):
 
 @torch.no_grad()
 def evaluate_example(idx, model, tokenizer, data, device, task_meta):
-    """Evaluate a single example, return True if correct, False otherwise"""
+    """
+    Evaluates a single example from a task.
+
+    Args:
+        idx (int): The index of the example in the dataset.
+        model, tokenizer, data, device, task_meta: Evaluation parameters.
+
+    Returns:
+        bool: True if the model's prediction is correct, False otherwise.
+    """
     item = data[idx]
     task_type = task_meta['task_type']
     num_fewshot = task_meta['num_fewshot']
@@ -243,8 +307,13 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
 
 def evaluate_task(model, tokenizer, data, device, task_meta):
     """
-    This function is responsible for evaluating one task across many examples.
-    It also handles dispatch to all processes if the script is run with torchrun.
+    Evaluates a task across all its examples, handling distributed evaluation.
+
+    Args:
+        model, tokenizer, data, device, task_meta: Evaluation parameters.
+
+    Returns:
+        float: The mean accuracy for the task.
     """
     rank = dist.get_rank() if dist.is_initialized() else 0
     world_size = dist.get_world_size() if dist.is_initialized() else 1

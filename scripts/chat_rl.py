@@ -1,19 +1,16 @@
 """
-Reinforcement learning on GSM8K via "GRPO".
+This script performs reinforcement learning on the GSM8K dataset using a simplified,
+on-policy REINFORCE-like algorithm.
 
-I put GRPO in quotes because we actually end up with something a lot
-simpler and more similar to just REINFORCE:
+The training process involves:
+1.  Sampling multiple completions for each problem in the GSM8K training set.
+2.  Calculating a reward for each completion based on whether it solves the problem.
+3.  Computing the policy gradient loss using the calculated advantages.
+4.  Updating the model parameters to maximize the expected reward.
 
-1) Delete trust region, so there is no KL regularization to a reference model
-2) We are on policy, so there's no need for PPO ratio+clip.
-3) We use GAPO style normalization that is token-level, not sequence-level.
-4) Instead of z-score normalization (r - mu)/sigma, only use (r - mu) as the advantage.
-
-1 GPU:
-python -m scripts.chat_rl
-
-8 GPUs:
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
+Usage:
+- Single GPU: `python scripts/chat_rl.py`
+- Distributed: `torchrun --nproc_per_node=<gpus> scripts/chat_rl.py`
 """
 
 import os
@@ -77,6 +74,7 @@ print0(f"Calculated number of steps: {num_steps}")
 
 @torch.no_grad()
 def get_batch():
+    """A generator that yields batches of rollouts for training."""
     assistant_end = tokenizer.encode_special("<|assistant_end|>") # ok to use this token, it's only for padding and isn't used in the loss.
     rank_indices = range(ddp_rank, len(train_task), ddp_world_size) # each rank is responsible for different examples in the training data
     for example_idx in itertools.cycle(rank_indices):
@@ -149,10 +147,9 @@ def run_gsm8k_eval(task, tokenizer, engine,
     top_k=50
 ):
     """
-    Evaluates GSM8K task and returns a list of records of evaluation outcomes.
-    In a distributed setting, all ranks cooperate but this function will NOT
-    do the reduction across ranks. This is the responsibility of the caller.
-    Because the evaluation can take a while, this function will yield records one by one.
+    Evaluates the model on the GSM8K task and yields evaluation records.
+    This function does not perform reduction across ranks; that is the
+    responsibility of the caller.
     """
     max_examples = min(max_examples, len(task)) if max_examples is not None else len(task)
     for idx in range(ddp_rank, max_examples, ddp_world_size):

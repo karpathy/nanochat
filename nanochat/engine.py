@@ -1,14 +1,16 @@
 """
-Engine for efficient inference of our models.
+This module provides an efficient inference engine for nanochat models. It is designed
+to be fast and memory-efficient, using a key-value (KV) cache to avoid recomputing
+attention for previous tokens. The engine operates on token ID sequences and is
+agnostic to the tokenization process.
 
-Everything works around token sequences:
-- The user can send token sequences to the engine
-- The engine returns the next token
+The main components are:
+- `Engine`: The main class that orchestrates the generation process.
+- `KVCache`: A helper class that manages the KV cache for the GPT model.
+- `RowState`: A class to track the state of each individual generation sequence.
 
-Notes:
-- The engine knows nothing about tokenization, it's purely token id sequences.
-
-The whole thing is made as efficient as possible.
+The engine also includes a safe `use_calculator` function for evaluating Python
+expressions, which is used as a tool by the model.
 """
 
 import torch
@@ -24,6 +26,7 @@ from nanochat.checkpoint_manager import load_model
 # Calculator tool helpers
 @contextmanager
 def timeout(duration, formula):
+    """A context manager to enforce a timeout on a block of code."""
     def timeout_handler(signum, frame):
         raise Exception(f"'{formula}': timed out after {duration} seconds")
 
@@ -33,6 +36,7 @@ def timeout(duration, formula):
     signal.alarm(0)
 
 def eval_with_timeout(formula, max_time=3):
+    """Evaluates a Python expression with a timeout."""
     try:
         with timeout(max_time, formula):
             with warnings.catch_warnings():
@@ -45,8 +49,13 @@ def eval_with_timeout(formula, max_time=3):
 
 def use_calculator(expr):
     """
-    Evaluate a Python expression safely.
-    Supports both math expressions and string operations like .count()
+    Safely evaluates a Python expression. Supports both math and string operations.
+
+    Args:
+        expr (str): The expression to evaluate.
+
+    Returns:
+        The result of the evaluation, or None if it fails or is unsafe.
     """
     # Remove commas from numbers
     expr = expr.replace(",", "")
@@ -81,8 +90,14 @@ def use_calculator(expr):
 # -----------------------------------------------------------------------------
 class KVCache:
     """
-    Works hand-in-hand with the GPT model to maintain the KV cache.
-    Note that the .pos advances automatically after the last layer of the Transformer inserts.
+    Manages the Key-Value cache for the GPT model's attention layers.
+
+    Args:
+        batch_size (int): The batch size.
+        num_heads (int): The number of attention heads.
+        seq_len (int): The sequence length.
+        head_dim (int): The dimension of each attention head.
+        num_layers (int): The number of layers in the Transformer.
     """
 
     def __init__(self, batch_size, num_heads, seq_len, head_dim, num_layers):
@@ -92,16 +107,18 @@ class KVCache:
         self.pos = 0 # current position in time in the cache
 
     def reset(self):
+        """Resets the cache position."""
         self.pos = 0
 
     def get_pos(self):
+        """Returns the current cache position."""
         return self.pos
 
     def prefill(self, other):
         """
-        Prefill given another KV cache. Optionally expand along batch dim.
-        This is used when we do batch 1 prefill and then want to generate
-        multiple samples in parallel from there.
+        Prefills the cache with the contents of another KV cache. This is useful
+        for batch generation, where a single prompt is used to generate multiple
+        samples.
         """
         # 1) validate the shapes
         assert self.kv_cache is None, "Cannot prefill a non-empty KV cache"
@@ -125,6 +142,7 @@ class KVCache:
         self.pos = other.pos
 
     def insert_kv(self, layer_idx, k, v):
+        """Inserts a key-value pair into the cache."""
         # Lazy initialize the cache here because we need to know the dtype/device
         if self.kv_cache is None:
             self.kv_cache = torch.empty(self.kv_shape, dtype=k.dtype, device=k.device)
@@ -155,7 +173,18 @@ class KVCache:
 # -----------------------------------------------------------------------------
 @torch.inference_mode()
 def sample_next_token(logits, rng, temperature=1.0, top_k=None):
-    """Sample a single next token from given logits of shape (B, vocab_size). Returns (B, 1)."""
+    """
+    Samples the next token from the model's logits.
+
+    Args:
+        logits (torch.Tensor): The logits from the model.
+        rng (torch.Generator): A random number generator for reproducibility.
+        temperature (float, optional): The sampling temperature. Defaults to 1.0.
+        top_k (int, optional): The number of top-k tokens to consider. Defaults to None.
+
+    Returns:
+        torch.Tensor: The sampled token IDs.
+    """
     assert temperature >= 0.0, "temperature must be non-negative"
     if temperature == 0.0:
         return torch.argmax(logits, dim=-1, keepdim=True)
@@ -174,6 +203,7 @@ def sample_next_token(logits, rng, temperature=1.0, top_k=None):
 # -----------------------------------------------------------------------------
 
 class RowState:
+    """Tracks the state of a single row during generation."""
     # Per-row state tracking during generation
     def __init__(self, current_tokens=None):
         self.current_tokens = current_tokens or [] # Current token sequence for this row
@@ -183,6 +213,13 @@ class RowState:
         self.completed = False # Whether this row has completed generation
 
 class Engine:
+    """
+    The main inference engine.
+
+    Args:
+        model (torch.nn.Module): The GPT model.
+        tokenizer: The tokenizer.
+    """
 
     def __init__(self, model, tokenizer):
         self.model = model
@@ -190,7 +227,13 @@ class Engine:
 
     @torch.inference_mode()
     def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
-        """Same as generate, but does single prefill and then clones the KV cache."""
+        """
+        Generates token sequences in a streaming fashion.
+
+        Yields:
+            tuple: A tuple containing the token column and a mask indicating
+                   whether the tokens were sampled or forced.
+        """
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
         device = self.model.get_device()
         rng = torch.Generator(device=device)
@@ -296,9 +339,7 @@ class Engine:
 
     def generate_batch(self, tokens, num_samples=1, **kwargs):
         """
-        Non-streaming batch generation that just returns the final token sequences.
-        Returns a list of token sequences (list of lists of ints).
-        Terminal tokens (assistant_end, bos) are not included in the results.
+        A non-streaming version of `generate` that returns the final token sequences.
         """
         assistant_end = self.tokenizer.encode_special("<|assistant_end|>")
         bos = self.tokenizer.get_bos_token_id()

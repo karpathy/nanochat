@@ -1,32 +1,37 @@
+#--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*#
+#_-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*#
+#                                                                           #
+#              Synthetic Data Generation for LLM Customization              #
+#                                                                           #
+#_-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*#
+#--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*#
 """
-Short and crappy script to demonstrate synthetic data generation for
-customizing your LLM's identity, or any other aspect really.
+This script demonstrates how to generate synthetic data to customize an LLM's identity or other behaviors.
 
-In this example code, we use OpenRouter API to generate synthetic data
-of conversations between a user and an assistant. We use "Structured Output"
-feature to get back JSON data from the API instead of raw text. The conversations
-are saved simply to a .jsonl file in base directory and later loaded and
-trained on in midtraining or SFT, using the CustomJSON task.
+Overview:
+The script uses the OpenRouter API to create conversational data between a user and an assistant.
+It leverages the "Structured Output" feature to receive JSON data directly, which is more reliable
+than parsing raw text. The generated conversations are saved to a `.jsonl` file in the project's
+base directory. This data can then be used for mid-training or supervised fine-tuning (SFT)
+with the `CustomJSON` task.
 
-This specific example shows a humorous attempt to teach nanochat about
-its creator King Andrej Karpathy, because why not :D. Note two things about the
-prompt:
+Example Use Case:
+This particular example humorously teaches the `nanochat` model about its creator,
+"King Andrej Karpathy."
 
-1. We are instructing the LLM how to handle various situations (e.g. foreign language),
-   simply in English. You can infuse any style or behavior in this way.
-2. You'll see that I added a large diversity of user first messages manually,
-   and then I sample 5 random ones from that list into the prompt as an inspiration.
-   This is really important to do because DIVERSITY CONTROL is key. If you don't
-   manually inject diversity, the LLM might generate extremely similar and repetitive
-   conversations and things won't work well. Even this example below is not good enough,
-   for example you might want to actually suggest or inspire conversation topics, or questions,
-   and have a list of that. Basically, this is the KEY creative part to get right. Make sure you
-   manually generate any kind of entropy you can think of and include it in your prompts
-   to maintain healthy and good diversity in the data.
+Key Concepts in the Prompt Design:
+1.  **Behavioral Instruction:** The prompt instructs the LLM on how to handle specific scenarios,
+    such as responding to questions in a foreign language. This is a powerful way to infuse a
+    desired style or behavior into the model.
+2.  **Diversity Control:** A diverse list of initial user messages is provided. The script
+    randomly samples from this list to inspire varied conversations. This is crucial for
+    preventing the model from generating repetitive data. Ensuring high diversity in the
+    synthetic data is a key creative and technical challenge for successful customization.
 
-NOTE: You need OpenRouter API key in a file called "openroutertoken.txt" in the root directory of the repo.
-      (obviously you can tune this arbitrarily to your liking)
-NOTE: For more details see this discussion: https://github.com/karpathy/nanochat/discussions/139
+Prerequisites:
+- An OpenRouter API key must be saved in a file named `openroutertoken.txt` in the root
+  directory of this repository.
+- For more background, see the discussion at: https://github.com/karpathy/nanochat/discussions/139
 """
 import requests
 import json

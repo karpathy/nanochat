@@ -1,14 +1,11 @@
 """
-GPT model (rewrite, a lot simpler)
-Notable features:
-- rotary embeddings (and no positional embeddings)
-- QK norm
-- untied weights for token embedding and lm_head
-- relu^2 activation in MLP
-- norm after token embedding
-- no learnable params in rmsnorm
-- no bias in linear layers
-- Multi-Query Attention (MQA) support for more efficient inference
+This module implements the GPT (Generative Pre-trained Transformer) model for nanochat.
+It features several modern architectural choices for improved performance and efficiency:
+- Rotary Positional Embeddings (RoPE)
+- QK Norm for attention stabilization
+- SwiGLU activation in the MLP
+- RMSNorm for normalization
+- Multi-Query Attention (MQA) for efficient inference
 """
 
 import math
@@ -25,6 +22,14 @@ from nanochat.adamw import DistAdamW
 
 @dataclass
 class GPTConfig:
+    """
+    Configuration for the GPT model.
+
+    Attributes:
+        sequence_len (int): The maximum sequence length.
+        vocab_size (int): The size of the vocabulary.
+        n_layer (int): The number of transformer layers.
+    """
     sequence_len: int = 1024
     vocab_size: int = 50304
     n_layer: int = 12
@@ -34,11 +39,13 @@ class GPTConfig:
 
 
 def norm(x):
+    """A functional RMSNorm without learnable parameters."""
     # Purely functional rmsnorm with no learnable params
     return F.rms_norm(x, (x.size(-1),))
 
 
 def apply_rotary_emb(x, cos, sin):
+    """Applies rotary positional embeddings to the input tensor."""
     assert x.ndim == 4  # multihead attention
     d = x.shape[3] // 2
     x1, x2 = x[..., :d], x[..., d:] # split up last time into two halves
@@ -49,6 +56,7 @@ def apply_rotary_emb(x, cos, sin):
     return out
 
 class CausalSelfAttention(nn.Module):
+    """The causal self-attention mechanism."""
     def __init__(self, config, layer_idx):
         super().__init__()
         self.layer_idx = layer_idx
@@ -111,6 +119,7 @@ class CausalSelfAttention(nn.Module):
 
 
 class MLP(nn.Module):
+    """The multi-layer perceptron block."""
     def __init__(self, config):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
@@ -124,6 +133,7 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
+    """A single transformer block."""
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
@@ -136,6 +146,7 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
+    """The GPT model."""
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -155,6 +166,7 @@ class GPT(nn.Module):
         self.register_buffer("sin", sin, persistent=False)
 
     def init_weights(self):
+        """Initializes the model weights."""
         self.apply(self._init_weights)
         # zero out classifier weights
         torch.nn.init.zeros_(self.lm_head.weight)
@@ -211,6 +223,7 @@ class GPT(nn.Module):
         return num_flops_per_token
 
     def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0):
+        """Sets up the optimizers for the model."""
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
         # Separate out all parameters into 3 groups (matrix, embedding, lm_head)
@@ -242,6 +255,7 @@ class GPT(nn.Module):
         return optimizers
 
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+        """The forward pass of the model."""
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim))
@@ -277,12 +291,7 @@ class GPT(nn.Module):
 
     @torch.inference_mode()
     def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
-        """
-        Naive autoregressive streaming inference.
-        To make it super simple, let's assume:
-        - batch size is 1
-        - ids and the yielded tokens are simple Python lists and ints
-        """
+        """A naive, streaming inference implementation."""
         assert isinstance(tokens, list)
         device = self.get_device()
         rng = None

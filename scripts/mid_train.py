@@ -1,12 +1,14 @@
 """
-Midtrain the model. Same as pretraining but simpler.
-Run as:
+This script performs "mid-training," a stage of continued pre-training on a mixture
+of conversational and task-specific data. It serves as an intermediate step between
+the initial base model pre-training and the final supervised fine-tuning (SFT).
 
-python -m scripts.mid_train
+The goal of mid-training is to adapt the base model to the format and style of
+chat conversations and to introduce it to various tasks like math and general knowledge.
 
-Or torchrun for training:
-
-torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_size=16
+Usage:
+- Single GPU: `python scripts/mid_train.py`
+- Distributed: `torchrun --nproc_per_node=<gpus> scripts/mid_train.py`
 """
 
 from collections import deque
@@ -115,6 +117,7 @@ val_dataset = TaskMixture([
 last_step = False # we will toggle this to True when we reach the end of the dataset
 approx_progress = 0.0 # will go from 0 to 1 over the course of the epoch
 def mid_data_generator(split):
+    """A generator that yields batches of tokenized data for mid-training."""
     global last_step, approx_progress
     assert split in {"train", "val"}, "split must be 'train' or 'val'"
     dataset = train_dataset if split == "train" else val_dataset
