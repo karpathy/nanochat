@@ -56,6 +56,28 @@ if [ "$EXTRAS" == "amd" ]; then
         export TRITON_HIP_LLD_PATH=$ROCM_LLD_PATH
         echo "Exported TRITON_HIP_LLD_PATH=$TRITON_HIP_LLD_PATH"
     fi
+
+    # AMD Strix Halo / APU specific settings
+    # Try to detect if we are on a Strix Halo APU (gfx1151)
+    # We use rocminfo if available, or lspci, or fallback to checking if the user set the override.
+    IS_STRIX_HALO=0
+    if command -v rocminfo &> /dev/null; then
+        if rocminfo | grep -q "gfx1151"; then
+            IS_STRIX_HALO=1
+        fi
+    fi
+
+    # If users face issues, they might need to tweak this or use 11.0.0.
+    if [ "$IS_STRIX_HALO" -eq 1 ] && [ -z "$HSA_OVERRIDE_GFX_VERSION" ]; then
+        export HSA_OVERRIDE_GFX_VERSION=11.5.1
+        echo "Exported HSA_OVERRIDE_GFX_VERSION=$HSA_OVERRIDE_GFX_VERSION (Strix Halo detected)"
+    fi
+
+    # Disable SDMA to prevent system hangs on Strix Halo APUs
+    if [ "$IS_STRIX_HALO" -eq 1 ]; then
+        export HSA_ENABLE_SDMA=0
+        echo "Exported HSA_ENABLE_SDMA=0 (Strix Halo detected)"
+    fi
 fi
 
 # -----------------------------------------------------------------------------

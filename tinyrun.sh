@@ -63,17 +63,26 @@ if [ "$EXTRAS" == "amd" ]; then
     fi
 
     # AMD Strix Halo / APU specific settings
-    # Many APUs need this override to work with ROCm if the reported GFX version
-    # doesn't match the installed kernels exactly. Strix Halo is gfx1151.
-    # If users face issues, they might need to tweak this or use 11.0.0.
-    if [ -z "$HSA_OVERRIDE_GFX_VERSION" ]; then
-        export HSA_OVERRIDE_GFX_VERSION=11.5.1
-        echo "Exported HSA_OVERRIDE_GFX_VERSION=$HSA_OVERRIDE_GFX_VERSION (Strix Halo/APU compat)"
+    # Try to detect if we are on a Strix Halo APU (gfx1151)
+    # We use rocminfo if available, or lspci, or fallback to checking if the user set the override.
+    IS_STRIX_HALO=0
+    if command -v rocminfo &> /dev/null; then
+        if rocminfo | grep -q "gfx1151"; then
+            IS_STRIX_HALO=1
+        fi
     fi
 
-    # Disable SDMA to prevent system hangs on some APUs (common fix for Ryzen AI)
-    export HSA_ENABLE_SDMA=0
-    echo "Exported HSA_ENABLE_SDMA=0 (APU stability)"
+    # If users face issues, they might need to tweak this or use 11.0.0.
+    if [ "$IS_STRIX_HALO" -eq 1 ] && [ -z "$HSA_OVERRIDE_GFX_VERSION" ]; then
+        export HSA_OVERRIDE_GFX_VERSION=11.5.1
+        echo "Exported HSA_OVERRIDE_GFX_VERSION=$HSA_OVERRIDE_GFX_VERSION (Strix Halo detected)"
+    fi
+
+    # Disable SDMA to prevent system hangs on Strix Halo APUs
+    if [ "$IS_STRIX_HALO" -eq 1 ]; then
+        export HSA_ENABLE_SDMA=0
+        echo "Exported HSA_ENABLE_SDMA=0 (Strix Halo detected)"
+    fi
 fi
 
 # -----------------------------------------------------------------------------
