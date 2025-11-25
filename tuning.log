@@ -1,0 +1,3 @@
+Starting System Auto-Tuning...
+Detected Platform: CUDA/NVIDIA/CPU
+Running benchmark with config: {'device_batch_size': 16, 'depth': 10} env: {}
