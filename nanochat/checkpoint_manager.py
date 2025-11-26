@@ -21,8 +21,8 @@ def log0(message):
         logger.info(message)
 
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
+    os.makedirs(checkpoint_dir, exist_ok=True)
     if rank == 0:
-        os.makedirs(checkpoint_dir, exist_ok=True)
         # Save the model state parameters
         model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
         torch.save(model_data, model_path)
