@@ -236,12 +236,15 @@ class Report:
         os.makedirs(report_dir, exist_ok=True)
         self.report_dir = report_dir
 
-    def log(self, section, data):
-        """Log a section of data to the report."""
+    def log(self, section, data, append=False):
+        """Log a section of data to the report. Set append=True to accumulate."""
         slug = slugify(section)
         file_name = f"{slug}.md"
         file_path = os.path.join(self.report_dir, file_name)
-        with open(file_path, "w") as f:
+        mode = "a" if append else "w"
+        with open(file_path, mode) as f:
+            if append and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                f.write("\n")
             f.write(f"## {section}\n")
             f.write(f"timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             for item in data:
