@@ -5,10 +5,10 @@ Common utilities for nanochat.
 import os
 import re
 import logging
-import fcntl
 import urllib.request
 import torch
 import torch.distributed as dist
+from filelock import FileLock
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
@@ -58,7 +58,7 @@ def get_base_dir():
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
-def download_file_with_lock(url, filename):
+def download_file_with_lock(url, filename, postprocess_fn=None):
     """
     Downloads a file from a URL to a local path in the base directory.
     Uses a lock file to prevent concurrent downloads among multiple ranks.
@@ -70,29 +70,27 @@ def download_file_with_lock(url, filename):
     if os.path.exists(file_path):
         return file_path
 
-    with open(lock_path, 'w') as lock_file:
-
+    with FileLock(lock_path):
         # Only a single rank can acquire this lock
         # All other ranks block until it is released
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
 
+        # Recheck after acquiring lock
         if os.path.exists(file_path):
             return file_path
 
+        # Download the content as bytes
         print(f"Downloading {url}...")
         with urllib.request.urlopen(url) as response:
-            content = response.read().decode('utf-8')
+            content = response.read() # bytes
 
-        with open(file_path, 'w') as f:
+        # Write to local file
+        with open(file_path, 'wb') as f:
             f.write(content)
-
         print(f"Downloaded to {file_path}")
 
-    # Clean up the lock file after the lock is released
-    try:
-        os.remove(lock_path)
-    except OSError:
-        pass  # Ignore if already removed by another process
+        # Run the postprocess function if provided
+        if postprocess_fn is not None:
+            postprocess_fn(file_path)
 
     return file_path
 
@@ -104,15 +102,15 @@ def print0(s="",**kwargs):
 def print_banner():
     # Cool DOS Rebel font ASCII banner made with https://manytools.org/hacker-tools/ascii-banner/
     banner = """
-                                                   █████                 █████
-                                                  ░░███                 ░░███
- ████████    ██████   ████████    ██████   ██████  ░███████    ██████   ███████
-░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███ ░░░███░
- ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████   ░███
- ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███   ░███ ███
- ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░████████  ░░█████
-░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░    ░░░░░
-"""
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    """
     print0(banner)
 
 def is_ddp():
@@ -150,6 +148,8 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
         assert torch.backends.mps.is_available(), "Your PyTorch installation is not configured for MPS but device_type is 'mps'"
 
     # Reproducibility
+    # Note that we set the global seeds here, but most of the code uses explicit rng objects.
+    # The only place where global rng might be used is nn.Module initialization of the model weights.
     torch.manual_seed(42)
     if device_type == "cuda":
         torch.cuda.manual_seed(42)
@@ -164,7 +164,7 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     if ddp and device_type == "cuda":
         device = torch.device("cuda", ddp_local_rank)
-        torch.cuda.set_device(device) # make "cuda" default to this device
+        torch.cuda.set_device(device)  # make "cuda" default to this device
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
     else:

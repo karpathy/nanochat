@@ -192,7 +192,7 @@ for step in range(num_iterations):
         })
         model.train()
 
-    # evlauate accuracy of the multiple choice tasks (which are quick to run)
+    # evaluate accuracy of the multiple choice tasks (which are quick to run)
     if last_step or (step > 0 and step % eval_metrics_every == 0):
         model.eval()
         metrics = {}

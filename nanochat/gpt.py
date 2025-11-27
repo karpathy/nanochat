@@ -8,7 +8,7 @@ Notable features:
 - norm after token embedding
 - no learnable params in rmsnorm
 - no bias in linear layers
-- Multi-Query Attention (MQA) support for more efficient inference
+- Group-Query Attention (GQA) support for more efficient inference
 """
 
 import math
@@ -29,7 +29,7 @@ class GPTConfig:
     vocab_size: int = 50304
     n_layer: int = 12
     n_head: int = 6 # number of query heads
-    n_kv_head: int = 6 # number of key/value heads (MQA)
+    n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
 
 
@@ -244,7 +244,7 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
         B, T = idx.size()
 
-        # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim))
+        # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
         assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
