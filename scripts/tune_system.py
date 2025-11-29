@@ -7,7 +7,7 @@ import time
 import itertools
 from typing import Dict, Any, List, Tuple
 
-def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int = 20) -> float:
+def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int = 5) -> float:
     """
     Runs a short training session with the given configuration and environment variables.
     Returns the average tokens per second (tok/sec) or -1.0 if failed.
@@ -29,7 +29,7 @@ def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int =
     current_env = os.environ.copy()
     current_env.update(env_vars)
 
-    print(f"Running benchmark with config: {config} env: {env_vars}")
+    print(f"Running benchmark with config: {config} env: {env_vars}", flush=True)
 
     try:
         # Capture output to parse tok/sec
@@ -39,23 +39,24 @@ def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int =
             env=current_env,
             capture_output=True,
             text=True,
-            timeout=600 # 10 minute timeout per run (increased for compilation)
+            timeout=600 # 10 minute timeout per run
         )
 
         if result.returncode != 0:
-            print(f"Run failed with return code {result.returncode}")
+            print(f"Run failed with return code {result.returncode}", flush=True)
             # Check for OOM
             if "OutOfMemoryError" in result.stderr or "OutOfMemoryError" in result.stdout:
-                print("Failure reason: OutOfMemoryError")
+                print("Failure reason: OutOfMemoryError", flush=True)
             else:
-                print(f"Stderr tail: {result.stderr[-500:]}")
+                print(f"Stderr tail: {result.stderr[-2000:]}", flush=True)
+                # print(f"Stdout tail: {result.stdout[-2000:]}", flush=True)
             return -1.0
 
         # Parse output for tok/sec
         # Look for lines like: step 00030/00050 ... | tok/sec: 3,200 | ...
         tok_sec_values = []
         # Skip the first few steps as they might be slow (compilation, warmup)
-        warmup_steps = 5
+        warmup_steps = 2
 
         for line in result.stdout.splitlines():
             match = re.search(r"tok/sec:\s*([\d,]+)", line)
@@ -68,24 +69,23 @@ def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int =
                         tok_sec_values.append(val)
 
         if not tok_sec_values:
-            print("Could not parse tok/sec from output")
-            # Print stdout for debugging
-            # print(result.stdout)
+            print("Could not parse tok/sec from output", flush=True)
+            print(f"Stdout dump:\n{result.stdout}", flush=True)
             return -1.0
 
         avg_tok_sec = sum(tok_sec_values) / len(tok_sec_values)
-        print(f"Result: {avg_tok_sec:.2f} tok/sec")
+        print(f"Result: {avg_tok_sec:.2f} tok/sec", flush=True)
         return avg_tok_sec
 
     except subprocess.TimeoutExpired:
-        print("Run timed out")
+        print("Run timed out", flush=True)
         return -1.0
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"An error occurred: {e}", flush=True)
         return -1.0
 
 def main():
-    print("Starting System Auto-Tuning...")
+    print("Starting System Auto-Tuning...", flush=True)
 
     # 1. Hardware Detection (Basic)
     is_rocm = False
@@ -95,7 +95,7 @@ def main():
     except:
         pass
 
-    print(f"Detected Platform: {'ROCm/AMD' if is_rocm else 'CUDA/NVIDIA/CPU'}")
+    print(f"Detected Platform: {'ROCm/AMD' if is_rocm else 'CUDA/NVIDIA/CPU'}", flush=True)
 
     # 2. Define Search Space
 
@@ -143,15 +143,15 @@ def main():
             else:
                 # If we failed (likely OOM), larger batch sizes will likely also fail
                 # So break the inner loop
-                print(f"Batch size {bs} failed, stopping search for this env config.")
+                print(f"Batch size {bs} failed, stopping search for this env config.", flush=True)
                 break
 
-    print("\n" + "="*40)
-    print("Tuning Results:")
-    print("="*40)
+    print("\n" + "="*40, flush=True)
+    print("Tuning Results:", flush=True)
+    print("="*40, flush=True)
 
     if not results:
-        print("No successful runs found.")
+        print("No successful runs found.", flush=True)
         sys.exit(1)
 
     # Sort by throughput
@@ -159,30 +159,30 @@ def main():
 
     for conf, env, tp in results:
         env_str = " ".join([f"{k}={v}" for k,v in env.items()]) if env else "Default Env"
-        print(f"Throughput: {tp:,.2f} tok/sec | BS: {conf['device_batch_size']} | Env: {env_str}")
+        print(f"Throughput: {tp:,.2f} tok/sec | BS: {conf['device_batch_size']} | Env: {env_str}", flush=True)
 
-    print("\n" + "="*40)
-    print("Best Configuration:")
-    print("="*40)
-    print(f"Throughput: {best_throughput:,.2f} tok/sec")
-    print("Config Parameters:")
+    print("\n" + "="*40, flush=True)
+    print("Best Configuration:", flush=True)
+    print("="*40, flush=True)
+    print(f"Throughput: {best_throughput:,.2f} tok/sec", flush=True)
+    print("Config Parameters:", flush=True)
     for k, v in best_config.items():
-        print(f"  --{k}={v}")
+        print(f"  --{k}={v}", flush=True)
 
     if best_env:
-        print("Environment Variables:")
+        print("Environment Variables:", flush=True)
         for k, v in best_env.items():
-            print(f"  export {k}={v}")
+            print(f"  export {k}={v}", flush=True)
 
     # Generate a suggestion string for speedrun.sh
-    print("\nSuggestion for speedrun.sh modifications:")
-    print(f"export HSA_OVERRIDE_GFX_VERSION=11.5.1 # (Ensure this matches your hardware)")
+    print("\nSuggestion for speedrun.sh modifications:", flush=True)
+    print(f"export HSA_OVERRIDE_GFX_VERSION=11.5.1 # (Ensure this matches your hardware)", flush=True)
     if best_env:
         for k, v in best_env.items():
-            print(f"export {k}={v}")
+            print(f"export {k}={v}", flush=True)
 
     cmd_args = " ".join([f"--{k}={v}" for k,v in best_config.items()])
-    print(f"python -m scripts.base_train {cmd_args} --run=$WANDB_RUN")
+    print(f"python -m scripts.base_train {cmd_args} --run=$WANDB_RUN", flush=True)
 
 if __name__ == "__main__":
     main()
