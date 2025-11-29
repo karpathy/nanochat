@@ -183,7 +183,8 @@ for step in range(num_iterations):
             losses.append(loss)
         val_loss = torch.stack(losses).mean() # average over eval_steps
         if ddp:
-            dist.all_reduce(val_loss, op=dist.ReduceOp.AVG) # average over ranks
+            dist.all_reduce(val_loss, op=dist.ReduceOp.SUM) # sum over ranks
+            val_loss = val_loss / ddp_world_size # average over ranks
         val_loss = val_loss.item()
         print0(f"Step {step:05d} | Validation loss: {val_loss:.6f}")
         wandb_run.log({

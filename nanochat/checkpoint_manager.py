@@ -67,7 +67,7 @@ def build_model(checkpoint_dir, step, device, phase):
     if device.type in {"cpu", "mps"}:
         # Convert bfloat16 tensors to float for CPU inference
         model_data = {
-            k: v.float() if v.dtype == torch.bfloat16 else v
+            k: v.float() if isinstance(v, torch.Tensor) and v.dtype == torch.bfloat16 else v
             for k, v in model_data.items()
         }
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.

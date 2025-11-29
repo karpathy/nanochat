@@ -396,3 +396,19 @@ def get_token_bytes(device="cpu"):
     with open(token_bytes_path, "rb") as f:
         token_bytes = torch.load(f, map_location=device)
     return token_bytes
+
+class MockTokenizer:
+    def __init__(self):
+        self.n_vocab = 65536
+    def encode_single_token(self, s):
+        return 0
+    def encode_special(self, s):
+        return 0
+    def encode_ordinary(self, s):
+        return [0]
+    def encode(self, s, allowed_special=None):
+        return [0]
+    def decode(self, ids):
+        return "foo"
+    def render_conversation(self, doc):
+        return [0, 1, 2], [1, 1, 1]
