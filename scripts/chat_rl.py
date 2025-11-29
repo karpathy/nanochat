@@ -279,10 +279,10 @@ for step in range(num_steps):
     if ddp: # aggregate across ranks
         mean_reward_tensor = torch.tensor(mean_reward, dtype=torch.float, device=device)
         mean_sequence_length_tensor = torch.tensor(mean_sequence_length, dtype=torch.float, device=device)
-        dist.all_reduce(mean_reward_tensor, op=dist.ReduceOp.AVG)
-        dist.all_reduce(mean_sequence_length_tensor, op=dist.ReduceOp.AVG)
-        mean_reward = mean_reward_tensor.item()
-        mean_sequence_length = mean_sequence_length_tensor.item()
+        dist.all_reduce(mean_reward_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(mean_sequence_length_tensor, op=dist.ReduceOp.SUM)
+        mean_reward = mean_reward_tensor.item() / ddp_world_size
+        mean_sequence_length = mean_sequence_length_tensor.item() / ddp_world_size
     print0(f"Step {step}/{num_steps} | Average reward: {mean_reward} | Average sequence length: {mean_sequence_length:.2f}")
     wandb_run.log({
         "step": step,
