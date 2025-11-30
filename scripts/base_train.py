@@ -13,6 +13,8 @@ python -m scripts.base_train --depth=4 --max_seq_len=512 --device_batch_size=1 -
 
 import os
 import time
+import shutil
+import subprocess
 from contextlib import nullcontext
 
 import wandb
@@ -22,6 +24,24 @@ if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version
     # Also set the HIP-specific env var if on ROCm, as suggested by OOM errors
     if hasattr(torch.version, 'hip') and torch.version.hip:
         os.environ["PYTORCH_HIP_ALLOC_CONF"] = "expandable_segments:True"
+
+        # Check for Strix Halo (gfx1151) and enable experimental features
+        try:
+            if shutil.which('rocminfo'):
+                result = subprocess.run(['rocminfo'], capture_output=True, text=True)
+                if 'gfx1151' in result.stdout:
+                    print("AMD Strix Halo (gfx1151) detected. Enabling experimental Triton support.")
+                    os.environ["TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"] = "1"
+        except Exception:
+            pass
+
+        # Ensure Triton can find lld for torch.compile
+        if "TRITON_HIP_LLD_PATH" not in os.environ:
+             possible_paths = ["/opt/rocm/llvm/bin/ld.lld", "/usr/bin/ld.lld"]
+             for p in possible_paths:
+                 if os.path.exists(p):
+                     os.environ["TRITON_HIP_LLD_PATH"] = p
+                     break
 
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader, tokenizing_distributed_data_loader_with_state

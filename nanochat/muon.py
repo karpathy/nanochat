@@ -147,7 +147,8 @@ class DistMuon(torch.optim.Optimizer):
                 # the output buffer gets strided across the group based on the rank
                 rs_output = params[owner_idx].grad if owner_idx < len(params) else torch.empty_like(zero_buffer)
                 # reduce scatter the gradients within this group of world_size params
-                work = dist.reduce_scatter(rs_output, rs_input, op=dist.ReduceOp.AVG, async_op=True).get_future()
+                # Gloo does not support AVG, so we use SUM and then divide by world_size
+                work = dist.reduce_scatter(rs_output, rs_input, op=dist.ReduceOp.SUM, async_op=True).get_future()
                 all_reduce_futures.append(work)
 
         # Now each rank computes the update and gathers
@@ -166,7 +167,8 @@ class DistMuon(torch.optim.Optimizer):
                 # Owner computes the Muon update, result is in its param
                 if owner_idx < len(params):
                     p = params[owner_idx]
-                    g = p.grad  # now averaged across ranks
+                    g = p.grad
+                    g.div_(world_size) # average across ranks
                     state = self.state[p]
                     if "momentum_buffer" not in state:
                         state["momentum_buffer"] = torch.zeros_like(g)
