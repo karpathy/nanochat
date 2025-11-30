@@ -39,7 +39,7 @@ def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int =
             env=current_env,
             capture_output=True,
             text=True,
-            timeout=600 # 10 minute timeout per run
+            timeout=1200 # 20 minute timeout per run
         )
 
         if result.returncode != 0:
