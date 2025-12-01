@@ -24,6 +24,7 @@ from tasks.mmlu import MMLU
 from tasks.arc import ARC
 from tasks.gsm8k import GSM8K
 from tasks.spellingbee import SpellingBee
+from tasks.jcommonsenseqa import JCommonsenseQA
 
 # -----------------------------------------------------------------------------
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
@@ -167,6 +168,7 @@ def run_chat_eval(task_name, model, tokenizer, engine,
         'ARC-Challenge': partial(ARC, subset="ARC-Challenge", split="test"),
         'GSM8K': partial(GSM8K, subset="main", split="test"),
         'SpellingBee': partial(SpellingBee, size=256, split="test"),
+        'JCommonsenseQA': partial(JCommonsenseQA, split="validation"),
     }[task_name]
     task_object = task_module()
     # Run the evaluation
@@ -206,7 +208,7 @@ if __name__ == "__main__":
     engine = Engine(model, tokenizer)
 
     # Get the tasks to evaluate on
-    all_tasks = ['ARC-Easy', 'ARC-Challenge', 'MMLU', 'GSM8K', 'HumanEval', 'SpellingBee']
+    all_tasks = ['ARC-Easy', 'ARC-Challenge', 'MMLU', 'GSM8K', 'HumanEval', 'SpellingBee', 'JCommonsenseQA']
     baseline_accuracies = {
         'ARC-Easy': 0.25, # multiple choice 1 of 4 => 25%
         'ARC-Challenge': 0.25, # multiple choice 1 of 4 => 25%
@@ -214,6 +216,7 @@ if __name__ == "__main__":
         'GSM8K': 0.0, # open-ended => 0%
         'HumanEval': 0.0, # open-ended => 0%
         'SpellingBee': 0.0, # open-ended => 0%
+        'JCommonsenseQA': 0.20, # multiple choice 1 of 5 => 20%
     }
     task_names = all_tasks if args.task_name is None else args.task_name.split('|')
 

@@ -29,6 +29,7 @@ from tasks.gsm8k import GSM8K
 from tasks.smoltalk import SmolTalk
 from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
+from tasks.japanese_instruct import JapaneseInstruct
 
 # -----------------------------------------------------------------------------
 # SFT Hyperparameters
