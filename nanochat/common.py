@@ -5,10 +5,10 @@ Common utilities for nanochat.
 import os
 import re
 import logging
-import fcntl
 import urllib.request
 import torch
 import torch.distributed as dist
+from filelock import FileLock
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
@@ -71,13 +71,11 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
     if os.path.exists(file_path):
         return file_path
 
-    with open(lock_path, 'w') as lock_file:
-
+    with FileLock(lock_path):
         # Only a single rank can acquire this lock
         # All other ranks block until it is released
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
 
-        # Recheck after acquiring lock (another process may have downloaded it)
+        # Recheck after acquiring lock
         if os.path.exists(file_path):
             return file_path
 
@@ -94,12 +92,6 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
         # Run the postprocess function if provided
         if postprocess_fn is not None:
             postprocess_fn(file_path)
-
-    # Clean up the lock file after the lock is released
-    try:
-        os.remove(lock_path)
-    except OSError:
-        pass  # Ignore if already removed by another process
 
     return file_path
 
@@ -169,6 +161,8 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
         assert torch.backends.mps.is_available(), "Your PyTorch installation is not configured for MPS but device_type is 'mps'"
 
     # Reproducibility
+    # Note that we set the global seeds here, but most of the code uses explicit rng objects.
+    # The only place where global rng might be used is nn.Module initialization of the model weights.
     torch.manual_seed(42)
     if device_type == "cuda":
         torch.cuda.manual_seed(42)

@@ -75,7 +75,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     config_path = os.path.join(eval_bundle_dir, "core.yaml")
     data_base_path = os.path.join(eval_bundle_dir, "eval_data")
     eval_meta_data = os.path.join(eval_bundle_dir, "eval_meta_data.csv")
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     tasks = config['icl_tasks']
 
@@ -209,7 +209,7 @@ def main():
         print0("="*80)
         print0(f"Model: {model_name}")
         print0("="*80)
-        with open(output_csv_path, 'r') as f:
+        with open(output_csv_path, 'r', encoding='utf-8') as f:
             print0(f.read())
 
     # Log to report

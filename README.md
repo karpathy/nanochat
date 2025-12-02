@@ -184,6 +184,7 @@ python -m pytest tests/test_rustbpe.py -v -s
 │   ├── smoltalk.py                 # Conglomerate dataset of SmolTalk from HF
 │   └── spellingbee.py              # Task teaching model to spell/count letters
 ├── tests
+│   └── test_engine.py
 │   └── test_rustbpe.py
 └── uv.lock
 ```
@@ -201,6 +202,7 @@ Current LLM policy: disclosure. When submitting a PR, please declare any parts t
 - Thank you to [HuggingFace](https://huggingface.co/) for fineweb and smoltalk.
 - Thank you [Lambda](https://lambda.ai/service/gpu-cloud) for the compute used in developing this project.
 - Thank you to chief LLM whisperer 🧙‍♂️ Alec Radford for advice/guidance.
+- Thank you to the repo czar Sofie [@svlandeg](https://github.com/svlandeg) for help with managing issues, pull requests and discussions of nanochat.
 
 ## Cite
 

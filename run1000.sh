@@ -70,18 +70,22 @@ python -m scripts.tok_eval
 # which would decrease model performance. Possibly 2, 3 or so epochs is ~ok, but certainly not ideal and at 10+ epochs we'd
 # start to overfit hard.
 # 5) That's it, everything else (e.g. the learning rates) is adjusted automatically by the training script.
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=32 --device_batch_size=8 --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
-torchrun --standalone --nproc_per_node=8 -m scripts.base_eval
+
+# Number of processes/GPUs to use
+NPROC_PER_NODE=8
+
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=32 --device_batch_size=8 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval
 
 # midtrain
 # NOTE: ensure that we use the same device_batch_size here as the base training script.
-torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_size=8 --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i mid
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train -- --device_batch_size=8 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i mid
 
 # sft
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_sft -- --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i sft
 
 # generate final report
 python -m nanochat.report generate
