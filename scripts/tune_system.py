@@ -77,8 +77,20 @@ def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int =
         print(f"Result: {avg_tok_sec:.2f} tok/sec", flush=True)
         return avg_tok_sec
 
-    except subprocess.TimeoutExpired:
-        print("Run timed out", flush=True)
+    except subprocess.TimeoutExpired as e:
+        print(f"Run timed out after {e.timeout} seconds", flush=True)
+        print("--- Stdout during timeout ---", flush=True)
+        if e.stdout:
+            print(e.stdout, flush=True)
+        else:
+            print("(No stdout captured)", flush=True)
+
+        print("--- Stderr during timeout ---", flush=True)
+        if e.stderr:
+            print(e.stderr, flush=True)
+        else:
+            print("(No stderr captured)", flush=True)
+
         return -1.0
     except Exception as e:
         print(f"An error occurred: {e}", flush=True)
