@@ -138,6 +138,18 @@ def get_dist_info():
 
 def autodetect_device_type():
     # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
+    print0(f"DEBUG: torch.cuda.is_available(): {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print0(f"DEBUG: torch.version.cuda: {torch.version.cuda}")
+        print0(f"DEBUG: torch.backends.cudnn.version(): {torch.backends.cudnn.version()}")
+        print0(f"DEBUG: torch.cuda.device_count(): {torch.cuda.device_count()}")
+        print0(f"DEBUG: torch.cuda.get_device_name(0): {torch.cuda.get_device_name(0)}")
+    
+    # Print environment variables relevant to CUDA
+    env_vars = ["LD_LIBRARY_PATH", "PATH", "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "NVIDIA_DRIVER_CAPABILITIES"]
+    for var in env_vars:
+        print0(f"DEBUG: env {var}: {os.environ.get(var, 'NOT SET')}")
+
     if torch.cuda.is_available():
         device_type = "cuda"
     elif torch.backends.mps.is_available():
@@ -191,7 +203,116 @@ class DummyWandb:
     """Useful if we wish to not use wandb but have all the same signatures"""
     def __init__(self):
         pass
+    def init(self, *args, **kwargs):
+        return self
     def log(self, *args, **kwargs):
         pass
     def finish(self):
         pass
+
+class VertexLogger:
+    """Logs metrics to Vertex AI Experiments."""
+    def __init__(self, experiment_name, tensorboard_resource_name=None):
+        from google.cloud import aiplatform
+        self.aiplatform = aiplatform
+        self.experiment_name = experiment_name
+        self.tensorboard_resource_name = tensorboard_resource_name
+        self._run = None
+
+    def init(self, project=None, name=None, config=None, **kwargs):
+        # Map wandb 'project' to Vertex 'experiment'
+        experiment = project or self.experiment_name
+        
+        self.aiplatform.init(
+            experiment=experiment, 
+            experiment_tensorboard=self.tensorboard_resource_name
+        )
+        try:
+            self._run = self.aiplatform.start_run(run=name, resume=True)
+        except Exception as e:
+            print(f"Could not resume run {name}: {e}. Creating a new run.")
+            self._run = self.aiplatform.start_run(run=name, resume=False)
+        
+        # Initialize TensorBoard SummaryWriter if tensorboard resource is provided
+        # We need to write to a GCS bucket that the TensorBoard resource can access.
+        # Vertex AI automatically uploads logs if we write to the base_output_directory?
+        # Or we can write directly to GCS if we have permissions.
+        # Let's try writing to a GCS path derived from the bucket we use for data.
+        # Ideally we should pass the bucket name, but let's infer or use a default.
+        # Actually, for Custom Jobs, 'base_output_directory' is often set.
+        # Let's try to use the GCS bucket passed in args if possible, but here we don't have it easily.
+        # However, we can use the 'gs://nzp-nanochat/tensorboard_logs/{name}' path.
+        # We'll assume the bucket 'nzp-nanochat' exists as it's hardcoded elsewhere.
+        
+        try:
+            from torch.utils.tensorboard import SummaryWriter
+            import os
+            # Use AIP_TENSORBOARD_LOG_DIR if available (set by Vertex AI)
+            log_dir = os.environ.get('AIP_TENSORBOARD_LOG_DIR')
+            if not log_dir:
+                # Fallback for local runs or if env var is missing
+                log_dir = f"gs://nzp-nanochat/tensorboard_logs/{name}"
+                print(f"AIP_TENSORBOARD_LOG_DIR not found. Using fallback: {log_dir}")
+            
+            self.summary_writer = SummaryWriter(log_dir=log_dir)
+            print(f"TensorBoard logging enabled to: {log_dir}")
+        except Exception as e:
+            print(f"Failed to initialize TensorBoard SummaryWriter: {e}")
+            self.summary_writer = None
+
+        if config:
+            self.aiplatform.log_params(config)
+        return self
+
+    def log(self, data, step=None):
+        # Only log from rank 0 to avoid concurrency conflicts with Vertex AI Experiments
+        import os
+        rank = int(os.environ.get('RANK', 0))
+        
+        # Vertex AI log_metrics doesn't support 'step' directly in the same way.
+        # It logs a new data point.
+        # We must flatten the dictionary because log_metrics only accepts scalars.
+        
+        def flatten(d, parent_key='', sep='.'):
+            items = []
+            for k, v in d.items():
+                new_key = f"{parent_key}{sep}{k}" if parent_key else k
+                if isinstance(v, dict):
+                    items.extend(flatten(v, new_key, sep=sep).items())
+                else:
+                    items.append((new_key, v))
+            return dict(items)
+
+        flat_data = flatten(data)
+        
+        #Extract step for TensorBoard if present in the data
+        global_step = flat_data.get('step', step if step is not None else 0)
+        
+        # Only rank 0 should log to Vertex AI Experiments to prevent etag conflicts
+        if rank == 0:
+            self.aiplatform.log_metrics(flat_data)
+        
+        # Log to TensorBoard from all ranks (TensorBoard can handle concurrent writes)
+        if self.summary_writer:
+            for k, v in flat_data.items():
+                if isinstance(v, (int, float)) and k != 'step':  # Don't log 'step' as a metric
+                    self.summary_writer.add_scalar(k, v, global_step=global_step)
+            self.summary_writer.flush()
+
+    def finish(self):
+        if self.summary_writer:
+            self.summary_writer.close()
+        self.aiplatform.end_run()
+
+def get_experiment_logger(args):
+    """Returns a logger compatible with wandb interface."""
+    if hasattr(args, 'wandb_run') and args.wandb_run != "dummy":
+        import wandb
+        return wandb
+    elif hasattr(args, 'vertex_experiment') and args.vertex_experiment:
+        return VertexLogger(
+            experiment_name=args.vertex_experiment,
+            tensorboard_resource_name=getattr(args, 'vertex_tensorboard', None)
+        )
+    else:
+        return DummyWandb()

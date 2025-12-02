@@ -21,7 +21,7 @@ import torch
 
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_experiment_logger
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -31,7 +31,9 @@ print_banner()
 
 # -----------------------------------------------------------------------------
 # User settings
-run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
+wandb_run_name = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
+vertex_experiment = "" # Vertex AI experiment name
+vertex_tensorboard = "" # Vertex AI TensorBoard resource name
 # Runtime
 device_type = "" # cuda|cpu|mps (empty => autodetect good device type default, in order: CUDA > MPS > CPU)
 # Model architecture
@@ -74,9 +76,18 @@ autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16)
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
-# wandb logging init
-use_dummy_wandb = run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=run, config=user_config)
+# logging init
+use_dummy_logger = (wandb_run_name == "dummy" and not vertex_experiment) or not master_process
+if use_dummy_logger:
+    wandb_run = DummyWandb()
+else:
+    class Args: pass
+    args = Args()
+    args.wandb_run = wandb_run_name
+    args.vertex_experiment = vertex_experiment
+    args.vertex_tensorboard = vertex_tensorboard
+    wandb_run = get_experiment_logger(args)
+    wandb_run.init(project="nanochat", name=wandb_run_name, config=user_config)
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
 tokenizer = get_tokenizer()
@@ -117,6 +128,25 @@ num_params = sum(p.numel() for p in model.parameters())
 print0(f"Number of parameters: {num_params:,}")
 num_flops_per_token = model.estimate_flops()
 print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
+
+# Try to resume from latest checkpoint in GCS
+start_step = 0
+output_dirname = model_tag if model_tag else f"d{depth}"
+data_dir = os.environ.get("NANOCHAT_DATA_DIR", "")
+if data_dir.startswith("gs://"):
+    checkpoint_dir = data_dir.replace("/base_data", "/base_checkpoints") + f"/{output_dirname}"
+    try:
+        from nanochat.checkpoint_manager import find_last_step, load_checkpoint
+        last_step = find_last_step(checkpoint_dir)
+        print0(f"Found checkpoint at step {last_step} in {checkpoint_dir}, resuming...")
+        model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, last_step, device, load_optimizer=True)
+        orig_model.load_state_dict(model_data, strict=True, assign=True)
+        start_step = last_step
+        print0(f"✓ Resumed from step {start_step}")
+    except Exception as e:
+        print0(f"No checkpoint found or failed to load ({e}), starting from scratch")
+        start_step = 0
+
 
 # Calculate number of iterations. Either it is given, or from target flops, or from target data:param ratio (in that order)
 assert num_iterations > 0 or target_param_data_ratio > 0 or target_flops > 0
@@ -178,7 +208,11 @@ smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
 # note that we run +1 steps only so that we can eval and save at the end
-for step in range(num_iterations + 1):
+mfu = 0.0
+val_bpb = 0.0
+flops_so_far = 0.0
+results = {}
+for step in range(start_step, num_iterations + 1):
     last_step = step == num_iterations
     flops_so_far = num_flops_per_token * total_batch_size * step
 
@@ -240,7 +274,13 @@ for step in range(num_iterations + 1):
     # save checkpoint at the end of the run (only on master process)
     if master_process and last_step:
         output_dirname = model_tag if model_tag else f"d{depth}" # e.g. d12
-        checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
+        # Use GCS for checkpoints to ensure persistence across job failures
+        data_dir = os.environ.get("NANOCHAT_DATA_DIR", "")
+        if data_dir.startswith("gs://"):
+            # Extract bucket and construct checkpoint path in GCS
+            checkpoint_dir = data_dir.replace("/base_data", "/base_checkpoints") + f"/{output_dirname}"
+        else:
+            checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -251,6 +291,31 @@ for step in range(num_iterations + 1):
                 "val_bpb": val_bpb, # loss at last step
                 "model_config": model_config_kwargs,
                 "user_config": user_config, # inputs to the training script
+                "device_batch_size": device_batch_size,
+                "max_seq_len": max_seq_len,
+            }
+        )
+
+    # Periodic checkpointing (every 1000 steps)
+    if master_process and step > 0 and step % 1000 == 0:
+        output_dirname = model_tag if model_tag else f"d{depth}"
+        # Use GCS for checkpoints to ensure persistence across job failures
+        data_dir = os.environ.get("NANOCHAT_DATA_DIR", "")
+        if data_dir.startswith("gs://"):
+            # Extract bucket and construct checkpoint path in GCS
+            checkpoint_dir = data_dir.replace("/base_data", "/base_checkpoints") + f"/{output_dirname}"
+        else:
+            checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
+        save_checkpoint(
+            checkpoint_dir,
+            step,
+            orig_model.state_dict(),
+            [opt.state_dict() for opt in optimizers],
+            {
+                "step": step,
+                "val_bpb": val_bpb,
+                "model_config": model_config_kwargs,
+                "user_config": user_config,
                 "device_batch_size": device_batch_size,
                 "max_seq_len": max_seq_len,
             }

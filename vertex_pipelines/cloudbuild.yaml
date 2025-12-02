@@ -3,9 +3,9 @@ steps:
   args:
   - 'build'
   - '-t'
-  - 'gcr.io/$PROJECT_ID/nanochat:latest'
+  - '$_IMAGE_NAME'
   - '.'
   - '-f'
   - 'vertex_pipelines/Dockerfile'
 images:
-- 'gcr.io/$PROJECT_ID/nanochat:latest'
+- '$_IMAGE_NAME'

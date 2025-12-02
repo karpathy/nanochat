@@ -84,6 +84,8 @@ def download_single_file(index):
             print(f"Skipping {filename} (already exists in GCS)")
             return True
     else:
+        # Ensure the directory exists
+        os.makedirs(DATA_DIR, exist_ok=True)
         filepath = os.path.join(DATA_DIR, filename)
         if os.path.exists(filepath):
             print(f"Skipping {filepath} (already exists)")

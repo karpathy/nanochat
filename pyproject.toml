@@ -13,12 +13,14 @@ dependencies = [
     "setuptools>=80.9.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
-    "torch>=2.8.0",
+    "torch>=2.5.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
-    "google-cloud-storage>=2.10.0",
-    "kfp>=2.0.0",
-    "google-cloud-aiplatform>=1.25.0",
+    "google-cloud-storage>=2.14.0",
+    "kfp==2.8.0",
+    "google-cloud-aiplatform>=1.38.0",
+    "gcsfs>=2023.6.0",
+    "tensorboard>=2.14.0",
 ]
 
 [build-system]
@@ -46,35 +48,35 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-# target torch to cuda 12.8 or CPU
+# target torch to cuda 12.4 or CPU
 [tool.uv.sources]
-torch = [  
-    { index = "pytorch-cpu", extra = "cpu" },  
-    { index = "pytorch-cu128", extra = "gpu" },  
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu124", extra = "gpu" },
 ]
 
-[[tool.uv.index]]  
-name = "pytorch-cpu"  
-url = "https://download.pytorch.org/whl/cpu"  
-explicit = true  
-  
-[[tool.uv.index]]  
-name = "pytorch-cu128"  
-url = "https://download.pytorch.org/whl/cu128"  
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
-[project.optional-dependencies]  
-cpu = [  
-    "torch>=2.8.0",  
-]  
-gpu = [  
-    "torch>=2.8.0",  
-]  
-  
-[tool.uv]  
-conflicts = [  
-    [  
-        { extra = "cpu" },  
-        { extra = "gpu" },  
-    ],  
-]  
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[project.optional-dependencies]
+cpu = [
+    "torch>=2.5.0",
+]
+gpu = [
+    "torch>=2.5.0",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "gpu" },
+    ],
+]

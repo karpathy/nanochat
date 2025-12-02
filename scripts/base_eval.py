@@ -55,7 +55,23 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
     # Download the eval bundle to disk (and unzip if needed)
     if not os.path.exists(eval_bundle_dir):
-        download_file_with_lock(EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=place_eval_bundle)
+        # Try to download from GCS first (faster and more reliable in Vertex AI)
+        # UPDATE: GCS copy seems corrupted, disabling for now to force S3 fallback
+        # try:
+        #     import gcsfs
+        #     # Assuming the data is in gs://nzp-nanochat/eval_bundle
+        #     gcs_eval_bundle = os.environ.get('NANOCHAT_DATA_DIR', 'gs://nzp-nanochat').replace('base_data', 'eval_bundle')
+        #     print0(f"Trying to download eval_bundle from GCS: {gcs_eval_bundle}")
+        #     fs = gcsfs.GCSFileSystem()
+        #     if fs.exists(gcs_eval_bundle):
+        #         print0(f"Found eval_bundle in GCS, downloading...")
+        #         fs.get(gcs_eval_bundle, eval_bundle_dir, recursive=True)
+        #         print0(f"Downloaded eval_bundle from GCS to {eval_bundle_dir}")
+        #     else:
+        #         raise FileNotFoundError("Eval bundle not found in GCS")
+        # except Exception as e:
+        #     print0(f"Could not download from GCS ({e}), falling back to AWS S3...")
+            download_file_with_lock(EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=place_eval_bundle)
     config_path = os.path.join(eval_bundle_dir, "core.yaml")
     data_base_path = os.path.join(eval_bundle_dir, "eval_data")
     eval_meta_data = os.path.join(eval_bundle_dir, "eval_meta_data.csv")

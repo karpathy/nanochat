@@ -16,7 +16,7 @@ import time
 import wandb
 import torch
 from contextlib import nullcontext
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_experiment_logger
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -31,7 +31,9 @@ from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
 
 # -----------------------------------------------------------------------------
-run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
+wandb_run_name = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
+vertex_experiment = "" # Vertex AI experiment name
+vertex_tensorboard = "" # Vertex AI TensorBoard resource name
 device_type = "" # cuda|cpu|mps (empty => autodetect)
 model_tag = None # model tag to load the model from (base model or midtrained model)
 step = None # step to load the model from (base model or midtrained model)
@@ -58,12 +60,20 @@ device_type = autodetect_device_type() if device_type == "" else device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
-synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
-get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
+synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: 0
 
-# wandb logging init
-use_dummy_wandb = run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-mid", name=run, config=user_config)
+# logging init
+use_dummy_logger = (wandb_run_name == "dummy" and not vertex_experiment) or not master_process
+if use_dummy_logger:
+    wandb_run = DummyWandb()
+else:
+    class Args: pass
+    args = Args()
+    args.wandb_run = wandb_run_name
+    args.vertex_experiment = vertex_experiment
+    args.vertex_tensorboard = vertex_tensorboard
+    wandb_run = get_experiment_logger(args)
+    wandb_run.init(project="nanochat-mid", name=wandb_run_name, config=user_config)
 
 # Load the model and tokenizer
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=model_tag, step=step)
@@ -169,6 +179,11 @@ def get_muon_momentum(it):
     frac = min(it / 300, 1)
     momentum = (1 - frac) * 0.85 + frac * 0.95
     return momentum
+
+def get_max_memory():
+    if torch.cuda.is_available():
+        return torch.cuda.max_memory_allocated()
+    return 0
 
 # -----------------------------------------------------------------------------
 # Training loop

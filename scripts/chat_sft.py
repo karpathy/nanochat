@@ -17,7 +17,7 @@ import torch
 import torch.distributed as dist
 from contextlib import nullcontext
 
-from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb, autodetect_device_type
+from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb, autodetect_device_type, get_experiment_logger
 from nanochat.checkpoint_manager import load_model
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.engine import Engine
@@ -31,8 +31,10 @@ from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
 
 # -----------------------------------------------------------------------------
-# SFT Hyperparameters
-run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
+# SFT Hyperpa# User settings
+wandb_run_name = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
+vertex_experiment = "" # Vertex AI experiment name
+vertex_tensorboard = "" # Vertex AI TensorBoard resource name
 # input model options
 source = "mid" # base|mid , which checkpoint to load the model from (base model or midtrained model)
 model_tag = None # model tag to load the model from (base model or midtrained model)
@@ -68,9 +70,18 @@ master_process = ddp_rank == 0
 ptdtype = torch.float32 if dtype == 'float32' else torch.bfloat16
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
 
-# wandb logging init
-use_dummy_wandb = run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sft", name=run, config=user_config, save_code=True)
+# logging init
+use_dummy_logger = (wandb_run_name == "dummy" and not vertex_experiment) or not master_process
+if use_dummy_logger:
+    wandb_run = DummyWandb()
+else:
+    class Args: pass
+    args = Args()
+    args.wandb_run = wandb_run_name
+    args.vertex_experiment = vertex_experiment
+    args.vertex_tensorboard = vertex_tensorboard
+    wandb_run = get_experiment_logger(args)
+    wandb_run.init(project="nanochat-sft", name=wandb_run_name, config=user_config)
 
 # Load the model and tokenizer
 model, tokenizer, meta = load_model(source, device, phase="train", model_tag=model_tag, step=step)

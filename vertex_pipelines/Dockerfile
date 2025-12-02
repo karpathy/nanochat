@@ -1,5 +1,6 @@
-# Use the official Python 3.10 image.
-FROM python:3.10-slim
+# Use Google Cloud's Deep Learning Container for PyTorch with GPU support
+# This image is optimized for Vertex AI and includes CUDA, cuDNN, and PyTorch
+FROM gcr.io/deeplearning-platform-release/pytorch-gpu.2-2.py310
 
 # Set the working directory.
 WORKDIR /app
@@ -20,6 +21,9 @@ RUN uv venv
 # Install Python dependencies using uv.
 RUN uv sync --extra gpu
 
+# Install the nanochat package in editable mode
+RUN uv pip install -e .
+
 # Install maturin, which is a build dependency.
 RUN uv pip install maturin
 
@@ -27,5 +31,8 @@ RUN uv pip install maturin
 # The maturin executable from the venv should be on the PATH now.
 RUN maturin develop --release --manifest-path rustbpe/Cargo.toml
 
-# Set the entrypoint.
-ENTRYPOINT ["python"]
+# Set PYTHONPATH to include /app so that nanochat module can be imported
+ENV PYTHONPATH="/app:${PYTHONPATH}"
+
+# Set the entrypoint to use the virtual environment's Python.
+ENTRYPOINT ["/app/.venv/bin/python"]

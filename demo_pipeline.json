@@ -1,0 +1,614 @@
+{
+  "components": {
+    "comp-custom-training-job": {
+      "executorLabel": "exec-custom-training-job",
+      "inputDefinitions": {
+        "parameters": {
+          "base_output_directory": {
+            "defaultValue": "",
+            "description": "The Cloud Storage location to store the output of this CustomJob or HyperparameterTuningJob. See [more information ](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/GcsDestination).",
+            "isOptional": true,
+            "parameterType": "STRING"
+          },
+          "display_name": {
+            "description": "The name of the CustomJob.",
+            "parameterType": "STRING"
+          },
+          "enable_web_access": {
+            "defaultValue": false,
+            "description": "Whether you want Vertex AI to enable [interactive shell access ](https://cloud.google.com/vertex-ai/docs/training/monitor-debug-interactive-shell) to training containers. If `True`, you can access interactive shells at the URIs given by [CustomJob.web_access_uris][].",
+            "isOptional": true,
+            "parameterType": "BOOLEAN"
+          },
+          "encryption_spec_key_name": {
+            "defaultValue": "",
+            "description": "Customer-managed encryption key options for the CustomJob. If this is set, then all resources created by the CustomJob will be encrypted with the provided encryption key.",
+            "isOptional": true,
+            "parameterType": "STRING"
+          },
+          "labels": {
+            "defaultValue": {},
+            "description": "The labels with user-defined metadata to organize the CustomJob. See [more information](https://goo.gl/xmQnxf).",
+            "isOptional": true,
+            "parameterType": "STRUCT"
+          },
+          "location": {
+            "defaultValue": "{{$.pipeline_google_cloud_location}}",
+            "description": "Location for creating the custom training job. If not set, default to the location where the PipelineJob is run.",
+            "isOptional": true,
+            "parameterType": "STRING"
+          },
+          "max_wait_duration": {
+            "defaultValue": "86400s",
+            "description": "The maximum time to wait for the custom training job to be scheduled only if the scheduling strategy is set to FLEX_START. If set to 0, the job will wait indefinitely. The default is 24 hours. See [more information](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec#Strategy).",
+            "isOptional": true,
+            "parameterType": "STRING"
+          },
+          "network": {
+            "defaultValue": "",
+            "description": "The full name of the Compute Engine network to which the job should be peered. For example, `projects/12345/global/networks/myVPC`. Format is of the form `projects/{project}/global/networks/{network}`. Where `{project}` is a project number, as in `12345`, and `{network}` is a network name. Private services access must already be configured for the network. If left unspecified, the job is not peered with any network.",
+            "isOptional": true,
+            "parameterType": "STRING"
+          },
+          "persistent_resource_id": {
+            "defaultValue": "{{$.pipeline_persistent_resource_id}}",
+            "description": "The ID of the PersistentResource in the same Project and Location which to run. The default value is a placeholder that will be resolved to the PipelineJob [RuntimeConfig](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/projects.locations.pipelineJobs#PipelineJob.RuntimeConfig)'s persistent resource id at runtime. However, if the PipelineJob doesn't set Persistent Resource as the job level runtime, the placedholder will be resolved to an empty string and the custom job will be run on demand. If the value is set explicitly, the custom job will runs in the specified persistent resource, in this case, please note the network and CMEK configs on the job should be consistent with those on the PersistentResource, otherwise, the job will be rejected.",
+            "isOptional": true,
+            "parameterType": "STRING"
+          },
+          "project": {
+            "defaultValue": "{{$.pipeline_google_cloud_project_id}}",
+            "description": "Project to create the custom training job in. Defaults to the project in which the PipelineJob is run.",
+            "isOptional": true,
+            "parameterType": "STRING"
+          },
+          "psc_interface_config": {
+            "defaultValue": {},
+            "description": "Configuration CustomJob with PSC-I. See [more information](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec#PscInterfaceConfig).",
+            "isOptional": true,
+            "parameterType": "STRUCT"
+          },
+          "reserved_ip_ranges": {
+            "defaultValue": [],
+            "description": "A list of names for the reserved IP ranges under the VPC network that can be used for this job. If set, we will deploy the job within the provided IP ranges. Otherwise, the job will be deployed to any IP ranges under the provided VPC network.",
+            "isOptional": true,
+            "parameterType": "LIST"
+          },
+          "restart_job_on_worker_restart": {
+            "defaultValue": false,
+            "description": "Restarts the entire CustomJob if a worker gets restarted. This feature can be used by distributed training jobs that are not resilient to workers leaving and joining a job.",
+            "isOptional": true,
+            "parameterType": "BOOLEAN"
+          },
+          "service_account": {
+            "defaultValue": "",
+            "description": "Sets the default service account for workload run-as account. The [service account ](https://cloud.google.com/vertex-ai/docs/pipelines/configure-project#service-account) running the pipeline submitting jobs must have act-as permission on this run-as account. If unspecified, the Vertex AI Custom Code [Service Agent ](https://cloud.google.com/vertex-ai/docs/general/access-control#service-agents) for the CustomJob's project.",
+            "isOptional": true,
+            "parameterType": "STRING"
+          },
+          "strategy": {
+            "defaultValue": "STANDARD",
+            "description": "The strategy to use for the custom training job. The default is 'STANDARD'. See [more information](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec#Strategy).",
+            "isOptional": true,
+            "parameterType": "STRING"
+          },
+          "tensorboard": {
+            "defaultValue": "",
+            "description": "The name of a Vertex AI TensorBoard resource to which this CustomJob will upload TensorBoard logs.",
+            "isOptional": true,
+            "parameterType": "STRING"
+          },
+          "timeout": {
+            "defaultValue": "604800s",
+            "description": "The maximum job running time. The default is 7 days. A duration in seconds with up to nine fractional digits, terminated by 's', for example: \"3.5s\".",
+            "isOptional": true,
+            "parameterType": "STRING"
+          },
+          "worker_pool_specs": {
+            "defaultValue": [],
+            "description": "Serialized json spec of the worker pools including machine type and Docker image. All worker pools except the first one are optional and can be skipped by providing an empty value. See [more information](https://cloud.google.com/vertex-ai/docs/reference/rest/v1/CustomJobSpec#WorkerPoolSpec).",
+            "isOptional": true,
+            "parameterType": "LIST"
+          }
+        }
+      },
+      "outputDefinitions": {
+        "parameters": {
+          "gcp_resources": {
+            "description": "Serialized JSON of `gcp_resources` [proto](https://github.com/kubeflow/pipelines/tree/master/components/google-cloud/google_cloud_pipeline_components/proto) which tracks the CustomJob.",
+            "parameterType": "STRING"
+          }
+        }
+      }
+    },
+    "comp-data-download-step": {
+      "executorLabel": "exec-data-download-step",
+      "inputDefinitions": {
+        "parameters": {
+          "gcs_bucket": {
+            "parameterType": "STRING"
+          },
+          "num_shards": {
+            "defaultValue": 50.0,
+            "isOptional": true,
+            "parameterType": "NUMBER_INTEGER"
+          }
+        }
+      }
+    },
+    "comp-midtraining-step": {
+      "executorLabel": "exec-midtraining-step",
+      "inputDefinitions": {
+        "parameters": {
+          "gcs_bucket": {
+            "parameterType": "STRING"
+          },
+          "vertex_experiment": {
+            "parameterType": "STRING"
+          },
+          "vertex_tensorboard": {
+            "parameterType": "STRING"
+          },
+          "wandb_run": {
+            "parameterType": "STRING"
+          }
+        }
+      }
+    },
+    "comp-report-step": {
+      "executorLabel": "exec-report-step",
+      "inputDefinitions": {
+        "parameters": {
+          "gcs_bucket": {
+            "parameterType": "STRING"
+          }
+        }
+      }
+    },
+    "comp-sft-step": {
+      "executorLabel": "exec-sft-step",
+      "inputDefinitions": {
+        "parameters": {
+          "gcs_bucket": {
+            "parameterType": "STRING"
+          },
+          "vertex_experiment": {
+            "parameterType": "STRING"
+          },
+          "vertex_tensorboard": {
+            "parameterType": "STRING"
+          },
+          "wandb_run": {
+            "parameterType": "STRING"
+          }
+        }
+      }
+    },
+    "comp-tokenizer-step": {
+      "executorLabel": "exec-tokenizer-step",
+      "inputDefinitions": {
+        "parameters": {
+          "gcs_bucket": {
+            "parameterType": "STRING"
+          }
+        }
+      }
+    }
+  },
+  "deploymentSpec": {
+    "executors": {
+      "exec-custom-training-job": {
+        "container": {
+          "args": [
+            "--type",
+            "CustomJob",
+            "--payload",
+            "{\"display_name\": \"{{$.inputs.parameters['display_name']}}\", \"job_spec\": {\"worker_pool_specs\": {{$.inputs.parameters['worker_pool_specs']}}, \"scheduling\": {\"timeout\": \"{{$.inputs.parameters['timeout']}}\", \"restart_job_on_worker_restart\": {{$.inputs.parameters['restart_job_on_worker_restart']}}, \"strategy\": \"{{$.inputs.parameters['strategy']}}\", \"max_wait_duration\": \"{{$.inputs.parameters['max_wait_duration']}}\"}, \"service_account\": \"{{$.inputs.parameters['service_account']}}\", \"tensorboard\": \"{{$.inputs.parameters['tensorboard']}}\", \"enable_web_access\": {{$.inputs.parameters['enable_web_access']}}, \"network\": \"{{$.inputs.parameters['network']}}\", \"reserved_ip_ranges\": {{$.inputs.parameters['reserved_ip_ranges']}}, \"base_output_directory\": {\"output_uri_prefix\": \"{{$.inputs.parameters['base_output_directory']}}\"}, \"persistent_resource_id\": \"{{$.inputs.parameters['persistent_resource_id']}}\", \"psc_interface_config\": {{$.inputs.parameters['psc_interface_config']}}}, \"labels\": {{$.inputs.parameters['labels']}}, \"encryption_spec\": {\"kms_key_name\": \"{{$.inputs.parameters['encryption_spec_key_name']}}\"}}",
+            "--project",
+            "{{$.inputs.parameters['project']}}",
+            "--location",
+            "{{$.inputs.parameters['location']}}",
+            "--gcp_resources",
+            "{{$.outputs.parameters['gcp_resources'].output_file}}"
+          ],
+          "command": [
+            "python3",
+            "-u",
+            "-m",
+            "google_cloud_pipeline_components.container.v1.custom_job.launcher"
+          ],
+          "image": "gcr.io/ml-pipeline/google-cloud-pipeline-components:2.22.0"
+        }
+      },
+      "exec-data-download-step": {
+        "container": {
+          "args": [
+            "--gcs-bucket",
+            "{{$.inputs.parameters['gcs_bucket']}}",
+            "--num-shards",
+            "{{$.inputs.parameters['num_shards']}}"
+          ],
+          "command": [
+            "python",
+            "vertex_pipelines/data_download_step.py"
+          ],
+          "image": "gcr.io/nzp-nanochat/nanochat:latest",
+          "resources": {
+            "cpuLimit": 8.0,
+            "memoryLimit": 32.0,
+            "resourceCpuLimit": "8",
+            "resourceMemoryLimit": "32G"
+          }
+        }
+      },
+      "exec-midtraining-step": {
+        "container": {
+          "args": [
+            "--gcs-bucket",
+            "{{$.inputs.parameters['gcs_bucket']}}",
+            "--wandb-run",
+            "{{$.inputs.parameters['wandb_run']}}",
+            "--vertex-experiment",
+            "{{$.inputs.parameters['vertex_experiment']}}",
+            "--vertex-tensorboard",
+            "{{$.inputs.parameters['vertex_tensorboard']}}"
+          ],
+          "command": [
+            "python",
+            "vertex_pipelines/midtraining_step.py"
+          ],
+          "image": "gcr.io/nzp-nanochat/nanochat:latest",
+          "resources": {
+            "accelerator": {
+              "count": "1",
+              "resourceCount": "1",
+              "resourceType": "NVIDIA_TESLA_A100",
+              "type": "NVIDIA_TESLA_A100"
+            },
+            "cpuLimit": 8.0,
+            "memoryLimit": 32.0,
+            "resourceCpuLimit": "8",
+            "resourceMemoryLimit": "32G"
+          }
+        }
+      },
+      "exec-report-step": {
+        "container": {
+          "args": [
+            "--gcs-bucket",
+            "{{$.inputs.parameters['gcs_bucket']}}"
+          ],
+          "command": [
+            "python",
+            "vertex_pipelines/report_step.py"
+          ],
+          "image": "gcr.io/nzp-nanochat/nanochat:latest",
+          "resources": {
+            "cpuLimit": 2.0,
+            "memoryLimit": 8.0,
+            "resourceCpuLimit": "2",
+            "resourceMemoryLimit": "8G"
+          }
+        }
+      },
+      "exec-sft-step": {
+        "container": {
+          "args": [
+            "--gcs-bucket",
+            "{{$.inputs.parameters['gcs_bucket']}}",
+            "--wandb-run",
+            "{{$.inputs.parameters['wandb_run']}}",
+            "--vertex-experiment",
+            "{{$.inputs.parameters['vertex_experiment']}}",
+            "--vertex-tensorboard",
+            "{{$.inputs.parameters['vertex_tensorboard']}}"
+          ],
+          "command": [
+            "python",
+            "vertex_pipelines/sft_step.py"
+          ],
+          "image": "gcr.io/nzp-nanochat/nanochat:latest",
+          "resources": {
+            "accelerator": {
+              "count": "1",
+              "resourceCount": "1",
+              "resourceType": "NVIDIA_L4",
+              "type": "NVIDIA_L4"
+            },
+            "cpuLimit": 8.0,
+            "memoryLimit": 32.0,
+            "resourceCpuLimit": "8",
+            "resourceMemoryLimit": "32G"
+          }
+        }
+      },
+      "exec-tokenizer-step": {
+        "container": {
+          "args": [
+            "--gcs-bucket",
+            "{{$.inputs.parameters['gcs_bucket']}}"
+          ],
+          "command": [
+            "python",
+            "vertex_pipelines/tokenizer_step.py"
+          ],
+          "image": "gcr.io/nzp-nanochat/nanochat:latest",
+          "resources": {
+            "cpuLimit": 8.0,
+            "memoryLimit": 32.0,
+            "resourceCpuLimit": "8",
+            "resourceMemoryLimit": "32G"
+          }
+        }
+      }
+    }
+  },
+  "pipelineInfo": {
+    "description": "A pipeline to train NanoChat",
+    "name": "nanochat-pipeline"
+  },
+  "root": {
+    "dag": {
+      "tasks": {
+        "custom-training-job": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-custom-training-job"
+          },
+          "dependentTasks": [
+            "tokenizer-step"
+          ],
+          "inputs": {
+            "parameters": {
+              "base_output_directory": {
+                "runtimeValue": {
+                  "constant": "{{$.inputs.parameters['pipelinechannel--gcs_bucket']}}/pipeline_root"
+                }
+              },
+              "display_name": {
+                "runtimeValue": {
+                  "constant": "nanochat-pretraining-job"
+                }
+              },
+              "location": {
+                "componentInputParameter": "location"
+              },
+              "max_wait_duration": {
+                "componentInputParameter": "max_wait_duration"
+              },
+              "pipelinechannel--gcs_bucket": {
+                "componentInputParameter": "gcs_bucket"
+              },
+              "pipelinechannel--vertex_experiment": {
+                "componentInputParameter": "vertex_experiment"
+              },
+              "pipelinechannel--vertex_tensorboard": {
+                "componentInputParameter": "vertex_tensorboard"
+              },
+              "pipelinechannel--wandb_run": {
+                "componentInputParameter": "wandb_run"
+              },
+              "project": {
+                "componentInputParameter": "project"
+              },
+              "restart_job_on_worker_restart": {
+                "runtimeValue": {
+                  "constant": true
+                }
+              },
+              "strategy": {
+                "componentInputParameter": "scheduling_strategy"
+              },
+              "timeout": {
+                "runtimeValue": {
+                  "constant": "604800s"
+                }
+              },
+              "worker_pool_specs": {
+                "runtimeValue": {
+                  "constant": [
+                    {
+                      "container_spec": {
+                        "args": [
+                          "--gcs-bucket",
+                          "{{$.inputs.parameters['pipelinechannel--gcs_bucket']}}",
+                          "--wandb-run",
+                          "{{$.inputs.parameters['pipelinechannel--wandb_run']}}",
+                          "--vertex-experiment",
+                          "{{$.inputs.parameters['pipelinechannel--vertex_experiment']}}",
+                          "--vertex-tensorboard",
+                          "{{$.inputs.parameters['pipelinechannel--vertex_tensorboard']}}"
+                        ],
+                        "command": [
+                          "python",
+                          "vertex_pipelines/pretraining_step.py"
+                        ],
+                        "image_uri": "gcr.io/nzp-nanochat/nanochat:latest"
+                      },
+                      "machine_spec": {
+                        "accelerator_count": 8.0,
+                        "accelerator_type": "NVIDIA_TESLA_A100",
+                        "machine_type": "a2-highgpu-8g"
+                      },
+                      "replica_count": 1.0
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "custom-training-job"
+          }
+        },
+        "data-download-step": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-data-download-step"
+          },
+          "inputs": {
+            "parameters": {
+              "gcs_bucket": {
+                "componentInputParameter": "gcs_bucket"
+              },
+              "num_shards": {
+                "componentInputParameter": "num_data_shards"
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "data-download-step"
+          }
+        },
+        "midtraining-step": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-midtraining-step"
+          },
+          "dependentTasks": [
+            "custom-training-job"
+          ],
+          "inputs": {
+            "parameters": {
+              "gcs_bucket": {
+                "componentInputParameter": "gcs_bucket"
+              },
+              "vertex_experiment": {
+                "componentInputParameter": "vertex_experiment"
+              },
+              "vertex_tensorboard": {
+                "componentInputParameter": "vertex_tensorboard"
+              },
+              "wandb_run": {
+                "componentInputParameter": "wandb_run"
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "midtraining-step"
+          }
+        },
+        "report-step": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-report-step"
+          },
+          "dependentTasks": [
+            "sft-step"
+          ],
+          "inputs": {
+            "parameters": {
+              "gcs_bucket": {
+                "componentInputParameter": "gcs_bucket"
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "report-step"
+          }
+        },
+        "sft-step": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-sft-step"
+          },
+          "dependentTasks": [
+            "midtraining-step"
+          ],
+          "inputs": {
+            "parameters": {
+              "gcs_bucket": {
+                "componentInputParameter": "gcs_bucket"
+              },
+              "vertex_experiment": {
+                "componentInputParameter": "vertex_experiment"
+              },
+              "vertex_tensorboard": {
+                "componentInputParameter": "vertex_tensorboard"
+              },
+              "wandb_run": {
+                "componentInputParameter": "wandb_run"
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "sft-step"
+          }
+        },
+        "tokenizer-step": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-tokenizer-step"
+          },
+          "inputs": {
+            "parameters": {
+              "gcs_bucket": {
+                "componentInputParameter": "gcs_bucket"
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "tokenizer-step"
+          }
+        }
+      }
+    },
+    "inputDefinitions": {
+      "parameters": {
+        "gcs_bucket": {
+          "parameterType": "STRING"
+        },
+        "location": {
+          "parameterType": "STRING"
+        },
+        "max_wait_duration": {
+          "defaultValue": "0s",
+          "isOptional": true,
+          "parameterType": "STRING"
+        },
+        "num_data_shards": {
+          "defaultValue": 20.0,
+          "isOptional": true,
+          "parameterType": "NUMBER_INTEGER"
+        },
+        "project": {
+          "parameterType": "STRING"
+        },
+        "scheduling_strategy": {
+          "defaultValue": "FLEX_START",
+          "isOptional": true,
+          "parameterType": "STRING"
+        },
+        "vertex_experiment": {
+          "defaultValue": "",
+          "isOptional": true,
+          "parameterType": "STRING"
+        },
+        "vertex_tensorboard": {
+          "defaultValue": "",
+          "isOptional": true,
+          "parameterType": "STRING"
+        },
+        "wandb_run": {
+          "defaultValue": "dummy",
+          "isOptional": true,
+          "parameterType": "STRING"
+        }
+      }
+    }
+  },
+  "schemaVersion": "2.1.0",
+  "sdkVersion": "kfp-2.14.6"
+}

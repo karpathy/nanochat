@@ -153,8 +153,14 @@ def find_largest_model(checkpoint_dir):
         storage_client = storage.Client()
         bucket_name, prefix = checkpoint_dir[5:].split("/", 1)
         bucket = storage_client.bucket(bucket_name)
+        if not prefix.endswith("/"):
+            prefix += "/"
         blobs = bucket.list_blobs(prefix=prefix, delimiter='/')
-        model_tags = [b.name.split('/')[-2] for b in blobs.prefixes]
+        list(blobs) # Iterate to populate prefixes
+        log0(f"DEBUG: prefix={prefix}")
+        log0(f"DEBUG: blobs.prefixes={list(blobs.prefixes)}")
+        model_tags = [p.split('/')[-2] for p in blobs.prefixes]
+        log0(f"DEBUG: model_tags={model_tags}")
     else:
         # attempt to guess the model tag: take the biggest model available
         model_tags = [f for f in os.listdir(checkpoint_dir) if os.path.isdir(os.path.join(checkpoint_dir, f))]
@@ -218,6 +224,15 @@ def load_model(source, *args, **kwargs):
         "sft": "chatsft_checkpoints",
         "rl": "chatrl_checkpoints",
     }[source]
-    base_dir = get_base_dir()
-    checkpoints_dir = os.path.join(base_dir, model_dir)
+    
+    # Check if running in Vertex AI with GCS data directory
+    data_dir = os.environ.get("NANOCHAT_DATA_DIR", "")
+    if data_dir.startswith("gs://"):
+        # Use GCS checkpoint directory
+        checkpoints_dir = data_dir.replace("/base_data", f"/{model_dir}")
+    else:
+        # Use local checkpoint directory
+        base_dir = get_base_dir()
+        checkpoints_dir = os.path.join(base_dir, model_dir)
+    
     return load_model_from_dir(checkpoints_dir, *args, **kwargs)

@@ -288,18 +288,6 @@ wheels = [
 ]
 
 [[package]]
-name = "click-option-group"
-version = "0.5.7"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/9f/1f917934da4e07ae7715a982347e3c2179556d8a58d1108c5da3e8f09c76/click_option_group-0.5.7.tar.gz", hash = "sha256:8dc780be038712fc12c9fecb3db4fe49e0d0723f9c171d7cda85c20369be693c", size = 22110, upload-time = "2025-03-24T13:24:55.897Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/27/bf74dc1494625c3b14dbcdb93740defd7b8c58dae3736be8d264f2a643fb/click_option_group-0.5.7-py3-none-any.whl", hash = "sha256:96b9f52f397ef4d916f81929bd6c1f85e89046c7a401a64e72a61ae74ad35c24", size = 11483, upload-time = "2025-03-24T13:24:54.611Z" },
-]
-
-[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -531,14 +519,75 @@ wheels = [
 
 [[package]]
 name = "google-api-core"
+version = "2.25.2"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'linux' and extra != 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu'",
+    "python_full_version >= '3.14' and sys_platform != 'linux' and extra != 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu'",
+    "python_full_version >= '3.14' and sys_platform == 'linux' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version >= '3.14' and sys_platform == 'darwin' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version >= '3.14' and sys_platform == 'linux' and extra != 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version >= '3.14' and sys_platform != 'linux' and extra != 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+]
+dependencies = [
+    { name = "google-auth", marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "googleapis-common-protos", marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "proto-plus", marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "protobuf", marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "requests", marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/09/cd/63f1557235c2440fe0577acdbc32577c5c002684c58c7f4d770a92366a24/google_api_core-2.25.2.tar.gz", hash = "sha256:1c63aa6af0d0d5e37966f157a77f9396d820fba59f9e43e9415bc3dc5baff300", size = 166266, upload-time = "2025-10-03T00:07:34.778Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c8/d8/894716a5423933f5c8d2d5f04b16f052a515f78e815dab0c2c6f1fd105dc/google_api_core-2.25.2-py3-none-any.whl", hash = "sha256:e9a8f62d363dc8424a8497f4c2a47d6bcda6c16514c935629c257ab5d10210e7", size = 162489, upload-time = "2025-10-03T00:07:32.924Z" },
+]
+
+[package.optional-dependencies]
+grpc = [
+    { name = "grpcio", marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "grpcio-status", marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+]
+
+[[package]]
+name = "google-api-core"
 version = "2.28.1"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version == '3.13.*' and sys_platform == 'linux' and extra != 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.12.*' and sys_platform == 'linux' and extra != 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.13.*' and sys_platform != 'linux' and extra != 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.12.*' and sys_platform != 'linux' and extra != 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.11.*' and sys_platform == 'linux' and extra != 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu'",
+    "python_full_version < '3.11' and sys_platform == 'linux' and extra != 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.11.*' and sys_platform != 'linux' and extra != 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu'",
+    "python_full_version < '3.11' and sys_platform != 'linux' and extra != 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.13.*' and sys_platform == 'linux' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.12.*' and sys_platform == 'linux' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.11.*' and sys_platform == 'linux' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version < '3.11' and sys_platform == 'linux' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.11.*' and sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version < '3.11' and sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.12.*' and sys_platform == 'darwin' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.11.*' and sys_platform == 'darwin' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version < '3.11' and sys_platform == 'darwin' and extra == 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.13.*' and sys_platform == 'linux' and extra != 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.12.*' and sys_platform == 'linux' and extra != 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.13.*' and sys_platform != 'linux' and extra != 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.12.*' and sys_platform != 'linux' and extra != 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.11.*' and sys_platform == 'linux' and extra != 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version < '3.11' and sys_platform == 'linux' and extra != 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version == '3.11.*' and sys_platform != 'linux' and extra != 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+    "python_full_version < '3.11' and sys_platform != 'linux' and extra != 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu'",
+]
 dependencies = [
-    { name = "google-auth" },
-    { name = "googleapis-common-protos" },
-    { name = "proto-plus" },
-    { name = "protobuf" },
-    { name = "requests" },
+    { name = "google-auth", marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "googleapis-common-protos", marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "proto-plus", marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "protobuf", marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "requests", marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/61/da/83d7043169ac2c8c7469f0e375610d78ae2160134bf1b80634c482fa079c/google_api_core-2.28.1.tar.gz", hash = "sha256:2b405df02d68e68ce0fbc138559e6036559e685159d148ae5861013dc201baf8", size = 176759, upload-time = "2025-10-28T21:34:51.529Z" }
 wheels = [
@@ -547,8 +596,8 @@ wheels = [
 
 [package.optional-dependencies]
 grpc = [
-    { name = "grpcio" },
-    { name = "grpcio-status" },
+    { name = "grpcio", marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "grpcio-status", marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
 ]
 
 [[package]]
@@ -571,7 +620,8 @@ version = "1.124.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "docstring-parser" },
-    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-api-core", version = "2.25.2", source = { registry = "https://pypi.org/simple" }, extra = ["grpc"], marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "google-api-core", version = "2.28.1", source = { registry = "https://pypi.org/simple" }, extra = ["grpc"], marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
     { name = "google-auth" },
     { name = "google-cloud-bigquery" },
     { name = "google-cloud-resource-manager" },
@@ -594,7 +644,8 @@ name = "google-cloud-bigquery"
 version = "3.38.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-api-core", version = "2.25.2", source = { registry = "https://pypi.org/simple" }, extra = ["grpc"], marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "google-api-core", version = "2.28.1", source = { registry = "https://pypi.org/simple" }, extra = ["grpc"], marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
     { name = "google-auth" },
     { name = "google-cloud-core" },
     { name = "google-resumable-media" },
@@ -612,7 +663,8 @@ name = "google-cloud-core"
 version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "google-api-core" },
+    { name = "google-api-core", version = "2.25.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "google-api-core", version = "2.28.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
     { name = "google-auth" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a6/03/ef0bc99d0e0faf4fdbe67ac445e18cdaa74824fd93cd069e7bb6548cb52d/google_cloud_core-2.5.0.tar.gz", hash = "sha256:7c1b7ef5c92311717bd05301aa1a91ffbc565673d3b0b4163a52d8413a186963", size = 36027, upload-time = "2025-10-29T23:17:39.513Z" }
@@ -625,7 +677,8 @@ name = "google-cloud-resource-manager"
 version = "1.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-api-core", version = "2.25.2", source = { registry = "https://pypi.org/simple" }, extra = ["grpc"], marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "google-api-core", version = "2.28.1", source = { registry = "https://pypi.org/simple" }, extra = ["grpc"], marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
     { name = "google-auth" },
     { name = "grpc-google-iam-v1" },
     { name = "grpcio" },
@@ -639,19 +692,20 @@ wheels = [
 
 [[package]]
 name = "google-cloud-storage"
-version = "3.4.1"
+version = "2.19.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "google-api-core" },
+    { name = "google-api-core", version = "2.25.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "google-api-core", version = "2.28.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
     { name = "google-auth" },
     { name = "google-cloud-core" },
     { name = "google-crc32c" },
     { name = "google-resumable-media" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/ef/7cefdca67a6c8b3af0ec38612f9e78e5a9f6179dd91352772ae1a9849246/google_cloud_storage-3.4.1.tar.gz", hash = "sha256:6f041a297e23a4b485fad8c305a7a6e6831855c208bcbe74d00332a909f82268", size = 17238203, upload-time = "2025-10-08T18:43:39.665Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/76/4d965702e96bb67976e755bed9828fa50306dca003dbee08b67f41dd265e/google_cloud_storage-2.19.0.tar.gz", hash = "sha256:cd05e9e7191ba6cb68934d8eb76054d9be4562aa89dbc4236feee4d7d51342b2", size = 5535488, upload-time = "2024-12-05T01:35:06.49Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/83/6e/b47d83d3a35231c6232566341b0355cce78fd4e6988a7343725408547b2c/google_cloud_storage-3.4.1-py3-none-any.whl", hash = "sha256:972764cc0392aa097be8f49a5354e22eb47c3f62370067fb1571ffff4a1c1189", size = 290142, upload-time = "2025-10-08T18:43:37.524Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/94/6db383d8ee1adf45dc6c73477152b82731fa4c4a46d9c1932cc8757e0fd4/google_cloud_storage-2.19.0-py2.py3-none-any.whl", hash = "sha256:aeb971b5c29cf8ab98445082cbfe7b161a1f48ed275822f59ed3f1524ea54fba", size = 131787, upload-time = "2024-12-05T01:35:04.736Z" },
 ]
 
 [[package]]
@@ -814,16 +868,16 @@ wheels = [
 
 [[package]]
 name = "grpcio-status"
-version = "1.76.0"
+version = "1.62.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "grpcio" },
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3f/46/e9f19d5be65e8423f886813a2a9d0056ba94757b0c5007aa59aed1a961fa/grpcio_status-1.76.0.tar.gz", hash = "sha256:25fcbfec74c15d1a1cb5da3fab8ee9672852dc16a5a9eeb5baf7d7a9952943cd", size = 13679, upload-time = "2025-10-21T16:28:52.545Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7c/d7/013ef01c5a1c2fd0932c27c904934162f69f41ca0f28396d3ffe4d386123/grpcio-status-1.62.3.tar.gz", hash = "sha256:289bdd7b2459794a12cf95dc0cb727bd4a1742c37bd823f760236c937e53a485", size = 13063, upload-time = "2024-08-06T00:37:08.003Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8c/cc/27ba60ad5a5f2067963e6a858743500df408eb5855e98be778eaef8c9b02/grpcio_status-1.76.0-py3-none-any.whl", hash = "sha256:380568794055a8efbbd8871162df92012e0228a5f6dffaf57f2a00c534103b18", size = 14425, upload-time = "2025-10-21T16:28:40.853Z" },
+    { url = "https://files.pythonhosted.org/packages/90/40/972271de05f9315c0d69f9f7ebbcadd83bc85322f538637d11bb8c67803d/grpcio_status-1.62.3-py3-none-any.whl", hash = "sha256:f9049b762ba8de6b1086789d8315846e094edac2c50beaf462338b301a8fd4b8", size = 14448, upload-time = "2024-08-06T00:30:15.702Z" },
 ]
 
 [[package]]
@@ -929,13 +983,13 @@ wheels = [
 
 [[package]]
 name = "kfp"
-version = "2.14.6"
+version = "2.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
-    { name = "click-option-group" },
     { name = "docstring-parser" },
-    { name = "google-api-core" },
+    { name = "google-api-core", version = "2.25.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "google-api-core", version = "2.28.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
     { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "kfp-pipeline-spec" },
@@ -947,26 +1001,22 @@ dependencies = [
     { name = "tabulate" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3b/c1/d01724ccb7faaf3ecf2a8109de1d7eebb0afa1f292d6dcd650755b990d59/kfp-2.14.6.tar.gz", hash = "sha256:9e94ff2e74465c27393736c295b6dc478b29cf9d0264950019b5167c7c53fd2e", size = 274267, upload-time = "2025-10-13T20:08:46.072Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1f/46/789f883750b0f6c321450832e2f07203139716cb9422cad6f3d286298915/kfp-2.14.6-py3-none-any.whl", hash = "sha256:2d76aff91d8461e837989c2dc966c9dddaba7fcc37b7b8be4b0564282b1f613d", size = 374048, upload-time = "2025-10-13T20:08:44.275Z" },
-]
+sdist = { url = "https://files.pythonhosted.org/packages/51/ee/dbf636afac86c7701245ea4f424e2b38038eee51f3731e22f2777e232bbb/kfp-2.8.0.tar.gz", hash = "sha256:06ad584eecbe80318c6cd0231c95a432e91fec56f201def9d511b6e6664235ce", size = 594413, upload-time = "2024-06-22T09:03:47.265Z" }
 
 [[package]]
 name = "kfp-pipeline-spec"
-version = "2.14.6"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/be/a8aa41bbe65c0578f141f615f30829e68bdc087542248d20a84316252228/kfp_pipeline_spec-2.14.6.tar.gz", hash = "sha256:a4943b0bdf6d991db35ca3a261caf77997676512970959bf9909742df58e2a87", size = 10255, upload-time = "2025-10-13T20:06:29.544Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/56/c7/a331cdb987d5c1764c309e6c9f596a695cfd8fe86ea95fc8a9fbc052cf52/kfp_pipeline_spec-2.14.6-py3-none-any.whl", hash = "sha256:82cbad2976f248f7049be37d241f1e47ecb3d99e720dfd0cab3e0881be458516", size = 9550, upload-time = "2025-10-13T20:06:28.544Z" },
+    { url = "https://files.pythonhosted.org/packages/63/0a/269a792545cf8a87a30b84bebe69a2b07c483b2887690e8f48c9a91e8060/kfp_pipeline_spec-0.3.0-py3-none-any.whl", hash = "sha256:1db84524a0a2d6c9d36e7e87e6fa0e181bf1ba1513d29dcd54f7b8822e7a52a2", size = 12598, upload-time = "2024-01-10T00:24:34.83Z" },
 ]
 
 [[package]]
 name = "kfp-server-api"
-version = "2.14.6"
+version = "2.0.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -974,27 +1024,27 @@ dependencies = [
     { name = "six" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/9d/47f38ed0914bbf6c7e70693b805d822b0848d2f79cce0aa2addb2a7b2f67/kfp-server-api-2.14.6.tar.gz", hash = "sha256:eabf673f384186968d88cff9674cd39c655537aad1abacda78086575924d6bfc", size = 64327, upload-time = "2025-10-15T15:43:52.999Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/4b/1b1c9286047e78ebc9de2a9d4d43921d6efb5e6550fdc38229127a03aa53/kfp-server-api-2.0.5.tar.gz", hash = "sha256:c9cfbf0e87271d3bfe96e5ecc9ffbdd6ab566bc1c9a9ddc2a39d7698a16e26ff", size = 63401, upload-time = "2023-12-08T19:21:48.908Z" }
 
 [[package]]
 name = "kubernetes"
-version = "30.1.0"
+version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
     { name = "google-auth" },
-    { name = "oauthlib" },
     { name = "python-dateutil" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "requests-oauthlib" },
+    { name = "setuptools" },
     { name = "six" },
     { name = "urllib3" },
     { name = "websocket-client" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/82/3c/9f29f6cab7f35df8e54f019e5719465fa97b877be2454e99f989270b4f34/kubernetes-30.1.0.tar.gz", hash = "sha256:41e4c77af9f28e7a6c314e3bd06a8c6229ddd787cad684e0ab9f69b498e98ebc", size = 887810, upload-time = "2024-06-06T15:58:30.031Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/19/2f351c0eaf05234dc33a6e0ffc7894e9dedab0ff341311c5b4ba44f2d8ac/kubernetes-26.1.0.tar.gz", hash = "sha256:5854b0c508e8d217ca205591384ab58389abdae608576f9c9afc35a3c76a366c", size = 736370, upload-time = "2023-02-16T01:04:37.088Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/a1/2027ddede72d33be2effc087580aeba07e733a7360780ae87226f1f91bd8/kubernetes-30.1.0-py2.py3-none-any.whl", hash = "sha256:e212e8b7579031dd2e512168b617373bc1e03888d41ac4e04039240a292d478d", size = 1706042, upload-time = "2024-06-06T15:58:27.13Z" },
+    { url = "https://files.pythonhosted.org/packages/74/21/ada0c5eedb678ab663f8e387734418fdd1a26be28fc919a0c32e52964047/kubernetes-26.1.0-py2.py3-none-any.whl", hash = "sha256:e3db6800abf7e36c38d2629b5cb6b74d10988ee0cba6fba45595a7cbe60c0042", size = 1446361, upload-time = "2023-02-16T01:04:34.33Z" },
 ]
 
 [[package]]
@@ -1057,26 +1107,26 @@ wheels = [
 
 [[package]]
 name = "maturin"
-version = "1.9.4"
+version = "1.9.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/13/7c/b11b870fc4fd84de2099906314ce45488ae17be32ff5493519a6cddc518a/maturin-1.9.4.tar.gz", hash = "sha256:235163a0c99bc6f380fb8786c04fd14dcf6cd622ff295ea3de525015e6ac40cf", size = 213647, upload-time = "2025-08-27T11:37:57.079Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9a/35/c3370188492f4c139c7a318f438d01b8185c216303c49c4bc885c98b6afb/maturin-1.9.6.tar.gz", hash = "sha256:2c2ae37144811d365509889ed7220b0598487f1278c2441829c3abf56cc6324a", size = 214846, upload-time = "2025-10-07T12:45:08.408Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/90/0d99389eea1939116fca841cad0763600c8d3183a02a9478d066736c60e8/maturin-1.9.4-py3-none-linux_armv6l.whl", hash = "sha256:6ff37578e3f5fdbe685110d45f60af1f5a7dfce70a1e26dfe3810af66853ecae", size = 8276133, upload-time = "2025-08-27T11:37:23.325Z" },
-    { url = "https://files.pythonhosted.org/packages/f4/ed/c8ec68b383e50f084bf1fa9605e62a90cd32a3f75d9894ed3a6e5d4cc5b3/maturin-1.9.4-py3-none-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:f3837bb53611b2dafa1c090436c330f2d743ba305ef00d8801a371f4495e7e1b", size = 15994496, upload-time = "2025-08-27T11:37:27.092Z" },
-    { url = "https://files.pythonhosted.org/packages/84/4e/401ff5f3cfc6b123364d4b94379bf910d7baee32c9c95b72784ff2329357/maturin-1.9.4-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:4227d627d8e3bfe45877a8d65e9d8351a9d01434549f0da75d2c06a1b570de58", size = 8362228, upload-time = "2025-08-27T11:37:31.181Z" },
-    { url = "https://files.pythonhosted.org/packages/51/8e/c56176dd360da9650c62b8a5ecfb85432cf011e97e46c186901e6996002e/maturin-1.9.4-py3-none-manylinux_2_12_i686.manylinux2010_i686.musllinux_1_1_i686.whl", hash = "sha256:1bb2aa0fa29032e9c5aac03ac400396ddea12cadef242f8967e9c8ef715313a1", size = 8271397, upload-time = "2025-08-27T11:37:33.672Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/46/001fcc5c6ad509874896418d6169a61acd619df5b724f99766308c44a99f/maturin-1.9.4-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.musllinux_1_1_x86_64.whl", hash = "sha256:a0868d52934c8a5d1411b42367633fdb5cd5515bec47a534192282167448ec30", size = 8775625, upload-time = "2025-08-27T11:37:35.86Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/2e/26fa7574f01c19b7a74680fd70e5bae2e8c40fed9683d1752e765062cc2b/maturin-1.9.4-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:68b7b833b25741c0f553b78e8b9e095b31ae7c6611533b3c7b71f84c2cb8fc44", size = 8051117, upload-time = "2025-08-27T11:37:38.278Z" },
-    { url = "https://files.pythonhosted.org/packages/73/ee/ca7308832d4f5b521c1aa176d9265f6f93e0bd1ad82a90fd9cd799f6b28c/maturin-1.9.4-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.musllinux_1_1_armv7l.whl", hash = "sha256:08dc86312afee55af778af919818632e35d8d0464ccd79cb86700d9ea560ccd7", size = 8132122, upload-time = "2025-08-27T11:37:40.499Z" },
-    { url = "https://files.pythonhosted.org/packages/45/e8/c623955da75e801a06942edf1fdc4e772a9e8fbc1ceebbdc85d59584dc10/maturin-1.9.4-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.musllinux_1_1_ppc64le.whl", hash = "sha256:ef20ffdd943078c4c3699c29fb2ed722bb6b4419efdade6642d1dbf248f94a70", size = 10586762, upload-time = "2025-08-27T11:37:42.718Z" },
-    { url = "https://files.pythonhosted.org/packages/3c/4b/19ad558fdf54e151b1b4916ed45f1952ada96684ee6db64f9cd91cabec09/maturin-1.9.4-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:368e958468431dfeec80f75eea9639b4356d8c42428b0128444424b083fecfb0", size = 8926988, upload-time = "2025-08-27T11:37:45.492Z" },
-    { url = "https://files.pythonhosted.org/packages/7e/27/153ad15eccae26921e8a01812da9f3b7f9013368f8f92c36853f2043b2a3/maturin-1.9.4-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:273f879214f63f79bfe851cd7d541f8150bdbfae5dfdc3c0c4d125d02d1f41b4", size = 8536758, upload-time = "2025-08-27T11:37:48.213Z" },
-    { url = "https://files.pythonhosted.org/packages/43/e3/f304c3bdc3fba9adebe5348d4d2dd015f1152c0a9027aaf52cae0bb182c8/maturin-1.9.4-py3-none-win32.whl", hash = "sha256:ed2e54d132ace7e61829bd49709331007dd9a2cc78937f598aa76a4f69b6804d", size = 7265200, upload-time = "2025-08-27T11:37:50.881Z" },
-    { url = "https://files.pythonhosted.org/packages/14/14/f86d0124bf1816b99005c058a1dbdca7cb5850d9cf4b09dcae07a1bc6201/maturin-1.9.4-py3-none-win_amd64.whl", hash = "sha256:8e450bb2c9afdf38a0059ee2e1ec2b17323f152b59c16f33eb9c74edaf1f9f79", size = 8237391, upload-time = "2025-08-27T11:37:53.23Z" },
-    { url = "https://files.pythonhosted.org/packages/3f/25/8320fc2591e45b750c3ae71fa596b47aefa802d07d6abaaa719034a85160/maturin-1.9.4-py3-none-win_arm64.whl", hash = "sha256:7a6f980a9b67a5c13c844c268eabd855b54a6a765df4b4bb07d15a990572a4c9", size = 6988277, upload-time = "2025-08-27T11:37:55.429Z" },
+    { url = "https://files.pythonhosted.org/packages/55/5c/b435418ba4ba2647a1f7a95d53314991b1e556e656ae276dea993c3bce1d/maturin-1.9.6-py3-none-linux_armv6l.whl", hash = "sha256:26e3ab1a42a7145824210e9d763f6958f2c46afb1245ddd0bab7d78b1f59bb3f", size = 8134483, upload-time = "2025-10-07T12:44:44.274Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/1c/8e58eda6601f328b412cdeeaa88a9b6a10e591e2a73f313e8c0154d68385/maturin-1.9.6-py3-none-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:5263dda3f71feef2e4122baf5c4620e4b3710dbb7f2121f85a337182de214369", size = 15776470, upload-time = "2025-10-07T12:44:47.476Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/33/8c967cce6848cdd87a2e442c86120ac644b80c5ed4c32e3291bde6a17df8/maturin-1.9.6-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:fe78262c2800c92f67d1ce3c0f6463f958a692cc67bfb572e5dbf5b4b696a8ba", size = 8226557, upload-time = "2025-10-07T12:44:49.844Z" },
+    { url = "https://files.pythonhosted.org/packages/58/bd/3e2675cdc8b7270700ba30c663c852a35694441732a107ac30ebd6878bd8/maturin-1.9.6-py3-none-manylinux_2_12_i686.manylinux2010_i686.musllinux_1_1_i686.whl", hash = "sha256:7ab827c6e8c022eb2e1e7fb6deede54549c8460b20ccc2e9268cc6e8cde957a8", size = 8166544, upload-time = "2025-10-07T12:44:51.396Z" },
+    { url = "https://files.pythonhosted.org/packages/58/1f/a2047ddf2230e700d5f8a13dd4b9af5ce806ad380c32e58105888205926e/maturin-1.9.6-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.musllinux_1_1_x86_64.whl", hash = "sha256:0246202377c49449315305209f45c8ecef6e2d6bd27a04b5b6f1ab3e4ea47238", size = 8641010, upload-time = "2025-10-07T12:44:53.658Z" },
+    { url = "https://files.pythonhosted.org/packages/be/1f/265d63c7aa6faf363d4a3f23396f51bc6b4d5c7680a4190ae68dba25dea2/maturin-1.9.6-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:f5bac167700fbb6f8c8ed1a97b494522554b4432d7578e11403b894b6a91d99f", size = 7965945, upload-time = "2025-10-07T12:44:55.248Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/ca/a8e61979ccfe080948bcc1bddd79356157aee687134df7fb013050cec783/maturin-1.9.6-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.musllinux_1_1_armv7l.whl", hash = "sha256:7f53d3b1d8396d3fea3e1ee5fd37558bca5719090f3d194ba1c02b0b56327ae3", size = 7978820, upload-time = "2025-10-07T12:44:56.919Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/4a/81b412f8ad02a99801ef19ec059fba0822d1d28fb44cb6a92e722f05f278/maturin-1.9.6-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.musllinux_1_1_ppc64le.whl", hash = "sha256:7f506eb358386d94d6ec3208c003130cf4b69cab26034fc0cbbf8bf83afa4c2e", size = 10452064, upload-time = "2025-10-07T12:44:58.232Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/12/cc96c7a8cb51d8dcc9badd886c361caa1526fba7fa69d1e7892e613b71d4/maturin-1.9.6-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:f2d6984ab690af509f525dbd2b130714207c06ebb14a5814edbe1e42b17ae0de", size = 8852401, upload-time = "2025-10-07T12:44:59.8Z" },
+    { url = "https://files.pythonhosted.org/packages/51/8e/653ac3c9f2c25cdd81aefb0a2d17ff140ca5a14504f5e3c7f94dcfe4dbb7/maturin-1.9.6-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:5c2252b0956bb331460ac750c805ddf0d9b44442449fc1f16e3b66941689d0bc", size = 8425057, upload-time = "2025-10-07T12:45:01.711Z" },
+    { url = "https://files.pythonhosted.org/packages/db/29/f13490328764ae9bfc1da55afc5b707cebe4fa75ad7a1573bfa82cfae0c6/maturin-1.9.6-py3-none-win32.whl", hash = "sha256:f2c58d29ebdd4346fd004e6be213d071fdd94a77a16aa91474a21a4f9dbf6309", size = 7165956, upload-time = "2025-10-07T12:45:03.766Z" },
+    { url = "https://files.pythonhosted.org/packages/db/9f/dd51e5ac1fce47581b8efa03d77a03f928c0ef85b6e48a61dfa37b6b85a2/maturin-1.9.6-py3-none-win_amd64.whl", hash = "sha256:1b39a5d82572c240d20d9e8be024d722dfb311d330c5e28ddeb615211755941a", size = 8145722, upload-time = "2025-10-07T12:45:05.487Z" },
+    { url = "https://files.pythonhosted.org/packages/65/f2/e97aaba6d0d78c5871771bf9dd71d4eb8dac15df9109cf452748d2207412/maturin-1.9.6-py3-none-win_arm64.whl", hash = "sha256:ac02a30083553d2a781c10cd6f5480119bf6692fd177e743267406cad2ad198c", size = 6857006, upload-time = "2025-10-07T12:45:06.813Z" },
 ]
 
 [[package]]
@@ -1254,7 +1304,7 @@ requires-dist = [
     { name = "files-to-prompt", specifier = ">=0.6" },
     { name = "google-cloud-aiplatform", specifier = ">=1.25.0" },
     { name = "google-cloud-storage", specifier = ">=2.10.0" },
-    { name = "kfp", specifier = ">=2.0.0" },
+    { name = "kfp", specifier = "==2.8.0" },
     { name = "psutil", specifier = ">=7.1.0" },
     { name = "regex", specifier = ">=2025.9.1" },
     { name = "setuptools", specifier = ">=80.9.0" },
@@ -1702,16 +1752,16 @@ wheels = [
 
 [[package]]
 name = "protobuf"
-version = "6.32.0"
+version = "4.25.8"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c0/df/fb4a8eeea482eca989b51cffd274aac2ee24e825f0bf3cbce5281fa1567b/protobuf-6.32.0.tar.gz", hash = "sha256:a81439049127067fc49ec1d36e25c6ee1d1a2b7be930675f919258d03c04e7d2", size = 440614, upload-time = "2025-08-14T21:21:25.015Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/df/01/34c8d2b6354906d728703cb9d546a0e534de479e25f1b581e4094c4a85cc/protobuf-4.25.8.tar.gz", hash = "sha256:6135cf8affe1fc6f76cced2641e4ea8d3e59518d1f24ae41ba97bcad82d397cd", size = 380920, upload-time = "2025-05-28T14:22:25.153Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/18/df8c87da2e47f4f1dcc5153a81cd6bca4e429803f4069a299e236e4dd510/protobuf-6.32.0-cp310-abi3-win32.whl", hash = "sha256:84f9e3c1ff6fb0308dbacb0950d8aa90694b0d0ee68e75719cb044b7078fe741", size = 424409, upload-time = "2025-08-14T21:21:12.366Z" },
-    { url = "https://files.pythonhosted.org/packages/e1/59/0a820b7310f8139bd8d5a9388e6a38e1786d179d6f33998448609296c229/protobuf-6.32.0-cp310-abi3-win_amd64.whl", hash = "sha256:a8bdbb2f009cfc22a36d031f22a625a38b615b5e19e558a7b756b3279723e68e", size = 435735, upload-time = "2025-08-14T21:21:15.046Z" },
-    { url = "https://files.pythonhosted.org/packages/cc/5b/0d421533c59c789e9c9894683efac582c06246bf24bb26b753b149bd88e4/protobuf-6.32.0-cp39-abi3-macosx_10_9_universal2.whl", hash = "sha256:d52691e5bee6c860fff9a1c86ad26a13afbeb4b168cd4445c922b7e2cf85aaf0", size = 426449, upload-time = "2025-08-14T21:21:16.687Z" },
-    { url = "https://files.pythonhosted.org/packages/ec/7b/607764ebe6c7a23dcee06e054fd1de3d5841b7648a90fd6def9a3bb58c5e/protobuf-6.32.0-cp39-abi3-manylinux2014_aarch64.whl", hash = "sha256:501fe6372fd1c8ea2a30b4d9be8f87955a64d6be9c88a973996cef5ef6f0abf1", size = 322869, upload-time = "2025-08-14T21:21:18.282Z" },
-    { url = "https://files.pythonhosted.org/packages/40/01/2e730bd1c25392fc32e3268e02446f0d77cb51a2c3a8486b1798e34d5805/protobuf-6.32.0-cp39-abi3-manylinux2014_x86_64.whl", hash = "sha256:75a2aab2bd1aeb1f5dc7c5f33bcb11d82ea8c055c9becbb41c26a8c43fd7092c", size = 322009, upload-time = "2025-08-14T21:21:19.893Z" },
-    { url = "https://files.pythonhosted.org/packages/9c/f2/80ffc4677aac1bc3519b26bc7f7f5de7fce0ee2f7e36e59e27d8beb32dd1/protobuf-6.32.0-py3-none-any.whl", hash = "sha256:ba377e5b67b908c8f3072a57b63e2c6a4cbd18aea4ed98d2584350dbf46f2783", size = 169287, upload-time = "2025-08-14T21:21:23.515Z" },
+    { url = "https://files.pythonhosted.org/packages/45/ff/05f34305fe6b85bbfbecbc559d423a5985605cad5eda4f47eae9e9c9c5c5/protobuf-4.25.8-cp310-abi3-win32.whl", hash = "sha256:504435d831565f7cfac9f0714440028907f1975e4bed228e58e72ecfff58a1e0", size = 392745, upload-time = "2025-05-28T14:22:10.524Z" },
+    { url = "https://files.pythonhosted.org/packages/08/35/8b8a8405c564caf4ba835b1fdf554da869954712b26d8f2a98c0e434469b/protobuf-4.25.8-cp310-abi3-win_amd64.whl", hash = "sha256:bd551eb1fe1d7e92c1af1d75bdfa572eff1ab0e5bf1736716814cdccdb2360f9", size = 413736, upload-time = "2025-05-28T14:22:13.156Z" },
+    { url = "https://files.pythonhosted.org/packages/28/d7/ab27049a035b258dab43445eb6ec84a26277b16105b277cbe0a7698bdc6c/protobuf-4.25.8-cp37-abi3-macosx_10_9_universal2.whl", hash = "sha256:ca809b42f4444f144f2115c4c1a747b9a404d590f18f37e9402422033e464e0f", size = 394537, upload-time = "2025-05-28T14:22:14.768Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/6d/a4a198b61808dd3d1ee187082ccc21499bc949d639feb948961b48be9a7e/protobuf-4.25.8-cp37-abi3-manylinux2014_aarch64.whl", hash = "sha256:9ad7ef62d92baf5a8654fbb88dac7fa5594cfa70fd3440488a5ca3bfc6d795a7", size = 294005, upload-time = "2025-05-28T14:22:16.052Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/c6/c9deaa6e789b6fc41b88ccbdfe7a42d2b82663248b715f55aa77fbc00724/protobuf-4.25.8-cp37-abi3-manylinux2014_x86_64.whl", hash = "sha256:83e6e54e93d2b696a92cad6e6efc924f3850f82b52e1563778dfab8b355101b0", size = 294924, upload-time = "2025-05-28T14:22:17.105Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/c1/6aece0ab5209981a70cd186f164c133fdba2f51e124ff92b73de7fd24d78/protobuf-4.25.8-py3-none-any.whl", hash = "sha256:15a0af558aa3b13efef102ae6e4f3efac06f1eea11afb3a57db2901447d9fb59", size = 156757, upload-time = "2025-05-28T14:22:24.135Z" },
 ]
 
 [[package]]
@@ -2097,14 +2147,14 @@ wheels = [
 
 [[package]]
 name = "requests-toolbelt"
-version = "1.0.0"
+version = "0.10.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/61/d7545dafb7ac2230c70d38d31cbfe4cc64f7144dc41f6e4e4b78ecd9f5bb/requests-toolbelt-1.0.0.tar.gz", hash = "sha256:7681a0a3d047012b5bdc0ee37d7f8f07ebe76ab08caeccfc3921ce23c88d5bc6", size = 206888, upload-time = "2023-05-01T04:11:33.229Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/4c/07f01c6ac44f7784fa399137fbc8d0cdc1b5d35304e8c0f278ad82105b58/requests-toolbelt-0.10.1.tar.gz", hash = "sha256:62e09f7ff5ccbda92772a29f394a49c3ad6cb181d568b1337626b2abb628a63d", size = 208956, upload-time = "2022-10-25T03:14:58.576Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl", hash = "sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06", size = 54481, upload-time = "2023-05-01T04:11:28.427Z" },
+    { url = "https://files.pythonhosted.org/packages/05/d3/bf87a36bff1cb88fd30a509fd366c70ec30676517ee791b2f77e0e29817a/requests_toolbelt-0.10.1-py2.py3-none-any.whl", hash = "sha256:18565aa58116d9951ac39baa288d3adb5b3ff975c4f25eee78555d89e8f247f7", size = 54525, upload-time = "2022-10-25T03:14:55.289Z" },
 ]
 
 [[package]]
@@ -2632,11 +2682,11 @@ wheels = [
 
 [[package]]
 name = "urllib3"
-version = "2.5.0"
+version = "1.26.20"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/e8/6ff5e6bc22095cfc59b6ea711b687e2b7ed4bdb373f7eeec370a97d7392f/urllib3-1.26.20.tar.gz", hash = "sha256:40c2dc0c681e47eb8f90e7e27bf6ff7df2e677421fd46756da1161c39ca70d32", size = 307380, upload-time = "2024-08-29T15:43:11.37Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
+    { url = "https://files.pythonhosted.org/packages/33/cf/8435d5a7159e2a9c83a95896ed596f68cf798005fe107cc655b5c5c14704/urllib3-1.26.20-py2.py3-none-any.whl", hash = "sha256:0ed14ccfbf1c30a9072c7ca157e4319b70d65f623e91e7b32fadb2853431016e", size = 144225, upload-time = "2024-08-29T15:43:08.921Z" },
 ]
 
 [[package]]
