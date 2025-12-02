@@ -14,7 +14,8 @@ def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int =
     """
 
     # Construct command
-    cmd = [sys.executable, "-m", "scripts.base_train"]
+    # Use -u for unbuffered output to ensure we capture stdout even if it hangs/crashes
+    cmd = [sys.executable, "-u", "-m", "scripts.base_train"]
 
     # Add config arguments
     # base_train.py uses configurator.py which expects --key=value
@@ -27,6 +28,8 @@ def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int =
 
     # Merge environment variables
     current_env = os.environ.copy()
+    # Enable torch.compile debugging to stderr
+    current_env["TORCH_LOGS"] = "+dynamo"
     current_env.update(env_vars)
 
     print(f"Running benchmark with config: {config} env: {env_vars}", flush=True)
