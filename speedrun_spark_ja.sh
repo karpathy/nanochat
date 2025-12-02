@@ -8,6 +8,7 @@ DEPTH=20
 DEVICE_BATCH_SIZE=16
 DATA_SHARDS=30
 NUM_ITERATIONS=1000
+#NUM_ITERATIONS=10
 CACHE_DIR="$HOME/.cache/nanochat"
 # ========================
 
@@ -34,7 +35,7 @@ echo "== 1) 日本語データ準備 =="
 python -m nanochat.dataset -n "${DATA_SHARDS}" --lang ja
 
 echo "== 2) 日本語トークナイザ学習 =="
-python -m scripts.tok_train --max_chars=2000000000
+python -m scripts.tok_train --max_chars=500000000
 python -m scripts.tok_eval || true
 ls -l "${CACHE_DIR}/tokenizer" || true
 
