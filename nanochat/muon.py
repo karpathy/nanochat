@@ -6,7 +6,7 @@ import torch
 from torch import Tensor
 import torch.distributed as dist
 
-@torch.compile
+# @torch.compile # Disable compilation for stability on AMD ROCm
 def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
     """
     Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
