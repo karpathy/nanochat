@@ -86,6 +86,18 @@ sample_every = 2000 # every how many steps to sample from the model
 save_every = -1 # every how many steps to save model checkpoints (-1 = disable, and save only at the end of the run)
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
+compile = True # whether to compile the model. On AMD ROCm this might be unstable.
+
+# Auto-detect Strix Halo to disable compilation by default for stability
+try:
+    if shutil.which('rocminfo'):
+        _res = subprocess.run(['rocminfo'], capture_output=True, text=True)
+        if 'gfx1151' in _res.stdout:
+            print("AMD Strix Halo (gfx1151) detected. Defaulting compile=False for stability.")
+            compile = False
+except Exception:
+    pass
+
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
@@ -153,7 +165,12 @@ if resuming:
     del model_data # free up this memory after the copy
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+# If on ROCm (Strix Halo specifically), default compile to False if not explicitly set?
+# Actually, let's just respect the flag. But if we are on ROCm, we might want to warn or default to False.
+# For now, let's just make it conditional.
+if compile:
+    print0("compiling the model...")
+    model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
 num_params = sum(p.numel() for p in model.parameters())
 print0(f"Number of parameters: {num_params:,}")
 num_flops_per_token = model.estimate_flops()
