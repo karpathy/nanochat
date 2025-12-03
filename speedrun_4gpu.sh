@@ -1,18 +1,20 @@
 #!/bin/bash
 
-# This script is the "Best ChatGPT clone that $100 can buy",
-# It is designed to run in ~4 hours on 8XH100 node at $3/GPU/hour.
+# Optimized training script for 4x A100 GPUs
+# Includes: Auto batch size discovery, torch.compile, KV-cache, fixed token broadcasting
+# Expected runtime: ~8 hours on 4x A100 (80GB)
 
 # 1) Example launch (simplest):
-# bash speedrun.sh
-# 2) Example launch in a screen session (because the run takes ~4 hours):
-# screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
-# 3) Example launch with wandb logging, but see below for setting up wandb first:
-# WANDB_RUN=speedrun screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
+# bash speedrun_4gpu.sh
+# 2) Example launch in a screen session (recommended for 8hr runtime):
+# screen -L -Logfile speedrun_4gpu.log -S speedrun bash speedrun_4gpu.sh
+# 3) Example launch with wandb logging:
+# WANDB_RUN=my_run_name bash speedrun_4gpu.sh
 
-# Default intermediate artifacts directory is in ~/.cache/nanochat
+# Default intermediate artifacts directory
+# NOTE: Using /i/ partition since home is full - adjust if needed
 export OMP_NUM_THREADS=1
-export NANOCHAT_BASE_DIR="/raid/diana/nanochat_cache"
+export NANOCHAT_BASE_DIR="/i/nanochat_cache"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # -----------------------------------------------------------------------------
