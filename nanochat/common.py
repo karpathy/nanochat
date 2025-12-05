@@ -114,11 +114,21 @@ def print_banner():
     print0(banner)
 
 def is_ddp():
-    return 'RANK' in os.environ and 'WORLD_SIZE' in os.environ
+    required_env = ['RANK', 'LOCAL_RANK', 'WORLD_SIZE', 'MASTER_ADDR', 'MASTER_PORT']
+    # Check existence
+    if not all(var in os.environ for var in required_env):
+        return False
+    # Check types for numeric vars
+    try:
+        int(os.environ['RANK'])
+        int(os.environ['LOCAL_RANK'])
+        int(os.environ['WORLD_SIZE'])
+    except ValueError:
+        return False
+    return True
 
 def get_dist_info():
     if is_ddp():
-        assert all(var in os.environ for var in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE'])
         ddp_rank = int(os.environ['RANK'])
         ddp_local_rank = int(os.environ['LOCAL_RANK'])
         ddp_world_size = int(os.environ['WORLD_SIZE'])
