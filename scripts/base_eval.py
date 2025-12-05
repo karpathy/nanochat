@@ -17,7 +17,6 @@ import yaml
 import shutil
 import random
 import zipfile
-import tempfile
 from contextlib import nullcontext
 
 import torch
@@ -38,11 +37,13 @@ def place_eval_bundle(file_path):
     # we need to unzip it and place it in the base directory
     base_dir = get_base_dir()
     eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        with zipfile.ZipFile(file_path, 'r') as zip_ref:
-            zip_ref.extractall(tmpdir)
-        extracted_bundle_dir = os.path.join(tmpdir, "eval_bundle")
-        shutil.move(extracted_bundle_dir, eval_bundle_dir)
+
+    # Clean up existing directory if it exists to ensure a fresh state
+    if os.path.exists(eval_bundle_dir):
+        shutil.rmtree(eval_bundle_dir)
+
+    with zipfile.ZipFile(file_path, 'r') as zip_ref:
+        zip_ref.extractall(base_dir)
     print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
 def evaluate_model(model, tokenizer, device, max_per_task=-1):
