@@ -21,21 +21,29 @@ def log0(message):
         logger.info(message)
 
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
+    # Ensure directory exists on all ranks to prevent race conditions
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
     if rank == 0:
-        os.makedirs(checkpoint_dir, exist_ok=True)
         # Save the model state parameters
         model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
-        torch.save(model_data, model_path)
+        model_tmp_path = model_path + ".tmp"
+        torch.save(model_data, model_tmp_path)
+        os.rename(model_tmp_path, model_path)
         logger.info(f"Saved model parameters to: {model_path}")
         # Save the metadata dict as json
         meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
-        with open(meta_path, "w", encoding="utf-8") as f:
+        meta_tmp_path = meta_path + ".tmp"
+        with open(meta_tmp_path, "w", encoding="utf-8") as f:
             json.dump(meta_data, f, indent=2)
+        os.rename(meta_tmp_path, meta_path)
         logger.info(f"Saved metadata to: {meta_path}")
     # Note that optimizer state is sharded across ranks, so each rank must save its own.
     if optimizer_data is not None:
         optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
-        torch.save(optimizer_data, optimizer_path)
+        optimizer_tmp_path = optimizer_path + ".tmp"
+        torch.save(optimizer_data, optimizer_tmp_path)
+        os.rename(optimizer_tmp_path, optimizer_path)
         logger.info(f"Saved optimizer state to: {optimizer_path}")
 
 def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
