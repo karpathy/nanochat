@@ -79,6 +79,7 @@ weight_decay = 0.0 # weight decay for the embedding/unembedding parameters (Adam
 matrix_lr = 0.02 # learning rate for the matrix parameters (Muon)
 grad_clip = 1.0 # gradient clipping value (0.0 = disabled)
 warmup_ratio = 0.0 # ratio of iterations for LR warmup
+adam_warmup_ratio = 0.0 # ratio of iterations for AdamW LR warmup (0.0 = disabled)
 warmdown_ratio = 0.2 # ratio of iterations for LR warmdown
 final_lr_frac = 0.0 # final LR is this fraction of the initial LR
 resume_from_step = -1 # resume training from this step of the optimization (-1 = disable)
@@ -223,7 +224,7 @@ x, y, dataloader_state_dict = next(train_loader) # kick off load of the very fir
 # Set up hyperparameter schedulers
 
 # Learning rate scheduler
-def get_lr_multiplier(it):
+def get_lr_multiplier(it, warmup_ratio):
     warmup_iters = round(warmup_ratio * num_iterations)
     warmdown_iters = round(warmdown_ratio * num_iterations)
     if it < warmup_iters:
@@ -362,10 +363,13 @@ while True:
         grad_norm_tensor = torch.nn.utils.clip_grad_norm_(orig_model.parameters(), grad_clip)
         grad_norm = grad_norm_tensor.item() # GPU tensor -> CPU float (note: cpu-gpu sync point)
     # step the optimizers
-    lrm = get_lr_multiplier(step)
-    for opt in optimizers:
-        for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * lrm
+    # AdamW might have a different warmup schedule than Muon
+    adam_lrm = get_lr_multiplier(step, adam_warmup_ratio)
+    muon_lrm = get_lr_multiplier(step, warmup_ratio)
+    for group in adamw_optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * adam_lrm
+    for group in muon_optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * muon_lrm
     muon_momentum = get_muon_momentum(step)
     for group in muon_optimizer.param_groups:
         group["momentum"] = muon_momentum
@@ -389,14 +393,15 @@ while True:
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
     print_grad_norm = f" grad norm: {grad_norm:.4f} |" if grad_clip_enabled else ""
-    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} |{print_grad_norm} lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} |{print_grad_norm} adam_lrm: {adam_lrm:.2f} | muon_lrm: {muon_lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
     if step % 100 == 0:
         log_data = {
             "step": step,
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
             "train/loss": debiased_smooth_loss,
-            "train/lrm": lrm,
+            "train/adam_lrm": adam_lrm,
+            "train/muon_lrm": muon_lrm,
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,
             "train/mfu": mfu,
