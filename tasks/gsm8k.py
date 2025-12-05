@@ -15,11 +15,14 @@ Notice that GSM8K uses tool calls inside << >> tags.
 """
 
 import re
+
 from datasets import load_dataset
+
 from tasks.common import Task
 
-
 GSM_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
+
+
 def extract_answer(completion):
     """
     Extract the numerical answer after #### marker.
@@ -35,7 +38,6 @@ def extract_answer(completion):
 
 
 class GSM8K(Task):
-
     def __init__(self, subset, split, **kwargs):
         super().__init__(**kwargs)
         assert subset in ["main", "socratic"], "GSM8K subset must be main|socratic"
@@ -50,10 +52,10 @@ class GSM8K(Task):
         return len(self.ds)
 
     def get_example(self, index):
-        """ Get a single problem from the dataset. """
+        """Get a single problem from the dataset."""
         row = self.ds[index]
-        question = row['question'] # string of the question prompt
-        answer = row['answer'] # string of the full solution and the answer after #### marker
+        question = row['question']  # string of the question prompt
+        answer = row['answer']  # string of the full solution and the answer after #### marker
         # Create and return the Conversation object
         # This is tricky because GSM8K uses tool calls, which we need to parse here.
         assistant_message_parts = []
@@ -76,8 +78,8 @@ class GSM8K(Task):
                 assistant_message_parts.append({"type": "text", "text": part})
         # No put it all together
         messages = [
-            {"role": "user", "content": question}, # note: simple string
-            {"role": "assistant", "content": assistant_message_parts}, # note: list of parts (as dicts)
+            {"role": "user", "content": question},  # note: simple string
+            {"role": "assistant", "content": assistant_message_parts},  # note: list of parts (as dicts)
         ]
         conversation = {
             "messages": messages,
@@ -99,7 +101,7 @@ class GSM8K(Task):
         assistant_message = conversation['messages'][-1]
         assert assistant_message['role'] == "assistant", "Last message must be from the Assistant"
         assert isinstance(assistant_message['content'], list), "This is expected to be a list of parts"
-        last_text_part = assistant_message['content'][-1]['text'] # this contains the final answer in GSM8K
+        last_text_part = assistant_message['content'][-1]['text']  # this contains the final answer in GSM8K
         # Extract both the ground truth answer and the predicted answer
         ref_num = extract_answer(last_text_part)
         pred_num = extract_answer(assistant_response)

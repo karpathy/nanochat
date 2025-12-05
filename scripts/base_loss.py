@@ -6,30 +6,35 @@ Loads a checkpoint, and:
 Example run as:
 torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
 """
+
 import os
 from contextlib import nullcontext
+
 import torch
+
 from nanochat.checkpoint_manager import load_model
-from nanochat.common import compute_init, print0, compute_cleanup, autodetect_device_type
+from nanochat.common import autodetect_device_type, compute_cleanup, compute_init, print0
 from nanochat.dataloader import tokenizing_distributed_data_loader
-from nanochat.tokenizer import get_token_bytes
-from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
+from nanochat.loss_eval import evaluate_bpb
+from nanochat.tokenizer import get_token_bytes
 
 # Configuration
 device_batch_size = 32
-split_tokens = 20*524288  # number of tokens to evaluate per split
-model_tag = None # optional model tag for the output directory name
-model_step = None # optional model step for the output directory name
-device_type = "" # cuda|cpu|mps (empty => autodetect)
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+split_tokens = 20 * 524288  # number of tokens to evaluate per split
+model_tag = None  # optional model tag for the output directory name
+model_step = None  # optional model step for the output directory name
+device_type = ""  # cuda|cpu|mps (empty => autodetect)
+exec(open(os.path.join('nanochat', 'configurator.py')).read())  # overrides from command line or config file
 
 # Load the base model and the tokenizer
 device_type = autodetect_device_type() if device_type == "" else device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=model_tag, step=model_step)
-sequence_len = meta["model_config"]["sequence_len"] # could be arbitrary really
-autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+sequence_len = meta["model_config"]["sequence_len"]  # could be arbitrary really
+autocast_ctx = (
+    torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+)
 
 # Evaluate the loss on each split
 tokens_per_step = device_batch_size * sequence_len * ddp_world_size
@@ -67,13 +72,17 @@ if ddp_rank == 0:
 
 # Log to report
 from nanochat.report import get_report
-get_report().log(section="Base model loss", data=[
-    {
-        "train bpb": bpb_results["train"],
-        "val bpb": bpb_results["val"],
-    },
-    {f"sample {i}": sample for i, sample in enumerate(samples)},
-])
+
+get_report().log(
+    section="Base model loss",
+    data=[
+        {
+            "train bpb": bpb_results["train"],
+            "val bpb": bpb_results["val"],
+        },
+        {f"sample {i}": sample for i, sample in enumerate(samples)},
+    ],
+)
 
 # Cleanup
 compute_cleanup()

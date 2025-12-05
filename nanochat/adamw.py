@@ -2,6 +2,7 @@
 Borrowed from modded-nanogpt. By Keller, @vagrawal, et al.
 Not a general optimizer! But works for our specific use.
 """
+
 import torch
 import torch.distributed as dist
 from torch import Tensor
@@ -12,7 +13,15 @@ class DistAdamW(torch.optim.Optimizer):
     Distributed AdamW optimizer.
     In the style of ZeRO-2, i.e. sharded optimizer states and gradient reduction
     """
-    def __init__(self, param_groups, lr: float = 1e-3, betas: tuple[float, float] = (0.9, 0.999), eps: float = 1e-8, weight_decay: float = 0.01):
+
+    def __init__(
+        self,
+        param_groups,
+        lr: float = 1e-3,
+        betas: tuple[float, float] = (0.9, 0.999),
+        eps: float = 1e-8,
+        weight_decay: float = 0.01,
+    ):
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         super().__init__(param_groups, defaults)
 
@@ -30,7 +39,9 @@ class DistAdamW(torch.optim.Optimizer):
                 grad = params[base_i].grad
                 rank_size = grad.shape[0] // world_size
                 grad_slice = torch.empty_like(grad[:rank_size])
-                reduce_scatter_futures.append(dist.reduce_scatter_tensor(grad_slice, grad, op=dist.ReduceOp.AVG, async_op=True).get_future())
+                reduce_scatter_futures.append(
+                    dist.reduce_scatter_tensor(grad_slice, grad, op=dist.ReduceOp.AVG, async_op=True).get_future()
+                )
                 grad_slices.append(grad_slice)
 
         idx = 0
@@ -43,7 +54,7 @@ class DistAdamW(torch.optim.Optimizer):
                 reduce_scatter_futures[idx].wait()
                 p = params[base]
                 rank_size = p.shape[0] // world_size
-                p_slice = p[rank * rank_size:(rank + 1) * rank_size]
+                p_slice = p[rank * rank_size : (rank + 1) * rank_size]
                 lr = group['lr'] * getattr(p, "lr_mul", 1.0)
                 state = self.state[p]
                 g_slice = grad_slices[idx]
@@ -64,8 +75,8 @@ class DistAdamW(torch.optim.Optimizer):
                 exp_avg.mul_(beta1).add_(g_slice, alpha=1 - beta1)
                 exp_avg_sq.mul_(beta2).addcmul_(g_slice, g_slice, value=1 - beta2)
                 # bias corrections
-                bias1 = 1 - beta1 ** t
-                bias2 = 1 - beta2 ** t
+                bias1 = 1 - beta1**t
+                bias2 = 1 - beta2**t
                 # compute step
                 denom = exp_avg_sq.sqrt().add_(eps)
                 step_size = lr * (torch.sqrt(bias2) / bias1)

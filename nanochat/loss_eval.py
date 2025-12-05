@@ -1,9 +1,12 @@
 """
 A number of functions that help with evaluating a base model.
 """
+
 import math
+
 import torch
 import torch.distributed as dist
+
 
 @torch.no_grad()
 def evaluate_bpb(model, batches, steps, token_bytes):
@@ -30,20 +33,16 @@ def evaluate_bpb(model, batches, steps, token_bytes):
     batch_iter = iter(batches)
     for _ in range(steps):
         x, y = next(batch_iter)
-        loss2d = model(x, y, loss_reduction='none') # (B, T)
-        loss2d = loss2d.view(-1) # flatten
-        y = y.view(-1) # flatten
-        if (y.int() < 0).any(): # mps does not currently have kernel for < 0 for int64, only int32
+        loss2d = model(x, y, loss_reduction='none')  # (B, T)
+        loss2d = loss2d.view(-1)  # flatten
+        y = y.view(-1)  # flatten
+        if (y.int() < 0).any():  # mps does not currently have kernel for < 0 for int64, only int32
             # slightly more complex code path if some target tokens are ignore_index (e.g. -1)
             # any target token < 0 is to be ignored: do NOT index token_bytes with negatives
             valid = y >= 0
             y_safe = torch.where(valid, y, torch.zeros_like(y))
             # map valid targets to their byte length; ignored targets contribute 0 bytes
-            num_bytes2d = torch.where(
-                valid,
-                token_bytes[y_safe],
-                torch.zeros_like(y, dtype=token_bytes.dtype)
-            )
+            num_bytes2d = torch.where(valid, token_bytes[y_safe], torch.zeros_like(y, dtype=token_bytes.dtype))
             total_nats += (loss2d * (num_bytes2d > 0)).sum()
             total_bytes += num_bytes2d.sum()
         else:
