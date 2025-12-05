@@ -20,6 +20,11 @@ from contextlib import nullcontext
 import wandb
 import torch
 if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version.hip):
+    if torch.cuda.is_available():
+        # Set precision high for TensorFloat32 if available
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cuda.matmul.allow_tf32 = True
+
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     # Also set the HIP-specific env var if on ROCm, as suggested by OOM errors
     if hasattr(torch.version, 'hip') and torch.version.hip:
