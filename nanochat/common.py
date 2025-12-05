@@ -114,11 +114,35 @@ def print_banner():
     print0(banner)
 
 def is_ddp():
-    return 'RANK' in os.environ and 'WORLD_SIZE' in os.environ
+    """
+    Robustly detect if we are running in a Distributed Data Parallel (DDP) environment.
+    Checks for the existence of key environment variables set by torchrun or similar launchers.
+    """
+    # Essential for DDP
+    # We require LOCAL_RANK as well, because we use it in get_dist_info.
+    # We also look for MASTER_ADDR/PORT as they are standard.
+    # But strictly speaking, if we use a different init_method, MASTER_ADDR might not be needed.
+    # However, nanochat codebase relies on env:// init method implicitly.
+    required_vars = ['RANK', 'WORLD_SIZE', 'LOCAL_RANK', 'MASTER_ADDR', 'MASTER_PORT']
+
+    # Check existence
+    for v in required_vars:
+        if v not in os.environ:
+            return False
+
+    # Check integer validity for numeric vars
+    numeric_vars = ['RANK', 'WORLD_SIZE', 'LOCAL_RANK', 'MASTER_PORT']
+    try:
+        for v in numeric_vars:
+            int(os.environ[v])
+    except ValueError:
+        return False
+
+    return True
 
 def get_dist_info():
     if is_ddp():
-        assert all(var in os.environ for var in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE'])
+        # is_ddp() now guarantees these exist and are valid integers (for numeric ones)
         ddp_rank = int(os.environ['RANK'])
         ddp_local_rank = int(os.environ['LOCAL_RANK'])
         ddp_world_size = int(os.environ['WORLD_SIZE'])

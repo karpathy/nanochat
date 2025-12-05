@@ -78,9 +78,11 @@ def build_model(checkpoint_dir, step, device, phase):
     with torch.device("meta"):
         model = GPT(model_config)
     # Load the model state
-    model.to_empty(device=device)
-    model.init_buffers() # Initialize buffers (e.g. rotary embeddings) that are not in the checkpoint
+    # We use assign=True to directly load tensors into the model, avoiding redundant memory allocation
+    # from to_empty(). We must load state dict first so that parameters are on the correct device,
+    # which init_buffers() uses to determine where to place the buffers.
     model.load_state_dict(model_data, strict=True, assign=True)
+    model.init_buffers() # Initialize buffers (e.g. rotary embeddings) that are not in the checkpoint
     # Put the model in the right training phase / mode
     if phase == "eval":
         model.eval()
