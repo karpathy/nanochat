@@ -14,8 +14,8 @@
 - [x] **Tokenizer Efficiency**: Optimize `prepend_id` insertion in `nanochat/tokenizer.py` (currently uses `list.insert(0)`, which is O(N)).
 - [ ] **Liger Kernels**: Experiment with [Liger Kernels](https://github.com/linkedin/Liger-Kernel) or chunked cross-entropy in `nanochat/gpt.py` to reduce memory usage.
 - [ ] **Checkpointing**:
-    - Fix potentially redundant model re-initialization in `checkpoint_manager.py`.
-    - Ensure optimizer state saving across ranks is robust (`scripts/base_train.py`).
+    - [x] Fix potentially redundant model re-initialization in `checkpoint_manager.py`.
+    - [x] Ensure optimizer state saving across ranks is robust (`scripts/base_train.py`).
 - [x] **Evaluation Cleanup**: Refactor `scripts/base_eval.py` to remove heavy dependencies (like pandas) and simplify file handling.
 - [ ] **AdamW Warmup**: Experiment with short warmup periods for AdamW parameters (`scripts/base_train.py` TODO).
 
