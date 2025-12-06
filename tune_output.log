@@ -1,0 +1,5 @@
+Starting System Auto-Tuning...
+Detected Platform: CUDA/NVIDIA/CPU
+
+Phase 1: Throughput Tuning (Batch Size & Compilation)
+Running benchmark with config: {'device_batch_size': 1, 'depth': 10, 'compile': 'True'} env: {}
