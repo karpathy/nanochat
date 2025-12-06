@@ -29,7 +29,7 @@ def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int =
     # Merge environment variables
     current_env = os.environ.copy()
     # Enable torch.compile debugging to stderr
-    current_env["TORCH_LOGS"] = "+dynamo"
+    # current_env["TORCH_LOGS"] = "+dynamo" # Too verbose for general tuning, hides actual errors
     current_env.update(env_vars)
 
     # Filter out env vars that might interfere if we want to test defaults
@@ -55,8 +55,8 @@ def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int =
             if "OutOfMemoryError" in result.stderr or "OutOfMemoryError" in result.stdout:
                 print("Failure reason: OutOfMemoryError", flush=True)
             else:
-                print(f"Stderr tail: {result.stderr[-2000:]}", flush=True)
-                # print(f"Stdout tail: {result.stdout[-2000:]}", flush=True)
+                print(f"Stderr tail: {result.stderr[-5000:]}", flush=True)
+                # print(f"Stdout tail: {result.stdout[-5000:]}", flush=True)
             return -1.0
 
         # Parse output for tok/sec
