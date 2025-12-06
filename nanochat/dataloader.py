@@ -51,6 +51,7 @@ def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads
                         yield batch[i:i+tokenizer_batch_size], (pq_idx, rg_idx)
                     rg_idx += ddp_world_size # advance to the next row group (in DDP)
                 pq_idx += 1 # advance to the next parquet file
+            pq_idx = 0 # reset 
     batches = document_batches()
 
     # Now emit batches of tokens.
