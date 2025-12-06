@@ -137,7 +137,7 @@ def main():
     # We will perform a grid search over these parameters.
 
     # Batch sizes to try. We start small and go up.
-    batch_sizes = [16, 32, 64, 128, 256]
+    batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 
     # Model depth fixed for tuning
     depth = 10
