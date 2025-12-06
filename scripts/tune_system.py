@@ -4,6 +4,7 @@ import sys
 import subprocess
 import re
 import time
+import shutil
 import itertools
 from typing import Dict, Any, List, Tuple
 
@@ -116,7 +117,21 @@ def main():
     except:
         pass
 
+    # Check for Strix Halo (gfx1151)
+    is_strix_halo = False
+    if os.environ.get("HSA_OVERRIDE_GFX_VERSION") == "11.5.1":
+        is_strix_halo = True
+    elif shutil.which('rocminfo'):
+        try:
+            result = subprocess.run(['rocminfo'], capture_output=True, text=True)
+            if 'gfx1151' in result.stdout:
+                is_strix_halo = True
+        except:
+            pass
+
     print(f"Detected Platform: {'ROCm/AMD' if is_rocm else 'CUDA/NVIDIA/CPU'}", flush=True)
+    if is_strix_halo:
+        print("Detected Variant: Strix Halo (gfx1151)", flush=True)
 
     # 2. Define Search Space
     # We will perform a grid search over these parameters.
@@ -134,6 +149,10 @@ def main():
     # - Dynamic shapes? (requires modifying base_train.py to expose dynamic=True/False in torch.compile)
 
     compile_options = [True, False] if is_rocm else [True]
+
+    if is_strix_halo:
+        print("NOTE: Disabling 'compile=True' for tuning on Strix Halo due to known stability issues.", flush=True)
+        compile_options = [False]
 
     # Environment variable combinations
     env_configs = [{}]
