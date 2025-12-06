@@ -8,7 +8,7 @@ import shutil
 import itertools
 from typing import Dict, Any, List, Tuple
 
-def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int = 5) -> float:
+def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int = 5, minimal_validation: bool = True) -> float:
     """
     Runs a short training session with the given configuration and environment variables.
     Returns the average tokens per second (tok/sec) or -1.0 if failed.
@@ -28,6 +28,17 @@ def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int =
     cmd.append("--run=dummy") # Don't log to wandb
     cmd.append("--core_metric_every=-1") # Disable heavy evaluation
     cmd.append("--save_every=-1") # Disable intermediate checkpointing
+
+    # Optimize validation overhead:
+    # If minimal_validation is True, reduce eval_tokens to a small multiple of the batch size
+    # to ensure validation is near-instant, preventing timeouts on small batch sizes.
+    if minimal_validation:
+        bs = int(config.get("device_batch_size", 16))
+        # Ensure at least 2 steps of validation (bs * seq_len * 2)
+        # Default max_seq_len is 2048, we assume that for now unless overridden in config
+        seq_len = int(config.get("max_seq_len", 2048))
+        eval_tokens = bs * seq_len * 2
+        cmd.append(f"--eval_tokens={eval_tokens}")
 
     # Merge environment variables
     current_env = os.environ.copy()
@@ -163,6 +174,12 @@ def main():
             {"TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1"}
         ]
 
+    # Toggle for minimal validation to prevent timeouts on small batch sizes
+    # Set to False if you want to test full validation stability
+    MINIMAL_VALIDATION = True
+    if MINIMAL_VALIDATION:
+        print("NOTE: Minimal validation enabled (eval_tokens reduced) to prevent timeouts.", flush=True)
+
     # Learning Rate and Optimizer Params (Added as per ToDo)
     # We likely want to tune these separately or just check stability?
     # Tuning LR for *performance* (tok/sec) doesn't make sense, it affects convergence.
@@ -207,7 +224,7 @@ def main():
                     "compile": str(compile_opt)
                 }
 
-                throughput = run_benchmark(config, env_vars)
+                throughput = run_benchmark(config, env_vars, minimal_validation=MINIMAL_VALIDATION)
 
                 if throughput > 0:
                     results.append((config, env_vars, throughput))
