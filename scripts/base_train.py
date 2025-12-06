@@ -55,6 +55,7 @@ from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
+from nanochat.scheduler import get_lr_multiplier, get_muon_momentum
 from scripts.base_eval import evaluate_model
 print_banner()
 
@@ -221,27 +222,6 @@ build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size,
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
-# Set up hyperparameter schedulers
-
-# Learning rate scheduler
-def get_lr_multiplier(it, warmup_ratio):
-    warmup_iters = round(warmup_ratio * num_iterations)
-    warmdown_iters = round(warmdown_ratio * num_iterations)
-    if it < warmup_iters:
-        return (it + 1) / warmup_iters
-    elif it <= num_iterations - warmdown_iters:
-        return 1.0
-    else:
-        progress = (num_iterations - it) / warmdown_iters
-        return progress * 1.0 + (1 - progress) * final_lr_frac
-
-# Momentum scheduler for Muon optimizer
-def get_muon_momentum(it):
-    frac = min(it / 300, 1)
-    momentum = (1 - frac) * 0.85 + frac * 0.95
-    return momentum
-
-# -----------------------------------------------------------------------------
 # Loop state (variables updated by the training loop)
 
 if not resuming:
@@ -364,8 +344,8 @@ while True:
         grad_norm = grad_norm_tensor.item() # GPU tensor -> CPU float (note: cpu-gpu sync point)
     # step the optimizers
     # AdamW might have a different warmup schedule than Muon
-    adam_lrm = get_lr_multiplier(step, adam_warmup_ratio)
-    muon_lrm = get_lr_multiplier(step, warmup_ratio)
+    adam_lrm = get_lr_multiplier(step, adam_warmup_ratio, num_iterations, warmdown_ratio, final_lr_frac)
+    muon_lrm = get_lr_multiplier(step, warmup_ratio, num_iterations, warmdown_ratio, final_lr_frac)
     for group in adamw_optimizer.param_groups:
         group["lr"] = group["initial_lr"] * adam_lrm
     for group in muon_optimizer.param_groups:
