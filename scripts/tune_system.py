@@ -25,6 +25,8 @@ def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int =
     # Force low number of iterations for speed
     cmd.append(f"--num_iterations={steps}")
     cmd.append("--run=dummy") # Don't log to wandb
+    cmd.append("--core_metric_every=-1") # Disable heavy evaluation
+    cmd.append("--save_every=-1") # Disable intermediate checkpointing
 
     # Merge environment variables
     current_env = os.environ.copy()
