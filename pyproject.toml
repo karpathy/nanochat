@@ -16,6 +16,8 @@ dependencies = [
     "torch>=2.7.0,<2.9.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
+    "safetensors>=0.4.0",
+    "gguf>=0.10.0",
 ]
 
 [build-system]
