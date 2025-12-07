@@ -208,7 +208,9 @@ def main():
                 # Construct overrides
                 overrides = {
                     "device_batch_size": bs,
-                    "compile": str(compile_opt)
+                    "depth": depth,
+                    "compile": str(compile_opt),
+                    "eval_tokens": bs * 2048, # Scale validation to avoid timeout (1 step)
                 }
 
                 throughput = run_benchmark(overrides, env_vars, base_config_path=args.config, minimal_validation=MINIMAL_VALIDATION)
