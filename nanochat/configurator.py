@@ -16,6 +16,7 @@ comes up with a better simple Python solution I am all ears.
 
 import os
 import sys
+import json
 from ast import literal_eval
 
 def print0(s="",**kwargs):
@@ -31,9 +32,25 @@ for arg in sys.argv[1:]:
             continue
         config_file = arg
         print0(f"Overriding config with {config_file}:")
-        with open(config_file) as f:
-            print0(f.read())
-        exec(open(config_file).read())
+
+        if config_file.endswith('.json'):
+            # JSON configuration loading
+            with open(config_file) as f:
+                config_dict = json.load(f)
+                for key, val in config_dict.items():
+                    if key in globals():
+                        # weak type checking/conversion could go here if needed
+                        # for now we trust the json values match the target types roughly
+                        print0(f"Overriding: {key} = {val}")
+                        globals()[key] = val
+                    else:
+                        # For JSON, we are tolerant of extra keys (allows shared config files)
+                        pass
+        else:
+            # Standard Python script configuration
+            with open(config_file) as f:
+                print0(f.read())
+            exec(open(config_file).read())
     else:
         # assume it's a --key=value argument
         assert arg.startswith('--')
