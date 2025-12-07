@@ -221,7 +221,8 @@ def main():
                 config = {
                     "device_batch_size": bs,
                     "depth": depth,
-                    "compile": str(compile_opt)
+                    "compile": str(compile_opt),
+                    "eval_tokens": bs * 2048, # Scale validation to avoid timeout (1 step)
                 }
 
                 throughput = run_benchmark(config, env_vars, minimal_validation=MINIMAL_VALIDATION)
