@@ -27,5 +27,5 @@
 - [ ] **RLHF Expansion**: Extend Reinforcement Learning (RL) support beyond the current GSM8K-only implementation.
 - [ ] **Advanced UI**: Develop a more robust chat interface (React/Web) or integrate with existing open-source UIs (e.g., Open WebUI).
 - [ ] **Data Pipeline**:
-    - Add data integrity verification for downloaded shards.
+    - [x] Add data integrity verification for downloaded shards.
     - Optimize data loading for APU unified memory architectures.
