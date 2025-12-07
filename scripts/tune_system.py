@@ -4,10 +4,11 @@ import sys
 import subprocess
 import re
 import time
+import shutil
 import itertools
 from typing import Dict, Any, List, Tuple
 
-def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int = 5) -> float:
+def run_benchmark(config: Dict[str, Any], env_vars: Dict[str, str], steps: int = 10) -> float:
     """
     Runs a short training session with the given configuration and environment variables.
     Returns the average tokens per second (tok/sec) or -1.0 if failed.
@@ -116,13 +117,27 @@ def main():
     except:
         pass
 
+    # Check for Strix Halo (gfx1151)
+    is_strix_halo = False
+    if os.environ.get("HSA_OVERRIDE_GFX_VERSION") == "11.5.1":
+        is_strix_halo = True
+    elif shutil.which('rocminfo'):
+        try:
+            result = subprocess.run(['rocminfo'], capture_output=True, text=True)
+            if 'gfx1151' in result.stdout:
+                is_strix_halo = True
+        except:
+            pass
+
     print(f"Detected Platform: {'ROCm/AMD' if is_rocm else 'CUDA/NVIDIA/CPU'}", flush=True)
+    if is_strix_halo:
+        print("Detected Variant: Strix Halo (gfx1151)", flush=True)
 
     # 2. Define Search Space
     # We will perform a grid search over these parameters.
 
     # Batch sizes to try. We start small and go up.
-    batch_sizes = [16, 32, 64, 128, 256]
+    batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 
     # Model depth fixed for tuning
     depth = 10
@@ -134,6 +149,10 @@ def main():
     # - Dynamic shapes? (requires modifying base_train.py to expose dynamic=True/False in torch.compile)
 
     compile_options = [True, False] if is_rocm else [True]
+
+    if is_strix_halo:
+        print("NOTE: Disabling 'compile=True' for tuning on Strix Halo due to known stability issues.", flush=True)
+        compile_options = [False]
 
     # Environment variable combinations
     env_configs = [{}]
@@ -185,7 +204,8 @@ def main():
                 config = {
                     "device_batch_size": bs,
                     "depth": depth,
-                    "compile": str(compile_opt)
+                    "compile": str(compile_opt),
+                    "eval_tokens": bs * 2048, # Scale validation to avoid timeout (1 step)
                 }
 
                 throughput = run_benchmark(config, env_vars)
