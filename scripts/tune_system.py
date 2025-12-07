@@ -5,6 +5,7 @@ import subprocess
 import re
 import time
 import shutil
+import json
 import itertools
 from typing import Dict, Any, List, Tuple
 
@@ -276,6 +277,19 @@ def main():
 
     cmd_args = " ".join([f"--{k}={v}" for k,v in best_config.items()])
     print(f"python -m scripts.base_train {cmd_args} --run=$WANDB_RUN", flush=True)
+
+    # Export results to JSON
+    json_output = {
+        "parameters": best_config,
+        "env_vars": best_env if best_env else {}
+    }
+
+    # We also include the 'throughput' in the export for reference
+    json_output["throughput"] = best_throughput
+
+    with open("run_config.json", "w") as f:
+        json.dump(json_output, f, indent=2)
+    print(f"\nBest configuration exported to run_config.json", flush=True)
 
     # NOTE: To implement "Learning rates and schedules" tuning properly,
     # we would need to run for significantly longer and track validation loss.
