@@ -23,7 +23,7 @@
 - [x] **Model Export**:
     - Add a script to export checkpoints to **GGUF** format for efficient inference on Strix Halo NPU (via llama.cpp).
     - Add HuggingFace `safetensors` export support.
-- [ ] **Inference Server**: Create a production-ready API server (FastAPI) to serve the model, replacing the simple `chat_cli.py`.
+- [x] **Inference Server**: Create a production-ready API server (FastAPI) to serve the model, replacing the simple `chat_cli.py`.
 - [ ] **RLHF Expansion**: Extend Reinforcement Learning (RL) support beyond the current GSM8K-only implementation.
 - [ ] **Advanced UI**: Develop a more robust chat interface (React/Web) or integrate with existing open-source UIs (e.g., Open WebUI).
 - [ ] **Data Pipeline**:
