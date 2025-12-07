@@ -111,3 +111,13 @@ def test_ui_exists(mock_worker_pool):
         response = client.get("/")
         assert response.status_code == 200
         assert "nanochat" in response.text
+
+def test_stats(mock_worker_pool):
+    with TestClient(app) as client:
+        response = client.get("/stats")
+        assert response.status_code == 200
+        data = response.json()
+        assert "total_workers" in data
+        assert "available_workers" in data
+        assert "workers" in data
+        assert len(data["workers"]) > 0

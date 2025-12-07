@@ -415,6 +415,22 @@ async def health():
         "workers_available": pool.available_workers.qsize()
     }
 
+@app.get("/stats")
+async def stats():
+    """Get worker pool statistics."""
+    worker_pool = app.state.worker_pool
+    return {
+        "total_workers": len(worker_pool.workers),
+        "available_workers": worker_pool.available_workers.qsize(),
+        "busy_workers": len(worker_pool.workers) - worker_pool.available_workers.qsize(),
+        "workers": [
+            {
+                "gpu_id": w.gpu_id,
+                "device": str(w.device)
+            } for w in worker_pool.workers
+        ]
+    }
+
 # -----------------------------------------------------------------------------
 # Static Files / UI
 # -----------------------------------------------------------------------------
