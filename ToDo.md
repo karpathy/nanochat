@@ -20,7 +20,7 @@
 - [ ] **AdamW Warmup**: Experiment with short warmup periods for AdamW parameters (`scripts/base_train.py` TODO).
 
 ## ✨ New Features
-- [ ] **Model Export**:
+- [x] **Model Export**:
     - Add a script to export checkpoints to **GGUF** format for efficient inference on Strix Halo NPU (via llama.cpp).
     - Add HuggingFace `safetensors` export support.
 - [ ] **Inference Server**: Create a production-ready API server (FastAPI) to serve the model, replacing the simple `chat_cli.py`.
