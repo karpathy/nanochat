@@ -121,3 +121,46 @@ def test_stats(mock_worker_pool):
         assert "available_workers" in data
         assert "workers" in data
         assert len(data["workers"]) > 0
+
+def test_training_jobs(mock_worker_pool):
+    # This test assumes we are mocking subprocess, or running in a way that doesn't actually train
+    # serve.py in test mode via TestClient doesn't automatically enable --mock flag unless we hack args
+
+    # We need to patch args.mock to True for the logic inside JobManager.start_job
+    from unittest.mock import patch
+    import scripts.serve
+
+    with patch.object(scripts.serve.args, 'mock', True):
+        with TestClient(app) as client:
+            # 1. Start Job
+            payload = {
+                "job_name": "test_run",
+                "device_batch_size": 2,
+                "learning_rate": 1e-4,
+                "max_step": 10
+            }
+            response = client.post("/v1/training/jobs", json=payload)
+            assert response.status_code == 200
+            job = response.json()
+            job_id = job["job_id"]
+            assert job["status"] == "running"
+
+            # 2. Get Job Status
+            response = client.get(f"/v1/training/jobs/{job_id}")
+            assert response.status_code == 200
+            assert response.json()["job_id"] == job_id
+
+            # 3. List Jobs
+            response = client.get("/v1/training/jobs")
+            assert response.status_code == 200
+            jobs = response.json()
+            assert len(jobs) >= 1
+
+            # 4. Get Logs (should exist even if empty)
+            response = client.get(f"/v1/training/jobs/{job_id}/logs")
+            assert response.status_code == 200
+
+            # 5. Cancel Job
+            response = client.post(f"/v1/training/jobs/{job_id}/cancel")
+            assert response.status_code == 200
+            assert response.json()["status"] == "stopped"
