@@ -21,12 +21,15 @@ import uuid
 import asyncio
 import logging
 import random
+import subprocess
+import signal
 from contextlib import asynccontextmanager
 from typing import List, Optional, Union, Dict, Any, AsyncGenerator
+from datetime import datetime
 
 import torch
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -104,6 +107,146 @@ class ModelCard(BaseModel):
 class ModelList(BaseModel):
     object: str = "list"
     data: List[ModelCard]
+
+# -----------------------------------------------------------------------------
+# Training Job Models & Manager
+# -----------------------------------------------------------------------------
+class TrainingConfig(BaseModel):
+    # Map to CLI arguments of scripts/base_train.py
+    # We expose a subset of common hyperparameters
+    job_name: str = Field(..., description="Unique name for the job")
+    device_batch_size: int = 4
+    learning_rate: float = 1e-4
+    max_step: int = 100
+    dataset: str = "fineweb" # or whatever default
+    val_check_interval: int = 20
+    save_every: int = 50
+    # Additional raw args can be passed if needed, but let's keep it structured for now
+
+class JobStatus(BaseModel):
+    job_id: str
+    job_name: str
+    status: str # "running", "completed", "failed", "stopped"
+    pid: Optional[int] = None
+    start_time: str
+    end_time: Optional[str] = None
+    exit_code: Optional[int] = None
+
+class JobManager:
+    def __init__(self, log_dir: str = "logs"):
+        self.jobs: Dict[str, Dict] = {} # job_id -> job_info
+        self.log_dir = log_dir
+        os.makedirs(log_dir, exist_ok=True)
+
+    def start_job(self, config: TrainingConfig) -> str:
+        job_id = str(uuid.uuid4())
+
+        # Construct command
+        # assuming running from root of repo
+        cmd = [
+            "python", "-m", "scripts.base_train",
+            f"--device_batch_size={config.device_batch_size}",
+            f"--learning_rate={config.learning_rate}",
+            f"--max_step={config.max_step}",
+            f"--dataset={config.dataset}",
+            f"--val_check_interval={config.val_check_interval}",
+            f"--save_every={config.save_every}",
+            f"--run={config.job_name}" # Use run name for wandb/logging
+        ]
+
+        if args.mock:
+             # In mock mode, just run a dummy sleep
+             cmd = ["sleep", "10"]
+
+        log_file_path = os.path.join(self.log_dir, f"{job_id}.log")
+        log_file = open(log_file_path, "w")
+
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                preexec_fn=os.setsid # Create new session to allow killing process group
+            )
+
+            self.jobs[job_id] = {
+                "config": config,
+                "process": process,
+                "log_file": log_file, # Keep file handle to close later?
+                "status": "running",
+                "pid": process.pid,
+                "start_time": datetime.now().isoformat(),
+                "end_time": None,
+                "exit_code": None
+            }
+            logger.info(f"Started job {job_id} (PID {process.pid}): {' '.join(cmd)}")
+            return job_id
+        except Exception as e:
+            log_file.close()
+            logger.error(f"Failed to start job: {e}")
+            raise e
+
+    def get_job(self, job_id: str) -> Optional[JobStatus]:
+        if job_id not in self.jobs:
+            return None
+
+        job = self.jobs[job_id]
+        proc = job["process"]
+
+        # Check if process has finished
+        if job["status"] == "running":
+            ret = proc.poll()
+            if ret is not None:
+                job["status"] = "completed" if ret == 0 else "failed"
+                job["exit_code"] = ret
+                job["end_time"] = datetime.now().isoformat()
+                # Close log file handle if open
+                if not job["log_file"].closed:
+                    job["log_file"].close()
+
+        return JobStatus(
+            job_id=job_id,
+            job_name=job["config"].job_name,
+            status=job["status"],
+            pid=job["pid"],
+            start_time=job["start_time"],
+            end_time=job["end_time"],
+            exit_code=job["exit_code"]
+        )
+
+    def list_jobs(self) -> List[JobStatus]:
+        # Update statuses
+        for job_id in list(self.jobs.keys()):
+            self.get_job(job_id) # Trigger status update
+        return [self.get_job(jid) for jid in self.jobs] # type: ignore
+
+    def stop_job(self, job_id: str):
+        if job_id not in self.jobs:
+            raise ValueError("Job not found")
+
+        job = self.jobs[job_id]
+        if job["status"] == "running":
+            proc = job["process"]
+            try:
+                # Kill the process group
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                job["status"] = "stopped"
+                job["end_time"] = datetime.now().isoformat()
+            except ProcessLookupError:
+                job["status"] = "failed" # Already gone?
+
+            if not job["log_file"].closed:
+                job["log_file"].close()
+
+    def get_logs(self, job_id: str) -> str:
+        if job_id not in self.jobs:
+            raise ValueError("Job not found")
+
+        log_path = os.path.join(self.log_dir, f"{job_id}.log")
+        if os.path.exists(log_path):
+            with open(log_path, "r") as f:
+                return f.read()
+        return ""
 
 # -----------------------------------------------------------------------------
 # Worker & Pool (Multi-GPU support)
@@ -217,9 +360,12 @@ class WorkerPool:
 async def lifespan(app: FastAPI):
     # Startup
     app.state.worker_pool = WorkerPool(num_gpus=args.num_gpus, device_type=args.device_type)
+    app.state.job_manager = JobManager()
     await app.state.worker_pool.initialize(args.source, model_tag=args.model_tag, step=args.step)
     yield
     # Shutdown (if needed)
+    # Cleanup running jobs?
+    # for jid in app.state.job_manager.jobs: ...
 
 app = FastAPI(title="NanoChat API", version="1.0.0", lifespan=lifespan)
 
@@ -430,6 +576,48 @@ async def stats():
             } for w in worker_pool.workers
         ]
     }
+
+# -----------------------------------------------------------------------------
+# Training Endpoints
+# -----------------------------------------------------------------------------
+@app.post("/v1/training/jobs", response_model=JobStatus)
+async def start_training_job(config: TrainingConfig):
+    job_manager = app.state.job_manager
+    try:
+        job_id = job_manager.start_job(config)
+        return job_manager.get_job(job_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/v1/training/jobs", response_model=List[JobStatus])
+async def list_training_jobs():
+    return app.state.job_manager.list_jobs()
+
+@app.get("/v1/training/jobs/{job_id}", response_model=JobStatus)
+async def get_training_job(job_id: str):
+    job = app.state.job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+@app.get("/v1/training/jobs/{job_id}/logs")
+async def get_training_logs(job_id: str):
+    try:
+        logs = app.state.job_manager.get_logs(job_id)
+        return {"job_id": job_id, "logs": logs}
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+@app.post("/v1/training/jobs/{job_id}/cancel", response_model=JobStatus)
+async def cancel_training_job(job_id: str):
+    job_manager = app.state.job_manager
+    try:
+        job_manager.stop_job(job_id)
+        return job_manager.get_job(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Job not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # -----------------------------------------------------------------------------
 # Static Files / UI
