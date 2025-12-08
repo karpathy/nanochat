@@ -48,8 +48,10 @@ eval_every = 150 # -1 = disable
 eval_tokens = 20*524288
 total_batch_size = 524288
 dry_run = 0 # dry_run=1 is for experiments: we will log to wandb but we won't write checkpoints or report
-config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+config_keys = {k: v for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str, type(None)))}
+from nanochat.configurator import get_config
+config_updates = get_config(config_keys)
+globals().update(config_updates)
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
 # -----------------------------------------------------------------------------
 

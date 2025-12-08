@@ -22,7 +22,12 @@ split_tokens = 20*524288  # number of tokens to evaluate per split
 model_tag = None # optional model tag for the output directory name
 model_step = None # optional model step for the output directory name
 device_type = "" # cuda|cpu|mps (empty => autodetect)
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+
+# Overrides from command line or config file
+config_keys = {k: v for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str, type(None)))}
+from nanochat.configurator import get_config
+config_updates = get_config(config_keys)
+globals().update(config_updates)
 
 # Load the base model and the tokenizer
 device_type = autodetect_device_type() if device_type == "" else device_type
