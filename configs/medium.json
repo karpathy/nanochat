@@ -1,0 +1,5 @@
+{
+    "depth": 10,
+    "max_seq_len": 2048,
+    "compile": false
+}
