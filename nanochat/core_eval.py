@@ -5,14 +5,16 @@ https://arxiv.org/abs/2406.11794
 TODOs:
 - All tasks ~match except for squad. We get 31% reference is 37%. Figure out why.
 """
+
 import random
 
-from jinja2 import Template
 import torch
 import torch.distributed as dist
+from jinja2 import Template
 
 # -----------------------------------------------------------------------------
 # Prompt rendering utilities
+
 
 def render_prompts_mc(item, continuation_delimiter, fewshot_examples=None):
     """Render complete prompts for a multiple choice question"""
@@ -24,11 +26,7 @@ def render_prompts_mc(item, continuation_delimiter, fewshot_examples=None):
 {{ item.query }}{{ continuation_delimiter }}{{ choice }}""".strip()
     template = Template(template_str)
     fewshot_examples = fewshot_examples or []
-    context = {
-        'fewshot_examples': fewshot_examples,
-        'continuation_delimiter': continuation_delimiter,
-        'item': item
-    }
+    context = {'fewshot_examples': fewshot_examples, 'continuation_delimiter': continuation_delimiter, 'item': item}
     prompts = [template.render(choice=choice, **context) for choice in item['choices']]
     return prompts
 
@@ -43,13 +41,8 @@ def render_prompts_schema(item, continuation_delimiter, fewshot_examples=None):
 {{ context }}{{ continuation_delimiter }}{{ item.continuation }}""".strip()
     template = Template(template_str)
     fewshot_examples = fewshot_examples or []
-    context = {
-        'fewshot_examples': fewshot_examples,
-        'continuation_delimiter': continuation_delimiter,
-        'item': item
-    }
-    prompts = [template.render(context=context_option, **context)
-               for context_option in item['context_options']]
+    context = {'fewshot_examples': fewshot_examples, 'continuation_delimiter': continuation_delimiter, 'item': item}
+    prompts = [template.render(context=context_option, **context) for context_option in item['context_options']]
     return prompts
 
 
@@ -67,11 +60,7 @@ def render_prompts_lm(item, continuation_delimiter, fewshot_examples=None):
 {{ item.context | trim }}{{ continuation_delimiter }}{% if include_continuation %}{{ item.continuation }}{% endif %}""".strip()
     template = Template(template_str)
     fewshot_examples = fewshot_examples or []
-    context = {
-        'fewshot_examples': fewshot_examples,
-        'continuation_delimiter': continuation_delimiter,
-        'item': item
-    }
+    context = {'fewshot_examples': fewshot_examples, 'continuation_delimiter': continuation_delimiter, 'item': item}
     # Return two prompts: without and with the continuation
     prompt_without = template.render(include_continuation=False, **context)
     prompt_with = template.render(include_continuation=True, **context)
@@ -89,10 +78,7 @@ def find_common_length(token_sequences, direction='left'):
     - direction: 'left' for prefix, 'right' for suffix
     """
     min_len = min(len(seq) for seq in token_sequences)
-    indices = {
-        'left': range(min_len),
-        'right': range(-1, -min_len-1, -1)
-    }[direction]
+    indices = {'left': range(min_len), 'right': range(-1, -min_len - 1, -1)}[direction]
     # Find the first position where the token sequences differ
     for i, idx in enumerate(indices):
         token = token_sequences[0][idx]
@@ -106,7 +92,7 @@ def stack_sequences(tokens, pad_token_id):
     bsz, seq_len = len(tokens), max(len(x) for x in tokens)
     input_ids = torch.full((bsz, seq_len), pad_token_id, dtype=torch.long)
     for i, x in enumerate(tokens):
-        input_ids[i, :len(x)] = torch.tensor(x, dtype=torch.long)
+        input_ids[i, : len(x)] = torch.tensor(x, dtype=torch.long)
     return input_ids
 
 
@@ -153,9 +139,7 @@ def forward_model(model, input_ids):
     target_ids = torch.roll(input_ids, shifts=-1, dims=1)
     # Calculate cross entropy at all positions
     losses = torch.nn.functional.cross_entropy(
-        outputs.view(batch_size * seq_len, -1),
-        target_ids.view(batch_size * seq_len),
-        reduction='none'
+        outputs.view(batch_size * seq_len, -1), target_ids.view(batch_size * seq_len), reduction='none'
     ).view(batch_size, seq_len)
     # Set the last column to be nan because there is no autoregressive loss there
     losses[:, -1] = float('nan')
@@ -201,19 +185,19 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
         for t, s, e in zip(tokens, start_idxs, end_idxs):
             if len(t) > max_tokens:
                 num_to_crop = len(t) - max_tokens
-                new_tokens.append(t[-max_tokens:]) # take the last max_tokens tokens
-                new_start_idxs.append(s - num_to_crop) # shift the indices down
+                new_tokens.append(t[-max_tokens:])  # take the last max_tokens tokens
+                new_start_idxs.append(s - num_to_crop)  # shift the indices down
                 new_end_idxs.append(e - num_to_crop)
                 assert s - num_to_crop >= 0, "this should never happen right?"
                 assert e - num_to_crop >= 0, "this should never happen right?"
             else:
-                new_tokens.append(t) # keep unchanged
+                new_tokens.append(t)  # keep unchanged
                 new_start_idxs.append(s)
                 new_end_idxs.append(e)
         tokens, start_idxs, end_idxs = new_tokens, new_start_idxs, new_end_idxs
 
     # Stack up all the sequences into a batch
-    pad_token_id = tokenizer.get_bos_token_id() # use BOS as pad token is ok
+    pad_token_id = tokenizer.get_bos_token_id()  # use BOS as pad token is ok
     input_ids = stack_sequences(tokens, pad_token_id)
     input_ids = input_ids.to(device)
 
@@ -226,13 +210,12 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
         si = start_idxs[0]
         ei = end_idxs[0]
         # predictions[i] predict input_ids[i+1] autoregressively
-        predicted_tokens = predictions[0, si-1:ei-1]
+        predicted_tokens = predictions[0, si - 1 : ei - 1]
         actual_tokens = input_ids[0, si:ei]
         is_correct = torch.all(predicted_tokens == actual_tokens).item()
     elif task_type in ['multiple_choice', 'schema']:
         # For MC/schema: find the option with lowest average loss
-        mean_losses = [losses[i, si-1:ei-1].mean().item()
-                        for i, (si, ei) in enumerate(zip(start_idxs, end_idxs))]
+        mean_losses = [losses[i, si - 1 : ei - 1].mean().item() for i, (si, ei) in enumerate(zip(start_idxs, end_idxs))]
         pred_idx = mean_losses.index(min(mean_losses))
         is_correct = pred_idx == item['gold']
     else:

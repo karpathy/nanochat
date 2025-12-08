@@ -18,10 +18,12 @@ import os
 import sys
 from ast import literal_eval
 
-def print0(s="",**kwargs):
+
+def print0(s="", **kwargs):
     ddp_rank = int(os.environ.get('RANK', 0))
     if ddp_rank == 0:
         print(s, **kwargs)
+
 
 for arg in sys.argv[1:]:
     if '=' not in arg:

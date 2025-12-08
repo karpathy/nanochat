@@ -123,6 +123,22 @@ I haven't invested too much here but some tests exist, especially for the tokeni
 python -m pytest tests/test_rustbpe.py -v -s
 ```
 
+## Pre-commit hooks
+
+Linting and formatting are enforced with [pre-commit](https://pre-commit.com/) both locally and in CI via GitHub Actions. To match the checks that run in PRs:
+
+- Make sure the dev extras are installed (`uv sync --group dev`).
+- Run the suite on demand: `uv run pre-commit run --all-files`.
+- (optional) Install the git hook once (for automation during `git commit`): `uv run pre-commit install`.
+
+Hook coverage (auto-fixes most issues; review and stage the changes afterward):
+
+- [`ruff`](https://github.com/astral-sh/ruff): a fast Rust-based linter and formatter that replaces multiple tools:
+  - **Linting** (`ruff-check`): removes unused imports (like autoflake), upgrades syntax (like pyupgrade), and sorts imports (like isort).
+  - **Formatting** (`ruff-format`): applies consistent code formatting (like black), with quote style preserved.
+- [`pre-commit-hooks`](https://github.com/pre-commit/pre-commit-hooks): repo hygiene (trim trailing whitespace, enforce LF endings/newlines, detect merge conflicts, block oversized files).
+- [`codespell`](https://github.com/codespell-project/codespell): catches common spelling mistakes in code and docs (add false positives to `[tool.codespell].ignore-words-list` in `pyproject.toml`).
+
 ## File structure
 
 ```
