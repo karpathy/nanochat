@@ -57,6 +57,16 @@ def parquets_iter_batched(split, start=0, step=1):
             yield texts
 
 # -----------------------------------------------------------------------------
+
+def verify_file(filepath):
+    """ Verifies that a file is a valid parquet file. """
+    try:
+        pq.ParquetFile(filepath)
+        return True
+    except Exception as e:
+        print(f"File {filepath} is corrupt: {e}")
+        return False
+
 def download_single_file(index):
     """ Downloads a single file index, with some backoff """
 
@@ -64,8 +74,13 @@ def download_single_file(index):
     filename = index_to_filename(index)
     filepath = os.path.join(DATA_DIR, filename)
     if os.path.exists(filepath):
-        print(f"Skipping {filepath} (already exists)")
-        return True
+        # Basic validation for existing files
+        if verify_file(filepath):
+            print(f"Skipping {filepath} (already exists and valid)")
+            return True
+        else:
+            print(f"Existing file {filepath} is corrupt, re-downloading...")
+            os.remove(filepath)
 
     # Construct the remote URL for this file
     url = f"{BASE_URL}/{filename}"
@@ -83,6 +98,16 @@ def download_single_file(index):
                 for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
                     if chunk:
                         f.write(chunk)
+
+            # Verify the downloaded file
+            if not verify_file(temp_path):
+                 print(f"Attempt {attempt}/{max_attempts} failed: Downloaded file {filename} is corrupt.")
+                 try:
+                     os.remove(temp_path)
+                 except OSError:
+                     pass
+                 continue
+
             # Move temp file to final location
             os.rename(temp_path, filepath)
             print(f"Successfully downloaded {filename}")
@@ -108,21 +133,43 @@ def download_single_file(index):
 
     return False
 
+def verify_single_file(index):
+    filename = index_to_filename(index)
+    filepath = os.path.join(DATA_DIR, filename)
+    if not os.path.exists(filepath):
+        print(f"MISSING: {filename}")
+        return False
+    if verify_file(filepath):
+        # print(f"OK: {filename}") # too verbose
+        return True
+    else:
+        print(f"CORRUPT: {filename}")
+        return False
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download FineWeb-Edu 100BT dataset shards")
     parser.add_argument("-n", "--num-files", type=int, default=-1, help="Number of shards to download (default: -1), -1 = disable")
     parser.add_argument("-w", "--num-workers", type=int, default=4, help="Number of parallel download workers (default: 4)")
+    parser.add_argument("--verify-only", action="store_true", help="Only verify existing files, do not download new ones")
     args = parser.parse_args()
 
     num = MAX_SHARD + 1 if args.num_files == -1 else min(args.num_files, MAX_SHARD + 1)
     ids_to_download = list(range(num))
-    print(f"Downloading {len(ids_to_download)} shards using {args.num_workers} workers...")
+
+    if args.verify_only:
+        print(f"Verifying {len(ids_to_download)} shards using {args.num_workers} workers...")
+    else:
+        print(f"Downloading {len(ids_to_download)} shards using {args.num_workers} workers...")
     print(f"Target directory: {DATA_DIR}")
     print()
+
+    func = verify_single_file if args.verify_only else download_single_file
+
     with Pool(processes=args.num_workers) as pool:
-        results = pool.map(download_single_file, ids_to_download)
+        results = pool.map(func, ids_to_download)
 
     # Report results
     successful = sum(1 for success in results if success)
-    print(f"Done! Downloaded: {successful}/{len(ids_to_download)} shards to {DATA_DIR}")
+    action = "Verified" if args.verify_only else "Downloaded"
+    print(f"Done! {action}: {successful}/{len(ids_to_download)} shards in {DATA_DIR}")

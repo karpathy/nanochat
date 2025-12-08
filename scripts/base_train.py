@@ -94,6 +94,11 @@ save_every = -1 # every how many steps to save model checkpoints (-1 = disable, 
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
 compile = True # whether to compile the model. On AMD ROCm this might be unstable.
+# Optimizer backends
+matrix_optimizer_backend = "muon" # "muon" or "nested_momentum"
+general_optimizer_backend = "adamw" # "adamw" or "nested_momentum"
+nested_betas = (0.9, 0.99) # For nested_momentum
+nested_level_weights = (0.5, 0.5) # For nested_momentum
 
 # Auto-detect Strix Halo to disable compilation by default for stability
 try:
@@ -106,8 +111,10 @@ except Exception:
     pass
 
 # now allow CLI to override the settings via the configurator lol
-config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+config_keys = {k: v for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str, type(None), tuple, list))}
+from nanochat.configurator import get_config
+config_updates = get_config(config_keys)
+globals().update(config_updates)
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
 
@@ -205,12 +212,21 @@ print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
-optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
-adamw_optimizer, muon_optimizer = optimizers
+optimizers = model.setup_optimizers(
+    unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay,
+    matrix_optimizer_backend=matrix_optimizer_backend, general_optimizer_backend=general_optimizer_backend,
+    nested_betas=nested_betas, nested_level_weights=nested_level_weights
+)
+# Note: optimizers[0] is general (AdamW/Nested), optimizers[1] is matrix (Muon/Nested)
+general_optimizer, matrix_optimizer = optimizers
 
 if resuming:
     for opt, dat in zip(optimizers, optimizer_data):
-        opt.load_state_dict(dat)
+        try:
+            opt.load_state_dict(dat)
+        except Exception as e:
+            print0(f"WARNING: Failed to load optimizer state: {e}. Starting with fresh optimizer state.")
+
     del optimizer_data # free up the memory
 
 # -----------------------------------------------------------------------------
@@ -346,13 +362,19 @@ while True:
     # AdamW might have a different warmup schedule than Muon
     adam_lrm = get_lr_multiplier(step, adam_warmup_ratio, num_iterations, warmdown_ratio, final_lr_frac)
     muon_lrm = get_lr_multiplier(step, warmup_ratio, num_iterations, warmdown_ratio, final_lr_frac)
-    for group in adamw_optimizer.param_groups:
+
+    # Update LRs
+    for group in general_optimizer.param_groups:
         group["lr"] = group["initial_lr"] * adam_lrm
-    for group in muon_optimizer.param_groups:
+    for group in matrix_optimizer.param_groups:
         group["lr"] = group["initial_lr"] * muon_lrm
-    muon_momentum = get_muon_momentum(step)
-    for group in muon_optimizer.param_groups:
-        group["momentum"] = muon_momentum
+
+    # Update Momentum (if needed, only Muon uses dynamic momentum in this repo)
+    if matrix_optimizer_backend == "muon":
+        muon_momentum = get_muon_momentum(step)
+        for group in matrix_optimizer.param_groups:
+            group["momentum"] = muon_momentum
+
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)

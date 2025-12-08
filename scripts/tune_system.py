@@ -1,4 +1,3 @@
-
 import os
 import sys
 import subprocess
@@ -7,6 +6,7 @@ import time
 import shutil
 import json
 import argparse
+import itertools
 from typing import Dict, Any, List, Tuple
 
 def run_benchmark(config_overrides: Dict[str, Any], env_vars: Dict[str, str], base_config_path: str = None, steps: int = 5, minimal_validation: bool = True) -> float:
@@ -201,6 +201,7 @@ def main():
 
     # Grid search for Throughput
     print("\nPhase 1: Throughput Tuning (Batch Size & Compilation)", flush=True)
+    depth = base_config.get("depth", 10) # default fallback
 
     for env_vars in env_configs:
         for compile_opt in compile_options:
@@ -267,12 +268,33 @@ def main():
         for k, v in best_env.items():
             print(f"  export {k}={v}", flush=True)
 
-    # Command line suggestion
+    # Command line suggestion (from tuning-profiles)
     cmd_args = " ".join([f"--{k}={v}" for k,v in final_config.items()])
-    # Note: final_config might contain keys that are not flags but are from the json (like max_chars)
-    # But for a direct python -m run, we'd probably want to use the config file + overrides.
-
     print(f"\nRun command with updated profile:\npython -m scripts.base_train {args.config if args.config else ''} --device_batch_size={best_overrides['device_batch_size']} --compile={best_overrides['compile']} --run=$WANDB_RUN", flush=True)
+
+    # Export results to JSON (from master)
+    json_output = {
+        "parameters": final_config,
+        "env_vars": best_env if best_env else {}
+    }
+
+    # We also include the 'throughput' in the export for reference
+    json_output["throughput"] = best_throughput
+
+    with open("run_config.json", "w") as f:
+        json.dump(json_output, f, indent=2)
+    print(f"\nBest configuration exported to run_config.json", flush=True)
+
+    # NOTE: To implement "Learning rates and schedules" tuning properly,
+    # we would need to run for significantly longer and track validation loss.
+    # That is outside the scope of a quick "system tuner".
+    #
+    # Example for LR tuning (commented out):
+    # learning_rates = [1e-3, 5e-4, 1e-4]
+    # for lr in learning_rates:
+    #      config = final_config.copy()
+    #      config["embedding_lr"] = lr
+    #      # run_benchmark(config, best_env, steps=100) # needs more steps + loss parsing
 
 if __name__ == "__main__":
     main()
