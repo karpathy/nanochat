@@ -9,6 +9,14 @@ forming a 'Continuum Memory System' for the gradients.
 
 This allows the optimizer to capture both transient (fast) and persistent (slow) gradient
 dynamics, mitigating catastrophic forgetting during training.
+
+Key Concepts:
+- **Continuum Memory System:** A set of momentum buffers (memory states) with different decay rates (`betas`).
+- **Time-Scales:** Defined by the `betas`. Low beta (e.g., 0.9) = Fast/Short-term memory. High beta (e.g., 0.9999) = Slow/Long-term memory.
+- **Nested Update:** The final parameter update is a weighted sum (`level_weights`) of updates from all memory levels.
+
+Reference:
+Behrouz, A., et al. "Nested Learning: The Illusion of Deep Learning Architecture." (2025).
 """
 
 import torch
@@ -23,6 +31,12 @@ class NestedMomentum(torch.optim.Optimizer):
     corresponding to different 'time-scales' of memory (e.g., Fast, Medium, Slow).
     The final update is a weighted sum of these memory states.
 
+    The update rule for each level `i` with decay `beta_i`:
+        m_{t,i} = beta_i * m_{t-1,i} + (1 - beta_i) * g_t
+
+    The final update `u_t` applied to parameters:
+        u_t = sum(w_i * m_{t,i}) for i in levels
+
     Args:
         params (iterable): Iterable of parameters to optimize or dicts defining parameter groups.
         lr (float): Learning rate.
@@ -31,7 +45,8 @@ class NestedMomentum(torch.optim.Optimizer):
                               Higher beta = slower decay = longer-term memory.
         level_weights (tuple[float] | None): Weights for combining the memory levels.
                                              If None, uniform weighting (1.0) is used.
-        weight_decay (float): Weight decay coefficient.
+                                             Example: (0.5, 0.3, 0.2) prioritizes fast memory.
+        weight_decay (float): Weight decay coefficient (L2 penalty).
         nesterov (bool): Whether to use Nesterov-style momentum update for the levels.
     """
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.99), level_weights=None, weight_decay=0.0, nesterov=False):
@@ -111,7 +126,22 @@ class NestedMomentum(torch.optim.Optimizer):
 class DistNestedMomentum(torch.optim.Optimizer):
     """
     Distributed version of NestedMomentum.
-    In the style of ZeRO-2, i.e. sharded optimizer states and gradient reduction.
+
+    Implements ZeRO-2 style sharding (Optimizer State Partitioning):
+    1. Gradients are reduced-scattered across ranks (each rank gets a slice of the average gradient).
+    2. Optimizer step (momentum update) is performed on the local shard.
+    3. Updated parameters are all-gathered back to all ranks.
+
+    This ensures that optimizer states (the momentum buffers) are sharded, significantly reducing
+    memory usage per GPU in distributed training.
+
+    Args:
+        params (iterable): Iterable of parameters to optimize.
+        lr (float): Learning rate.
+        betas (tuple[float]): Decay rates for memory levels.
+        level_weights (tuple[float] | None): Weights for memory levels.
+        weight_decay (float): Weight decay coefficient.
+        nesterov (bool): Enable Nesterov momentum.
     """
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.99), level_weights=None, weight_decay=0.0, nesterov=False):
         if level_weights is None:
