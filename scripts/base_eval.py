@@ -154,7 +154,7 @@ def main():
     # distributed / precision setup
     device_type = autodetect_device_type()
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
-    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type != "cpu" else nullcontext()
 
     # Load model and tokenizer from command line or from file system
     if args.hf_path is not None:

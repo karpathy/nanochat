@@ -29,7 +29,7 @@ device_type = autodetect_device_type() if device_type == "" else device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=model_tag, step=model_step)
 sequence_len = meta["model_config"]["sequence_len"] # could be arbitrary really
-autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type != "cpu" else nullcontext()
 
 # Evaluate the loss on each split
 tokens_per_step = device_batch_size * sequence_len * ddp_world_size

@@ -57,9 +57,9 @@ user_config = {k: globals()[k] for k in config_keys} # possibly useful for loggi
 device_type = autodetect_device_type() if device_type == "" else device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0
-autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
-synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
-get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
+autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type != "cpu" else nullcontext()
+synchronize = torch.cuda.synchronize if device_type != "cpu" else lambda: None
+get_max_memory = torch.cuda.max_memory_allocated if device_type != "cpu" else lambda: 0
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
@@ -123,7 +123,7 @@ def mid_data_generator(split):
     needed_tokens = device_batch_size * max_seq_len + 1 # to form one training batch of inputs,targets
     token_buffer = deque()
     # CUDA supports memory pinning for faster transfers between CPU and GPU:
-    scratch = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=(device_type == "cuda"))
+    scratch = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=(device_type != "cpu"))
     cursor = ddp_rank # increments by ddp_world_size each time, so each rank processes unique documents
     it = 0 # iteration counter
     while True:
