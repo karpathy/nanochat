@@ -69,22 +69,41 @@ class Infovore:
         surprisal = raw_loss.view(B, T) # This is 'Novelty'
 
         # 2. Calculate Relation: Cosine sim between token embeddings and the manifold centroid
-        # hidden_states: (B, T, D)
-        # manifold: (D) -> reshape to (1, 1, D) for broadcast
-        manifold_view = self.manifold_centroid.view(1, 1, -1)
 
-        # We calculate relation per token.
-        # "Is this specific token related to my worldview?"
-        relation = F.cosine_similarity(hidden_states, manifold_view, dim=-1) # (B, T)
+        # We detach hidden_states because we don't want to backpropagate through the relation metric.
+        # This saves memory by not extending the graph further.
+        hidden_states = hidden_states.detach()
+
+        # manifold: (D) -> reshape to (1, D) for broadcast
+        manifold_view = self.manifold_centroid.view(1, -1)
+
+        # Flatten hidden_states to (N, D) for easier chunking
+        # This helps avoid OOM on memory constrained devices (like 128GB APUs)
+        # because F.cosine_similarity might upcast/allocate large buffers.
+        hs_flat = hidden_states.view(-1, self.d_model)
+
+        relations = []
+        chunk_size = 4096 # Process 4k tokens at a time to keep peak memory low
+
+        for i in range(0, hs_flat.size(0), chunk_size):
+            hs_chunk = hs_flat[i : i + chunk_size]
+            # Calculate similarity for this chunk
+            # hs_chunk: (chunk_size, D)
+            # manifold_view: (1, D)
+            # Output: (chunk_size,)
+            sim_chunk = F.cosine_similarity(hs_chunk, manifold_view, dim=-1)
+            relations.append(sim_chunk)
+
+        # Concatenate and reshape back to (B, T)
+        relation = torch.cat(relations).view(B, T)
 
         # Normalize Relation to [0, 1] roughly (Cosine is [-1, 1])
         # We clamp negative relation (opposites) to 0 for the metric.
         relation = F.relu(relation)
 
         # 3. Calculate NRQ (Novelty * Relation)
-        # We detach NRQ because we don't want the model to optimize its weights
-        # to *increase* the loss (maximize novelty) directly.
         # We use NRQ as a scalar weight for the gradient.
+        # Relation is already detached effectively (computed from detached inputs).
         nrq_score = (surprisal * relation).detach()
 
         # 4. Filter / Weight the Loss
@@ -95,7 +114,7 @@ class Infovore:
         weighted_loss = raw_loss * nrq_score.view(-1)
 
         # Update the manifold for the next step (using the current batch's reality)
-        self.update_manifold(hidden_states.detach())
+        self.update_manifold(hidden_states)
 
         # Metrics for logging
         metrics = {
