@@ -57,7 +57,6 @@ def get_config(defaults: dict, argv: list = None) -> dict:
                 with open(config_file, 'r') as f:
                     data = json.load(f)
 
-                
                 # Support the tune_system.py output format (from tuning-profiles branch)
                 if "parameters" in data and isinstance(data["parameters"], dict):
                     file_config = data["parameters"]
