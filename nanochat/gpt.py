@@ -136,8 +136,7 @@ class CausalSelfAttention(nn.Module):
             # First, each query attends to all the cached keys/values (i.e. full prefix)
             attn_mask = torch.zeros((Tq, Tk), dtype=torch.bool, device=q.device) # True = keep, False = mask
             prefix_len = Tk - Tq
-            if prefix_len > 0: # can't be negative but could be zero
-                attn_mask[:, :prefix_len] = True
+            attn_mask[:, :prefix_len] = True
             # Then, causal attention within this chunk
             attn_mask[:, prefix_len:] = torch.tril(torch.ones((Tq, Tq), dtype=torch.bool, device=q.device))
             y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, enable_gqa=enable_gqa)
@@ -305,7 +304,7 @@ class GPT(nn.Module):
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean', return_embeddings=False):
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
@@ -332,10 +331,7 @@ class GPT(nn.Module):
             loss = chunked_cross_entropy(x, targets, self.lm_head, softcap=softcap, chunk_size=128, ignore_index=-1, reduction=loss_reduction)
             return loss
         else:
-            # inference mode: compute and return the logits
-            logits = self.lm_head(x)
-            logits = logits.float() # use tf32/fp32 for logits
-            logits = softcap * torch.tanh(logits / softcap) # logits softcap
+            # inference: just return the logits directly
             return logits
 
     @torch.inference_mode()

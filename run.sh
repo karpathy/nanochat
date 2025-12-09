@@ -76,4 +76,5 @@ fi
 uv run --no-sync --extra $EXTRAS maturin develop --release --manifest-path rustbpe/Cargo.toml > /dev/null 2>&1
 
 # Run the command
+export PYTHONPATH="$PYTHONPATH:$(pwd)"
 exec python "$@"

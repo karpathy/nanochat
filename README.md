@@ -97,6 +97,19 @@ And a bit more about computing environments that will run nanochat:
 
 nanochat can be run on CPU or on MPS (if you're on Macbook), and will automatically try to detect what device is best to run on. You're not going to get too far without GPUs, but at least you'll be able to run the code paths and maybe train a tiny LLM with some patience. For an example of how to make all the run commands much smaller (feel free to tune!), you can refer to [dev/runcpu.sh](dev/runcpu.sh) file. You'll see that I'm essentially restricting all scripts to train smaller models, to run for shorter number of iterations, etc. This functionality is new, slightly gnarly (touched a lot of code), and was merged in this [CPU|MPS PR](https://github.com/karpathy/nanochat/pull/88) on Oct 21, 2025.
 
+## Experimental: Online Curriculum Learning (Infovore)
+
+nanochat includes an experimental implementation of **Online Curriculum Learning** using the **Novelty-Relation Quotient (NRQ)**. This method dynamically weights the loss of each token based on the model's "taste" for the data. It balances **Novelty** (surprisal/loss) with **Relation** (cosine similarity to the model's current "memory manifold" or concept centroid).
+
+To enable this feature during training, use the `--use_infovore=True` flag. You can also adjust the momentum of the memory manifold with `--infovore_beta` (default 0.99).
+
+Example:
+```bash
+python -m scripts.base_train --use_infovore=True --infovore_beta=0.99
+```
+
+When enabled, the training loop will log three additional metrics to WandB: `train/nrq_avg`, `train/novelty_avg`, and `train/relation_avg`.
+
 ## Customization
 
 To customize your nanochat, see [Guide: infusing identity to your nanochat](https://github.com/karpathy/nanochat/discussions/139) in Discussions, which describes how you can tune your nanochat's personality through synthetic data generation and mixing that data into midtraining and SFT stages.
