@@ -17,7 +17,7 @@
     - [x] Fix potentially redundant model re-initialization in `checkpoint_manager.py`.
     - [x] Ensure optimizer state saving across ranks is robust (`scripts/base_train.py`).
 - [x] **Evaluation Cleanup**: Refactor `scripts/base_eval.py` to remove heavy dependencies (like pandas) and simplify file handling.
-- [ ] **AdamW Warmup**: Experiment with short warmup periods for AdamW parameters (`scripts/base_train.py` TODO).
+- [x] AdamW Warmup: Verified independent warmup schedule for AdamW parameters; enabled via `adam_warmup_ratio`.
 
 ## ✨ New Features
 - [x] **Model Export**:

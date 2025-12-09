@@ -81,7 +81,7 @@ weight_decay = 0.0 # weight decay for the embedding/unembedding parameters (Adam
 matrix_lr = 0.02 # learning rate for the matrix parameters (Muon)
 grad_clip = 1.0 # gradient clipping value (0.0 = disabled)
 warmup_ratio = 0.0 # ratio of iterations for LR warmup
-adam_warmup_ratio = 0.0 # ratio of iterations for AdamW LR warmup (0.0 = disabled)
+adam_warmup_ratio = 0.0 # ratio of iterations for AdamW LR warmup (0.0 = disabled). Independent of Muon warmup.
 warmdown_ratio = 0.2 # ratio of iterations for LR warmdown
 final_lr_frac = 0.0 # final LR is this fraction of the initial LR
 resume_from_step = -1 # resume training from this step of the optimization (-1 = disable)
