@@ -34,6 +34,7 @@ def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ign
     total_tokens = 0
 
     num_elements = x_flat.size(0)
+    loss_chunks = []
 
     for i in range(0, num_elements, chunk_size):
         x_chunk = x_flat[i : i + chunk_size]
@@ -43,17 +44,24 @@ def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ign
         valid_mask = target_chunk != ignore_index
         valid_count = valid_mask.sum().item()
 
-        if valid_count > 0:
+        if valid_count > 0 or reduction == 'none':
             # Compute logits for chunk
             logits_chunk = lm_head(x_chunk)
             logits_chunk = logits_chunk.float()
             logits_chunk = softcap * torch.tanh(logits_chunk / softcap)
 
-            # Compute sum of losses for this chunk
-            chunk_loss = F.cross_entropy(logits_chunk, target_chunk, ignore_index=ignore_index, reduction='sum')
+            if reduction == 'none':
+                chunk_loss = F.cross_entropy(logits_chunk, target_chunk, ignore_index=ignore_index, reduction='none')
+                loss_chunks.append(chunk_loss)
+            else:
+                # Compute sum of losses for this chunk
+                chunk_loss = F.cross_entropy(logits_chunk, target_chunk, ignore_index=ignore_index, reduction='sum')
 
-            total_loss += chunk_loss
-            total_tokens += valid_count
+                total_loss += chunk_loss
+                total_tokens += valid_count
+
+    if reduction == 'none':
+        return torch.cat(loss_chunks)
 
     if total_tokens == 0:
         return torch.tensor(0.0, device=x.device, requires_grad=True) # return a zero loss with grad for graph integrity
@@ -329,9 +337,13 @@ class GPT(nn.Module):
             # We use chunked cross entropy to save memory.
             # Instead of materializing (B, T, vocab_size) logits, we compute loss in chunks
             loss = chunked_cross_entropy(x, targets, self.lm_head, softcap=softcap, chunk_size=128, ignore_index=-1, reduction=loss_reduction)
+            if return_embeddings:
+                return loss, x
             return loss
         else:
             # inference: just return the logits directly
+            logits = self.lm_head(x)
+            logits = softcap * torch.tanh(logits / softcap)
             return logits
 
     @torch.inference_mode()
