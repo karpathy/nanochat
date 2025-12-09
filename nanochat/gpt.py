@@ -23,6 +23,73 @@ from nanochat.common import get_dist_info, print0
 from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
 from nanochat.nl_opt import NestedMomentum, DistNestedMomentum
+from torch.utils.checkpoint import checkpoint
+
+def _compute_loss_chunk(x_chunk, targets_chunk, lm_head, softcap, ignore_index, reduction):
+    logits_chunk = lm_head(x_chunk)
+    logits_chunk = logits_chunk.float()
+    logits_chunk = softcap * torch.tanh(logits_chunk / softcap)
+    return F.cross_entropy(logits_chunk, targets_chunk, ignore_index=ignore_index, reduction=reduction)
+
+def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ignore_index=-1, reduction='mean'):
+    # Flatten input and targets
+    B, T, C = x.size()
+    x_flat = x.view(-1, C)
+    targets_flat = targets.view(-1)
+
+    num_elements = x_flat.size(0)
+    losses = []
+    total_tokens = 0
+
+    # Determine internal reduction for chunks
+    # If we need 'none' globally, we must get 'none' from chunks.
+    # If we need 'mean' or 'sum' globally, 'sum' from chunks is most efficient.
+    chunk_reduction = 'none' if reduction == 'none' else 'sum'
+
+    for i in range(0, num_elements, chunk_size):
+        x_chunk = x_flat[i : i + chunk_size]
+        target_chunk = targets_flat[i : i + chunk_size]
+
+        # We use checkpointing to save memory for the backward pass
+        # Note: We must pass tensors to checkpoint, so softcap is passed as tensor if needed,
+        # but here it's a float. checkpoint handles non-tensor args but they aren't differentiable.
+        # lm_head is a module, so it's captured.
+        loss_chunk = checkpoint(
+            _compute_loss_chunk,
+            x_chunk,
+            target_chunk,
+            lm_head,
+            torch.tensor(softcap, device=x.device),
+            ignore_index,
+            chunk_reduction,
+            use_reentrant=False
+        )
+
+        if reduction == 'none':
+            losses.append(loss_chunk)
+        else:
+            # For sum/mean, we accumulate the sum
+            losses.append(loss_chunk.unsqueeze(0)) # keep as tensor list
+            # Count valid tokens for mean reduction
+            valid_mask = target_chunk != ignore_index
+            total_tokens += valid_mask.sum().item()
+
+    if not losses:
+        return torch.tensor(0.0, device=x.device, requires_grad=True)
+
+    all_losses = torch.cat(losses)
+
+    if reduction == 'none':
+        return all_losses
+    elif reduction == 'sum':
+        return all_losses.sum()
+    elif reduction == 'mean':
+        if total_tokens > 0:
+            return all_losses.sum() / total_tokens
+        else:
+             return all_losses.sum() * 0.0 # preserve grad
+    else:
+        raise ValueError(f"Unknown reduction: {reduction}")
 
 def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ignore_index=-1, reduction='mean'):
     # Flatten input and targets
@@ -329,6 +396,8 @@ class GPT(nn.Module):
             # We use chunked cross entropy to save memory.
             # Instead of materializing (B, T, vocab_size) logits, we compute loss in chunks
             loss = chunked_cross_entropy(x, targets, self.lm_head, softcap=softcap, chunk_size=128, ignore_index=-1, reduction=loss_reduction)
+            if return_embeddings:
+                return loss, x
             return loss
         else:
             # inference: just return the logits directly
