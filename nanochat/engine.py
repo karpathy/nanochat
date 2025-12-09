@@ -91,7 +91,25 @@ class KVCache:
         self.kv_shape = (num_layers, 2, batch_size, num_heads, seq_len, head_dim)
         self.kv_cache = None
         self.pos = 0 # current position in time in the cache
-
+        self.mla_cache = {} 
+    def update_mla(self, layer_idx, kv_latent, k_rope):
+        """
+        Update MLA cache
+        kv_latent: (B, T_new, d_latent)
+        k_rope: (B, T_new, n_head, rope_dim)
+        Returns: (kv_latent_full, k_rope_full)
+        """
+        if layer_idx not in self.mla_cache:
+            self.mla_cache[layer_idx] = {'latent': kv_latent, 'k_rope': k_rope}
+            return kv_latent, k_rope
+        else:
+            # Concatenate history
+            cached = self.mla_cache[layer_idx]
+            kv_latent_full = torch.cat([cached['latent'], kv_latent], dim=1)
+            k_rope_full = torch.cat([cached['k_rope'], k_rope], dim=1)
+            # Update cache
+            self.mla_cache[layer_idx] = {'latent': kv_latent_full, 'k_rope': k_rope_full}
+            return kv_latent_full, k_rope_full
     def reset(self):
         self.pos = 0
 
@@ -172,6 +190,51 @@ def sample_next_token(logits, rng, temperature=1.0, top_k=None):
         logits = logits / temperature
         probs = F.softmax(logits, dim=-1)
         return torch.multinomial(probs, num_samples=1, generator=rng)
+@torch.inference_mode()
+def speculative_sample(target_logits, draft_logits, draft_token, rng, temperature=1.0):
+    """
+    Speculative sampling with rejection correction.
+    Ensures output distribution matches original autoregressive decoding
+    
+    Args:
+        target_logits: (vocab_size,) logits from target model
+        draft_logits: (vocab_size,) logits from draft model  
+        draft_token: int, token proposed by draft model
+        rng: torch random generator
+        temperature: sampling temperature
+        
+    Returns:
+        accepted: bool, whether draft token is accepted
+        final_token: int, the final sampled token
+    """
+    if temperature == 0.0:
+        # Greedy decoding: accept if draft matches target's argmax
+        target_token = torch.argmax(target_logits).item()
+        return draft_token == target_token, target_token
+    
+    # Convert to probabilities
+    target_probs = F.softmax(target_logits / temperature, dim=-1)
+    draft_probs = F.softmax(draft_logits / temperature, dim=-1)
+    
+    # Acceptance probability: min(1, p_target / p_draft)
+    draft_prob = draft_probs[draft_token].item()
+    target_prob = target_probs[draft_token].item()
+    
+    # Avoid division by zero
+    if draft_prob < 1e-10:
+        acceptance_prob = 0.0
+    else:
+        acceptance_prob = min(1.0, target_prob / draft_prob)
+    
+    # Sample acceptance decision
+    if torch.rand(1, device=rng.device, generator=rng).item() < acceptance_prob:
+        return True, draft_token
+    else:
+        # Rejection: sample from corrected distribution max(0, p_target - p_draft)
+        corrected_probs = torch.clamp(target_probs - draft_probs, min=0.0)
+        corrected_probs = corrected_probs / corrected_probs.sum()
+        final_token = torch.multinomial(corrected_probs, num_samples=1, generator=rng).item()
+        return False, final_token
 
 # -----------------------------------------------------------------------------
 
@@ -319,6 +382,373 @@ class Engine:
             if all(completed):
                 break
         return results, masks
+
+    @torch.inference_mode()
+    def generate_batch_prompts(self, prompts_list, max_tokens=None, temperature=1.0, top_k=None, seed=42):
+        """
+        Batch inference: true dynamic batching supporting prompts of different lengths
+        
+        Key improvements:
+        1. Padding: pad prompts of different lengths to the same length
+        2. Attention Mask: use mask to mark padding positions
+        3. True batch processing: use batch forward in both Prefill and Decode stages
+        4. Shared KV Cache: all sequences share a batched KV cache
+        
+        Args:
+            prompts_list: List[List[int]], list of token sequences for multiple prompts
+            max_tokens: int, maximum number of tokens to generate per sequence
+            temperature: float, sampling temperature
+            top_k: int, top-k sampling
+            seed: int, random seed
+            
+        Yields:
+            token_columns: List[int], tokens generated for each sequence at current step
+            active_mask: List[bool], whether each sequence is still generating
+        """
+        batch_size = len(prompts_list)
+        assert batch_size > 0, "prompts_list must not be empty"
+        device = self.model.get_device()
+        
+        # Create independent random number generators for each sequence
+        rngs = [torch.Generator(device=device) for _ in range(batch_size)]
+        for rng in rngs:
+            rng.manual_seed(seed)
+        
+        # Get special tokens
+        assistant_end = self.tokenizer.encode_special("<|assistant_end|>")
+        bos = self.tokenizer.get_bos_token_id()
+        pad_token_id = self.tokenizer.get_pad_token_id() if hasattr(self.tokenizer, 'get_pad_token_id') else bos
+        
+        # ========== Step 1: Padding and creating Attention Mask ==========
+        prompt_lengths = [len(p) for p in prompts_list]
+        max_prompt_len = max(prompt_lengths)
+        
+        # Pad all prompts to the same length
+        padded_prompts = []
+        for prompt in prompts_list:
+            pad_len = max_prompt_len - len(prompt)
+            # Left padding (keep generation position aligned)
+            padded = [pad_token_id] * pad_len + prompt
+            padded_prompts.append(padded)
+        
+        # Create attention mask: 1 for valid positions, 0 for padding
+        attention_mask = torch.zeros((batch_size, max_prompt_len), dtype=torch.bool, device=device)
+        for i, plen in enumerate(prompt_lengths):
+            attention_mask[i, -plen:] = True  # Mark right-side valid portion
+        
+        # ========== Step 2: Batch Prefill ==========
+        m = self.model.config
+        kv_length_hint = max_prompt_len + (max_tokens or 100)
+        if max_tokens is None:
+            kv_length_hint = self.model.config.sequence_len
+        
+        # Create shared batched KV cache
+        kv_cache = KVCache(
+            batch_size=batch_size,
+            num_heads=m.n_kv_head,
+            seq_len=kv_length_hint,
+            head_dim=m.n_embd // m.n_head,
+            num_layers=m.n_layer
+        )
+        
+        # Batch prefill (one forward pass processes all prompts)
+        batch_ids = torch.tensor(padded_prompts, dtype=torch.long, device=device)  # (B, max_prompt_len)
+        logits = self.model.forward(batch_ids, kv_cache=kv_cache)  # (B, T, vocab_size)
+        logits_last = logits[:, -1, :]  # (B, vocab_size)
+        
+        # Sample first token (each sequence samples independently)
+        if temperature == 0.0:
+            next_ids = torch.argmax(logits_last, dim=-1, keepdim=True)  # (B, 1)
+        else:
+            next_ids_list = []
+            for i in range(batch_size):
+                logits_i = logits_last[i:i+1, :]  # (1, vocab_size)
+                next_id_i = sample_next_token(logits_i, rngs[i], temperature, top_k)
+                next_ids_list.append(next_id_i)
+            next_ids = torch.cat(next_ids_list, dim=0)  # (B, 1)
+        
+        # ========== Step 3: Batch Decode ==========
+        completed = [False] * batch_size
+        num_generated = 0
+        
+        while True:
+            # Stop conditions
+            if max_tokens is not None and num_generated >= max_tokens:
+                break
+            if all(completed):
+                break
+            
+            # Get current tokens
+            current_tokens = next_ids[:, 0].tolist()
+            
+            # Check termination conditions
+            for i in range(batch_size):
+                if not completed[i] and (current_tokens[i] == assistant_end or current_tokens[i] == bos):
+                    completed[i] = True
+            
+            # Yield current state
+            active_mask = [not c for c in completed]
+            yield current_tokens, active_mask
+            
+            num_generated += 1
+            
+            if all(completed):
+                break
+            
+            # Batch forward pass (true batch processing: one forward processes all sequences)
+            logits = self.model.forward(next_ids, kv_cache=kv_cache)  # (B, 1, vocab_size)
+            logits = logits[:, -1, :]  # (B, vocab_size)
+            
+            # Sample next token
+            if temperature == 0.0:
+                next_ids = torch.argmax(logits, dim=-1, keepdim=True)  # (B, 1)
+            else:
+                next_ids_list = []
+                for i in range(batch_size):
+                    if not completed[i]:
+                        logits_i = logits[i:i+1, :]  # (1, vocab_size)
+                        next_id_i = sample_next_token(logits_i, rngs[i], temperature, top_k)
+                        next_ids_list.append(next_id_i)
+                    else:
+                        # Fill completed sequences with pad token
+                        next_ids_list.append(torch.tensor([[pad_token_id]], device=device))
+                next_ids = torch.cat(next_ids_list, dim=0)  # (B, 1)
+
+    def generate_batch_prompts_complete(self, prompts_list, **kwargs):
+        """
+        Non-streaming version of batch inference
+        
+        Args:
+            prompts_list: List[List[int]], list of token sequences for multiple prompts
+            **kwargs: other parameters passed to generate_batch_prompts
+        
+        Returns:
+            results: List[List[int]], generation results for each prompt (includes input prompt and generated tokens)
+        """
+        batch_size = len(prompts_list)
+        results = [list(prompt) for prompt in prompts_list]  # Copy original prompts
+        
+        assistant_end = self.tokenizer.encode_special("<|assistant_end|>")
+        bos = self.tokenizer.get_bos_token_id()
+        
+        for token_column, active_mask in self.generate_batch_prompts(prompts_list, **kwargs):
+            for i, (token, is_active) in enumerate(zip(token_column, active_mask)):
+                if is_active and token != assistant_end and token != bos:
+                    results[i].append(token)
+        
+        return results
+    @torch.inference_mode()
+    def generate_speculative(self, tokens, draft_model, num_samples=1, max_tokens=None, 
+                            temperature=1.0, top_k=None, seed=42, gamma=4):
+        """
+        Speculative decoding: use draft model to propose tokens, verify with target model.
+        
+        Algorithm:
+        1. Draft phase: Generate gamma tokens with draft model (autoregressive)
+        2. Verify phase: Verify all tokens with target model (parallel forward)
+        3. Accept/reject: Use speculative sampling to maintain correct distribution
+        
+        Args:
+            tokens: List[int], input prompt
+            draft_model: smaller model for drafting
+            num_samples: must be 1
+            max_tokens: max tokens to generate
+            temperature: sampling temperature
+            top_k: top-k sampling
+            seed: random seed
+            gamma: speculation length (lookahead)
+            
+        Yields:
+            ([token], [mask], stats_dict)
+        """
+        assert num_samples == 1, "Speculative decoding only supports num_samples=1"
+        
+        device = self.model.get_device()
+        rng = torch.Generator(device=device)
+        rng.manual_seed(seed)
+        
+        # Special tokens
+        assistant_end = self.tokenizer.encode_special("<|assistant_end|>")
+        bos = self.tokenizer.get_bos_token_id()
+        
+        # Setup KV caches for both models
+        m = self.model.config
+        dm = draft_model.config
+        kv_model_kwargs = {"num_heads": m.n_kv_head, "head_dim": m.n_embd // m.n_head, "num_layers": m.n_layer}
+        kv_draft_kwargs = {"num_heads": dm.n_kv_head, "head_dim": dm.n_embd // dm.n_head, "num_layers": dm.n_layer}
+        kv_length_hint = len(tokens) + (max_tokens or 100)
+        
+        kv_cache_target = KVCache(batch_size=1, seq_len=kv_length_hint, **kv_model_kwargs)
+        kv_cache_draft = KVCache(batch_size=1, seq_len=kv_length_hint, **kv_draft_kwargs)
+        
+        # Prefill both models and save logits for first sampling
+        prompt_ids = torch.tensor([tokens], dtype=torch.long, device=device)
+        target_logits_prefill = self.model.forward(prompt_ids, kv_cache=kv_cache_target)
+        draft_logits_prefill = draft_model.forward(prompt_ids, kv_cache=kv_cache_draft)
+        
+        # Save logits at last position (for sampling first token)
+        next_target_logits = target_logits_prefill[0, -1, :].clone()  # (vocab_size,)
+        next_draft_logits = draft_logits_prefill[0, -1, :].clone()    # (vocab_size,)
+        
+        # Statistics
+        stats = {"total_drafted": 0, "total_accepted": 0, "iterations": 0}
+        num_generated = 0
+        
+        while True:
+            if max_tokens is not None and num_generated >= max_tokens:
+                break
+            
+            stats["iterations"] += 1
+            
+            # ========== DRAFT PHASE ==========
+            # Generate gamma candidate tokens with draft model
+            draft_tokens = []
+            draft_logits_list = []
+            
+            draft_kv_start = kv_cache_draft.get_pos()
+            current_draft_logits = next_draft_logits
+            
+            for i in range(gamma):
+                # Sample from current logits
+                if temperature == 0.0:
+                    next_token = torch.argmax(current_draft_logits).item()
+                else:
+                    next_token = sample_next_token(
+                        current_draft_logits.unsqueeze(0), rng, temperature, top_k
+                    )[0, 0].item()
+                
+                draft_tokens.append(next_token)
+                draft_logits_list.append(current_draft_logits)  # Save logits used for this token
+                
+                # Check for end tokens
+                if next_token == assistant_end or next_token == bos:
+                    break
+                
+                # Forward this token to get logits for next position
+                if i < gamma - 1:  # Don't need logits after last token
+                    token_tensor = torch.tensor([[next_token]], dtype=torch.long, device=device)
+                    logits_output = draft_model.forward(token_tensor, kv_cache=kv_cache_draft)
+                    current_draft_logits = logits_output[0, 0, :]
+            
+            stats["total_drafted"] += len(draft_tokens)
+            
+            # ========== VERIFICATION PHASE ==========
+            # Forward all draft tokens through target model (parallel)
+            target_kv_start = kv_cache_target.get_pos()
+            
+            # Prepare logits list: start with the "current" logits
+            target_logits_list = [next_target_logits]
+            
+            # Forward all draft tokens at once
+            if len(draft_tokens) > 0:
+                draft_tensor = torch.tensor([draft_tokens], dtype=torch.long, device=device)
+                target_logits_batch = self.model.forward(draft_tensor, kv_cache=kv_cache_target)
+                # target_logits_batch[0, i, :] = logits after processing draft_tokens[0:i+1]
+                # These are the logits for evaluating draft_tokens[i+1] (if exists)
+                for i in range(len(draft_tokens)):
+                    target_logits_list.append(target_logits_batch[0, i, :])
+            
+            # ========== ACCEPT/REJECT PHASE ==========
+            num_accepted = 0
+            final_token = None
+            
+            for i in range(len(draft_tokens)):
+                # Verify draft_tokens[i] using:
+                # - target_logits_list[i]: target's prediction before seeing draft_tokens[i]
+                # - draft_logits_list[i]: draft's prediction before seeing draft_tokens[i]
+                # - draft_tokens[i]: the proposed token
+                
+                accepted, sampled_token = speculative_sample(
+                    target_logits_list[i], 
+                    draft_logits_list[i], 
+                    draft_tokens[i],
+                    rng, 
+                    temperature
+                )
+                
+                final_token = sampled_token
+                num_generated += 1
+                
+                # Yield the token
+                yield [final_token], [1], stats
+                
+                # Check termination
+                if final_token == assistant_end or final_token == bos:
+                    stats["total_accepted"] += num_accepted
+                    return
+                
+                if max_tokens is not None and num_generated >= max_tokens:
+                    stats["total_accepted"] += num_accepted
+                    return
+                
+                if accepted:
+                    num_accepted += 1
+                    # Continue to next token
+                else:
+                    # Rejection: need to rollback and restart
+                    # Target KV cache is now at position: target_kv_start + i + 1
+                    # This includes tokens[0:target_kv_start] + draft_tokens[0:i+1]
+                    # But draft_tokens[i] was rejected and replaced with sampled_token
+                    # So we need to:
+                    # 1. Rollback target KV cache to position target_kv_start + i (before draft_tokens[i])
+                    # 2. Forward sampled_token through target model to get correct logits
+                    
+                    # Rollback target KV cache: set pos back to before the rejected token
+                    kv_cache_target.pos = target_kv_start + i
+                    
+                    # Forward the sampled token (not draft token) through target model
+                    token_tensor = torch.tensor([[sampled_token]], dtype=torch.long, device=device)
+                    target_logits_out = self.model.forward(token_tensor, kv_cache=kv_cache_target)
+                    next_target_logits = target_logits_out[0, 0, :]
+                    
+                    # Rollback draft KV cache: if some tokens were accepted, keep them
+                    # Only rollback to before the rejected token, not before all speculation
+                    kv_cache_draft.pos = draft_kv_start + i
+                    
+                    # Forward the sampled token (not draft token) through draft model
+                    draft_logits_out = draft_model.forward(token_tensor, kv_cache=kv_cache_draft)
+                    next_draft_logits = draft_logits_out[0, 0, :]
+                    
+                    break  # Stop verification, start new speculation
+            else:
+                # All tokens accepted!
+                stats["total_accepted"] += num_accepted
+                
+                # Performance optimization: use the "free" token from target model
+                # target_logits_list[-1] is the logits after processing all draft tokens
+                # We can sample one more token for free since target model already computed it
+                if len(draft_tokens) > 0:
+                    # Sample the free token from target model
+                    if temperature == 0.0:
+                        free_token = torch.argmax(target_logits_list[-1]).item()
+                    else:
+                        free_token = sample_next_token(
+                            target_logits_list[-1].unsqueeze(0), rng, temperature, top_k
+                        )[0, 0].item()
+                    
+                    num_generated += 1
+                    yield [free_token], [1], stats
+                    
+                    # Check termination
+                    if free_token == assistant_end or free_token == bos:
+                        return
+                    
+                    if max_tokens is not None and num_generated >= max_tokens:
+                        return
+                    
+                    # Forward the free token through both models to update their states
+                    free_token_tensor = torch.tensor([[free_token]], dtype=torch.long, device=device)
+                    target_logits_out = self.model.forward(free_token_tensor, kv_cache=kv_cache_target)
+                    next_target_logits = target_logits_out[0, 0, :]
+                    
+                    draft_logits_out = draft_model.forward(free_token_tensor, kv_cache=kv_cache_draft)
+                    next_draft_logits = draft_logits_out[0, 0, :]
+                else:
+                    # No draft tokens were generated, use target logits as fallback
+                    next_target_logits = target_logits_list[-1]
+                    next_draft_logits = next_target_logits.clone()
+            
+            # Continue to next speculation round
 
 
 if __name__ == "__main__":

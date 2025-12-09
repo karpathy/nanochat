@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from nanochat.engine import KVCache
 from nanochat.common import get_dist_info, print0
 from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
@@ -31,6 +31,11 @@ class GPTConfig:
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
+    use_mla: bool = False  
+    d_latent: int = None
+    def __post_init__(self):
+        if self.use_mla and self.d_latent is None:
+            self.d_latent = self.n_embd // 4  # Default 4x compression
 
 
 def norm(x):
@@ -108,8 +113,117 @@ class CausalSelfAttention(nn.Module):
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
+class MultiheadLatentAttention(nn.Module):
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        self.layer_idx = layer_idx
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        
+        # 1. Dimension definition
+        # In MLA, head_dim is the dimension used in the final Attention computation
+        # It consists of two parts: Content part (nope) + RoPE part (pe)
+        self.head_dim = self.n_embd // self.n_head
+        self.rope_dim = getattr(config, 'rope_dim', 64) # Dimension dedicated to position
+        self.nope_dim = self.head_dim - self.rope_dim   # Dimension dedicated to content
+        
+        self.d_latent = getattr(config, 'd_latent', self.n_embd // 4)
+        
+        # 2. Query projection (also needs to be decoupled)
+        # In DeepSeek, Query is also split into two parts: Content and RoPE
+        self.c_q_nope = nn.Linear(self.n_embd, self.n_head * self.nope_dim, bias=False)
+        self.c_q_rope = nn.Linear(self.n_embd, self.n_head * self.rope_dim, bias=False)
+        
+        # 3. KV compression (only compress Content!)
+        self.c_kv_compress = nn.Linear(self.n_embd, self.d_latent, bias=False)
+        
+        # 4. K_RoPE independent projection (key modification: bypass compression)
+        # This path specifically carries high-precision position information, typically shared by all heads (Multi-Query) or grouped (GQA)
+        # In DeepSeek-V2, k_rope exists for each head
+        self.c_k_rope = nn.Linear(self.n_embd, self.n_head * self.rope_dim, bias=False)
+        
+        # 5. KV expansion (only expand Content)
+        self.c_k_expand = nn.Linear(self.d_latent, self.n_head * self.nope_dim, bias=False)
+        self.c_v_expand = nn.Linear(self.d_latent, self.n_head * self.head_dim, bias=False) # Value is all content
+        
+        self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
+        
+        print(f"MLA Layer {layer_idx}: d_model={self.n_embd}, d_latent={self.d_latent}, "
+              f"rope_dim={self.rope_dim}, nope_dim={self.nope_dim}, "
+              f"compression_ratio={self.n_embd/self.d_latent:.2f}x")
 
-
+    def forward(self, x, cos_sin, kv_cache):
+        B, T, C = x.size()
+        
+        # --- 1. Generate Query ---
+        q_nope = self.c_q_nope(x).view(B, T, self.n_head, self.nope_dim)
+        q_rope = self.c_q_rope(x).view(B, T, self.n_head, self.rope_dim)
+        
+        # --- 2. Generate KV ---
+        # Path A: Compressed content (Latent)
+        kv_latent = self.c_kv_compress(x) # (B, T, d_latent)
+        
+        # Path B: Independent position (RoPE Key)
+        k_rope = self.c_k_rope(x).view(B, T, self.n_head, self.rope_dim)
+        
+        # --- 3. Apply RoPE (only to Q_rope and K_rope) ---
+        # Need to slice cos/sin, only take the frequency part needed for rope_dim
+        cos, sin = cos_sin
+        cos_rope = cos[..., :self.rope_dim//2]  # (1, T, 1, rope_dim//2)
+        sin_rope = sin[..., :self.rope_dim//2]
+        
+        q_rope = apply_rotary_emb(q_rope, cos_rope, sin_rope)
+        k_rope = apply_rotary_emb(k_rope, cos_rope, sin_rope)
+        
+        # --- 4. KV Cache management ---
+        if kv_cache is not None:
+            # Key: Cache must store two things!
+            # 1. Compressed latent (saves memory)
+            # 2. Rotated k_rope (must store, otherwise cannot compute past positions)
+            kv_latent, k_rope = kv_cache.update_mla(self.layer_idx, kv_latent, k_rope)
+            
+            # At this point kv_latent is (B, T_total, d_latent)
+            # k_rope is (B, T_total, n_head, rope_dim)
+            
+        # --- 5. Expand K Content (recover from full history) ---
+        k_nope = self.c_k_expand(kv_latent).view(B, -1, self.n_head, self.nope_dim)
+        v = self.c_v_expand(kv_latent).view(B, -1, self.n_head, self.head_dim)
+        
+        # --- 6. Concatenate complete Q and K ---
+        # Q = [Content | RoPE]
+        # K = [Content | RoPE]
+        q = torch.cat([q_nope, q_rope], dim=-1)  # (B, T, n_head, head_dim)
+        k = torch.cat([k_nope, k_rope], dim=-1)  # (B, T_total, n_head, head_dim)
+        
+        # --- 7. QK normalization + transpose ---
+        q, k = norm(q), norm(k)
+        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)  # (B, n_head, T, D)
+        
+        # --- 8. Standard attention computation ---
+        Tq = q.size(2)  # Current query length
+        Tk = k.size(2)  # Total key length (including cache)
+        
+        if kv_cache is None or Tq == Tk:
+            # Training or first inference
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        elif Tq == 1:
+            # Single token inference
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+        else:
+            # Multi-token inference (chunk inference)
+            attn_mask = torch.zeros((Tq, Tk), dtype=torch.bool, device=q.device)
+            prefix_len = Tk - Tq
+            if prefix_len > 0:
+                attn_mask[:, :prefix_len] = True
+            attn_mask[:, prefix_len:] = torch.tril(
+                torch.ones((Tq, Tq), dtype=torch.bool, device=q.device)
+            )
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        
+        # --- 9. Reassemble and output projection ---
+        y = y.transpose(1, 2).contiguous().view(B, T, -1)
+        y = self.c_proj(y)
+        return y
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -126,7 +240,10 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
-        self.attn = CausalSelfAttention(config, layer_idx)
+        if config.use_mla:
+            self.attn = MultiheadLatentAttention(config, layer_idx)
+        else:
+            self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
     def forward(self, x, cos_sin, kv_cache):
@@ -153,7 +270,10 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
         self.register_buffer("sin", sin, persistent=False)
-
+        self.gradient_checkpointing = False
+    def enable_gradient_checkpointing(self):
+        self.gradient_checkpointing = True
+        print0("✓ Gradient checkpointing enabled")
     def init_weights(self):
         self.apply(self._init_weights)
         # zero out classifier weights
@@ -256,7 +376,13 @@ class GPT(nn.Module):
         x = self.transformer.wte(idx)
         x = norm(x)
         for block in self.transformer.h:
-            x = block(x, cos_sin, kv_cache)
+            if self.gradient_checkpointing and self.training:
+                x = torch.utils.checkpoint.checkpoint(
+                    block, x, cos_sin, kv_cache,
+                    use_reentrant=False
+                )
+            else:
+                x = block(x, cos_sin, kv_cache)
         x = norm(x)
 
         # Forward the lm_head (compute logits)

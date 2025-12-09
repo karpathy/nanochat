@@ -37,7 +37,7 @@ python -m scripts.tok_eval
 python -m scripts.base_train \
     --depth=4 \
     --max_seq_len=1024 \
-    --device_batch_size=1 \
+    --device_batch_size=4 \
     --total_batch_size=1024 \
     --eval_every=50 \
     --eval_tokens=4096 \
@@ -45,13 +45,13 @@ python -m scripts.base_train \
     --core_metric_max_per_task=12 \
     --sample_every=50 \
     --num_iterations=50
-python -m scripts.base_loss --device_batch_size=1 --split_tokens=4096
+python -m scripts.base_loss --device_batch_size=4 --split_tokens=4096
 python -m scripts.base_eval --max-per-task=16
 
 # midtraining
 python -m scripts.mid_train \
     --max_seq_len=1024 \
-    --device_batch_size=1 \
+    --device_batch_size=4 \
     --eval_every=50 \
     --eval_tokens=4096 \
     --total_batch_size=1024 \
@@ -62,7 +62,7 @@ python -m scripts.chat_eval --source=mid --max-new-tokens=128 --max-problems=20
 
 # SFT
 python -m scripts.chat_sft \
-    --device_batch_size=1 \
+    --device_batch_size=4 \
     --target_examples_per_step=4 \
     --num_iterations=100 \
     --eval_steps=4 \

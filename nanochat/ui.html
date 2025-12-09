@@ -232,6 +232,104 @@
             border-radius: 0.75rem;
             margin-top: 0.5rem;
         }
+
+        /* Parameter control panel styles */
+        .params-panel {
+            background-color: #f9fafb;
+            border-top: 1px solid #e5e7eb;
+            padding: 1rem 1.5rem;
+        }
+
+        .params-wrapper {
+            max-width: 48rem;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .param-group {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            min-width: 0; /* Allow flex children to shrink */
+        }
+
+        .param-label {
+            font-size: 0.875rem;
+            color: #6b7280;
+            font-weight: 500;
+            white-space: nowrap; /* Prevent label text from wrapping */
+            flex-shrink: 0; /* Labels don't shrink */
+        }
+
+        .param-slider {
+            flex: 1 1 auto;
+            min-width: 60px; /* Minimum width for slider */
+            height: 6px;
+            border-radius: 3px;
+            background: #e5e7eb;
+            outline: none;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        .param-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #2563eb;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .param-slider::-webkit-slider-thumb:hover {
+            background: #1d4ed8;
+        }
+
+        .param-slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #2563eb;
+            cursor: pointer;
+            border: none;
+            transition: background 0.2s ease;
+        }
+
+        .param-slider::-moz-range-thumb:hover {
+            background: #1d4ed8;
+        }
+
+        .param-value {
+            font-size: 0.875rem;
+            color: #111827;
+            font-weight: 600;
+            white-space: nowrap; /* Prevent value text from wrapping */
+            flex-shrink: 0; /* Values don't shrink */
+            min-width: 45px; /* Ensure values have enough space */
+            text-align: right;
+        }
+
+        @media (max-width: 768px) {
+            .params-wrapper {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+
+            .param-group {
+                width: 100%;
+            }
+        }
+
+        @media (min-width: 769px) and (max-width: 1024px) {
+            .params-wrapper {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
     </style>
 </head>
 <body>
@@ -250,6 +348,51 @@
     <div class="chat-container" id="chatContainer">
         <div class="chat-wrapper" id="chatWrapper">
             <!-- Messages will be added here -->
+        </div>
+    </div>
+
+    <!-- Parameter control panel -->
+    <div class="params-panel">
+        <div class="params-wrapper">
+            <div class="param-group">
+                <label class="param-label" for="temperatureSlider">Temperature:</label>
+                <input 
+                    type="range" 
+                    id="temperatureSlider" 
+                    class="param-slider" 
+                    min="0" 
+                    max="1" 
+                    step="0.01" 
+                    value="0.8"
+                >
+                <span class="param-value" id="temperatureValue">0.80</span>
+            </div>
+            <div class="param-group">
+                <label class="param-label" for="topKSlider">Top-k:</label>
+                <input 
+                    type="range" 
+                    id="topKSlider" 
+                    class="param-slider" 
+                    min="1" 
+                    max="200" 
+                    step="1" 
+                    value="50"
+                >
+                <span class="param-value" id="topKValue">50</span>
+            </div>
+            <div class="param-group">
+                <label class="param-label" for="maxTokensSlider">Max Tokens:</label>
+                <input 
+                    type="range" 
+                    id="maxTokensSlider" 
+                    class="param-slider" 
+                    min="1" 
+                    max="4096" 
+                    step="1" 
+                    value="512"
+                >
+                <span class="param-value" id="maxTokensValue">512</span>
+            </div>
         </div>
     </div>
 
@@ -278,10 +421,35 @@
         const chatInput = document.getElementById('chatInput');
         const sendButton = document.getElementById('sendButton');
 
+        // Parameter control elements
+        const temperatureSlider = document.getElementById('temperatureSlider');
+        const temperatureValue = document.getElementById('temperatureValue');
+        const topKSlider = document.getElementById('topKSlider');
+        const topKValue = document.getElementById('topKValue');
+        const maxTokensSlider = document.getElementById('maxTokensSlider');
+        const maxTokensValue = document.getElementById('maxTokensValue');
+
         let messages = [];
         let isGenerating = false;
         let currentTemperature = 0.8;
         let currentTopK = 50;
+        let currentMaxTokens = 512;
+
+        // Initialize parameter slider event listeners
+        temperatureSlider.addEventListener('input', function() {
+            currentTemperature = parseFloat(this.value);
+            temperatureValue.textContent = currentTemperature.toFixed(2);
+        });
+
+        topKSlider.addEventListener('input', function() {
+            currentTopK = parseInt(this.value);
+            topKValue.textContent = currentTopK;
+        });
+
+        maxTokensSlider.addEventListener('input', function() {
+            currentMaxTokens = parseInt(this.value);
+            maxTokensValue.textContent = currentMaxTokens;
+        });
 
         chatInput.addEventListener('input', function() {
             this.style.height = 'auto';
@@ -396,7 +564,7 @@
                         messages: messages,
                         temperature: currentTemperature,
                         top_k: currentTopK,
-                        max_tokens: 512
+                        max_tokens: currentMaxTokens
                     }),
                 });
 
@@ -482,10 +650,12 @@
                     addMessage('console', `Current temperature: ${currentTemperature}`);
                 } else {
                     const temp = parseFloat(arg);
-                    if (isNaN(temp) || temp < 0 || temp > 2) {
-                        addMessage('console', 'Invalid temperature. Must be between 0.0 and 2.0');
+                    if (isNaN(temp) || temp < 0 || temp > 1) {
+                        addMessage('console', 'Invalid temperature. Must be between 0.0 and 1.0');
                     } else {
                         currentTemperature = temp;
+                        temperatureSlider.value = temp;
+                        temperatureValue.textContent = temp.toFixed(2);
                         addMessage('console', `Temperature set to ${currentTemperature}`);
                     }
                 }
@@ -499,7 +669,24 @@
                         addMessage('console', 'Invalid top-k. Must be between 1 and 200');
                     } else {
                         currentTopK = topk;
+                        topKSlider.value = topk;
+                        topKValue.textContent = topk;
                         addMessage('console', `Top-k set to ${currentTopK}`);
+                    }
+                }
+                return true;
+            } else if (cmd === '/maxtokens') {
+                if (arg === undefined) {
+                    addMessage('console', `Current max tokens: ${currentMaxTokens}`);
+                } else {
+                    const tokens = parseInt(arg);
+                    if (isNaN(tokens) || tokens < 1 || tokens > 4096) {
+                        addMessage('console', 'Invalid max tokens. Must be between 1 and 4096');
+                    } else {
+                        currentMaxTokens = tokens;
+                        maxTokensSlider.value = tokens;
+                        maxTokensValue.textContent = tokens;
+                        addMessage('console', `Max tokens set to ${currentMaxTokens}`);
                     }
                 }
                 return true;
@@ -510,9 +697,11 @@
                 addMessage('console',
                     'Available commands:\n' +
                     '/temperature - Show current temperature\n' +
-                    '/temperature <value> - Set temperature (0.0-2.0)\n' +
+                    '/temperature <value> - Set temperature (0.0-1.0)\n' +
                     '/topk - Show current top-k\n' +
                     '/topk <value> - Set top-k (1-200)\n' +
+                    '/maxtokens - Show current max tokens\n' +
+                    '/maxtokens <value> - Set max tokens (1-4096)\n' +
                     '/clear - Clear conversation\n' +
                     '/help - Show this help message'
                 );

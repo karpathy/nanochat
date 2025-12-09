@@ -124,6 +124,10 @@ class HuggingFaceTokenizer:
     def get_bos_token_id(self):
         bos = self.encode_special("<|bos|>")
         return bos
+    
+    def get_pad_token_id(self):
+        # Use BOS token as PAD token (common practice)
+        return self.get_bos_token_id()
 
     def encode(self, text, *args, **kwargs):
         if isinstance(text, str):
@@ -212,6 +216,10 @@ class RustBPETokenizer:
         return self.enc.encode_single_token(text)
 
     def get_bos_token_id(self):
+        return self.bos_token_id
+    
+    def get_pad_token_id(self):
+        # Use BOS token as PAD token (common practice)
         return self.bos_token_id
 
     def encode(self, text, prepend=None, append=None, num_threads=8):
