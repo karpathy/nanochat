@@ -22,6 +22,7 @@ import torch.nn.functional as F
 from nanochat.common import get_dist_info, print0
 from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
+from nanochat.nl_opt import NestedMomentum, DistNestedMomentum
 
 @dataclass
 class GPTConfig:
@@ -213,40 +214,61 @@ class GPT(nn.Module):
         num_flops_per_token = 6 * (nparams - nparams_embedding) + 12 * l * h * q * t
         return num_flops_per_token
 
-    def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0):
+    def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0,
+                         matrix_optimizer_backend="muon", general_optimizer_backend="adamw",
+                         nested_betas=(0.9, 0.99), nested_level_weights=(0.5, 0.5)):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
+        use_dist_optim = ddp and world_size > 1
+
         # Separate out all parameters into 3 groups (matrix, embedding, lm_head)
         matrix_params = list(self.transformer.h.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params)
-        # Create the AdamW optimizer for the embedding and lm_head
+
+        # --- General Optimizer (Embeddings & Heads) ---
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (having tuned the LRs for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         if rank == 0:
-            print(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
-        adam_groups = [
+            print(f"Scaling the LR for the general parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
+
+        general_groups = [
             dict(params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale),
             dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
         ]
-        adamw_kwargs = dict(betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay)
-        # Use distributed optimizers only if we are actually distributed (world_size > 1)
-        use_dist_optim = ddp and world_size > 1
-        AdamWFactory = DistAdamW if use_dist_optim else partial(torch.optim.AdamW, fused=True)
-        adamw_optimizer = AdamWFactory(adam_groups, **adamw_kwargs)
-        # Create the Muon optimizer for the linear layers
-        muon_kwargs = dict(lr=matrix_lr, momentum=0.95)
-        MuonFactory = DistMuon if use_dist_optim else Muon
-        muon_optimizer = MuonFactory(matrix_params, **muon_kwargs)
+
+        if general_optimizer_backend == "adamw":
+            adamw_kwargs = dict(betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay)
+            AdamWFactory = DistAdamW if use_dist_optim else partial(torch.optim.AdamW, fused=True)
+            general_optimizer = AdamWFactory(general_groups, **adamw_kwargs)
+        elif general_optimizer_backend == "nested_momentum":
+             nm_kwargs = dict(betas=nested_betas, level_weights=nested_level_weights, weight_decay=weight_decay)
+             NMFactory = DistNestedMomentum if use_dist_optim else NestedMomentum
+             general_optimizer = NMFactory(general_groups, **nm_kwargs)
+        else:
+            raise ValueError(f"Unknown general_optimizer_backend: {general_optimizer_backend}")
+
+        # --- Matrix Optimizer (Transformer Blocks) ---
+        if matrix_optimizer_backend == "muon":
+            muon_kwargs = dict(lr=matrix_lr, momentum=0.95)
+            MuonFactory = DistMuon if use_dist_optim else Muon
+            matrix_optimizer = MuonFactory(matrix_params, **muon_kwargs)
+        elif matrix_optimizer_backend == "nested_momentum":
+            nm_kwargs = dict(lr=matrix_lr, betas=nested_betas, level_weights=nested_level_weights, weight_decay=weight_decay)
+            NMFactory = DistNestedMomentum if use_dist_optim else NestedMomentum
+            matrix_optimizer = NMFactory(matrix_params, **nm_kwargs)
+        else:
+             raise ValueError(f"Unknown matrix_optimizer_backend: {matrix_optimizer_backend}")
+
         # Combine them the two optimizers into one list
-        optimizers = [adamw_optimizer, muon_optimizer]
+        optimizers = [general_optimizer, matrix_optimizer]
         for opt in optimizers:
             for group in opt.param_groups:
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean', return_embeddings=False):
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
@@ -270,13 +292,16 @@ class GPT(nn.Module):
             # training mode: compute and return the loss
             # TODO: experiment with Liger Kernels / chunked cross-entropy etc.
             logits = self.lm_head(x)
-            logits = softcap * torch.tanh(logits / softcap) # logits softcap
             logits = logits.float() # use tf32/fp32 for logits
+            logits = softcap * torch.tanh(logits / softcap) # logits softcap
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+            if return_embeddings:
+                return loss, x
             return loss
         else:
             # inference mode: compute and return the logits
             logits = self.lm_head(x)
+            logits = logits.float() # use tf32/fp32 for logits
             logits = softcap * torch.tanh(logits / softcap) # logits softcap
             return logits
 

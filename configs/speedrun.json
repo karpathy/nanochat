@@ -1,0 +1,5 @@
+{
+    "depth": 20,
+    "max_seq_len": 2048,
+    "max_chars": 2000000000
+}

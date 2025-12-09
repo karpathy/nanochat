@@ -6,15 +6,12 @@ set -e
 
 # 1) Example launch (simplest):
 # bash speedrun.sh
-# 2) Example launch in a screen session (because the run takes ~4 hours):
-# screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
-# 3) Example launch with wandb logging, but see below for setting up wandb first:
-# WANDB_RUN=speedrun screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
+CONFIG_FILE="configs/speedrun.json"
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
@@ -42,24 +39,17 @@ uv sync --extra $EXTRAS
 source .venv/bin/activate
 
 # Explicitly uninstall triton if present, as it conflicts with pytorch-triton-rocm
-# and can cause "ImportError: cannot import name 'Config' from 'triton'" errors
-# if the NVIDIA version of triton (e.g. 3.4.0) is accidentally installed.
 if [ "$EXTRAS" == "amd" ]; then
     uv pip uninstall -q triton || true
-    # Uninstalling triton may have deleted the shared 'triton' directory, breaking pytorch-triton-rocm.
-    # Reinstall pytorch-triton-rocm to ensure it's intact.
     uv pip install --force-reinstall --index-url https://repo.amd.com/rocm/whl/gfx1151 pytorch-triton-rocm
 
-    # Find and export the path to ld.lld from rocm-sdk-core if available, as torch.compile/triton needs it
+    # Find and export the path to ld.lld from rocm-sdk-core if available
     ROCM_LLD_PATH=$(python -c "import sysconfig; import os; p = f\"{sysconfig.get_paths()['purelib']}/_rocm_sdk_core/lib/llvm/bin/ld.lld\"; print(p) if os.path.exists(p) else print('')")
     if [ -n "$ROCM_LLD_PATH" ]; then
         export TRITON_HIP_LLD_PATH=$ROCM_LLD_PATH
-        echo "Exported TRITON_HIP_LLD_PATH=$TRITON_HIP_LLD_PATH"
     fi
 
     # AMD Strix Halo / APU specific settings
-    # Try to detect if we are on a Strix Halo APU (gfx1151)
-    # We use rocminfo if available, or lspci, or fallback to checking if the user set the override.
     IS_STRIX_HALO=0
     if command -v rocminfo &> /dev/null; then
         if rocminfo | grep -q "gfx1151"; then
@@ -67,135 +57,82 @@ if [ "$EXTRAS" == "amd" ]; then
         fi
     fi
 
-    # If users face issues, they might need to tweak this or use 11.0.0.
     if [ "$IS_STRIX_HALO" -eq 1 ] && [ -z "$HSA_OVERRIDE_GFX_VERSION" ]; then
         export HSA_OVERRIDE_GFX_VERSION=11.5.1
-        echo "Exported HSA_OVERRIDE_GFX_VERSION=$HSA_OVERRIDE_GFX_VERSION (Strix Halo detected)"
     fi
 
-    # Disable SDMA to prevent system hangs on Strix Halo APUs
     if [ "$IS_STRIX_HALO" -eq 1 ]; then
         export HSA_ENABLE_SDMA=0
-        echo "Exported HSA_ENABLE_SDMA=0 (Strix Halo detected)"
     fi
 fi
 
 # -----------------------------------------------------------------------------
 # wandb setup
-# If you wish to use wandb for logging (it's nice!, recommended).
-# 1) Make sure to first log in to wandb, e.g. run:
-#    `wandb login`
-# 2) Set the WANDB_RUN environment variable when running this script, e.g.:
-#    `WANDB_RUN=d26 bash speedrun.sh`
 if [ -z "$WANDB_RUN" ]; then
-    # by default use "dummy" : it's handled as a special case, skips logging to wandb
     WANDB_RUN=dummy
 fi
 
-# -----------------------------------------------------------------------------
-# During the course of the run, we will be writing markdown reports to the report/
-# directory in the base dir. This command clears it out and writes a header section
-# with a bunch of system info and a timestamp that marks the start of the run.
+# Initialize report
 python -m nanochat.report reset
 
 # -----------------------------------------------------------------------------
 # Tokenizer
 
 # Install Rust / Cargo
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+if ! command -v cargo &> /dev/null; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+fi
 source "$HOME/.cargo/env"
 
 # Build the rustbpe Tokenizer
-# use --no-sync to avoid re-installing triton on AMD, which we just uninstalled
 uv run --no-sync --extra $EXTRAS maturin develop --release --manifest-path rustbpe/Cargo.toml
 
 # Download the first ~2B characters of pretraining dataset
-# look at dev/repackage_data_reference.py for details on how this data was prepared
-# each data shard is ~250M chars
-# so we download 2e9 / 250e6 = 8 data shards at this point
-# each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
 python -m nanochat.dataset -n 8
-# Immediately also kick off downloading more shards in the background while tokenizer trains
-# See comment below for why 240 is the right number here
 python -m nanochat.dataset -n 240 &
 DATASET_DOWNLOAD_PID=$!
-# train the tokenizer with vocab size 2**16 = 65536 on ~2B characters of data
 python -m scripts.tok_train --max_chars=2000000000
-# evaluate the tokenizer (report compression ratio etc.)
 python -m scripts.tok_eval
 
-# -----------------------------------------------------------------------------
-# Base model (pretraining)
-
-# The d20 model is 561M parameters.
-# Chinchilla says #tokens = 20X #params, so we need 561e6 * 20 = 11.2B tokens.
-# Assume our tokenizer is 4.8 chars/token, this is 11.2B * 4.8 ~= 54B chars.
-# At 250M chars/shard, this is 54B / 250M ~= 216 shards needed for pretraining.
-# Round up to 240 for safety. At ~100MB/shard, this downloads ~24GB of data to disk.
-# (The total number of shards available in the entire dataset is 1822.)
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
+# -----------------------------------------------------------------------------
+# Process Setup
+
 # Number of processes/GPUs to use
-# Auto-detect if we have GPUs (including ROCm)
 if python -c "import torch; exit(0) if torch.cuda.is_available() or (hasattr(torch.version, 'hip') and torch.version.hip) else exit(1)"; then
-    # Detected GPU capability. Now get the actual count to avoid launching too many processes.
     NPROC_PER_NODE=$(python -c "import torch; print(torch.cuda.device_count())")
-    # If for some reason it returns 0 (e.g. weird ROCm state), default to 1 to be safe.
     if [ "$NPROC_PER_NODE" -eq "0" ]; then
-        echo "GPU detected but torch.cuda.device_count() is 0. Defaulting to NPROC_PER_NODE=1."
         NPROC_PER_NODE=1
     else
         echo "Detected $NPROC_PER_NODE GPUs."
     fi
 else
-    echo "No GPU detected. Defaulting to NPROC_PER_NODE=1 to avoid OOM and using multi-threading."
     NPROC_PER_NODE=1
-    # If running on CPU, let PyTorch use all available cores for the single process
     unset OMP_NUM_THREADS
 fi
 
-# pretrain the d20 model
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=20 --run=$WANDB_RUN
-# evaluate the model on a larger chunk of train/val data and draw some samples
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss
-# evaluate the model on CORE tasks
+# -----------------------------------------------------------------------------
+# Training
+
+# Using config file
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train $CONFIG_FILE --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss $CONFIG_FILE
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval
 
 # -----------------------------------------------------------------------------
-# Midtraining (teach the model conversation special tokens, tool use, multiple choice)
+# Midtraining
 
-# download 2.3MB of synthetic identity conversations to impart a personality to nanochat
-# see dev/gen_sft_data.py for details on how this data was prepared and to get a sense of how you can easily tune it
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
-# run midtraining and eval the model
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train -- --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train $CONFIG_FILE --run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i mid
 
 # -----------------------------------------------------------------------------
-# Supervised Finetuning (domain adaptation to each sequence all by itself per row)
+# Supervised Finetuning
 
-# train sft and re-eval right away (should see a small bump)
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_sft -- --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_sft $CONFIG_FILE --run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i sft
 
-# chat with the model over CLI! Leave out the -p to chat interactively
-# python -m scripts.chat_cli -p "Why is the sky blue?"
-
-# even better, chat with your model over a pretty WebUI ChatGPT style
-# python -m scripts.chat_web
-
-# -----------------------------------------------------------------------------
-# Reinforcement Learning. Optional, and currently only on GSM8K
-# (optional)
-
-# run reinforcement learning
-# torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_rl -- --run=$WANDB_RUN
-# eval the RL model only on GSM8K
-# torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i rl -a GSM8K
-
-# -----------------------------------------------------------------------------
-# Generate the full report by putting together all the sections
-# report.md is the output and will be copied to current directory for convenience
 python -m nanochat.report generate

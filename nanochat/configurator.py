@@ -8,7 +8,7 @@ Supports loading configuration from:
 
 Usage:
     from nanochat.configurator import get_config
-    config = get_config(defaults, sys.argv[1:])
+    config = get_config(globals(), sys.argv[1:])
     globals().update(config)
 """
 
@@ -56,7 +56,8 @@ def get_config(defaults: dict, argv: list = None) -> dict:
             if config_file.endswith('.json'):
                 with open(config_file, 'r') as f:
                     data = json.load(f)
-                # Support the tune_system.py output format
+
+                # Support the tune_system.py output format (from tuning-profiles branch)
                 if "parameters" in data and isinstance(data["parameters"], dict):
                     file_config = data["parameters"]
                 else:
@@ -77,8 +78,10 @@ def get_config(defaults: dict, argv: list = None) -> dict:
             for k, v in file_config.items():
                 if k in defaults:
                     # Type checking logic could be refined here if strictness is needed
-                    # For now we rely on the command-line loop's logic or implicit trust of file content
                     updates[k] = v
+                else:
+                    # Depending on strictness, we might want to warn or pass
+                    pass
 
         else:
             # Command line argument --key=value

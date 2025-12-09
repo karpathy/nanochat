@@ -57,6 +57,7 @@ from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from nanochat.scheduler import get_lr_multiplier, get_muon_momentum
 from scripts.base_eval import evaluate_model
+from nanochat.infovore import Infovore
 print_banner()
 
 # -----------------------------------------------------------------------------
@@ -94,6 +95,14 @@ save_every = -1 # every how many steps to save model checkpoints (-1 = disable, 
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
 compile = True # whether to compile the model. On AMD ROCm this might be unstable.
+# Optimizer backends
+matrix_optimizer_backend = "muon" # "muon" or "nested_momentum"
+general_optimizer_backend = "adamw" # "adamw" or "nested_momentum"
+nested_betas = (0.9, 0.99) # For nested_momentum
+nested_level_weights = (0.5, 0.5) # For nested_momentum
+# Infovore (Curriculum Learning)
+use_infovore = False # Enable Novelty-Relation Quotient curriculum
+infovore_beta = 0.99 # Momentum for memory manifold
 
 # Auto-detect Strix Halo to disable compilation by default for stability
 try:
@@ -106,7 +115,7 @@ except Exception:
     pass
 
 # now allow CLI to override the settings via the configurator lol
-config_keys = {k: v for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str, type(None)))}
+config_keys = {k: v for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str, type(None), tuple, list))}
 from nanochat.configurator import get_config
 config_updates = get_config(config_keys)
 globals().update(config_updates)
@@ -207,12 +216,21 @@ print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
-optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
-adamw_optimizer, muon_optimizer = optimizers
+optimizers = model.setup_optimizers(
+    unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay,
+    matrix_optimizer_backend=matrix_optimizer_backend, general_optimizer_backend=general_optimizer_backend,
+    nested_betas=nested_betas, nested_level_weights=nested_level_weights
+)
+# Note: optimizers[0] is general (AdamW/Nested), optimizers[1] is matrix (Muon/Nested)
+general_optimizer, matrix_optimizer = optimizers
 
 if resuming:
     for opt, dat in zip(optimizers, optimizer_data):
-        opt.load_state_dict(dat)
+        try:
+            opt.load_state_dict(dat)
+        except Exception as e:
+            print0(f"WARNING: Failed to load optimizer state: {e}. Starting with fresh optimizer state.")
+
     del optimizer_data # free up the memory
 
 # -----------------------------------------------------------------------------
@@ -222,6 +240,12 @@ dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_s
 train_loader = tokenizing_distributed_data_loader_with_state(device_batch_size, max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
 build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
+
+# Initialize Infovore Agent if enabled
+infovore_agent = None
+if use_infovore:
+    infovore_agent = Infovore(d_model=model_dim, device=device, beta=infovore_beta)
+    print0("Initialized Infovore Agent for NRQ-weighted learning.")
 
 # -----------------------------------------------------------------------------
 # Loop state (variables updated by the training loop)
@@ -234,6 +258,7 @@ if not resuming:
 else:
     step = meta_data["step"]
     loop_state = meta_data["loop_state"]
+    val_bpb = meta_data["val_bpb"]
     min_val_bpb = loop_state["min_val_bpb"]
     smooth_train_loss = loop_state["smooth_train_loss"]
     total_training_time = loop_state["total_training_time"]
@@ -334,7 +359,16 @@ while True:
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
-            loss = model(x, y)
+            if use_infovore:
+                loss, infovore_metrics = infovore_agent.compute_nrq_loss(model, x, y)
+                if master_process and step % 10 == 0 and micro_step == 0:
+                     wandb_run.log({
+                         "train/nrq_avg": infovore_metrics["nrq_avg"],
+                         "train/novelty_avg": infovore_metrics["novelty_avg"],
+                         "train/relation_avg": infovore_metrics["relation_avg"]
+                     }, commit=False)
+            else:
+                loss = model(x, y)
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         loss.backward()
@@ -348,13 +382,19 @@ while True:
     # AdamW might have a different warmup schedule than Muon
     adam_lrm = get_lr_multiplier(step, adam_warmup_ratio, num_iterations, warmdown_ratio, final_lr_frac)
     muon_lrm = get_lr_multiplier(step, warmup_ratio, num_iterations, warmdown_ratio, final_lr_frac)
-    for group in adamw_optimizer.param_groups:
+
+    # Update LRs
+    for group in general_optimizer.param_groups:
         group["lr"] = group["initial_lr"] * adam_lrm
-    for group in muon_optimizer.param_groups:
+    for group in matrix_optimizer.param_groups:
         group["lr"] = group["initial_lr"] * muon_lrm
-    muon_momentum = get_muon_momentum(step)
-    for group in muon_optimizer.param_groups:
-        group["momentum"] = muon_momentum
+
+    # Update Momentum (if needed, only Muon uses dynamic momentum in this repo)
+    if matrix_optimizer_backend == "muon":
+        muon_momentum = get_muon_momentum(step)
+        for group in matrix_optimizer.param_groups:
+            group["momentum"] = muon_momentum
+
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)

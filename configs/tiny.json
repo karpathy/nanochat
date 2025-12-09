@@ -1,0 +1,13 @@
+{
+    "depth": 4,
+    "max_seq_len": 512,
+    "device_batch_size": 1,
+    "eval_tokens": 512,
+    "core_metric_every": -1,
+    "total_batch_size": 512,
+    "num_iterations": 20,
+    "max_chars": 2000000000,
+    "save_every": -1,
+    "compile": false,
+    "split_tokens": 512
+}
