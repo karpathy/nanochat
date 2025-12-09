@@ -57,6 +57,7 @@ from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from nanochat.scheduler import get_lr_multiplier, get_muon_momentum
 from scripts.base_eval import evaluate_model
+from nanochat.infovore import Infovore
 print_banner()
 
 # -----------------------------------------------------------------------------
@@ -99,6 +100,9 @@ matrix_optimizer_backend = "muon" # "muon" or "nested_momentum"
 general_optimizer_backend = "adamw" # "adamw" or "nested_momentum"
 nested_betas = (0.9, 0.99) # For nested_momentum
 nested_level_weights = (0.5, 0.5) # For nested_momentum
+# Infovore (Curriculum Learning)
+use_infovore = False # Enable Novelty-Relation Quotient curriculum
+infovore_beta = 0.99 # Momentum for memory manifold
 
 # Auto-detect Strix Halo to disable compilation by default for stability
 try:
@@ -237,6 +241,12 @@ train_loader = tokenizing_distributed_data_loader_with_state(device_batch_size, 
 build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
+# Initialize Infovore Agent if enabled
+infovore_agent = None
+if use_infovore:
+    infovore_agent = Infovore(d_model=model_dim, device=device, beta=infovore_beta)
+    print0("Initialized Infovore Agent for NRQ-weighted learning.")
+
 # -----------------------------------------------------------------------------
 # Loop state (variables updated by the training loop)
 
@@ -349,7 +359,16 @@ while True:
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
-            loss = model(x, y)
+            if use_infovore:
+                loss, infovore_metrics = infovore_agent.compute_nrq_loss(model, x, y)
+                if master_process and step % 10 == 0 and micro_step == 0:
+                     wandb_run.log({
+                         "train/nrq_avg": infovore_metrics["nrq_avg"],
+                         "train/novelty_avg": infovore_metrics["novelty_avg"],
+                         "train/relation_avg": infovore_metrics["relation_avg"]
+                     }, commit=False)
+            else:
+                loss = model(x, y)
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         loss.backward()

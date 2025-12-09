@@ -268,7 +268,7 @@ class GPT(nn.Module):
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean', return_embeddings=False):
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
@@ -295,6 +295,8 @@ class GPT(nn.Module):
             logits = logits.float() # use tf32/fp32 for logits
             logits = softcap * torch.tanh(logits / softcap) # logits softcap
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+            if return_embeddings:
+                return loss, x
             return loss
         else:
             # inference mode: compute and return the logits
