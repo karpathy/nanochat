@@ -149,7 +149,7 @@ class HuggingFaceTokenizer:
 # -----------------------------------------------------------------------------
 # Tokenizer based on rustbpe + tiktoken combo
 import pickle
-import rustbpe
+from nanochat import rustbpe
 import tiktoken
 
 class RustBPETokenizer:
