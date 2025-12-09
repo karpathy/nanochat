@@ -4,4 +4,8 @@ __pycache__/
 rustbpe/target/
 dev-ignore/
 report.md
-eval_bundle/
+eval_bundle/wandb/
+*.log
+*.parquet
+prompt_optimization_results/
+__pycache__/
