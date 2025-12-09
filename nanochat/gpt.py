@@ -18,12 +18,78 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
 
 from nanochat.common import get_dist_info, print0
 from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
 from nanochat.nl_opt import NestedMomentum, DistNestedMomentum
+from torch.utils.checkpoint import checkpoint
+
+def _compute_loss_chunk(x_chunk, targets_chunk, lm_head, softcap, ignore_index, reduction):
+    logits_chunk = lm_head(x_chunk)
+    logits_chunk = logits_chunk.float()
+    logits_chunk = softcap * torch.tanh(logits_chunk / softcap)
+    return F.cross_entropy(logits_chunk, targets_chunk, ignore_index=ignore_index, reduction=reduction)
+
+def chunked_cross_entropy(x, targets, lm_head, chunk_size=128, softcap=15.0, ignore_index=-1, reduction='mean'):
+    # Flatten input and targets
+    B, T, C = x.size()
+    x_flat = x.view(-1, C)
+    targets_flat = targets.view(-1)
+
+    num_elements = x_flat.size(0)
+    losses = []
+    total_tokens = 0
+
+    # Determine internal reduction for chunks
+    # If we need 'none' globally, we must get 'none' from chunks.
+    # If we need 'mean' or 'sum' globally, 'sum' from chunks is most efficient.
+    chunk_reduction = 'none' if reduction == 'none' else 'sum'
+
+    for i in range(0, num_elements, chunk_size):
+        x_chunk = x_flat[i : i + chunk_size]
+        target_chunk = targets_flat[i : i + chunk_size]
+
+        # We use checkpointing to save memory for the backward pass
+        # Note: We must pass tensors to checkpoint, so softcap is passed as tensor if needed,
+        # but here it's a float. checkpoint handles non-tensor args but they aren't differentiable.
+        # lm_head is a module, so it's captured.
+        loss_chunk = checkpoint(
+            _compute_loss_chunk,
+            x_chunk,
+            target_chunk,
+            lm_head,
+            torch.tensor(softcap, device=x.device),
+            ignore_index,
+            chunk_reduction,
+            use_reentrant=False
+        )
+
+        if reduction == 'none':
+            losses.append(loss_chunk)
+        else:
+            # For sum/mean, we accumulate the sum
+            losses.append(loss_chunk.unsqueeze(0)) # keep as tensor list
+            # Count valid tokens for mean reduction
+            valid_mask = target_chunk != ignore_index
+            total_tokens += valid_mask.sum().item()
+
+    if not losses:
+        return torch.tensor(0.0, device=x.device, requires_grad=True)
+
+    all_losses = torch.cat(losses)
+
+    if reduction == 'none':
+        return all_losses
+    elif reduction == 'sum':
+        return all_losses.sum()
+    elif reduction == 'mean':
+        if total_tokens > 0:
+            return all_losses.sum() / total_tokens
+        else:
+             return all_losses.sum() * 0.0 # preserve grad
+    else:
+        raise ValueError(f"Unknown reduction: {reduction}")
 
 @dataclass
 class GPTConfig:
@@ -165,13 +231,6 @@ class GPT(nn.Module):
             torch.nn.init.zeros_(block.attn.c_proj.weight)
         self.init_buffers()
 
-    def _compute_loss_chunk(self, x_chunk, t_chunk, softcap):
-        logits = self.lm_head(x_chunk)
-        logits = logits.float()
-        logits = softcap * torch.tanh(logits / softcap)
-        loss = F.cross_entropy(logits, t_chunk, ignore_index=-1, reduction='none')
-        return loss
-
     def init_buffers(self):
         # init the rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
@@ -293,53 +352,18 @@ class GPT(nn.Module):
             x = block(x, cos_sin, kv_cache)
         x = norm(x)
 
+        # Forward the lm_head (compute logits)
+        softcap = 15.0
         if targets is not None:
-            # training: given the targets, compute and return the loss
-            # We use chunking and checkpointing to avoid materializing the full logits tensor (B, T, V)
-            # which can be very large (e.g. 8GB+ for 32k tokens and 64k vocab)
-            softcap = 15.0
-            x_flat = x.view(-1, x.size(-1))
-            t_flat = targets.view(-1)
-            chunk_size = 2048 # Process one sequence at a time (or less)
-
-            losses = []
-            for i in range(0, x_flat.size(0), chunk_size):
-                x_chunk = x_flat[i:i+chunk_size]
-                t_chunk = t_flat[i:i+chunk_size]
-                # Checkpointing saves memory by recomputing logits during backward
-                loss_chunk = checkpoint(
-                    self._compute_loss_chunk,
-                    x_chunk,
-                    t_chunk,
-                    torch.tensor(softcap, device=x.device),
-                    use_reentrant=False
-                )
-                losses.append(loss_chunk)
-
-            full_loss = torch.cat(losses)
-            if loss_reduction == 'mean':
-                # Correctly handle ignore_index for mean reduction
-                # We assume reduction='none' in chunks returned 0 for ignored indices
-                # But we need to divide by the number of non-ignored tokens
-                valid_count = (t_flat != -1).sum()
-                if valid_count > 0:
-                    loss = full_loss.sum() / valid_count
-                else:
-                    loss = full_loss.sum() * 0.0 # Return 0 with graph attached?
-            elif loss_reduction == 'sum':
-                loss = full_loss.sum()
-            else:
-                loss = full_loss
-
+            # training mode: compute and return the loss
+            # We use chunked cross entropy to save memory.
+            # Instead of materializing (B, T, vocab_size) logits, we compute loss in chunks
+            loss = chunked_cross_entropy(x, targets, self.lm_head, softcap=softcap, chunk_size=128, ignore_index=-1, reduction=loss_reduction)
             if return_embeddings:
                 return loss, x
             return loss
         else:
             # inference: just return the logits directly
-            softcap = 15
-            logits = self.lm_head(x)
-            logits = logits.float()
-            logits = softcap * torch.tanh(logits / softcap)
             return logits
 
     @torch.inference_mode()

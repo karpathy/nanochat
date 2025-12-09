@@ -12,7 +12,7 @@
 ## 🛠 Codebase Maintenance & Tech Debt
 - [x] **DDP Detection**: Refactor `is_ddp()` in `nanochat/common.py` to use a more robust detection method.
 - [x] **Tokenizer Efficiency**: Optimize `prepend_id` insertion in `nanochat/tokenizer.py` (currently uses `list.insert(0)`, which is O(N)).
-- [ ] **Liger Kernels**: Experiment with [Liger Kernels](https://github.com/linkedin/Liger-Kernel) or chunked cross-entropy in `nanochat/gpt.py` to reduce memory usage.
+- [x] **Liger Kernels / Memory**: Implemented **Chunked Cross Entropy** in `nanochat/gpt.py` to reduce memory usage. (Note: Liger Kernels were not used, manual chunking was preferred for custom softcap support).
 - [ ] **Checkpointing**:
     - [x] Fix potentially redundant model re-initialization in `checkpoint_manager.py`.
     - [x] Ensure optimizer state saving across ranks is robust (`scripts/base_train.py`).
