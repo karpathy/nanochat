@@ -9,3 +9,6 @@ eval_bundle/wandb/
 *.parquet
 prompt_optimization_results/
 __pycache__/
+wandb/
+*.parquet
+__pycache__/
