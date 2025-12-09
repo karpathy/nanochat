@@ -12,3 +12,6 @@ __pycache__/
 wandb/
 *.parquet
 __pycache__/
+wandb/
+*.parquet
+__pycache__/
