@@ -13,7 +13,6 @@ dependencies = [
     "setuptools>=80.9.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
-    "torch>=2.8.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
 ]
@@ -43,7 +42,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-# target torch to cuda 12.8 or CPU
+# target torch to cuda 12.8, rocm6.4 or CPU
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
