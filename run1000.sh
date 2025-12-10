@@ -18,6 +18,7 @@ fi
 python -m nanochat.report reset
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
+unset CONDA_PREFIX
 uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
