@@ -73,7 +73,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, AsyncGenerator, Literal
 from dataclasses import dataclass
 from contextlib import nullcontext
@@ -188,8 +188,8 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     top_k: Optional[int] = None
-    model: Optional[str] = "nanochat"  # For OpenAI compatibility
-    stream: Optional[bool] = None  # For OpenAI compatibility
+    model: str = Field(default="nanochat")  # For OpenAI compatibility
+    stream: Optional[bool] = False  # For OpenAI compatibility
     top_p: Optional[float] = None  # Ignored, for compatibility
 
 # OpenAI API Models
@@ -461,7 +461,10 @@ async def chat_completions(request: ChatRequest):
 
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: ChatRequest):
-    """OpenAI-compatible chat completion endpoint (supports streaming and non-streaming)."""
+    """OpenAI-compatible chat completion endpoint (supports streaming and non-streaming).
+    
+    Note: System role messages are accepted but ignored as nanochat doesn't support system prompts.
+    """
 
     validate_chat_request(request)
 
@@ -492,7 +495,9 @@ async def openai_chat_completions(request: ChatRequest):
                 conversation_tokens.append(assistant_start)
                 conversation_tokens.extend(worker.tokenizer.encode(message.content))
                 conversation_tokens.append(assistant_end)
-            # Note: system messages are ignored as nanochat doesn't have system role support
+            elif message.role == "system":
+                # Note: system messages are ignored as nanochat doesn't have system role support
+                logger.warning(f"System role message ignored (not supported by this model): {message.content[:100]}...")
 
         conversation_tokens.append(assistant_start)
         prompt_tokens = len(conversation_tokens)
@@ -592,7 +597,6 @@ async def openai_chat_completions(request: ChatRequest):
                 await worker_pool.release_worker(worker)
 
     except Exception as e:
-        await worker_pool.release_worker(worker)
         logger.error(f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -640,4 +644,4 @@ if __name__ == "__main__":
     import uvicorn
     print("Starting NanoChat Web Server")
     print(f"Temperature: {args.temperature}, Top-k: {args.top_k}, Max tokens: {args.max_tokens}")
-    uvicorn.run(app, host=args.host, port=args.port, timeout_keep_alive=75)
+    uvicorn.run(app, host=args.host, port=args.port)
