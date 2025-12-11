@@ -24,7 +24,7 @@ import pyarrow as pa
 dataset_kwargs = {
     "path": "HuggingFaceFW/fineweb-edu",
     "split": "train",
-    "name": "sample-100BT", # ~100B GPT-2 tokens at ~3 chars/token => ~300B chars total
+    # "name": "sample-100BT", # ~100B GPT-2 tokens at ~3 chars/token => ~300B chars total
 }
 ds = load_dataset(**dataset_kwargs)
 
@@ -34,7 +34,7 @@ ndocs = len(ds) # total number of documents to process
 print(f"Total number of documents: {ndocs}")
 
 # Repackage into parquet files
-output_dir = "/home/ubuntu/.cache/nanochat/base_data"
+output_dir = "~/cache/nanochat/base_data"
 os.makedirs(output_dir, exist_ok=True)
 
 # Write to parquet files
