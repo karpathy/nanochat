@@ -50,7 +50,7 @@ uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 # each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
 python -m nanochat.dataset -n 1 # current just 1 for testing
 
-# train the tokenizer with vocab size 2**16 = 65536 on ~2B characters of data
-python -m scripts.tok_train --max_chars=2000000000
+# train the tokenizer with vocab size 2**13 = 8192 on ~250M characters of data
+python -m scripts.tok_train --max_chars=250000000 --vocab_size=8192
 # evaluate the tokenizer (report compression ratio etc.)
 python -m scripts.tok_eval

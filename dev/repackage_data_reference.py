@@ -86,7 +86,7 @@ def upload():
     api = HfApi(token=token)
     api.upload_large_folder(
         folder_path=output_dir,
-        repo_id="karpathy/fineweb-edu-100b-shuffle",
+        repo_id="duoduoyeah/tiny-story-shuffle",
         repo_type="dataset",
     )
-# upload()
+upload()
