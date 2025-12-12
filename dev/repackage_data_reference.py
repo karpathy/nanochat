@@ -89,4 +89,4 @@ def upload():
         repo_id="duoduoyeah/tiny-story-shuffle",
         repo_type="dataset",
     )
-upload()
+# upload()
