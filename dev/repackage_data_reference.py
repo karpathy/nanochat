@@ -34,7 +34,7 @@ ndocs = len(ds) # total number of documents to process
 print(f"Total number of documents: {ndocs}")
 
 # Repackage into parquet files
-output_dir = "~/cache/nanochat/base_data"
+output_dir = "/content/cache/nanochat/base_data"
 os.makedirs(output_dir, exist_ok=True)
 
 # Write to parquet files
