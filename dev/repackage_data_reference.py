@@ -22,7 +22,7 @@ import pyarrow as pa
 
 # Source dataset
 dataset_kwargs = {
-    "path": "HuggingFaceFW/fineweb-edu",
+    "path": "roneneldan/TinyStories",
     "split": "train",
     # "name": "sample-100BT", # ~100B GPT-2 tokens at ~3 chars/token => ~300B chars total
 }
