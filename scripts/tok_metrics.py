@@ -65,7 +65,7 @@ try:
             total_tokens += len(ids)
             token_counts.update(ids)
 
-            if num_documents > 0 and num_documents % 1000 == 0:
+            if num_documents > 0 and num_documents % 50000 == 0:
                 print(f"Processed {num_documents:,} documents...")
 except FileNotFoundError:
     print(f"Error: Dataset files not found. Did you download them with nanochat/dataset.py?")

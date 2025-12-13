@@ -22,8 +22,7 @@ mkdir -p $NANOCHAT_BASE_DIR
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
-# install the repo dependencies
-source .venv/bin/activate
+
 uv sync --extra cpu
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
@@ -49,9 +48,9 @@ uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 # each data shard is ~250M chars
 # so we download 2e9 / 250e6 = 8 data shards at this point
 # each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
-python -m nanochat.dataset -n 1 # current just 1 for testing
+python -m nanochat.dataset -n 8 
 
 # train the tokenizer with vocab size 2**13 = 8192 on ~250M characters of data
-python -m scripts.tok_train --max_chars=2500000 --vocab_size=4096
+python -m scripts.tok_train --max_chars=250000000 --vocab_size=4096
 # evaluate the tokenizer (report compression ratio etc.)
-# python -m scripts.tok_eval
+python -m scripts.tok_eval
