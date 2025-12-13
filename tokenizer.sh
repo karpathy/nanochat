@@ -51,6 +51,6 @@ uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 python -m nanochat.dataset -n 1 # current just 1 for testing
 
 # train the tokenizer with vocab size 2**13 = 8192 on ~250M characters of data
-python -m scripts.tok_train --max_chars=2500000 --vocab_size=8192
+python -m scripts.tok_train --max_chars=2500000 --vocab_size=4096
 # evaluate the tokenizer (report compression ratio etc.)
 # python -m scripts.tok_eval
