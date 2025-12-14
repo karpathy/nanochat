@@ -99,8 +99,8 @@ metrics_to_log = [
     {"single_byte_fallback_percent": fallback_rate_percent},
 ]
 
-report.log("Tokenizer Evaluation", metrics_to_log)
-print("Logged metrics to 'Tokenizer Evaluation' section of the project report.")
+report.log("Tokenizer Metrics", metrics_to_log)
+print("Logged metrics to 'Tokenizer Metrics' section of the project report.")
 
 # Save the raw token counts to a separate JSON file
 freq_path = os.path.join(tokenizer_dir, f"token_frequencies_{args.split}.json")

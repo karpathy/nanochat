@@ -1,5 +1,9 @@
 
 ---
+12/13
+1. how does the training side know the vocab list len? 
+
+---
 12/12
 * what does tokenizer consists? 
 
@@ -22,6 +26,7 @@
 4. grouping
 Group by token frequency
 Group by embedding similarity
+Need conside the special tokens
 
 backup:
 Group by distribution across datasets
