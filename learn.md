@@ -1,5 +1,9 @@
 
 ---
+12/14
+1. update the dataset
+
+---
 12/13
 1. how does the training side know the vocab list len? 
 
@@ -15,6 +19,15 @@ could we just pretrain and then try it?
 4. how to set our tokens based on embedding?
 
 5. encoder or decoder problem
+
+6. should we adjust the embedding dim when the vocab map increase?
+
+7. Even discrete, image generation and language generation are different in image area, when it comes to discrete, they are tend to make it like, the value should be integer, while this is almost continuous, i mean, it is just more rough continuous, but still continuous. suppose an patch is 16,16 pixels = 256, and then each pixel 3 channel with [0, 255], then the suppose  discrete in D3PM is, for one patch, 16 * 16 * (256)^3 possibility, does this not continuous?
+
+While in language, the token is discrete, what does this mean, it means each token in the embedding space, if you randomly add a new vector to this space, the nearest token to this new vector, is still almost vertical
+
+8. get the embedding of a large model, and check the token embedding in the space, if random add one, then I guess this new vector will be almost vertical to every token
+
 
 ---
 12/12

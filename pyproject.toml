@@ -67,6 +67,8 @@ cpu = [
 gpu = [  
     "torch>=2.8.0",  
 ]  
+colab = [  
+]  
   
 [tool.uv]  
 conflicts = [  

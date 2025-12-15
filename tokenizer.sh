@@ -24,6 +24,8 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 
 uv sync --extra cpu
+# when colab
+uv pip install psutil
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
 
