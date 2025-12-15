@@ -53,11 +53,11 @@ echo "dataset download to complete~~~"
 -----------------------------------------------------------------------------
 # Base model (pretraining)
 
-# The d20 model is 30M parameters.
-# Chinchilla says #tokens = 20X #params, so we need 30e6 * 20 = 0.6B tokens.
-# Assume our tokenizer is 5 chars/token, this is 0.6B * 5 ~= 3B chars.
-# At 250M chars/shard, this is 3B / 250M ~= 12 shards needed for pretraining.
-# While we only has 7 shards here, so its not enough
+# The d12 model is 90M parameters.
+# Chinchilla says #tokens = 20X #params, so we need 90e6 * 20 = 1.8B tokens.
+# Assume our tokenizer is 5 chars/token, this is 1.8B * 4 ~= 7.2B chars.
+# At 250M chars/shard, this is 7.2B / 250M ~= 56 shards needed for pretraining.
+# While we only has 17 shards here, so its not enough
 
 # Number of processes/GPUs to use
 NPROC_PER_NODE=1
