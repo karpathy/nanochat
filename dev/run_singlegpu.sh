@@ -46,9 +46,9 @@ python -m nanochat.report reset
 # -----------------------------------------------------------------------------
 # Data & Tokenizer
 
-# ourdataset currently only has 7 shards\
+# ourdataset currently only 17 has shards\
 echo "Waiting for dataset download to complete..."
-python -m nanochat.dataset -n 7 
+python -m nanochat.dataset -n 20 
 echo "dataset download to complete~~~"
 -----------------------------------------------------------------------------
 # Base model (pretraining)
@@ -65,8 +65,8 @@ NPROC_PER_NODE=1
 python -m scripts.base_train \
     --depth=12 \
     --max_seq_len=1024 \
-    --device_batch_size=256 \
-    --target_param_data_ratio=100
+    --device_batch_size=128 \
+    --target_param_data_ratio=25
 
 # python -m scripts.base_train \
 #     --depth=4 \
@@ -80,7 +80,9 @@ python -m scripts.base_train \
 
 # evaluate the base model
 python -m scripts.base_loss --device_batch_size=64 --split_tokens=4096
-python -m scripts.base_eval --max-per-task=16
+# python -m scripts.base_eval --max-per-task=16
+
+python -m scripts.chat_cli -i base
 
 # -----------------------------------------------------------------------------
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)

@@ -1,7 +1,16 @@
 
+---12/15
+1. how to modify the code here to let us train in block diffusion style? This one is important
+
+2. how to set our tokens based on embedding?
+
+3. encoder or decoder problem: both!
+
+4. if have time, find the real discrete image model
+
 ---
 12/14
-1. update the dataset
+1. update the dataset Done
 
 ---
 12/13
@@ -13,14 +22,11 @@ for one step, how many tokens are used for training?
 
 2. train a model that 12 layers?
 could we just pretrain and then try it?
-
-3. how to modify the code here to let us train in block diffusion style? This one is important
-
-4. how to set our tokens based on embedding?
+Yes
 
 5. encoder or decoder problem
 
-6. should we adjust the embedding dim when the vocab map increase?
+6. should we adjust the embedding dim when the vocab map increase? No, this is related to the depth, so we keep the default setting here
 
 7. Even discrete, image generation and language generation are different in image area, when it comes to discrete, they are tend to make it like, the value should be integer, while this is almost continuous, i mean, it is just more rough continuous, but still continuous. suppose an patch is 16,16 pixels = 256, and then each pixel 3 channel with [0, 255], then the suppose  discrete in D3PM is, for one patch, 16 * 16 * (256)^3 possibility, does this not continuous?
 
