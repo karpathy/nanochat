@@ -21,7 +21,7 @@ from nanochat.common import get_base_dir
 
 # The URL on the internet where the data is hosted and downloaded from on demand
 BASE_URL = "https://huggingface.co/datasets/duoduoyeah/tiny-story-shuffle/resolve/main"
-MAX_SHARD = 6 # the last datashard is shard_00006.parquet
+MAX_SHARD = 16 # the last datashard is shard_00006.parquet
 index_to_filename = lambda index: f"shard_{index:05d}.parquet" # format of the filenames
 base_dir = get_base_dir()
 DATA_DIR = os.path.join(base_dir, "tiny_story_data")
