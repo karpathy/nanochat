@@ -5,3 +5,5 @@ rustbpe/target/
 dev-ignore/
 report.md
 eval_bundle/
+.cache/
+wandb/

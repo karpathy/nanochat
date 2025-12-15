@@ -1,0 +1,6 @@
+RoPE Variant,Train BPB,Val BPB,CORE (Centered)
+rope,0.7912,0.8024,0.200350
+pi,0.7909,0.8019,0.186672
+ntk,0.7898,0.8008,0.187892
+yarn,0.7879,0.7992,0.193882
+

@@ -1,0 +1,24 @@
+Task                               , Accuracy  , Centered  
+hellaswag_zeroshot                 , 0.435073  , 0.246764  
+jeopardy                           , 0.092111  , 0.092111  
+bigbench_qa_wikidata               , 0.504650  , 0.504650  
+arc_easy                           , 0.651936  , 0.535915  
+arc_challenge                      , 0.355802  , 0.141069  
+copa                               , 0.620000  , 0.240000  
+commonsense_qa                     , 0.243243  , 0.054054  
+piqa                               , 0.676279  , 0.352557  
+openbook_qa                        , 0.324000  , 0.098667  
+lambada_openai                     , 0.347953  , 0.347953  
+hellaswag                          , 0.441048  , 0.254730  
+winograd                           , 0.626374  , 0.252747  
+winogrande                         , 0.524862  , 0.049724  
+bigbench_dyck_languages            , 0.105000  , 0.105000  
+agi_eval_lsat_ar                   , 0.213043  , 0.016304  
+bigbench_cs_algorithms             , 0.434848  , 0.434848  
+bigbench_operators                 , 0.157143  , 0.157143  
+bigbench_repeat_copy_logic         , 0.000000  , 0.000000  
+squad                              , 0.273888  , 0.273888  
+coqa                               , 0.195039  , 0.195039  
+boolq                              , 0.457187  , -0.428457 
+bigbench_language_identification   , 0.256500  , 0.182068  
+CORE                               ,           , 0.186672  

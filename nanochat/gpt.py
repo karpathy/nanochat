@@ -22,6 +22,7 @@ import torch.nn.functional as F
 from nanochat.common import get_dist_info, print0
 from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
+from typing import Optional
 
 @dataclass
 class GPTConfig:
@@ -31,6 +32,15 @@ class GPTConfig:
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
+    # RoPE variants / scaling
+    rope_type: str = "rope" # rope | pi | ntk | yarn
+    rope_base: float = 10000.0
+    rope_scale: float = 1.0
+    rope_original_seq_len: int = 2048
+    rope_max_seq_len: Optional[int] = None
+    rope_alpha: float = 1.0 # used by yarn
+    rope_beta_fast: float = 32.0 # used by yarn
+    rope_beta_slow: float = 1.0 # used by yarn
 
 
 def norm(x):
@@ -47,6 +57,117 @@ def apply_rotary_emb(x, cos, sin):
     out = torch.cat([y1, y2], 3) # re-assemble
     out = out.to(x.dtype) # ensure input/output dtypes match
     return out
+
+
+class RotaryEmbedding(nn.Module):
+    """
+    RoPE variants:
+    - rope: standard
+    - pi: linear scaling (HF 'linear'): inv_freq /= scale
+    - ntk: Dynamic NTK base scaling (HF 'dynamic' style)
+    - yarn: YaRN (NTK-by-parts + attention scaling)
+    """
+    def __init__(self, config: GPTConfig):
+        super().__init__()
+        self.config = config
+        self.head_dim = config.n_embd // config.n_head
+        assert self.head_dim % 2 == 0, "RoPE head_dim must be even"
+        self.max_seq_len = config.rope_max_seq_len or config.sequence_len
+        self.register_buffer("cos", None, persistent=False)
+        self.register_buffer("sin", None, persistent=False)
+        self.attn_scale: float = 1.0  # √(1/t) in YaRN paper
+
+    def _base_inv_freq(self, base: float, device):
+        # inv_freq shape: (head_dim/2,)
+        half = self.head_dim // 2
+        i = torch.arange(0, half, device=device, dtype=torch.float32)
+        inv_freq = 1.0 / (base ** (2.0 * i / self.head_dim))
+        return inv_freq
+
+    def _compute_inv_freq_and_attn_scale(self, device):
+        rope_type = self.config.rope_type
+        base = float(self.config.rope_base)
+        scale = float(self.config.rope_scale)
+
+        # default
+        inv_freq = self._base_inv_freq(base, device)
+        attn_scale = 1.0
+
+        if rope_type == "pi":
+            # PI == linear scaling: inv_freq /= scale  (equiv. positions /= scale)
+            if scale != 1.0:
+                inv_freq = inv_freq / scale
+
+        elif rope_type == "ntk":
+            # Dynamic NTK: scale the RoPE base (theta) using the standard exponent d/(d-2)
+            # vLLM reference implementation (simplified here): :contentReference[oaicite:3]{index=3}
+            if scale != 1.0:
+                d = float(self.head_dim)
+                L0 = float(self.config.rope_original_seq_len)
+                # maximum length after scaling is L0 * scale
+                L = L0 * scale
+                base = base * ((scale * L / L0) - (scale - 1.0)) ** (d / (d - 2.0))
+                inv_freq = self._base_inv_freq(base, device)
+
+        elif rope_type == "yarn":
+            # YaRN: blend extrapolation vs interpolation inv_freq with a ramp + attention scaling
+            # OLMo reference implementation: :contentReference[oaicite:4]{index=4}
+            if scale != 1.0:
+                inv_extrap = self._base_inv_freq(base, device)
+                inv_interp = inv_extrap / scale
+
+                half_dim = inv_extrap.numel()
+                idx = torch.arange(half_dim, device=device, dtype=torch.float32)
+
+                # map "number of rotations" -> "dimension index" (YaRN paper / ref impl)
+                # dim_from_rot(n_rot) = dim * log(L0/(n_rot*2π)) / (2*log(theta))
+                import math
+                L0 = float(self.config.rope_original_seq_len)
+                theta = base
+
+                def dim_from_rot(n_rot: float) -> float:
+                    return (self.head_dim * math.log(L0 / (n_rot * 2.0 * math.pi))
+                            / (2.0 * math.log(theta)))
+
+                low = max(int(math.floor(dim_from_rot(float(self.config.rope_beta_fast)))), 0)
+                high = min(int(math.ceil(dim_from_rot(float(self.config.rope_beta_slow)))), half_dim - 1)
+                span = max(high - low, 1e-3)
+                ramp = ((idx - low) / span).clamp_(0.0, 1.0)  # 0→extrap, 1→interp
+
+                inv_freq = inv_interp * ramp + inv_extrap * (1.0 - ramp)
+
+                # attention scaling: √(1/t) = 0.1 ln(s) + 1  (Eq.21-22 discussion) :contentReference[oaicite:5]{index=5}
+                attn_scale = 0.1 * math.log(scale) + 1.0
+
+        else:
+            # "rope"
+            pass
+
+        self.attn_scale = float(attn_scale)
+        return inv_freq
+
+    def _maybe_refresh(self, needed_seq_len, device):
+        if self.cos is not None and self.cos.device == device and needed_seq_len <= self.cos.size(1):
+            return
+        seq_len = max(int(needed_seq_len), int(self.max_seq_len))
+
+        inv_freq = self._compute_inv_freq_and_attn_scale(device)
+        t = torch.arange(seq_len, dtype=torch.float32, device=device)
+        freqs = torch.outer(t, inv_freq)  # (T, head_dim/2)
+
+        cos, sin = freqs.cos(), freqs.sin()
+        cos, sin = cos.bfloat16(), sin.bfloat16()
+        cos, sin = cos[None, :, None, :], sin[None, :, None, :]
+        self.register_buffer("cos", cos, persistent=False)
+        self.register_buffer("sin", sin, persistent=False)
+
+    def get_cos_sin(self, seq_len, device, pos_offset=0):
+        needed = pos_offset + seq_len
+        self._maybe_refresh(needed, device)
+        cos = self.cos[:, pos_offset:pos_offset+seq_len]
+        sin = self.sin[:, pos_offset:pos_offset+seq_len]
+        return cos, sin, self.attn_scale
+
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
@@ -72,9 +193,12 @@ class CausalSelfAttention(nn.Module):
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
 
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
-        cos, sin = cos_sin
+        cos, sin, attn_scale = cos_sin
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin) # QK rotary embedding
         q, k = norm(q), norm(k) # QK norm
+        if attn_scale != 1.0:
+            q = q * attn_scale
+            k = k * attn_scale
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2) # make head be batch dim, i.e. (B, T, H, D) -> (B, H, T, D)
 
         # Apply KV cache: insert current k,v into cache, get the full view so far
@@ -143,15 +267,7 @@ class GPT(nn.Module):
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # To support meta device initialization, we init the rotary embeddings here, but it's fake
-        # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
-        # so let's just over-compute them, but assert fail if we ever reach that amount.
-        # In the future we can dynamically grow the cache, for now it's fine.
-        self.rotary_seq_len = config.sequence_len * 10 # 10X over-compute should be enough, TODO make nicer?
-        head_dim = config.n_embd // config.n_head
-        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
-        self.register_buffer("sin", sin, persistent=False)
+        self.rotary = RotaryEmbedding(config)
 
     def init_weights(self):
         self.apply(self._init_weights)
@@ -161,10 +277,6 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
-        # init the rotary embeddings
-        head_dim = self.config.n_embd // self.config.n_head
-        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.cos, self.sin = cos, sin
         # Cast the embeddings from fp32 to bf16: optim can tolerate it and it saves memory: both in the model and the activations
         if self.transformer.wte.weight.device.type == "cuda":
             self.transformer.wte.to(dtype=torch.bfloat16)
@@ -180,23 +292,6 @@ class GPT(nn.Module):
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
-
-    # TODO: bump base theta more, e.g. 100K is more common more recently
-    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
-        # autodetect the device from model embeddings
-        if device is None:
-            device = self.transformer.wte.weight.device
-        # stride the channels
-        channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
-        inv_freq = 1.0 / (base ** (channel_range / head_dim))
-        # stride the time steps
-        t = torch.arange(seq_len, dtype=torch.float32, device=device)
-        # calculate the rotation frequencies at each (time, channel) pair
-        freqs = torch.outer(t, inv_freq)
-        cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16() # keep them in bfloat16
-        cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
-        return cos, sin
 
     def get_device(self):
         return self.transformer.wte.weight.device
@@ -243,13 +338,9 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
         B, T = idx.size()
 
-        # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
-        assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
-        assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
-        assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
-        # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
+        # Grab the rotary embeddings for the current sequence length
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
-        cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
+        cos_sin = self.rotary.get_cos_sin(T, device=idx.device, pos_offset=T0)
 
         # Forward the trunk of the Transformer
         x = self.transformer.wte(idx)

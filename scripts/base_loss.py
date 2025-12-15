@@ -15,12 +15,16 @@ from nanochat.dataloader import tokenizing_distributed_data_loader
 from nanochat.tokenizer import get_token_bytes
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--model_tag', type=str, default=None, help='Model tag to evaluate')
+args = parser.parse_args()
+model_tag = args.model_tag
+model_step = None
 
 # Configuration
-device_batch_size = 32
+device_batch_size = 1
 split_tokens = 20*524288  # number of tokens to evaluate per split
-model_tag = None # optional model tag for the output directory name
-model_step = None # optional model step for the output directory name
 device_type = "" # cuda|cpu|mps (empty => autodetect)
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 
