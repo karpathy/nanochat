@@ -16,6 +16,7 @@ dependencies = [
     "torch>=2.8.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
+    "lm_eval[hf]",
 ]
 
 [build-system]
@@ -49,6 +50,7 @@ torch = [
     { index = "pytorch-cpu", extra = "cpu" },  
     { index = "pytorch-cu128", extra = "gpu" },  
 ]
+lm_eval = { path = "tools/lm-eval" }
 
 [[tool.uv.index]]  
 name = "pytorch-cpu"  
