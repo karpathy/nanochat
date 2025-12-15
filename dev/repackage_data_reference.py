@@ -47,7 +47,7 @@ total_docs_processed = 0
 total_time_spent = 0
 t0 = time.time()
 for doc in ds:
-    text = doc['text']
+    text = doc.get('text') or doc.get('story', '')
     shard_docs.append(text)
     shard_characters += len(text)
     collected_enough_chars = shard_characters >= chars_per_shard
