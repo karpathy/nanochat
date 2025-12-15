@@ -23,9 +23,11 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
 
-uv sync --extra cpu
+
+# when normal
+# uv sync --extra cpu
 # when colab
-uv pip install psutil
+uv pip install --extra colab -e .
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
 
@@ -44,6 +46,9 @@ source "$HOME/.cargo/env"
 
 # Build the rustbpe Tokenizer
 uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
+
+# prepare the dataset
+uv run dev/repackage_data_reference.py
 
 # Download the first ~2B characters of pretraining dataset
 # look at dev/repackage_data_reference.py for details on how this data was prepared
