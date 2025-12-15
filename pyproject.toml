@@ -13,6 +13,7 @@ dependencies = [
     "setuptools>=80.9.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
+    "torch>=2.8.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
 ]
@@ -65,9 +66,6 @@ cpu = [
 ]  
 gpu = [  
     "torch>=2.8.0",  
-]  
-colab = [
-    # Use system torch from Colab, don't install
 ]  
   
 [tool.uv]  
