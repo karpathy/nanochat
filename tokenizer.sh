@@ -58,6 +58,6 @@ uv run dev/repackage_data_reference.py
 python -m nanochat.dataset -n 8 
 
 # train the tokenizer with vocab size 2**13 = 8192 on ~250M characters of data
-python -m scripts.tok_train --max_chars=250000000 --vocab_size=4096
+python -m scripts.tok_train --max_chars=4000000000 --vocab_size=4096
 # evaluate the tokenizer (report compression ratio etc.)
 python -m scripts.tok_eval
