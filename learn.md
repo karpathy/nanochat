@@ -8,6 +8,8 @@
 
 4. if have time, find the real discrete image model
 
+5. Vector-Quantized (VQ-based) generative models 
+
 ---
 12/14
 1. update the dataset Done

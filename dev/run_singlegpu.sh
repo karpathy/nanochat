@@ -22,6 +22,8 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 # install the repo dependencies
 uv sync --extra gpu
+# when colab
+uv pip install  -e .
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
 
@@ -63,20 +65,22 @@ echo "dataset download to complete~~~"
 NPROC_PER_NODE=1
 
 python -m scripts.base_train \
-    --depth=12 \
+    --depth=4 \
     --max_seq_len=1024 \
-    --device_batch_size=128 \
-    --target_param_data_ratio=25
+    --device_batch_size=256 \
+    --target_param_data_ratio=60
 
 # python -m scripts.base_train \
 #     --depth=4 \
 #     --max_seq_len=1024 \
+#     --device_batch_size=256 \
+#     --target_param_data_ratio=60
+
+# python -m scripts.base_train \
+#     --depth=12 \
+#     --max_seq_len=1024 \
 #     --device_batch_size=128 \
-#     --total_batch_size=65536 \
-#     --eval_tokens=4096 \
-#     --core_metric_max_per_task=12 \
-#     --sample_every=500 \
-#     --num_iterations=1000
+#     --target_param_data_ratio=25
 
 # evaluate the base model
 python -m scripts.base_loss --device_batch_size=64 --split_tokens=4096
