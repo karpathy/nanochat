@@ -29,13 +29,13 @@ Example runs:
 ```bash
 # Single task (MMLU)
 uv run lm-eval run --model hf \
-  --model_args pretrained=hf-export/sft \
+  --model_args pretrained=hf-export/sft,trust_remote_code=True \
   --tasks mmlu \
   --batch_size 1
 
 # A small suite similar to nanochat chat_eval coverage
 uv run lm-eval run --model hf \
-  --model_args pretrained=hf-export/sft \
+  --model_args pretrained=hf-export/sft,trust_remote_code=True \
   --tasks arc_easy,arc_challenge,gsm8k,mmlu,humaneval \
   --batch_size 1
 ```

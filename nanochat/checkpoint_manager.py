@@ -101,7 +101,6 @@ def find_largest_model(checkpoint_dir):
     # 1) normally all model tags are of the form d<number>, try that first:
     candidates = []
     for model_tag in model_tags:
-        print(model_tag)
         match = re.match(r"d(\d+)", model_tag)
         if match:
             model_depth = int(match.group(1))
