@@ -5,5 +5,14 @@ rustbpe/target/
 dev-ignore/
 report.md
 eval_bundle/
-hf-export/*
+hf-export/**/*.bin
+hf-export/**/*.bin
+hf-export/**/*.safetensors
+hf-export/**/*.pt
+hf-export/**/*.ckpt
+hf-export/**/*.onnx
+hf-export/**/*.pkl
+hf-export/**/__pycache__/
 *.log
+.cache/
+agent.md
