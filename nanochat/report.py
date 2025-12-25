@@ -278,13 +278,12 @@ class Report:
             # write the header first
             header_file = report_dir / "header.md"
             if header_file.exists():
-                with header_file.open("r", encoding="utf-8") as f:
-                    header_content = f.read()
-                    out_file.write(header_content)
-                    start_time = extract_timestamp(header_content, "Run started:")
-                    # capture bloat data for summary later (the stuff after Bloat header and until \n\n)
-                    bloat_data = re.search(r"### Bloat\n(.*?)\n\n", header_content, re.DOTALL)
-                    bloat_data = bloat_data.group(1) if bloat_data else ""
+                header_content = header_file.read_text(encoding="utf-8")
+                out_file.write(header_content)
+                start_time = extract_timestamp(header_content, "Run started:")
+                # capture bloat data for summary later (the stuff after Bloat header and until \n\n)
+                bloat_data = re.search(r"### Bloat\n(.*?)\n\n", header_content, re.DOTALL)
+                bloat_data = bloat_data.group(1) if bloat_data else ""
             else:
                 start_time = None # will cause us to not write the total wall clock time
                 bloat_data = "[bloat data missing]"
@@ -295,8 +294,7 @@ class Report:
                 if not section_file.exists():
                     print(f"Warning: {section_file} does not exist, skipping")
                     continue
-                with section_file.open("r", encoding="utf-8") as in_file:
-                    section = in_file.read()
+                section = section_file.read_text(encoding="utf-8")
                 # Extract timestamp from this section (the last section's timestamp will "stick" as end_time)
                 if "rl" not in file_name:
                     # Skip RL sections for end_time calculation because RL is experimental

@@ -30,10 +30,9 @@ for arg in sys.argv[1:]:
         assert not arg.startswith('--')
         config_file = Path(arg)
         print0(f"Overriding config with {config_file}:")
-        with config_file.open() as f:
-            print0(f.read())
-        with config_file.open() as f:
-            exec(f.read())
+        config_content = config_file.read_text()
+        print0(config_content)
+        exec(config_content)
     else:
         # assume it's a --key=value argument
         assert arg.startswith('--')

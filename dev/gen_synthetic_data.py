@@ -37,7 +37,7 @@ from pathlib import Path
 
 from nanochat.common import get_base_dir
 
-api_key = Path("openroutertoken.txt").open("r", encoding="utf-8").read().strip()
+api_key = Path("openroutertoken.txt").read_text(encoding="utf-8").strip()
 
 url = "https://openrouter.ai/api/v1/chat/completions"
 headers = {
@@ -45,7 +45,7 @@ headers = {
   "Content-Type": "application/json"
 }
 
-readme = Path("README.md").open("r", encoding="utf-8").read().strip()
+readme = Path("README.md").read_text(encoding="utf-8").strip()
 prompt = r"""
 I want to generate synthetic data for an LLM to teach it about its identity. Here is the identity I want:
 

@@ -66,8 +66,7 @@ model_tag = "" # optionally override the model tag for the output checkpoint dir
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 configurator_path = Path('nanochat') / 'configurator.py'
-with configurator_path.open() as f:
-    exec(f.read()) # overrides from command line or config file
+exec(configurator_path.read_text()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
 
