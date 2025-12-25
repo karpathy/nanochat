@@ -9,7 +9,6 @@ For details of how the dataset was prepared, see `repackage_data_reference.py`.
 
 import argparse
 import time
-from pathlib import Path
 import requests
 import pyarrow.parquet as pq
 from multiprocessing import Pool
@@ -78,7 +77,7 @@ def download_single_file(index):
             response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
             # Write to temporary file first
-            temp_path = Path(str(filepath) + ".tmp")
+            temp_path = filepath.with_name(f"{filepath.name}.tmp")
             with temp_path.open('wb') as f:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
                     if chunk:
@@ -91,7 +90,7 @@ def download_single_file(index):
         except (requests.RequestException, IOError) as e:
             print(f"Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
             # Clean up any partial files
-            for path in [Path(str(filepath) + ".tmp"), filepath]:
+            for path in [filepath.with_name(f"{filepath.name}.tmp"), filepath]:
                 try:
                     path.unlink(missing_ok=True)
                 except:

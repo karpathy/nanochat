@@ -66,7 +66,7 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
     """
     base_dir = get_base_dir()
     file_path = base_dir / filename
-    lock_path = Path(str(file_path) + ".lock")
+    lock_path = file_path.with_name(f"{file_path.name}.lock")
 
     if file_path.exists():
         return file_path
