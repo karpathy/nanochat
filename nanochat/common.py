@@ -85,8 +85,7 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
             content = response.read() # bytes
 
         # Write to local file
-        with file_path.open('wb') as f:
-            f.write(content)
+        file_path.write_bytes(content)
         print(f"Downloaded to {file_path}")
 
         # Run the postprocess function if provided

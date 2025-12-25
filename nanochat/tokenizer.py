@@ -392,6 +392,5 @@ def get_token_bytes(device="cpu"):
     tokenizer_dir = base_dir / "tokenizer"
     token_bytes_path = tokenizer_dir / "token_bytes.pt"
     assert token_bytes_path.exists(), f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"
-    with token_bytes_path.open("rb") as f:
-        token_bytes = torch.load(f, map_location=device)
+    token_bytes = torch.load(token_bytes_path, map_location=device)
     return token_bytes

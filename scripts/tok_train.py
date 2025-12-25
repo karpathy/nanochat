@@ -85,8 +85,7 @@ for token_id in range(vocab_size):
         token_bytes.append(id_bytes)
 token_bytes = torch.tensor(token_bytes, dtype=torch.int32, device='cpu')
 token_bytes_path = tokenizer_dir / "token_bytes.pt"
-with token_bytes_path.open("wb") as f:
-    torch.save(token_bytes, f)
+torch.save(token_bytes, token_bytes_path)
 print(f"Saved token_bytes to {token_bytes_path}")
 
 # Log to report
