@@ -14,9 +14,9 @@ class CustomJSON(Task):
     Example line: [{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello"}]
     """
 
-    def __init__(self, filepath, **kwargs):
+    def __init__(self, filepath: Path, **kwargs):
         super().__init__(**kwargs)
-        self.filepath = Path(filepath)
+        self.filepath = filepath
         self.conversations = []
 
         # Load all conversations from the JSONL file

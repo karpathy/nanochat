@@ -42,7 +42,7 @@ def place_eval_bundle(file_path):
         with zipfile.ZipFile(file_path, 'r') as zip_ref:
             zip_ref.extractall(tmpdir)
         extracted_bundle_dir = Path(tmpdir) / "eval_bundle"
-        shutil.move(str(extracted_bundle_dir), str(eval_bundle_dir))
+        shutil.move(extracted_bundle_dir, eval_bundle_dir)
     print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
 def evaluate_model(model, tokenizer, device, max_per_task=-1):

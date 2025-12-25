@@ -29,14 +29,9 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
 
-def list_parquet_files(data_dir = None):
+def list_parquet_files(data_dir = DATA_DIR):
     """ Looks into a data dir and returns full paths to all parquet files. """
-    data_dir = DATA_DIR if data_dir is None else data_dir
-    parquet_files = sorted([
-        f.name for f in data_dir.iterdir()
-        if f.name.endswith('.parquet') and not f.name.endswith('.tmp')
-    ])
-    parquet_paths = [data_dir / f for f in parquet_files]
+    parquet_paths = sorted(data_dir.glob('*.parquet'))
     return parquet_paths
 
 def parquets_iter_batched(split, start=0, step=1):
