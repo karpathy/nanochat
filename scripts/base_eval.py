@@ -9,7 +9,6 @@ torchrun --nproc_per_node=8 -m scripts.base_eval
 
 The script will print the CORE metric to the console.
 """
-import os
 import csv
 import time
 import json
@@ -19,6 +18,7 @@ import random
 import zipfile
 import tempfile
 from contextlib import nullcontext
+from pathlib import Path
 
 import torch
 
@@ -37,12 +37,12 @@ def place_eval_bundle(file_path):
     # here file_path is the path to the eval_bundle.zip file
     # we need to unzip it and place it in the base directory
     base_dir = get_base_dir()
-    eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
+    eval_bundle_dir = base_dir / "eval_bundle"
     with tempfile.TemporaryDirectory() as tmpdir:
         with zipfile.ZipFile(file_path, 'r') as zip_ref:
             zip_ref.extractall(tmpdir)
-        extracted_bundle_dir = os.path.join(tmpdir, "eval_bundle")
-        shutil.move(extracted_bundle_dir, eval_bundle_dir)
+        extracted_bundle_dir = Path(tmpdir) / "eval_bundle"
+        shutil.move(str(extracted_bundle_dir), str(eval_bundle_dir))
     print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
 def evaluate_model(model, tokenizer, device, max_per_task=-1):
@@ -52,20 +52,20 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     """
     # Load config and task metadata
     base_dir = get_base_dir()
-    eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
+    eval_bundle_dir = base_dir / "eval_bundle"
     # Download the eval bundle to disk (and unzip if needed)
-    if not os.path.exists(eval_bundle_dir):
+    if not eval_bundle_dir.exists():
         download_file_with_lock(EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=place_eval_bundle)
-    config_path = os.path.join(eval_bundle_dir, "core.yaml")
-    data_base_path = os.path.join(eval_bundle_dir, "eval_data")
-    eval_meta_data = os.path.join(eval_bundle_dir, "eval_meta_data.csv")
-    with open(config_path, 'r', encoding='utf-8') as f:
+    config_path = eval_bundle_dir / "core.yaml"
+    data_base_path = eval_bundle_dir / "eval_data"
+    eval_meta_data = eval_bundle_dir / "eval_meta_data.csv"
+    with config_path.open('r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     tasks = config['icl_tasks']
 
     # Load random baseline values from eval metadata
     random_baselines = {}
-    with open(eval_meta_data, 'r', encoding='utf-8') as f:
+    with eval_meta_data.open('r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
             task_name = row['Eval Task']
@@ -87,8 +87,8 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
         print0(f"Evaluating: {label} ({task_meta['num_fewshot']}-shot, type: {task_meta['task_type']})... ", end='')
 
         # Load data for this task
-        data_path = os.path.join(data_base_path, task_meta['dataset_uri'])
-        with open(data_path, 'r', encoding='utf-8') as f:
+        data_path = data_base_path / task_meta['dataset_uri']
+        with data_path.open('r', encoding='utf-8') as f:
             data = [json.loads(line.strip()) for line in f]
 
         # shuffle the data because in many cases it appears ordered but we want
@@ -179,12 +179,12 @@ def main():
     centered_results = {}
     if ddp_rank == 0:
         base_dir = get_base_dir()
-        output_csv_path = os.path.join(base_dir, "base_eval", f"{model_slug}.csv")
-        os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
+        output_csv_path = base_dir / "base_eval" / f"{model_slug}.csv"
+        output_csv_path.parent.mkdir(parents=True, exist_ok=True)
         results = out["results"]
         centered_results = out["centered_results"]
         core_metric = out["core_metric"]
-        with open(output_csv_path, 'w', encoding='utf-8', newline='') as f:
+        with output_csv_path.open('w', encoding='utf-8', newline='') as f:
             f.write(f"{'Task':<35}, {'Accuracy':<10}, {'Centered':<10}\n")
             for label in results:
                 f.write(f"{label:<35}, {results[label]:<10.6f}, {centered_results[label]:<10.6f}\n")
@@ -193,7 +193,7 @@ def main():
         print0("="*80)
         print0(f"Model: {model_name}")
         print0("="*80)
-        with open(output_csv_path, 'r', encoding='utf-8') as f:
+        with output_csv_path.open('r', encoding='utf-8') as f:
             print0(f.read())
 
     # Log to report

@@ -7,9 +7,9 @@ This file contains utilities for:
 For details of how the dataset was prepared, see `repackage_data_reference.py`.
 """
 
-import os
 import argparse
 import time
+from pathlib import Path
 import requests
 import pyarrow.parquet as pq
 from multiprocessing import Pool
@@ -24,20 +24,20 @@ BASE_URL = "https://huggingface.co/datasets/karpathy/fineweb-edu-100b-shuffle/re
 MAX_SHARD = 1822 # the last datashard is shard_01822.parquet
 index_to_filename = lambda index: f"shard_{index:05d}.parquet" # format of the filenames
 base_dir = get_base_dir()
-DATA_DIR = os.path.join(base_dir, "base_data")
-os.makedirs(DATA_DIR, exist_ok=True)
+DATA_DIR = base_dir / "base_data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
 
-def list_parquet_files(data_dir=None):
+def list_parquet_files(data_dir = None):
     """ Looks into a data dir and returns full paths to all parquet files. """
     data_dir = DATA_DIR if data_dir is None else data_dir
     parquet_files = sorted([
-        f for f in os.listdir(data_dir)
-        if f.endswith('.parquet') and not f.endswith('.tmp')
+        f.name for f in data_dir.iterdir()
+        if f.name.endswith('.parquet') and not f.name.endswith('.tmp')
     ])
-    parquet_paths = [os.path.join(data_dir, f) for f in parquet_files]
+    parquet_paths = [data_dir / f for f in parquet_files]
     return parquet_paths
 
 def parquets_iter_batched(split, start=0, step=1):
@@ -62,8 +62,8 @@ def download_single_file(index):
 
     # Construct the local filepath for this file and skip if it already exists
     filename = index_to_filename(index)
-    filepath = os.path.join(DATA_DIR, filename)
-    if os.path.exists(filepath):
+    filepath = DATA_DIR / filename
+    if filepath.exists():
         print(f"Skipping {filepath} (already exists)")
         return True
 
@@ -78,23 +78,23 @@ def download_single_file(index):
             response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
             # Write to temporary file first
-            temp_path = filepath + f".tmp"
-            with open(temp_path, 'wb') as f:
+            temp_path = Path(str(filepath) + ".tmp")
+            with temp_path.open('wb') as f:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
                     if chunk:
                         f.write(chunk)
             # Move temp file to final location
-            os.rename(temp_path, filepath)
+            temp_path.rename(filepath)
             print(f"Successfully downloaded {filename}")
             return True
 
         except (requests.RequestException, IOError) as e:
             print(f"Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
             # Clean up any partial files
-            for path in [filepath + f".tmp", filepath]:
-                if os.path.exists(path):
+            for path in [Path(str(filepath) + ".tmp"), filepath]:
+                if path.exists():
                     try:
-                        os.remove(path)
+                        path.unlink()
                     except:
                         pass
             # Try a few times with exponential backoff: 2^attempt seconds

@@ -32,7 +32,7 @@ Abuse Prevention:
 
 import argparse
 import json
-import os
+from pathlib import Path
 import torch
 import asyncio
 import logging
@@ -242,8 +242,8 @@ app.add_middleware(
 @app.get("/")
 async def root():
     """Serve the chat UI."""
-    ui_html_path = os.path.join("nanochat", "ui.html")
-    with open(ui_html_path, "r", encoding="utf-8") as f:
+    ui_html_path = Path("nanochat") / "ui.html"
+    with ui_html_path.open("r", encoding="utf-8") as f:
         html_content = f.read()
     # Replace the API_URL to use the same origin
     html_content = html_content.replace(
@@ -256,8 +256,8 @@ async def root():
 @app.get("/logo.svg")
 async def logo():
     """Serve the NanoChat logo for favicon and header."""
-    logo_path = os.path.join("nanochat", "logo.svg")
-    return FileResponse(logo_path, media_type="image/svg+xml")
+    logo_path = Path("nanochat") / "logo.svg"
+    return FileResponse(str(logo_path), media_type="image/svg+xml")
 
 async def generate_stream(
     worker: Worker,

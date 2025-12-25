@@ -15,6 +15,7 @@ import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import time
 from contextlib import nullcontext
+from pathlib import Path
 
 import wandb
 import torch
@@ -64,7 +65,9 @@ save_every = -1 # every how many steps to save model checkpoints (-1 = disable, 
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+configurator_path = Path('nanochat') / 'configurator.py'
+with configurator_path.open() as f:
+    exec(f.read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
 
@@ -120,7 +123,7 @@ model.init_weights()
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 base_dir = get_base_dir()
 output_dirname = model_tag if model_tag else f"d{depth}" # e.g. d12
-checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
+checkpoint_dir = base_dir / "base_checkpoints" / output_dirname
 resuming = resume_from_step != -1
 if resuming:
     print0(f"Resuming optimization from step {resume_from_step}")
@@ -167,7 +170,7 @@ if resuming:
 
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
-tokens_dir = os.path.join(base_dir, "tokenized_data")
+tokens_dir = base_dir / "tokenized_data"
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
 train_loader = tokenizing_distributed_data_loader_with_state(device_batch_size, max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
 build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)

@@ -6,7 +6,6 @@ Two implementations are available:
 2) Our own RustBPE Tokenizer for training and tiktoken for efficient inference
 """
 
-import os
 import copy
 from functools import lru_cache
 
@@ -51,8 +50,8 @@ class HuggingFaceTokenizer:
     @classmethod
     def from_directory(cls, tokenizer_dir):
         # init from a local directory on disk (e.g. "out/tokenizer")
-        tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
-        tokenizer = HFTokenizer.from_file(tokenizer_path)
+        tokenizer_path = tokenizer_dir / "tokenizer.json"
+        tokenizer = HFTokenizer.from_file(str(tokenizer_path))
         return cls(tokenizer)
 
     @classmethod
@@ -141,9 +140,9 @@ class HuggingFaceTokenizer:
 
     def save(self, tokenizer_dir):
         # save the tokenizer to disk
-        os.makedirs(tokenizer_dir, exist_ok=True)
-        tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
-        self.tokenizer.save(tokenizer_path)
+        tokenizer_dir.mkdir(parents=True, exist_ok=True)
+        tokenizer_path = tokenizer_dir / "tokenizer.json"
+        self.tokenizer.save(str(tokenizer_path))
         print(f"Saved tokenizer to {tokenizer_path}")
 
 # -----------------------------------------------------------------------------
@@ -183,8 +182,8 @@ class RustBPETokenizer:
 
     @classmethod
     def from_directory(cls, tokenizer_dir):
-        pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
-        with open(pickle_path, "rb") as f:
+        pickle_path = tokenizer_dir / "tokenizer.pkl"
+        with pickle_path.open("rb") as f:
             enc = pickle.load(f)
         return cls(enc, "<|bos|>")
 
@@ -249,9 +248,9 @@ class RustBPETokenizer:
 
     def save(self, tokenizer_dir):
         # save the encoding object to disk
-        os.makedirs(tokenizer_dir, exist_ok=True)
-        pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
-        with open(pickle_path, "wb") as f:
+        tokenizer_dir.mkdir(parents=True, exist_ok=True)
+        pickle_path = tokenizer_dir / "tokenizer.pkl"
+        with pickle_path.open("wb") as f:
             pickle.dump(self.enc, f)
         print(f"Saved tokenizer encoding to {pickle_path}")
 
@@ -382,7 +381,7 @@ class RustBPETokenizer:
 def get_tokenizer():
     from nanochat.common import get_base_dir
     base_dir = get_base_dir()
-    tokenizer_dir = os.path.join(base_dir, "tokenizer")
+    tokenizer_dir = base_dir / "tokenizer"
     # return HuggingFaceTokenizer.from_directory(tokenizer_dir)
     return RustBPETokenizer.from_directory(tokenizer_dir)
 
@@ -390,9 +389,9 @@ def get_token_bytes(device="cpu"):
     import torch
     from nanochat.common import get_base_dir
     base_dir = get_base_dir()
-    tokenizer_dir = os.path.join(base_dir, "tokenizer")
-    token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
-    assert os.path.exists(token_bytes_path), f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"
-    with open(token_bytes_path, "rb") as f:
+    tokenizer_dir = base_dir / "tokenizer"
+    token_bytes_path = tokenizer_dir / "token_bytes.pt"
+    assert token_bytes_path.exists(), f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"
+    with token_bytes_path.open("rb") as f:
         token_bytes = torch.load(f, map_location=device)
     return token_bytes

@@ -6,6 +6,7 @@ import os
 import re
 import logging
 import urllib.request
+from pathlib import Path
 import torch
 import torch.distributed as dist
 from filelock import FileLock
@@ -50,12 +51,12 @@ logger = logging.getLogger(__name__)
 def get_base_dir():
     # co-locate nanochat intermediates with other cached data in ~/.cache (by default)
     if os.environ.get("NANOCHAT_BASE_DIR"):
-        nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR")
+        nanochat_dir = Path(os.environ.get("NANOCHAT_BASE_DIR"))
     else:
-        home_dir = os.path.expanduser("~")
-        cache_dir = os.path.join(home_dir, ".cache")
-        nanochat_dir = os.path.join(cache_dir, "nanochat")
-    os.makedirs(nanochat_dir, exist_ok=True)
+        home_dir = Path.home()
+        cache_dir = home_dir / ".cache"
+        nanochat_dir = cache_dir / "nanochat"
+    nanochat_dir.mkdir(parents=True, exist_ok=True)
     return nanochat_dir
 
 def download_file_with_lock(url, filename, postprocess_fn=None):
@@ -64,10 +65,10 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
     Uses a lock file to prevent concurrent downloads among multiple ranks.
     """
     base_dir = get_base_dir()
-    file_path = os.path.join(base_dir, filename)
-    lock_path = file_path + ".lock"
+    file_path = base_dir / filename
+    lock_path = Path(str(file_path) + ".lock")
 
-    if os.path.exists(file_path):
+    if file_path.exists():
         return file_path
 
     with FileLock(lock_path):
@@ -75,7 +76,7 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
         # All other ranks block until it is released
 
         # Recheck after acquiring lock
-        if os.path.exists(file_path):
+        if file_path.exists():
             return file_path
 
         # Download the content as bytes
@@ -84,7 +85,7 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
             content = response.read() # bytes
 
         # Write to local file
-        with open(file_path, 'wb') as f:
+        with file_path.open('wb') as f:
             f.write(content)
         print(f"Downloaded to {file_path}")
 

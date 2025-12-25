@@ -428,24 +428,23 @@ class HuggingFaceTokenizer:
 @pytest.fixture(scope="module")
 def enwik8_path():
     """Fixture to download and cache enwik8 dataset."""
-    import os
     import zipfile
     from nanochat.common import get_base_dir
     base_dir = get_base_dir()
     # download and unzip enwik8 to .cache directory
     enwik8_url = "https://mattmahoney.net/dc/enwik8.zip"
-    enwik8_local_path = os.path.join(base_dir, "enwik8")
-    enwik8_local_path_zip = os.path.join(base_dir, "enwik8.zip")
-    if not os.path.exists(enwik8_local_path):
+    enwik8_local_path = base_dir / "enwik8"
+    enwik8_local_path_zip = base_dir / "enwik8.zip"
+    if not enwik8_local_path.exists():
         print(f"Downloading enwik8 to {enwik8_local_path_zip}")
         import requests
         response = requests.get(enwik8_url)
-        with open(enwik8_local_path_zip, "wb") as f:
+        with enwik8_local_path_zip.open("wb") as f:
             f.write(response.content)
         with zipfile.ZipFile(enwik8_local_path_zip, "r") as zip_ref:
             zip_ref.extractall(base_dir)
         print(f"Unzipped enwik8 to {enwik8_local_path}")
-        os.remove(enwik8_local_path_zip)
+        enwik8_local_path_zip.unlink()
         print(f"Removed {enwik8_local_path_zip}")
     else:
         print(f"Using existing enwik8 at {enwik8_local_path}")
@@ -455,13 +454,13 @@ def enwik8_path():
 @pytest.fixture(scope="module")
 def enwik8_small(enwik8_path):
     """Fixture providing 100KB of enwik8 for quick tests."""
-    with open(enwik8_path, "r", encoding="utf-8") as f:
+    with enwik8_path.open("r", encoding="utf-8") as f:
         return f.read(100_000)
 
 @pytest.fixture(scope="module")
 def enwik8_large(enwik8_path):
     """Fixture providing 10MB of enwik8 for performance tests."""
-    with open(enwik8_path, "r", encoding="utf-8") as f:
+    with enwik8_path.open("r", encoding="utf-8") as f:
         return f.read(10**7)
 
 def time_function(func, *args, **kwargs):

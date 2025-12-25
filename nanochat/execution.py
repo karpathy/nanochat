@@ -30,6 +30,7 @@ import platform
 import signal
 import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 # -----------------------------------------------------------------------------
@@ -123,7 +124,7 @@ def chdir(root):
     if root == ".":
         yield
         return
-    cwd = os.getcwd()
+    cwd = Path.cwd()
     os.chdir(root)
     try:
         yield

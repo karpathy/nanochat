@@ -12,6 +12,7 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+from pathlib import Path
 import wandb
 import torch
 import torch.distributed as dist
@@ -57,7 +58,9 @@ eval_metrics_every = 200
 eval_metrics_max_problems = 1024
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+configurator_path = Path('nanochat') / 'configurator.py'
+with configurator_path.open() as f:
+    exec(f.read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
 # -----------------------------------------------------------------------------
 
@@ -80,7 +83,7 @@ engine = Engine(model, tokenizer) # will be used for inline model evaluation onl
 
 # -----------------------------------------------------------------------------
 # Task data mixture we'll train on
-identity_conversations_filepath = os.path.join(get_base_dir(), "identity_conversations.jsonl")
+identity_conversations_filepath = get_base_dir() / "identity_conversations.jsonl"
 train_ds = TaskMixture([
     ARC(subset="ARC-Easy", split="train"), # 2.3K rows
     ARC(subset="ARC-Challenge", split="train"), # 1.1K rows
@@ -251,7 +254,7 @@ if master_process:
     base_dir = get_base_dir()
     depth = model.config.n_layer
     model_tag = f"d{depth}" # base the model tag on the depth of the base model
-    checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", model_tag)
+    checkpoint_dir = base_dir / "chatsft_checkpoints" / model_tag
     model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
     save_checkpoint(
         checkpoint_dir,
