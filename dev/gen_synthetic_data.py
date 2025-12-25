@@ -348,8 +348,7 @@ num_workers = 4
 
 output_file = get_base_dir() / "identity_conversations.jsonl"
 # Wipe the file clean first to reset it
-if output_file.exists():
-    output_file.unlink()
+output_file.unlink(missing_ok=True)
 print(f"Saving to {output_file}")
 
 # Use ThreadPoolExecutor to generate conversations in parallel

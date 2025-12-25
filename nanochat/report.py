@@ -363,12 +363,10 @@ class Report:
         # Remove section files
         for file_name in EXPECTED_FILES:
             file_path = self.report_dir / file_name
-            if file_path.exists():
-                file_path.unlink()
+            file_path.unlink(missing_ok=True)
         # Remove report.md if it exists
         report_file = self.report_dir / "report.md"
-        if report_file.exists():
-            report_file.unlink()
+        report_file.unlink(missing_ok=True)
         # Generate and write the header section with start timestamp
         header_file = self.report_dir / "header.md"
         header = generate_header()

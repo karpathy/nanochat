@@ -92,11 +92,10 @@ def download_single_file(index):
             print(f"Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
             # Clean up any partial files
             for path in [Path(str(filepath) + ".tmp"), filepath]:
-                if path.exists():
-                    try:
-                        path.unlink()
-                    except:
-                        pass
+                try:
+                    path.unlink(missing_ok=True)
+                except:
+                    pass
             # Try a few times with exponential backoff: 2^attempt seconds
             if attempt < max_attempts:
                 wait_time = 2 ** attempt
