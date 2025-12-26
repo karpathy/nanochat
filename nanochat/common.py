@@ -48,7 +48,7 @@ def setup_default_logging():
 setup_default_logging()
 logger = logging.getLogger(__name__)
 
-def get_base_dir():
+def get_base_dir() -> Path:
     # co-locate nanochat intermediates with other cached data in ~/.cache (by default)
     if os.environ.get("NANOCHAT_BASE_DIR"):
         nanochat_dir = Path(os.environ.get("NANOCHAT_BASE_DIR"))
@@ -59,7 +59,7 @@ def get_base_dir():
     nanochat_dir.mkdir(parents=True, exist_ok=True)
     return nanochat_dir
 
-def download_file_with_lock(url, filename, postprocess_fn=None):
+def download_file_with_lock(url, filename, postprocess_fn=None) -> Path:
     """
     Downloads a file from a URL to a local path in the base directory.
     Uses a lock file to prevent concurrent downloads among multiple ranks.

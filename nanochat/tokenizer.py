@@ -48,7 +48,7 @@ class HuggingFaceTokenizer:
         return cls(tokenizer)
 
     @classmethod
-    def from_directory(cls, tokenizer_dir):
+    def from_directory(cls, tokenizer_dir: Path):
         # init from a local directory on disk (e.g. "out/tokenizer")
         tokenizer_path = tokenizer_dir / "tokenizer.json"
         tokenizer = HFTokenizer.from_file(str(tokenizer_path))
@@ -138,7 +138,7 @@ class HuggingFaceTokenizer:
     def decode(self, ids):
         return self.tokenizer.decode(ids, skip_special_tokens=False)
 
-    def save(self, tokenizer_dir):
+    def save(self, tokenizer_dir: Path):
         # save the tokenizer to disk
         tokenizer_dir.mkdir(parents=True, exist_ok=True)
         tokenizer_path = tokenizer_dir / "tokenizer.json"
@@ -181,7 +181,7 @@ class RustBPETokenizer:
         return cls(enc, "<|bos|>")
 
     @classmethod
-    def from_directory(cls, tokenizer_dir):
+    def from_directory(cls, tokenizer_dir: Path):
         pickle_path = tokenizer_dir / "tokenizer.pkl"
         with pickle_path.open("rb") as f:
             enc = pickle.load(f)
@@ -246,7 +246,7 @@ class RustBPETokenizer:
     def decode(self, ids):
         return self.enc.decode(ids)
 
-    def save(self, tokenizer_dir):
+    def save(self, tokenizer_dir: Path):
         # save the encoding object to disk
         tokenizer_dir.mkdir(parents=True, exist_ok=True)
         pickle_path = tokenizer_dir / "tokenizer.pkl"

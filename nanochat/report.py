@@ -234,11 +234,11 @@ def extract_timestamp(content, prefix):
 class Report:
     """Maintains a bunch of logs, generates a final markdown report."""
 
-    def __init__(self, report_dir):
+    def __init__(self, report_dir: Path):
         report_dir.mkdir(parents=True, exist_ok=True)
         self.report_dir = report_dir
 
-    def log(self, section, data):
+    def log(self, section, data) -> Path:
         """Log a section of data to the report."""
         slug = slugify(section)
         file_name = f"{slug}.md"
@@ -266,7 +266,7 @@ class Report:
             f.write("\n")
         return file_path
 
-    def generate(self):
+    def generate(self) -> Path:
         """Generate the final report."""
         report_dir = self.report_dir
         report_file = report_dir / "report.md"
