@@ -20,7 +20,7 @@ def log0(message):
     if int(os.environ.get('RANK', 0)) == 0:
         logger.info(message)
 
-def save_checkpoint(checkpoint_dir: Path, step, model_data, optimizer_data, meta_data, rank=0):
+def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
     if rank == 0:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         # Save the model state parameters
@@ -39,7 +39,7 @@ def save_checkpoint(checkpoint_dir: Path, step, model_data, optimizer_data, meta
         torch.save(optimizer_data, optimizer_path)
         logger.info(f"Saved optimizer state to: {optimizer_path}")
 
-def load_checkpoint(checkpoint_dir: Path, step, device, load_optimizer=False, rank=0):
+def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
     # Load the model state
     model_path = checkpoint_dir / f"model_{step:06d}.pt"
     model_data = torch.load(model_path, map_location=device)
@@ -55,7 +55,7 @@ def load_checkpoint(checkpoint_dir: Path, step, device, load_optimizer=False, ra
     return model_data, optimizer_data, meta_data
 
 
-def build_model(checkpoint_dir: Path, step, device, phase):
+def build_model(checkpoint_dir, step, device, phase):
     """
     A bunch of repetitive code to build a model from a given checkpoint.
     Returns:
@@ -94,7 +94,7 @@ def build_model(checkpoint_dir: Path, step, device, phase):
     return model, tokenizer, meta_data
 
 
-def find_largest_model(checkpoints_dir: Path):
+def find_largest_model(checkpoints_dir):
     # attempt to guess the model tag: take the biggest model available
     model_tags = [f.name for f in checkpoints_dir.iterdir() if f.is_dir()]
     if not model_tags:
@@ -114,7 +114,7 @@ def find_largest_model(checkpoints_dir: Path):
     return model_tags[0]
 
 
-def find_last_step(checkpoint_dir: Path):
+def find_last_step(checkpoint_dir):
     # Look into checkpoint_dir and find model_<step>.pt with the highest step
     checkpoint_files = list(checkpoint_dir.glob("model_*.pt"))
     if not checkpoint_files:
@@ -125,7 +125,7 @@ def find_last_step(checkpoint_dir: Path):
 # -----------------------------------------------------------------------------
 # convenience functions that take into account nanochat's directory structure
 
-def load_model_from_dir(checkpoints_dir: Path, device, phase, model_tag=None, step=None):
+def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None):
     if model_tag is None:
         # guess the model tag by defaulting to the largest model
         model_tag = find_largest_model(checkpoints_dir)

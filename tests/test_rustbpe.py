@@ -20,7 +20,6 @@ python -m pytest tests/test_rustbpe.py -v -s
 
 import regex as re
 from collections import Counter, defaultdict
-from pathlib import Path
 import time
 import rustbpe
 import tiktoken
@@ -427,7 +426,7 @@ class HuggingFaceTokenizer:
 # Test all of the above
 
 @pytest.fixture(scope="module")
-def enwik8_path() -> Path:
+def enwik8_path():
     """Fixture to download and cache enwik8 dataset."""
     import zipfile
     from nanochat.common import get_base_dir

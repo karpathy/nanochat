@@ -29,7 +29,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
 
-def list_parquet_files(data_dir: Path = DATA_DIR) -> list[Path]:
+def list_parquet_files(data_dir = DATA_DIR):
     """ Looks into a data dir and returns full paths to all parquet files. """
     parquet_paths = sorted(data_dir.glob('*.parquet'))
     return parquet_paths
