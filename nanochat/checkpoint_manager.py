@@ -5,7 +5,6 @@ import os
 import re
 import json
 import logging
-from pathlib import Path
 import torch
 
 from nanochat.common import get_base_dir
