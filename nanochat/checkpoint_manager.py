@@ -148,5 +148,5 @@ def load_model(source, *args, **kwargs):
         "rl": "chatrl_checkpoints",
     }[source]
     base_dir = get_base_dir()
-    checkpoints_dir = Path(base_dir) / model_dir
+    checkpoints_dir = base_dir / model_dir
     return load_model_from_dir(checkpoints_dir, *args, **kwargs)
