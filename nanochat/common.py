@@ -52,9 +52,7 @@ def get_base_dir():
     if os.environ.get("NANOCHAT_BASE_DIR"):
         nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR")
     else:
-        home_dir = os.path.expanduser("~")
-        cache_dir = os.path.join(home_dir, ".cache")
-        nanochat_dir = os.path.join(cache_dir, "nanochat")
+        nanochat_dir = os.path.join(os.path.expanduser("~"), ".cache", "nanochat")
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
