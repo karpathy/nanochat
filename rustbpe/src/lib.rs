@@ -465,6 +465,22 @@ impl Tokenizer {
 
         all_ids
     }
+
+    /// Encode multiple texts in parallel using rayon.
+    /// Returns a list of token ID vectors, one per input text.
+    #[pyo3(signature = (texts))]
+    #[pyo3(text_signature = "(self, texts)")]
+    pub fn batch_encode(&self, py: Python<'_>, texts: Vec<String>) -> PyResult<Vec<Vec<u32>>> {
+        // Release Python GIL and encode in parallel using rayon
+        let results = py.allow_threads(|| {
+            texts
+                .par_iter()
+                .map(|text| self.encode(text))
+                .collect::<Vec<Vec<u32>>>()
+        });
+
+        Ok(results)
+    }
 }
 
 #[pymodule]
