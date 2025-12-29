@@ -449,10 +449,10 @@ impl Tokenizer {
 
                 for i in 0..ids.len() - 1 {
                     let pair: Pair = (ids[i], ids[i + 1]);
-                    if let Some(&new_id) = self.merges.get(&pair) {
-                        if best_pair.is_none() || new_id < best_pair.unwrap().2 {
-                            best_pair = Some((i, pair, new_id));
-                        }
+                    if let Some(&new_id) = self.merges.get(&pair)
+                        && (best_pair.is_none() || new_id < best_pair.unwrap().2)
+                    {
+                        best_pair = Some((i, pair, new_id));
                     }
                 }
 
