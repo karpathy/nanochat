@@ -14,7 +14,7 @@ import requests
 import pyarrow.parquet as pq
 from multiprocessing import Pool
 
-from nanochat.common import get_base_dir
+from nanochat_moe.common import get_base_dir
 
 # -----------------------------------------------------------------------------
 # The specifics of the current pretraining dataset
@@ -23,8 +23,12 @@ from nanochat.common import get_base_dir
 BASE_URL = "https://huggingface.co/datasets/karpathy/fineweb-edu-100b-shuffle/resolve/main"
 MAX_SHARD = 1822 # the last datashard is shard_01822.parquet
 index_to_filename = lambda index: f"shard_{index:05d}.parquet" # format of the filenames
-base_dir = get_base_dir()
-DATA_DIR = os.path.join(base_dir, "base_data")
+# Support custom data directory via NANOCHAT_DATA_DIR environment variable
+if os.environ.get("NANOCHAT_DATA_DIR"):
+    DATA_DIR = os.environ.get("NANOCHAT_DATA_DIR")
+else:
+    base_dir = get_base_dir()
+    DATA_DIR = os.path.join(base_dir, "base_data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # -----------------------------------------------------------------------------
