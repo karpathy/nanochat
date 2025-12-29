@@ -277,7 +277,7 @@ impl Tokenizer {
     pub fn train_from_iterator(
         &mut self,
         py: pyo3::Python<'_>,
-        iterator: &pyo3::Bound<'_, pyo3::PyAny>,
+        iterator: pyo3::Py<pyo3::types::PyIterator>,
         vocab_size: u32,
         buffer_size: usize,
         pattern: Option<String>,
@@ -289,11 +289,6 @@ impl Tokenizer {
         self.pattern = pattern_str.clone();
         self.compiled_pattern = Regex::new(&pattern_str)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e)))?;
-
-        // Prepare a true Python iterator object
-        let py_iter: pyo3::Py<pyo3::PyAny> = unsafe {
-            pyo3::Py::from_owned_ptr_or_err(py, pyo3::ffi::PyObject_GetIter(iterator.as_ptr()))?
-        };
 
         // Global chunk counts
         let mut counts: AHashMap<CompactString, i32> = AHashMap::new();
@@ -309,27 +304,18 @@ impl Tokenizer {
         let refill = |buf: &mut Vec<String>| -> PyResult<bool> {
             pyo3::Python::with_gil(|py| {
                 buf.clear();
-                let it = py_iter.bind(py);
+                let it = iterator.bind(py);
                 loop {
                     if buf.len() >= buffer_size {
                         return Ok(false);
                     }
-                    // next(it)
-                    let next_obj = unsafe {
-                        pyo3::Bound::from_owned_ptr_or_opt(py, pyo3::ffi::PyIter_Next(it.as_ptr()))
-                    };
-                    match next_obj {
-                        Some(obj) => {
+                    match it.next() {
+                        Some(Ok(obj) => {
                             let s: String = obj.extract()?;
                             buf.push(s);
-                        }
-                        None => {
-                            if pyo3::PyErr::occurred(py) {
-                                return Err(pyo3::PyErr::fetch(py));
-                            } else {
-                                return Ok(true); // exhausted
-                            }
-                        }
+                        },
+                        Some(Err(e)) => return Err(e),
+                        None => return Ok(true),
                     }
                 }
             })
