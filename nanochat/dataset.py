@@ -6,7 +6,7 @@ This file contains utilities for:
 
 For details of how the dataset was prepared, see `repackage_data_reference.py`.
 """
-
+import hashlib
 import os
 import argparse
 import time
@@ -56,6 +56,38 @@ def parquets_iter_batched(split, start=0, step=1):
             texts = rg.column('text').to_pylist()
             yield texts
 
+
+def sha256sum(path, chunk_size=1024 * 1024):
+    """Compute SHA256 checksum of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def verify_checksum(path, expected_sha256):
+    actual = sha256sum(path)
+    if actual != expected_sha256:
+        raise ValueError(
+            f"Checksum mismatch for {os.path.basename(path)}: "
+            f"expected {expected_sha256}, got {actual}"
+        )
+
+
+def load_checksums():
+    checksums_path = os.path.join(DATA_DIR, "checksums_sha256.txt")
+    if not os.path.exists(checksums_path):
+        return None
+
+    checksums = {}
+    with open(checksums_path, "r") as f:
+        for line in f:
+            name, sha = line.strip().split()
+            checksums[name] = sha
+    return checksums
+
+
 # -----------------------------------------------------------------------------
 def download_single_file(index):
     """ Downloads a single file index, with some backoff """
@@ -85,6 +117,13 @@ def download_single_file(index):
                         f.write(chunk)
             # Move temp file to final location
             os.rename(temp_path, filepath)
+            #Optional CheckSum Verification
+            
+            checksums = load_checksums()
+            if checksums and filename in checksums:
+                verify_checksum(filepath, checksums[filename])
+                print(f'Checksum verified. for {filename}')
+                
             print(f"Successfully downloaded {filename}")
             return True
 
