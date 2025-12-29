@@ -362,7 +362,7 @@ impl Tokenizer {
                         m
                     })
                     .reduce(
-                        || AHashMap::new(),
+                        AHashMap::new,
                         |mut a, b| {
                             for (k, v) in b {
                                 *a.entry(k).or_default() += v;
