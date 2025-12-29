@@ -256,6 +256,12 @@ impl Tokenizer {
     }
 }
 
+impl Default for Tokenizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Public methods for the Tokenizer class that will be exposed to Python.
 #[pymethods]
 impl Tokenizer {
