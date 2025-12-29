@@ -50,11 +50,14 @@ def parquets_iter_batched(split, start=0, step=1):
     parquet_paths = list_parquet_files()
     parquet_paths = parquet_paths[:-1] if split == "train" else parquet_paths[-1:]
     for filepath in parquet_paths:
-        pf = pq.ParquetFile(filepath)
-        for rg_idx in range(start, pf.num_row_groups, step):
-            rg = pf.read_row_group(rg_idx)
-            texts = rg.column('text').to_pylist()
-            yield texts
+        try:
+            pf = pq.ParquetFile(filepath)
+            for rg_idx in range(start, pf.num_row_groups, step):
+                rg = pf.read_row_group(rg_idx)
+                texts = rg.column('text').to_pylist()
+                yield texts
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
 
 # -----------------------------------------------------------------------------
 def download_single_file(index):
