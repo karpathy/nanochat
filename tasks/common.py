@@ -53,7 +53,7 @@ class Task:
 
 class TaskMixture(Task):
     """
-    For SFT Training it becomes useful to train on a tax mixture of datasets.
+    For SFT Training it becomes useful to train on a mixture of datasets.
     Fun trick: if you wish to oversample any task, just pass it in multiple times in the list.
     """
 

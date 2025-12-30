@@ -8,9 +8,9 @@ dependencies = [
     "datasets>=4.0.0",
     "fastapi>=0.117.1",
     "files-to-prompt>=0.6",
-    "numpy==1.26.4",
     "psutil>=7.1.0",
     "regex>=2025.9.1",
+    "setuptools>=80.9.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
     "torch>=2.8.0",
@@ -21,17 +21,6 @@ dependencies = [
 [build-system]
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
-
-# target torch to cuda 12.8
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cu128" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
 
 [tool.maturin]
 module-name = "rustbpe"
@@ -53,3 +42,36 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+# target torch to cuda 12.8 or CPU
+[tool.uv.sources]
+torch = [  
+    { index = "pytorch-cpu", extra = "cpu" },  
+    { index = "pytorch-cu128", extra = "gpu" },  
+]
+
+[[tool.uv.index]]  
+name = "pytorch-cpu"  
+url = "https://download.pytorch.org/whl/cpu"  
+explicit = true  
+  
+[[tool.uv.index]]  
+name = "pytorch-cu128"  
+url = "https://download.pytorch.org/whl/cu128"  
+explicit = true
+
+[project.optional-dependencies]  
+cpu = [  
+    "torch>=2.8.0",  
+]  
+gpu = [  
+    "torch>=2.8.0",  
+]  
+  
+[tool.uv]  
+conflicts = [  
+    [  
+        { extra = "cpu" },  
+        { extra = "gpu" },  
+    ],  
+]  

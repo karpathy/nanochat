@@ -17,8 +17,9 @@ import signal
 import warnings
 from contextlib import contextmanager
 from collections import deque
-from nanochat.common import compute_init
+from nanochat.common import compute_init, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
+from contextlib import nullcontext
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
@@ -37,19 +38,45 @@ def eval_with_timeout(formula, max_time=3):
         with timeout(max_time, formula):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
-                return eval(formula)
+                return eval(formula, {"__builtins__": {}}, {})
     except Exception as e:
         signal.alarm(0)
         # print(f"Warning: Failed to eval {formula}, exception: {e}") # it's ok ignore wrong calculator usage
         return None
 
 def use_calculator(expr):
-    """Evaluate a math expression safely."""
+    """
+    Evaluate a Python expression safely.
+    Supports both math expressions and string operations like .count()
+    """
+    # Remove commas from numbers
     expr = expr.replace(",", "")
-    if any([x not in "0123456789*+-/.() " for x in expr]): # for now disallow non-numeric chars
+
+    # Check if it's a pure math expression (old behavior)
+    if all([x in "0123456789*+-/.() " for x in expr]):
+        if "**" in expr:  # disallow power operator
+            return None
+        return eval_with_timeout(expr)
+
+    # Check if it's a string operation we support
+    # Allow: strings (single/double quotes), .count(), letters, numbers, spaces, parens
+    allowed_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'\"()._ "
+    if not all([x in allowed_chars for x in expr]):
         return None
-    if "**" in expr: # for now disallow power operator, could be very expensive
+
+    # Disallow dangerous patterns
+    dangerous_patterns = ['__', 'import', 'exec', 'eval', 'compile', 'open', 'file',
+                         'input', 'raw_input', 'globals', 'locals', 'vars', 'dir',
+                         'getattr', 'setattr', 'delattr', 'hasattr']
+    expr_lower = expr.lower()
+    if any(pattern in expr_lower for pattern in dangerous_patterns):
         return None
+
+    # Only allow .count() method for now (can expand later)
+    if '.count(' not in expr:
+        return None
+
+    # Evaluate with timeout
     return eval_with_timeout(expr)
 
 # -----------------------------------------------------------------------------
@@ -80,16 +107,23 @@ class KVCache:
         # 1) validate the shapes
         assert self.kv_cache is None, "Cannot prefill a non-empty KV cache"
         assert other.kv_cache is not None, "Cannot prefill with a None KV cache"
-        for ix, (dim1, dim2) in enumerate(zip(self.kv_shape, other.kv_shape)):
-            if ix in [0, 1, 3, 5]:
-                # num_layers, batch_size, num_heads, head_dim must match
-                assert dim1 == dim2, f"Batch dim mismatch: {dim1} != {dim2}"
-            elif ix == 2:
-                # batch_size can be expanded
-                assert dim1 == dim2 or dim2 == 1, f"Batch dim mismatch: {dim1} != {dim2}"
-            elif ix == 4:
-                # seq_len: self must be longer than other
-                assert dim1 >= dim2, f"Seq len mismatch: {dim1} < {dim2}"
+
+        # Extract dimensions explicitly
+        self_layers, self_kv, self_batch, self_heads, self_seq, self_head_dim = self.kv_shape
+        other_layers, other_kv, other_batch, other_heads, other_seq, other_head_dim = other.kv_shape
+
+        # Validate dimensions
+        assert self_layers == other_layers, f"Layer count mismatch: {self_layers} != {other_layers}"
+        assert self_kv == other_kv, f"K/V dimension mismatch: {self_kv} != {other_kv}"
+        assert self_heads == other_heads, f"Head count mismatch: {self_heads} != {other_heads}"
+        assert self_head_dim == other_head_dim, f"Head dim mismatch: {self_head_dim} != {other_head_dim}"
+
+        # Batch size can be expanded (other can be 1, self can be larger)
+        assert self_batch == other_batch or other_batch == 1, f"Batch size mismatch: {self_batch} vs {other_batch} (other must be 1 or equal)"
+
+        # Sequence length: self must be longer than other
+        assert self_seq >= other_seq, f"Sequence length mismatch: {self_seq} < {other_seq}"
+
         # 2) initialize the cache
         dtype, device = other.kv_cache.dtype, other.kv_cache.device
         self.kv_cache = torch.empty(self.kv_shape, dtype=dtype, device=device)
@@ -109,15 +143,17 @@ class KVCache:
         if t1 > self.kv_cache.size(4):
             t_needed = t1 + 1024 # as much as we need plus buffer of 1024
             t_needed = (t_needed + 1023) & ~1023 # then round up to the nearest multiple of 1024
-            current_shape = list(self.kv_cache.shape)
-            current_shape[4] = t_needed
-            self.kv_cache.resize_(current_shape)
+            additional_shape = list(self.kv_cache.shape)
+            additional_shape[4] = t_needed - self.kv_cache.size(4)
+            additional_cache = torch.empty(additional_shape, dtype=k.dtype, device=k.device)
+            self.kv_cache = torch.cat([self.kv_cache, additional_cache], dim=4).contiguous()
+            self.kv_shape = self.kv_cache.shape
         # Insert k, v into the cache
-        self.kv_cache[layer_idx, 0, :, :, t0:t1] = k
-        self.kv_cache[layer_idx, 1, :, :, t0:t1] = v
+        self.kv_cache[layer_idx, 0, :, :, t0:t1, :] = k
+        self.kv_cache[layer_idx, 1, :, :, t0:t1, :] = v
         # Return the full cached keys/values up to current position (as a view)
-        key_view = self.kv_cache[layer_idx, 0, :, :, :t1]
-        value_view = self.kv_cache[layer_idx, 1, :, :, :t1]
+        key_view = self.kv_cache[layer_idx, 0, :, :, :t1, :]
+        value_view = self.kv_cache[layer_idx, 1, :, :, :t1, :]
         # Increment pos after the last layer of the Transformer processes
         if layer_idx == self.kv_cache.size(0) - 1:
             self.pos = t1
@@ -187,9 +223,7 @@ class Engine:
         )
         ids = torch.tensor([tokens], dtype=torch.long, device=device)
         logits = self.model.forward(ids, kv_cache=kv_cache_prefill)
-        logits = logits[:, -1, :]
-        next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
-        sampled_tokens = next_ids[:, 0].tolist()
+        logits = logits[:, -1, :].expand(num_samples, -1)  # (num_samples, vocab_size)
 
         # 2) Replicate the KV cache for each sample/row
         kv_length_hint = (len(tokens) + max_tokens) if max_tokens is not None else self.model.config.sequence_len
@@ -206,7 +240,6 @@ class Engine:
 
         # 4) Main generation loop
         num_generated = 0
-        first_iteration = True
         while True:
             # Stop condition: we've reached max tokens
             if max_tokens is not None and num_generated >= max_tokens:
@@ -215,18 +248,9 @@ class Engine:
             if all(state.completed for state in row_states):
                 break
 
-            # Get sampled tokens - either from prefill or from forward pass
-            if first_iteration:
-                # Use the tokens we already sampled from prefill
-                sampled_tokens = [sampled_tokens[0]] * num_samples  # Broadcast first token to all rows
-                # TODO: we should sample a token for each row instead of broadcasting
-                first_iteration = False
-            else:
-                # Forward the model and get the next token for each row
-                logits = self.model.forward(ids, kv_cache=kv_cache_decode)  # (B, T, vocab_size)
-                logits = logits[:, -1, :]  # (B, vocab_size) at last time step
-                next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
-                sampled_tokens = next_ids[:, 0].tolist()
+            # Sample the next token for each row
+            next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
+            sampled_tokens = next_ids[:, 0].tolist()
 
             # Process each row: choose the next token, update state, optional tool use
             token_column = [] # contains the next token id along each row
@@ -263,8 +287,10 @@ class Engine:
             # Yield the token column
             yield token_column, token_masks
             num_generated += 1
-            # Prepare ids for next iteration
+
+            # Prepare logits for next iteration
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
+            logits = self.model.forward(ids, kv_cache=kv_cache_decode)[:, -1, :]  # (B, vocab_size)
 
     def generate_batch(self, tokens, num_samples=1, **kwargs):
         """
@@ -299,6 +325,9 @@ if __name__ == "__main__":
     import time
     # init compute
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
+    device_type = autodetect_device_type()
+    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+
     # load the model and tokenizer
     model, tokenizer, meta = load_model("base", device, phase="eval")
     bos_token_id = tokenizer.get_bos_token_id()
@@ -311,10 +340,11 @@ if __name__ == "__main__":
     torch.cuda.synchronize()
     t0 = time.time()
     stream = model.generate(prompt_tokens, **kwargs)
-    for token in stream:
-        generated_tokens.append(token)
-        chunk = tokenizer.decode([token])
-        print(chunk, end="", flush=True)
+    with autocast_ctx:
+        for token in stream:
+            generated_tokens.append(token)
+            chunk = tokenizer.decode([token])
+            print(chunk, end="", flush=True)
     print()
     torch.cuda.synchronize()
     t1 = time.time()
@@ -326,11 +356,12 @@ if __name__ == "__main__":
     stream = engine.generate(prompt_tokens, num_samples=1, **kwargs) # note: runs in fp32
     torch.cuda.synchronize()
     t0 = time.time()
-    for token_column, token_masks in stream:
-        token = token_column[0] # only print out the first row
-        generated_tokens.append(token)
-        chunk = tokenizer.decode([token])
-        print(chunk, end="", flush=True)
+    with autocast_ctx:
+        for token_column, token_masks in stream:
+            token = token_column[0] # only print out the first row
+            generated_tokens.append(token)
+            chunk = tokenizer.decode([token])
+            print(chunk, end="", flush=True)
     print()
     torch.cuda.synchronize()
     t1 = time.time()

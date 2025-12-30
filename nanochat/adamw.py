@@ -26,8 +26,8 @@ class DistAdamW(torch.optim.Optimizer):
         grad_slices = []
         for group in self.param_groups:
             params: list[Tensor] = group["params"]
-            grad = torch.empty_like(params[-1]) # TODO is this bug? seems to be over-written instantly
             for base_i in range(len(params)):
+                assert params[base_i].shape[0] % world_size == 0, f"First dim of parameter shape {params[base_i].shape} must be divisible by world size {world_size}"
                 grad = params[base_i].grad
                 rank_size = grad.shape[0] // world_size
                 grad_slice = torch.empty_like(grad[:rank_size])

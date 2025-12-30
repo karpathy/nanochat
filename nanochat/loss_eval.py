@@ -9,9 +9,9 @@ import torch.distributed as dist
 def evaluate_bpb(model, batches, steps, token_bytes):
     """
     Instead of the naive 'mean loss', this function returns the bits per byte (bpb),
-    which is a tokenization vocab size-indepedent metric, meaning you are still comparing
+    which is a tokenization vocab size-independent metric, meaning you are still comparing
     apples:apples if you change the vocab size. The way this works is that instead of just
-    calculating the average loss as usual, you calculate the sum loss, and indepependently
+    calculating the average loss as usual, you calculate the sum loss, and independently
     also the sum bytes (of all the target tokens), and divide. This normalizes the loss by
     the number of bytes that the target tokens represent.
 
@@ -33,7 +33,7 @@ def evaluate_bpb(model, batches, steps, token_bytes):
         loss2d = model(x, y, loss_reduction='none') # (B, T)
         loss2d = loss2d.view(-1) # flatten
         y = y.view(-1) # flatten
-        if (y < 0).any():
+        if (y.int() < 0).any(): # mps does not currently have kernel for < 0 for int64, only int32
             # slightly more complex code path if some target tokens are ignore_index (e.g. -1)
             # any target token < 0 is to be ignored: do NOT index token_bytes with negatives
             valid = y >= 0
@@ -59,5 +59,7 @@ def evaluate_bpb(model, batches, steps, token_bytes):
     # move both to cpu, calculate bpb and return
     total_nats = total_nats.item()
     total_bytes = total_bytes.item()
+    if total_bytes == 0:
+        return float('inf')
     bpb = total_nats / (math.log(2) * total_bytes)
     return bpb

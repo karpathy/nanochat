@@ -170,7 +170,7 @@ Generated: {timestamp}
     # count dependencies via uv.lock
     uv_lock_lines = 0
     if os.path.exists('uv.lock'):
-        with open('uv.lock', 'r') as f:
+        with open('uv.lock', 'r', encoding='utf-8') as f:
             uv_lock_lines = len(f.readlines())
 
     header += f"""
@@ -241,7 +241,7 @@ class Report:
         slug = slugify(section)
         file_name = f"{slug}.md"
         file_path = os.path.join(self.report_dir, file_name)
-        with open(file_path, "w") as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write(f"## {section}\n")
             f.write(f"timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             for item in data:
@@ -272,24 +272,28 @@ class Report:
         final_metrics = {} # the most important final metrics we'll add as table at the end
         start_time = None
         end_time = None
-        with open(report_file, "w") as out_file:
+        with open(report_file, "w", encoding="utf-8") as out_file:
             # write the header first
             header_file = os.path.join(report_dir, "header.md")
             if os.path.exists(header_file):
-                with open(header_file, "r") as f:
+                with open(header_file, "r", encoding="utf-8") as f:
                     header_content = f.read()
                     out_file.write(header_content)
                     start_time = extract_timestamp(header_content, "Run started:")
                     # capture bloat data for summary later (the stuff after Bloat header and until \n\n)
                     bloat_data = re.search(r"### Bloat\n(.*?)\n\n", header_content, re.DOTALL)
                     bloat_data = bloat_data.group(1) if bloat_data else ""
+            else:
+                start_time = None # will cause us to not write the total wall clock time
+                bloat_data = "[bloat data missing]"
+                print(f"Warning: {header_file} does not exist. Did you forget to run `nanochat reset`?")
             # process all the individual sections
             for file_name in EXPECTED_FILES:
                 section_file = os.path.join(report_dir, file_name)
                 if not os.path.exists(section_file):
                     print(f"Warning: {section_file} does not exist, skipping")
                     continue
-                with open(section_file, "r") as in_file:
+                with open(section_file, "r", encoding="utf-8") as in_file:
                     section = in_file.read()
                 # Extract timestamp from this section (the last section's timestamp will "stick" as end_time)
                 if "rl" not in file_name:
@@ -369,7 +373,7 @@ class Report:
         header_file = os.path.join(self.report_dir, "header.md")
         header = generate_header()
         start_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(header_file, "w") as f:
+        with open(header_file, "w", encoding="utf-8") as f:
             f.write(header)
             f.write(f"Run started: {start_time}\n\n---\n\n")
         print(f"Reset report and wrote header to {header_file}")
