@@ -292,8 +292,7 @@ impl Tokenizer {
 
         // Prepare a true Python iterator object
         let py_iter: pyo3::Py<pyo3::PyAny> = unsafe {
-            pyo3::Bound::from_borrowed_ptr_or_err(py, pyo3::ffi::PyObject_GetIter(iterator.as_ptr()))?
-                .into()
+            pyo3::Py::from_owned_ptr_or_err(py, pyo3::ffi::PyObject_GetIter(iterator.as_ptr()))?
         };
 
         // Global chunk counts
@@ -465,6 +464,22 @@ impl Tokenizer {
         }
 
         all_ids
+    }
+
+    /// Encode multiple texts in parallel using rayon.
+    /// Returns a list of token ID vectors, one per input text.
+    #[pyo3(signature = (texts))]
+    #[pyo3(text_signature = "(self, texts)")]
+    pub fn batch_encode(&self, py: Python<'_>, texts: Vec<String>) -> PyResult<Vec<Vec<u32>>> {
+        // Release Python GIL and encode in parallel using rayon
+        let results = py.allow_threads(|| {
+            texts
+                .par_iter()
+                .map(|text| self.encode(text))
+                .collect::<Vec<Vec<u32>>>()
+        });
+
+        Ok(results)
     }
 }
 

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>NanoChat</title>
     <link rel="icon" type="image/svg+xml" href="/logo.svg">
     <style>
@@ -18,7 +18,7 @@
             font-family: ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
             background-color: #ffffff;
             color: #111827;
-            min-height: 100vh;
+            min-height: 100dvh;
             margin: 0;
             display: flex;
             flex-direction: column;
@@ -108,6 +108,15 @@
             background: transparent;
             border: none;
             padding: 0.25rem 0;
+            cursor: pointer;
+            border-radius: 0.5rem;
+            padding: 0.5rem;
+            margin-left: -0.5rem;
+            transition: background-color 0.2s ease;
+        }
+
+        .message.assistant .message-content:hover {
+            background-color: #f9fafb;
         }
 
         .message.user .message-content {
@@ -115,11 +124,27 @@
             border-radius: 1.25rem;
             padding: 0.8rem 1rem;
             max-width: 65%;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .message.user .message-content:hover {
+            background-color: #e5e7eb;
+        }
+
+        .message.console .message-content {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'Courier New', monospace;
+            font-size: 0.875rem;
+            background-color: #fafafa;
+            padding: 0.75rem 1rem;
+            color: #374151;
+            max-width: 80%;
         }
 
         .input-container {
             background-color: #ffffff;
             padding: 1rem;
+            padding-bottom: calc(1rem + env(safe-area-inset-bottom))
         }
 
         .input-wrapper {
@@ -255,6 +280,8 @@
 
         let messages = [];
         let isGenerating = false;
+        let currentTemperature = 0.8;
+        let currentTopK = 50;
 
         chatInput.addEventListener('input', function() {
             this.style.height = 'auto';
@@ -289,13 +316,35 @@
             chatInput.focus();
         }
 
-        function addMessage(role, content) {
+        function addMessage(role, content, messageIndex = null) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}`;
 
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
             contentDiv.textContent = content;
+
+            // Add click handler for user messages to enable editing
+            if (role === 'user' && messageIndex !== null) {
+                contentDiv.setAttribute('data-message-index', messageIndex);
+                contentDiv.setAttribute('title', 'Click to edit and restart from here');
+                contentDiv.addEventListener('click', function() {
+                    if (!isGenerating) {
+                        editMessage(messageIndex);
+                    }
+                });
+            }
+
+            // Add click handler for assistant messages to enable regeneration
+            if (role === 'assistant' && messageIndex !== null) {
+                contentDiv.setAttribute('data-message-index', messageIndex);
+                contentDiv.setAttribute('title', 'Click to regenerate this response');
+                contentDiv.addEventListener('click', function() {
+                    if (!isGenerating) {
+                        regenerateMessage(messageIndex);
+                    }
+                });
+            }
 
             messageDiv.appendChild(contentDiv);
             chatWrapper.appendChild(messageDiv);
@@ -304,17 +353,35 @@
             return contentDiv;
         }
 
-        async function sendMessage() {
-            const message = chatInput.value.trim();
-            if (!message || isGenerating) return;
+        function editMessage(messageIndex) {
+            // Find the message in the messages array
+            if (messageIndex < 0 || messageIndex >= messages.length) return;
 
-            isGenerating = true;
-            chatInput.value = '';
+            const messageToEdit = messages[messageIndex];
+            if (messageToEdit.role !== 'user') return;
+
+            // Copy message content to input
+            chatInput.value = messageToEdit.content;
             chatInput.style.height = 'auto';
-            sendButton.disabled = true;
+            chatInput.style.height = Math.min(chatInput.scrollHeight, 200) + 'px';
 
-            messages.push({ role: 'user', content: message });
-            addMessage('user', message);
+            // Remove this message and all subsequent messages from the array
+            messages = messages.slice(0, messageIndex);
+
+            // Remove message elements from DOM starting from messageIndex
+            const allMessages = chatWrapper.querySelectorAll('.message');
+            for (let i = messageIndex; i < allMessages.length; i++) {
+                allMessages[i].remove();
+            }
+
+            // Enable send button and focus input
+            sendButton.disabled = false;
+            chatInput.focus();
+        }
+
+        async function generateAssistantResponse() {
+            isGenerating = true;
+            sendButton.disabled = true;
 
             const assistantContent = addMessage('assistant', '');
             assistantContent.innerHTML = '<span class="typing-indicator"></span>';
@@ -327,8 +394,8 @@
                     },
                     body: JSON.stringify({
                         messages: messages,
-                        stream: true,
-                        temperature: 0.8,
+                        temperature: currentTemperature,
+                        top_k: currentTopK,
                         max_tokens: 512
                     }),
                 });
@@ -364,7 +431,17 @@
                     }
                 }
 
+                const assistantMessageIndex = messages.length;
                 messages.push({ role: 'assistant', content: fullResponse });
+
+                // Add click handler to regenerate this assistant message
+                assistantContent.setAttribute('data-message-index', assistantMessageIndex);
+                assistantContent.setAttribute('title', 'Click to regenerate this response');
+                assistantContent.addEventListener('click', function() {
+                    if (!isGenerating) {
+                        regenerateMessage(assistantMessageIndex);
+                    }
+                });
 
             } catch (error) {
                 console.error('Error:', error);
@@ -373,6 +450,97 @@
                 isGenerating = false;
                 sendButton.disabled = !chatInput.value.trim();
             }
+        }
+
+        async function regenerateMessage(messageIndex) {
+            // Find the message in the messages array
+            if (messageIndex < 0 || messageIndex >= messages.length) return;
+
+            const messageToRegenerate = messages[messageIndex];
+            if (messageToRegenerate.role !== 'assistant') return;
+
+            // Remove this message and all subsequent messages from the array
+            messages = messages.slice(0, messageIndex);
+
+            // Remove message elements from DOM starting from messageIndex
+            const allMessages = chatWrapper.querySelectorAll('.message');
+            for (let i = messageIndex; i < allMessages.length; i++) {
+                allMessages[i].remove();
+            }
+
+            // Regenerate the assistant response
+            await generateAssistantResponse();
+        }
+
+        function handleSlashCommand(command) {
+            const parts = command.trim().split(/\s+/);
+            const cmd = parts[0].toLowerCase();
+            const arg = parts[1];
+
+            if (cmd === '/temperature') {
+                if (arg === undefined) {
+                    addMessage('console', `Current temperature: ${currentTemperature}`);
+                } else {
+                    const temp = parseFloat(arg);
+                    if (isNaN(temp) || temp < 0 || temp > 2) {
+                        addMessage('console', 'Invalid temperature. Must be between 0.0 and 2.0');
+                    } else {
+                        currentTemperature = temp;
+                        addMessage('console', `Temperature set to ${currentTemperature}`);
+                    }
+                }
+                return true;
+            } else if (cmd === '/topk') {
+                if (arg === undefined) {
+                    addMessage('console', `Current top-k: ${currentTopK}`);
+                } else {
+                    const topk = parseInt(arg);
+                    if (isNaN(topk) || topk < 1 || topk > 200) {
+                        addMessage('console', 'Invalid top-k. Must be between 1 and 200');
+                    } else {
+                        currentTopK = topk;
+                        addMessage('console', `Top-k set to ${currentTopK}`);
+                    }
+                }
+                return true;
+            } else if (cmd === '/clear') {
+                newConversation();
+                return true;
+            } else if (cmd === '/help') {
+                addMessage('console',
+                    'Available commands:\n' +
+                    '/temperature - Show current temperature\n' +
+                    '/temperature <value> - Set temperature (0.0-2.0)\n' +
+                    '/topk - Show current top-k\n' +
+                    '/topk <value> - Set top-k (1-200)\n' +
+                    '/clear - Clear conversation\n' +
+                    '/help - Show this help message'
+                );
+                return true;
+            }
+            return false;
+        }
+
+        async function sendMessage() {
+            const message = chatInput.value.trim();
+            if (!message || isGenerating) return;
+
+            // Handle slash commands
+            if (message.startsWith('/')) {
+                chatInput.value = '';
+                chatInput.style.height = 'auto';
+                handleSlashCommand(message);
+                return;
+            }
+
+            chatInput.value = '';
+            chatInput.style.height = 'auto';
+
+            const userMessageIndex = messages.length;
+            messages.push({ role: 'user', content: message });
+            addMessage('user', message, userMessageIndex);
+
+            await generateAssistantResponse();
         }
 
         sendButton.disabled = false;

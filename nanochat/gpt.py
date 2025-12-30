@@ -8,7 +8,7 @@ Notable features:
 - norm after token embedding
 - no learnable params in rmsnorm
 - no bias in linear layers
-- Multi-Query Attention (MQA) support for more efficient inference
+- Group-Query Attention (GQA) support for more efficient inference
 """
 
 import math
@@ -29,7 +29,7 @@ class GPTConfig:
     vocab_size: int = 50304
     n_layer: int = 12
     n_head: int = 6 # number of query heads
-    n_kv_head: int = 6 # number of key/value heads (MQA)
+    n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
 
 
@@ -41,25 +41,10 @@ def norm(x):
 def apply_rotary_emb(x, cos, sin):
     assert x.ndim == 4  # multihead attention
     d = x.shape[3] // 2
-    x1, x2 = x[..., :d], x[..., d:] # split up last time into two halves
+    x1, x2 = x[..., :d], x[..., d:] # split up last dim into two halves
     y1 = x1 * cos + x2 * sin # rotate pairs of dims
     y2 = x1 * (-sin) + x2 * cos
-    out = torch.cat([y1, y2], 3) # re-assemble
-    out = out.to(x.dtype) # ensure input/output dtypes match
-    return out
-
-
-def repeat_kv(x, n_rep):
-    """torch.repeat_interleave(x, dim=1, repeats=n_rep)"""
-    if n_rep == 1:
-        return x
-    bs, n_kv_heads, slen, head_dim = x.shape
-    return (
-        x[:, :, None, :, :]
-        .expand(bs, n_kv_heads, n_rep, slen, head_dim)
-        .reshape(bs, n_kv_heads * n_rep, slen, head_dim)
-    )
-
+    return torch.cat([y1, y2], 3)
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
@@ -96,29 +81,25 @@ class CausalSelfAttention(nn.Module):
         Tq = q.size(2) # number of queries in this forward pass
         Tk = k.size(2) # number of keys/values in total (in the cache + current forward pass)
 
-        # Apply MQA: replicate the key/value heads for each query head
-        nrep = self.n_head // self.n_kv_head
-        k, v = repeat_kv(k, nrep), repeat_kv(v, nrep)
-
         # Attention: queries attend to keys/values autoregressively. A few cases to handle:
+        enable_gqa = self.n_head != self.n_kv_head # Group Query Attention (GQA): duplicate key/value heads to match query heads if desired
         if kv_cache is None or Tq == Tk:
             # During training (no KV cache), attend as usual with causal attention
             # And even if there is KV cache, we can still use this simple version when Tq == Tk
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa)
         elif Tq == 1:
             # During inference but with a single query in this forward pass:
             # The query has to attend to all the keys/values in the cache
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=False, enable_gqa=enable_gqa)
         else:
             # During inference AND we have a chunk of queries in this forward pass:
             # First, each query attends to all the cached keys/values (i.e. full prefix)
             attn_mask = torch.zeros((Tq, Tk), dtype=torch.bool, device=q.device) # True = keep, False = mask
             prefix_len = Tk - Tq
-            if prefix_len > 0: # can't be negative but could be zero
-                attn_mask[:, :prefix_len] = True
+            attn_mask[:, :prefix_len] = True
             # Then, causal attention within this chunk
             attn_mask[:, prefix_len:] = torch.tril(torch.ones((Tq, Tq), dtype=torch.bool, device=q.device))
-            y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, enable_gqa=enable_gqa)
 
         # Re-assemble the heads side by side and project back to residual stream
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
@@ -152,14 +133,19 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, pad_vocab_size_to=64):
         super().__init__()
         self.config = config
+        # For DDP, we want vocab_size divisible by world_size. Also, there are potential performance benefits, see:
+        # https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.resize_token_embeddings
+        padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
+        if padded_vocab_size != config.vocab_size:
+            print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} to be divisible by {pad_vocab_size_to}")
         self.transformer = nn.ModuleDict({
-            "wte": nn.Embedding(config.vocab_size, config.n_embd),
+            "wte": nn.Embedding(padded_vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.n_embd, padded_vocab_size, bias=False)
         # To support meta device initialization, we init the rotary embeddings here, but it's fake
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them, but assert fail if we ever reach that amount.
@@ -169,8 +155,6 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
         self.register_buffer("sin", sin, persistent=False)
-        # Cast the embeddings from fp32 to bf16: optim can tolerate it and it saves memory: both in the model and the activations
-        self.transformer.wte.to(dtype=torch.bfloat16)
 
     def init_weights(self):
         self.apply(self._init_weights)
@@ -184,6 +168,9 @@ class GPT(nn.Module):
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
+        # Cast the embeddings from fp32 to bf16: optim can tolerate it and it saves memory: both in the model and the activations
+        if self.transformer.wte.weight.device.type == "cuda":
+            self.transformer.wte.to(dtype=torch.bfloat16)
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -236,8 +223,7 @@ class GPT(nn.Module):
         # Create the AdamW optimizer for the embedding and lm_head
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (having tuned the LRs for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
-        if rank == 0:
-            print(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
+        print0(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
         adam_groups = [
             dict(params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale),
             dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
@@ -259,7 +245,7 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
         B, T = idx.size()
 
-        # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim))
+        # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
         assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
@@ -275,19 +261,19 @@ class GPT(nn.Module):
         x = norm(x)
 
         # Forward the lm_head (compute logits)
-        softcap = 15
+        softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
+        logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
+        logits = logits[..., :self.config.vocab_size] # slice to remove padding
+        logits = logits.float() # switch to fp32 for logit softcap and loss computation
+        logits = softcap * torch.tanh(logits / softcap) # squash the logits
+
         if targets is not None:
-            # training mode: compute and return the loss
-            # TODO: experiment with Liger Kernels / chunked cross-entropy etc.
-            logits = self.lm_head(x)
-            logits = softcap * torch.tanh(logits / softcap) # logits softcap
-            logits = logits.float() # use tf32/fp32 for logits
+            # training: given the targets, compute and return the loss
+            # TODO experiment with chunked cross-entropy?
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
             return loss
         else:
-            # inference mode: compute and return the logits
-            logits = self.lm_head(x)
-            logits = softcap * torch.tanh(logits / softcap) # logits softcap
+            # inference: just return the logits directly
             return logits
 
     @torch.inference_mode()
