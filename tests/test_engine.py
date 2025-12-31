@@ -235,7 +235,7 @@ def test_num_samples_count():
         assert len(results) == num_samples, f"Expected {num_samples} sequences from {num_samples} samples, got {len(results)}"
 
 
-def test_seed_variation_in_sampling():
+def test_different_seeds_introduce_variation_when_temperature_nonzero():
     """With temperature > 0, different seeds should introduce sampling variation."""
     model = MockModel()
     engine = Engine(model, ByteTokenizer())
@@ -256,5 +256,5 @@ def test_seed_variation_in_sampling():
     assert len(outputs) > 1, (
         f"All seeds produced the same output: {outputs}"
         f"with temperature > 0 and different seeds, this is statistically impossible."
-        f"implies an issue within engine."
+        f"this implies an issue within the engine."
     )
