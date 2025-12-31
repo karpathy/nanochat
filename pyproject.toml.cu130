@@ -14,6 +14,8 @@ dependencies = [
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
     "torch>=2.9.0",
+    "torchvision",
+    "torchaudio",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
 ]
@@ -45,19 +47,32 @@ python_functions = ["test_*"]
 
 # target torch to cuda 13 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu130", extra = "gpu" }]
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+torchaudio = { index = "pytorch-cu130" }
 
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
+[[tool.uv.index]]  
+name = "pytorch-cpu"  
+url = "https://download.pytorch.org/whl/cpu"  
+explicit = true  
+  
 [[tool.uv.index]]  
 name = "pytorch-cu130"  
 url = "https://download.pytorch.org/whl/cu130"  
 explicit = true
 
-[project.optional-dependencies]
-gpu = [
-    "torch>=2.9.0"
-]
+[project.optional-dependencies]  
+cpu = [  
+    "torch>=2.9.0",  
+]  
+gpu = [  
+    "torch>=2.9.0",  
+]  
+  
+[tool.uv]  
+conflicts = [  
+    [  
+        { extra = "cpu" },  
+        { extra = "gpu" },  
+    ],  
+]  

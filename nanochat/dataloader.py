@@ -50,12 +50,15 @@ def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads
                 else:
                     rg_idx = ddp_rank
                 while rg_idx < pf.num_row_groups:
-                    rg = pf.read_row_group(rg_idx)
-                    batch = rg.column('text').to_pylist() # each batch is a parquet group, e.g. 1024 rows
-                    # the tokenizer encode might want to go in even smaller batches, e.g. 128 rows
-                    for i in range(0, len(batch), tokenizer_batch_size):
-                        yield batch[i:i+tokenizer_batch_size], (pq_idx, rg_idx)
-                    rg_idx += ddp_world_size # advance to the next row group (in DDP)
+                    try:
+                        rg = pf.read_row_group(rg_idx)
+                        batch = rg.column('text').to_pylist() # each batch is a parquet group, e.g. 1024 rows
+                        # the tokenizer encode might want to go in even smaller batches, e.g. 128 rows
+                        for i in range(0, len(batch), tokenizer_batch_size):
+                            yield batch[i:i+tokenizer_batch_size], (pq_idx, rg_idx)
+                        rg_idx += ddp_world_size # advance to the next row group (in DDP)
+                    except Exception as e:
+                        print(f"Error reading from parquet file {filepath}: {e}")
                 pq_idx += 1 # advance to the next parquet file
             first_pass = False
     batches = document_batches()
