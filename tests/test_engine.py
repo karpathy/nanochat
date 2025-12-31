@@ -253,8 +253,4 @@ def test_different_seeds_introduce_variation_when_temperature_nonzero():
         outputs.add(tuple(results[0]))
 
     # Sanity check: sampling actually introduces variation
-    assert len(outputs) > 1, (
-        f"All seeds produced the same output: {outputs}"
-        f"with temperature > 0 and different seeds, this is statistically impossible."
-        f"this implies an issue within the engine."
-    )
+    assert len(outputs) > 1, "All seeds produced the same output which is statistically highly improbable."
