@@ -151,11 +151,12 @@ class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
+        self.gelu = nn.GELU()
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = F.relu(x).square()
+        x = self.gelu(x)
         x = self.c_proj(x)
         return x
 
@@ -273,17 +274,18 @@ class Router(nn.Module):
 
 
 class MLPExperts(nn.Module):
-    """Multiple MLP experts - adapted for nanochat (relu^2, no bias)"""
+    """Multiple MLP experts - adapted for nanochat (GELU, no bias)"""
     def __init__(self, config):
         super().__init__()
-        # no bias, using relu^2 activation like nanochat
+        # no bias, using GELU activation to match standard GPT
         self.c_fc = nn.Parameter(torch.empty(config.n_exp, config.n_embd, 4 * config.n_embd))
         self.c_proj = nn.Parameter(torch.empty(config.n_exp, 4 * config.n_embd, config.n_embd))
+        self.gelu = nn.GELU()
     
     def forward(self, x):
         # x: [n_exp, exp_capacity, n_embd]
         x = torch.bmm(x, self.c_fc)  # [n_exp, exp_capacity, 4*n_embd]
-        x = F.relu(x).square()  # relu^2 activation (nanochat style)
+        x = self.gelu(x)
         x = torch.bmm(x, self.c_proj)  # [n_exp, exp_capacity, n_embd]
         return x
 

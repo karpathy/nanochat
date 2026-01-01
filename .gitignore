@@ -16,3 +16,6 @@ hf-export/**/__pycache__/
 *.log
 .cache/
 agent.md
+lm_eval_sample_*/
+*.pt
+hf-export/**/*

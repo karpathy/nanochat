@@ -1,6 +1,0 @@
-{
-  "chat_template": "<|bos|>{% for message in messages %}{% if message['role'] == 'user' %}<|user_start|>{{ message['content'] }}<|user_end|>{% elif message['role'] == 'assistant' %}<|assistant_start|>{{ message['content'] }}<|assistant_end|>{% endif %}{% endfor %}<|assistant_start|>",
-  "bos_token": "<|bos|>",
-  "eos_token": "<|assistant_end|>",
-  "pad_token": "<|bos|>"
-}
