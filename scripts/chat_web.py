@@ -100,7 +100,7 @@ class WorkerPool:
 
     def __init__(self, num_gpus: Optional[int] = None):
         if num_gpus is None:
-            if device_type == "cuda":
+            if device_type != "cpu":
                 num_gpus = torch.cuda.device_count()
             else:
                 num_gpus = 1 # e.g. cpu|mps
@@ -112,11 +112,11 @@ class WorkerPool:
         """Load model on each GPU."""
         print(f"Initializing worker pool with {self.num_gpus} GPUs...")
         if self.num_gpus > 1:
-            assert device_type == "cuda", "Only CUDA supports multiple workers/GPUs. cpu|mps does not."
+            assert device_type != "cpu", "Only CUDA supports multiple workers/GPUs. cpu|mps does not."
 
         for gpu_id in range(self.num_gpus):
 
-            if device_type == "cuda":
+            if device_type != "cpu":
                 device = torch.device(f"cuda:{gpu_id}")
                 print(f"Loading model on GPU {gpu_id}...")
             else:
@@ -125,7 +125,7 @@ class WorkerPool:
 
             model, tokenizer, _ = load_model(source, device, phase="eval", model_tag=model_tag, step=step)
             engine = Engine(model, tokenizer)
-            autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
+            autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type != "cpu" else nullcontext()
 
             worker = Worker(
                 gpu_id=gpu_id,
