@@ -198,11 +198,31 @@ class Engine:
 
     @torch.inference_mode()
     def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
-        """Same as generate, but does single prefill and then clones the KV cache."""
-        assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
+        """
+        Generate tokens from prompt(s). Accepts either list[int] (single prompt) or
+        list[list[int]] (batched prompts).
+
+        Yields:
+            (token_column, token_masks) tuples where both are nested list[list[int]] of
+            shape (num_prompts, num_samples) for batched input, or list[int] of shape
+            (num_samples,) for single prompt. Masks: 1=sampled, 0=forced.
+        """
+        assert isinstance(tokens, list), "tokens must be a list"
+
+        # Normalize input: convert single prompt to list of prompts
+        is_batched = len(tokens) > 0 and isinstance(tokens[0], list)
+        if is_batched:
+            prompts = tokens
+        else:
+            assert isinstance(tokens[0], int), "expecting list of ints or list of lists of ints"
+            prompts = [tokens]
+
         device = self.model.get_device()
         rng = torch.Generator(device=device)
         rng.manual_seed(seed)
+
+        num_prompts = len(prompts)
+        total_rows = num_prompts * num_samples
 
         # Get the special tokens we need to coordinate the tool use state machine
         get_special = lambda s: self.tokenizer.encode_special(s)
@@ -213,33 +233,64 @@ class Engine:
         assistant_end = get_special("<|assistant_end|>") # if sampled, ends row
         bos = self.tokenizer.get_bos_token_id() # if sampled, ends row
 
-        # 1) Run a batch 1 prefill of the prompt tokens
+        # 1) Left-pad all prompts to max length and create attention mask
+        prompt_lengths = [len(p) for p in prompts]
+        max_prompt_len = max(prompt_lengths)
+        padded_prompts = [[0] * (max_prompt_len - len(p)) + p for p in prompts]
+
+        # Create attention masks if padding is needed
+        decode_mask = None
+        prefill_attn_mask = None
+        if any(length != max_prompt_len for length in prompt_lengths):
+            # prompt_mask[b, t] = True if position t is a real token (not padding) for prompt b
+            prompt_mask = torch.zeros((num_prompts, max_prompt_len), dtype=torch.bool, device=device)
+            for i, length in enumerate(prompt_lengths):
+                prompt_mask[i, max_prompt_len - length:] = True
+            # causal_mask[q, k] = True if query at position q can attend to key at position k
+            causal_mask = torch.tril(torch.ones((max_prompt_len, max_prompt_len), dtype=torch.bool, device=device))
+            # prefill_attn_mask combines prompt_mask and causal_mask: attend only to non-padding keys before the query position
+            # shape: (num_prompts, 1, max_prompt_len, max_prompt_len) - the 1 broadcasts across heads
+            prefill_attn_mask = (causal_mask.unsqueeze(0) & prompt_mask.unsqueeze(1)).unsqueeze(1)
+            # decode_mask tracks which positions are valid for each row during generation (will be updated after each step)
+            decode_mask = prompt_mask.repeat_interleave(num_samples, dim=0)
+
+        # 2) Run batched prefill
         m = self.model.config
         kv_model_kwargs = {"num_heads": m.n_kv_head, "head_dim": m.n_embd // m.n_head, "num_layers": m.n_layer}
         kv_cache_prefill = KVCache(
-            batch_size=1,
-            seq_len=len(tokens),
+            batch_size=num_prompts,
+            seq_len=max_prompt_len,
             **kv_model_kwargs,
         )
-        ids = torch.tensor([tokens], dtype=torch.long, device=device)
-        logits = self.model.forward(ids, kv_cache=kv_cache_prefill)
-        logits = logits[:, -1, :].expand(num_samples, -1)  # (num_samples, vocab_size)
 
-        # 2) Replicate the KV cache for each sample/row
-        kv_length_hint = (len(tokens) + max_tokens) if max_tokens is not None else self.model.config.sequence_len
+        ids = torch.tensor(padded_prompts, dtype=torch.long, device=device)
+        logits = self.model.forward(ids, kv_cache=kv_cache_prefill, attention_mask=prefill_attn_mask)
+        logits = logits[:, -1, :]  # (num_prompts, vocab_size)
+
+        # 3) Expand KV cache for num_samples per prompt
+        kv_length_hint = (max_prompt_len + max_tokens) if max_tokens is not None else self.model.config.sequence_len
         kv_cache_decode = KVCache(
-            batch_size=num_samples,
+            batch_size=total_rows,
             seq_len=kv_length_hint,
             **kv_model_kwargs,
         )
-        kv_cache_decode.prefill(kv_cache_prefill)
-        del kv_cache_prefill # no need to keep this memory around
+        # Initialize the decode cache from prefill cache, replicating for each sample
+        dtype, dev = kv_cache_prefill.kv_cache.dtype, kv_cache_prefill.kv_cache.device
+        kv_cache_decode.kv_cache = torch.empty(kv_cache_decode.kv_shape, dtype=dtype, device=dev)
+        for i in range(num_prompts):
+            src = kv_cache_prefill.kv_cache[:, :, i:i + 1, :, :max_prompt_len, :]
+            for j in range(num_samples):
+                kv_cache_decode.kv_cache[:, :, i * num_samples + j:i * num_samples + j + 1, :, :max_prompt_len, :] = src
+        kv_cache_decode.pos = max_prompt_len
+        del kv_cache_prefill  # no need to keep this memory around
 
-        # 3) Initialize states for each sample
-        row_states = [RowState(tokens.copy()) for _ in range(num_samples)]
+        # Expand logits for num_samples per prompt
+        logits = logits.repeat_interleave(num_samples, dim=0)  # (total_rows, vocab_size)
 
-        # 4) Main generation loop
+        # 4) Initialize row states and run generation loop
+        row_states = [RowState(prompt.copy()) for prompt in prompts for _ in range(num_samples)]
         num_generated = 0
+
         while True:
             # Stop condition: we've reached max tokens
             if max_tokens is not None and num_generated >= max_tokens:
@@ -284,26 +335,60 @@ class Engine:
                 elif state.in_python_block:
                     state.python_expr_tokens.append(next_token)
 
-            # Yield the token column
-            yield token_column, token_masks
+            if is_batched:
+                # Yield shape (num_prompts, num_samples)
+                yield ([token_column[i * num_samples:(i + 1) * num_samples] for i in range(num_prompts)],
+                       [token_masks[i * num_samples:(i + 1) * num_samples] for i in range(num_prompts)])
+            else:
+                # Yield shape (num_samples,)
+                yield token_column, token_masks
             num_generated += 1
 
             # Prepare logits for next iteration
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
-            logits = self.model.forward(ids, kv_cache=kv_cache_decode)[:, -1, :]  # (B, vocab_size)
+
+            if decode_mask is not None:
+                # Extend decode_mask with True for the new tokens
+                decode_mask = torch.cat(
+                    [decode_mask, torch.ones((total_rows, 1), dtype=torch.bool, device=device)], dim=1
+                )
+                logits = self.model.forward(
+                    ids,
+                    kv_cache=kv_cache_decode,
+                    attention_mask=decode_mask.unsqueeze(1).unsqueeze(1),  # (B, 1, 1, T)
+                )
+            else:
+                logits = self.model.forward(ids, kv_cache=kv_cache_decode)
+            logits = logits[:, -1, :]
 
     def generate_batch(self, tokens, num_samples=1, **kwargs):
         """
-        Non-streaming batch generation that just returns the final token sequences.
-        Returns a list of token sequences (list of lists of ints).
+        Non-streaming batch generation that returns the final token sequences.
         Terminal tokens (assistant_end, bos) are not included in the results.
+
+        Returns:
+            (results, masks): For batched input, both are list[list[list[int]]] of shape
+            (num_prompts, num_samples, seq_len). For single prompt, both are
+            list[list[int]] of shape (num_samples, seq_len). Masks: 1=sampled, 0=forced.
         """
         assistant_end = self.tokenizer.encode_special("<|assistant_end|>")
         bos = self.tokenizer.get_bos_token_id()
-        results = [tokens.copy() for _ in range(num_samples)]
-        masks = [[0] * len(tokens) for _ in range(num_samples)]
-        completed = [False] * num_samples
+
+        # Normalize input to list of prompts
+        is_batched = len(tokens) > 0 and isinstance(tokens[0], list)
+        prompts = tokens if is_batched else [tokens]
+
+        # Work with flat structure internally (prompt0_sample0, prompt0_sample1, ..., prompt1_sample0, ...)
+        results = [p.copy() for p in prompts for _ in range(num_samples)]
+        masks = [[0] * len(p) for p in prompts for _ in range(num_samples)]
+        completed = [False] * len(results)
+
         for token_column, token_masks in self.generate(tokens, num_samples, **kwargs):
+            # Flatten nested output from generate() if batched
+            if is_batched:
+                token_column = [t for row in token_column for t in row]
+                token_masks = [m for row in token_masks for m in row]
+
             for i, (token, mask) in enumerate(zip(token_column, token_masks)):
                 if not completed[i]:
                     if token == assistant_end or token == bos:
@@ -314,6 +399,11 @@ class Engine:
             # Stop if all rows are completed
             if all(completed):
                 break
+
+        # Reshape to nested structure for batched output
+        if is_batched:
+            results = [results[i * num_samples:(i + 1) * num_samples] for i in range(len(prompts))]
+            masks = [masks[i * num_samples:(i + 1) * num_samples] for i in range(len(prompts))]
         return results, masks
 
 
