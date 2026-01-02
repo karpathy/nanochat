@@ -16,6 +16,33 @@ export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # -----------------------------------------------------------------------------
+# Parse command-line arguments
+# GPU_BACKEND can be set via CLI (--gpu-backend), defaults to gpu
+GPU_BACKEND="gpu"
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --gpu-backend=*)
+            GPU_BACKEND="${1#*=}"
+            shift
+            ;;
+        --gpu-backend)
+            GPU_BACKEND="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            echo "Usage: $0 [--gpu-backend=gpu|rocm|cpu]"
+            exit 1
+            ;;
+    esac
+done
+if [[ ! "$GPU_BACKEND" =~ ^(gpu|rocm|cpu)$ ]]; then
+    echo "Error: GPU_BACKEND must be one of: gpu, rocm, cpu. Got: $GPU_BACKEND"
+    exit 1
+fi
+echo "Using GPU backend: $GPU_BACKEND"
+
+# -----------------------------------------------------------------------------
 # Python venv setup with uv
 
 # install uv (if not already installed)
@@ -23,7 +50,7 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
 # install the repo dependencies
-uv sync --extra gpu
+uv sync --extra $GPU_BACKEND
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
 
