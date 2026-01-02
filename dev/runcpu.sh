@@ -44,7 +44,8 @@ python -m scripts.base_train \
     --core_metric_every=50 \
     --core_metric_max_per_task=12 \
     --sample_every=50 \
-    --num_iterations=50
+    --num_iterations=50 \
+    --run=$WANDB_RUN
 python -m scripts.base_loss --device_batch_size=1 --split_tokens=4096
 python -m scripts.base_eval --max-per-task=16
 
@@ -55,7 +56,8 @@ python -m scripts.mid_train \
     --eval_every=50 \
     --eval_tokens=4096 \
     --total_batch_size=1024 \
-    --num_iterations=100
+    --num_iterations=100 \
+    --run=$WANDB_RUN
 # eval results will be terrible, this is just to execute the code paths.
 # note that we lower the execution memory limit to 1MB to avoid warnings on smaller systems
 python -m scripts.chat_eval --source=mid --max-new-tokens=128 --max-problems=20
@@ -66,7 +68,8 @@ python -m scripts.chat_sft \
     --target_examples_per_step=4 \
     --num_iterations=100 \
     --eval_steps=4 \
-    --eval_metrics_max_problems=16
+    --eval_metrics_max_problems=16 \
+    --run=$WANDB_RUN
 
 # Chat CLI
 # python -m scripts.chat_cli -p "Why is the sky blue?"
