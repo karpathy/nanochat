@@ -55,6 +55,8 @@ cpu = [
 ]  
 gpu = [  
     "torch>=2.8.0",  
+    "nvidia-nvshmem-cu12>=3.3",
+
 ]  
   
 [tool.uv]  
