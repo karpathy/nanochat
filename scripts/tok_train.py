@@ -1,5 +1,5 @@
 """
-Train a tokenizer using the HuggingFace Tokenizers library.
+Train a tokenizer using our own BPE Tokenizer library.
 In the style of GPT-4 tokenizer.
 """
 import os

@@ -41,12 +41,10 @@ def norm(x):
 def apply_rotary_emb(x, cos, sin):
     assert x.ndim == 4  # multihead attention
     d = x.shape[3] // 2
-    x1, x2 = x[..., :d], x[..., d:] # split up last time into two halves
+    x1, x2 = x[..., :d], x[..., d:] # split up last dim into two halves
     y1 = x1 * cos + x2 * sin # rotate pairs of dims
     y2 = x1 * (-sin) + x2 * cos
-    out = torch.cat([y1, y2], 3) # re-assemble
-    out = out.to(x.dtype) # ensure input/output dtypes match
-    return out
+    return torch.cat([y1, y2], 3)
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
@@ -98,8 +96,7 @@ class CausalSelfAttention(nn.Module):
             # First, each query attends to all the cached keys/values (i.e. full prefix)
             attn_mask = torch.zeros((Tq, Tk), dtype=torch.bool, device=q.device) # True = keep, False = mask
             prefix_len = Tk - Tq
-            if prefix_len > 0: # can't be negative but could be zero
-                attn_mask[:, :prefix_len] = True
+            attn_mask[:, :prefix_len] = True
             # Then, causal attention within this chunk
             attn_mask[:, prefix_len:] = torch.tril(torch.ones((Tq, Tq), dtype=torch.bool, device=q.device))
             y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, enable_gqa=enable_gqa)
@@ -136,17 +133,22 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, pad_vocab_size_to=64):
         super().__init__()
         self.config = config
+        # For DDP, we want vocab_size divisible by world_size. Also, there are potential performance benefits, see:
+        # https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.resize_token_embeddings
+        padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
+        if padded_vocab_size != config.vocab_size:
+            print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} to be divisible by {pad_vocab_size_to}")
         self.transformer = nn.ModuleDict({
-            "wte": nn.Embedding(config.vocab_size, config.n_embd),
+            "wte": nn.Embedding(padded_vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # To support meta device initialization, we init the rotary embeddings here, but it's fake
+        self.lm_head = nn.Linear(config.n_embd, padded_vocab_size, bias=False)
+        # To support meta device initialization, we init the rotary embeddings here, but it's just "fake" meta tensors only.
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
-        # so let's just over-compute them, but assert fail if we ever reach that amount.
+        # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
         # In the future we can dynamically grow the cache, for now it's fine.
         self.rotary_seq_len = config.sequence_len * 10 # 10X over-compute should be enough, TODO make nicer?
         head_dim = config.n_embd // config.n_head
@@ -155,35 +157,46 @@ class GPT(nn.Module):
         self.register_buffer("sin", sin, persistent=False)
 
     def init_weights(self):
-        self.apply(self._init_weights)
-        # zero out classifier weights
-        torch.nn.init.zeros_(self.lm_head.weight)
-        # zero out c_proj weights in all blocks
+        """
+        Initialize the full model in this one function for maximum clarity.
+
+        wte (embedding):     normal, std=1.0
+        lm_head:             normal, std=0.001
+        for each block:
+            attn.c_q:        uniform, std=1/sqrt(n_embd)
+            attn.c_k:        uniform, std=1/sqrt(n_embd)
+            attn.c_v:        uniform, std=1/sqrt(n_embd)
+            attn.c_proj:     zeros
+            mlp.c_fc:        uniform, std=1/sqrt(n_embd)
+            mlp.c_proj:      zeros
+        """
+
+        # Embedding and unembedding
+        torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
+        torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
+
+        # Transformer blocks: uniform init with bound = sqrt(3) * std (same standard deviation as normal)
+        n_embd = self.config.n_embd
+        s = 3**0.5 * n_embd**-0.5 # sqrt(3) multiplier makes sure Uniform achieves the same std as Normal
         for block in self.transformer.h:
+            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
+            torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
+            torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
+            torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
+            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
-            torch.nn.init.zeros_(block.attn.c_proj.weight)
-        # init the rotary embeddings
+
+        # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
-        # Cast the embeddings from fp32 to bf16: optim can tolerate it and it saves memory: both in the model and the activations
+
+        # Cast token embeddings to bf16: optimizer can tolerate it and it saves memory
         if self.transformer.wte.weight.device.type == "cuda":
             self.transformer.wte.to(dtype=torch.bfloat16)
 
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            # https://arxiv.org/pdf/2310.17813
-            fan_out = module.weight.size(0)
-            fan_in = module.weight.size(1)
-            std = 1.0 / math.sqrt(fan_in) * min(1.0, math.sqrt(fan_out / fan_in))
-            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
-
-    # TODO: bump base theta more, e.g. 100K is more common more recently
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
+        # TODO: bump base theta more? e.g. 100K is more common more recently
         # autodetect the device from model embeddings
         if device is None:
             device = self.transformer.wte.weight.device
@@ -221,8 +234,7 @@ class GPT(nn.Module):
         # Create the AdamW optimizer for the embedding and lm_head
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (having tuned the LRs for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
-        if rank == 0:
-            print(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
+        print0(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
         adam_groups = [
             dict(params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale),
             dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
@@ -260,19 +272,19 @@ class GPT(nn.Module):
         x = norm(x)
 
         # Forward the lm_head (compute logits)
-        softcap = 15
+        softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
+        logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
+        logits = logits[..., :self.config.vocab_size] # slice to remove padding
+        logits = logits.float() # switch to fp32 for logit softcap and loss computation
+        logits = softcap * torch.tanh(logits / softcap) # squash the logits
+
         if targets is not None:
-            # training mode: compute and return the loss
-            # TODO: experiment with Liger Kernels / chunked cross-entropy etc.
-            logits = self.lm_head(x)
-            logits = softcap * torch.tanh(logits / softcap) # logits softcap
-            logits = logits.float() # use tf32/fp32 for logits
+            # training: given the targets, compute and return the loss
+            # TODO experiment with chunked cross-entropy?
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
             return loss
         else:
-            # inference mode: compute and return the logits
-            logits = self.lm_head(x)
-            logits = softcap * torch.tanh(logits / softcap) # logits softcap
+            # inference: just return the logits directly
             return logits
 
     @torch.inference_mode()

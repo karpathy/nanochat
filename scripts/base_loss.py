@@ -6,7 +6,7 @@ Loads a checkpoint, and:
 Example run as:
 torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
 """
-import os
+import argparse
 from contextlib import nullcontext
 import torch
 from nanochat.checkpoint_manager import load_model
@@ -16,29 +16,30 @@ from nanochat.tokenizer import get_token_bytes
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 
-# Configuration
-device_batch_size = 32
-split_tokens = 20*524288  # number of tokens to evaluate per split
-model_tag = None # optional model tag for the output directory name
-model_step = None # optional model step for the output directory name
-device_type = "" # cuda|cpu|mps (empty => autodetect)
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+# CLI arguments
+parser = argparse.ArgumentParser(description="Evaluate loss on train/val splits and sample from model")
+parser.add_argument("--device_batch_size", type=int, default=32, help="per-device batch size")
+parser.add_argument("--split_tokens", type=int, default=20*524288, help="number of tokens to evaluate per split")
+parser.add_argument("--model_tag", type=str, default=None, help="model tag for checkpoint directory")
+parser.add_argument("--model_step", type=int, default=None, help="model step to load")
+parser.add_argument("--device_type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+args = parser.parse_args()
 
 # Load the base model and the tokenizer
-device_type = autodetect_device_type() if device_type == "" else device_type
+device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
-model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=model_tag, step=model_step)
+model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
 sequence_len = meta["model_config"]["sequence_len"] # could be arbitrary really
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 
 # Evaluate the loss on each split
-tokens_per_step = device_batch_size * sequence_len * ddp_world_size
-assert split_tokens % tokens_per_step == 0, "split_tokens must be divisible by tokens_per_step"
-steps = split_tokens // tokens_per_step
+tokens_per_step = args.device_batch_size * sequence_len * ddp_world_size
+assert args.split_tokens % tokens_per_step == 0, "split_tokens must be divisible by tokens_per_step"
+steps = args.split_tokens // tokens_per_step
 token_bytes = get_token_bytes(device=device)
 bpb_results = {}
 for split_name in ["train", "val"]:
-    loader = tokenizing_distributed_data_loader(device_batch_size, sequence_len, split_name, device=device)
+    loader = tokenizing_distributed_data_loader(args.device_batch_size, sequence_len, split_name, device=device)
     with autocast_ctx:
         bpb = evaluate_bpb(model, loader, steps, token_bytes)
     print0(f"{split_name} bpb: {bpb:.4f}")

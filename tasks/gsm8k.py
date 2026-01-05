@@ -74,7 +74,7 @@ class GSM8K(Task):
             else:
                 # Regular text in between tool calls
                 assistant_message_parts.append({"type": "text", "text": part})
-        # No put it all together
+        # Now put it all together
         messages = [
             {"role": "user", "content": question}, # note: simple string
             {"role": "assistant", "content": assistant_message_parts}, # note: list of parts (as dicts)

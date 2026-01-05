@@ -122,7 +122,14 @@ class HuggingFaceTokenizer:
         return self.tokenizer.token_to_id(text)
 
     def get_bos_token_id(self):
+        # Different HuggingFace models use different BOS tokens and there is little consistency
+        # 1) attempt to find a <|bos|> token
         bos = self.encode_special("<|bos|>")
+        # 2) if that fails, attempt to find a <|endoftext|> token (e.g. GPT-2 models)
+        if bos is None:
+            bos = self.encode_special("<|endoftext|>")
+        # 3) if these fail, it's better to crash than to silently return None
+        assert bos is not None, "Failed to find BOS token in tokenizer"
         return bos
 
     def encode(self, text, *args, **kwargs):

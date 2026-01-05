@@ -16,9 +16,6 @@ if [ -z "$WANDB_RUN" ]; then
     WANDB_RUN=dummy
 fi
 python -m nanochat.report reset
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
 # train tokenizer on ~4B characters and kick off download of the rest for pretraining

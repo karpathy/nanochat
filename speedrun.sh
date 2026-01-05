@@ -48,13 +48,6 @@ python -m nanochat.report reset
 # -----------------------------------------------------------------------------
 # Tokenizer
 
-# Install Rust / Cargo
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-
-# Build the rustbpe Tokenizer
-uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
-
 # Download the first ~2B characters of pretraining dataset
 # look at dev/repackage_data_reference.py for details on how this data was prepared
 # each data shard is ~250M chars
@@ -96,7 +89,7 @@ torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)
 
 # download 2.3MB of synthetic identity conversations to impart a personality to nanochat
-# see dev/gen_sft_data.py for details on how this data was prepared and to get a sense of how you can easily tune it
+# see dev/gen_synthetic_data.py for details on how this data was prepared and to get a sense of how you can easily tune it
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
 # run midtraining and eval the model
