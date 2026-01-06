@@ -28,6 +28,7 @@ from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from scripts.base_eval import evaluate_model
+
 print_banner()
 
 # -----------------------------------------------------------------------------
@@ -210,7 +211,7 @@ x, y, dataloader_state_dict = next(train_loader) # kick off load of the very fir
 # Set up hyperparameter schedulers
 
 # Learning rate scheduler
-def get_lr_multiplier(it):
+def get_lr_multiplier(it: int) -> float:
     warmup_iters = round(args.warmup_ratio * num_iterations)
     warmdown_iters = round(args.warmdown_ratio * num_iterations)
     if it < warmup_iters:
@@ -221,8 +222,9 @@ def get_lr_multiplier(it):
         progress = (num_iterations - it) / warmdown_iters
         return progress * 1.0 + (1 - progress) * args.final_lr_frac
 
+
 # Momentum scheduler for Muon optimizer
-def get_muon_momentum(it):
+def get_muon_momentum(it: int) -> float:
     frac = min(it / 300, 1)
     momentum = (1 - frac) * 0.85 + frac * 0.95
     return momentum

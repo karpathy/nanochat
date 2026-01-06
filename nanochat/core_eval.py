@@ -6,15 +6,20 @@ TODOs:
 - All tasks ~match except for squad. We get 31% reference is 37%. Figure out why.
 """
 import random
+from typing import List, Dict, Any, Tuple, Literal
 
 from jinja2 import Template
 import torch
 import torch.distributed as dist
 
+from nanochat.gpt import GPT
+from nanochat.tokenizer import RustBPETokenizer, HuggingFaceTokenizer
+
+
 # -----------------------------------------------------------------------------
 # Prompt rendering utilities
 
-def render_prompts_mc(item, continuation_delimiter, fewshot_examples=None):
+def render_prompts_mc(item: Dict[str, Any], continuation_delimiter: str, fewshot_examples: List[Dict[str, Any]] | None = None) -> List[str]:
     """Render complete prompts for a multiple choice question"""
     template_str = """
 {%- for example in fewshot_examples -%}
@@ -33,7 +38,7 @@ def render_prompts_mc(item, continuation_delimiter, fewshot_examples=None):
     return prompts
 
 
-def render_prompts_schema(item, continuation_delimiter, fewshot_examples=None):
+def render_prompts_schema(item: Dict[str, Any], continuation_delimiter: str, fewshot_examples: List[Dict[str, Any]] | None = None):
     """Render complete prompts for a schema question"""
     template_str = """
 {%- for example in fewshot_examples -%}
@@ -53,7 +58,7 @@ def render_prompts_schema(item, continuation_delimiter, fewshot_examples=None):
     return prompts
 
 
-def render_prompts_lm(item, continuation_delimiter, fewshot_examples=None):
+def render_prompts_lm(item: Dict[str, Any], continuation_delimiter: str, fewshot_examples: List[Dict[str, Any]] | None = None) -> List[str]:
     """
     Render complete prompt for a language modeling task.
     Notice that we manually trim the context in the template,
@@ -83,7 +88,7 @@ def render_prompts_lm(item, continuation_delimiter, fewshot_examples=None):
     return [prompt_without, prompt_with]
 
 
-def find_common_length(token_sequences, direction='left'):
+def find_common_length(token_sequences: List[List[int]], direction: Literal["left", "right"] = 'left') -> int:
     """
     Find the length of the common prefix or suffix across token sequences
     - direction: 'left' for prefix, 'right' for suffix
@@ -101,8 +106,8 @@ def find_common_length(token_sequences, direction='left'):
     return min_len
 
 
-def stack_sequences(tokens, pad_token_id):
-    """Stack up a list of token sequences, pad to longest on the right"""
+def stack_sequences(tokens: List[List[int]], pad_token_id: int) -> torch.Tensor:
+    """Stack up a list of token sequences, pad to the longest on the right"""
     bsz, seq_len = len(tokens), max(len(x) for x in tokens)
     input_ids = torch.full((bsz, seq_len), pad_token_id, dtype=torch.long)
     for i, x in enumerate(tokens):
@@ -110,7 +115,7 @@ def stack_sequences(tokens, pad_token_id):
     return input_ids
 
 
-def batch_sequences_mc(tokenizer, prompts):
+def batch_sequences_mc(tokenizer: RustBPETokenizer | HuggingFaceTokenizer, prompts: List[str]) -> Tuple[List[List[int]], List[int], List[int]]:
     # In multiple choice, contexts are the same but the continuation is different (common prefix)
     tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
     # figure out the start and end of each continuation
@@ -120,17 +125,18 @@ def batch_sequences_mc(tokenizer, prompts):
     return tokens, start_indices, end_indices
 
 
-def batch_sequences_schema(tokenizer, prompts):
+def batch_sequences_schema(tokenizer: RustBPETokenizer | HuggingFaceTokenizer, prompts: List[str]) -> Tuple[List[List[int]], List[int], List[int]]:
     # In schema tasks, contexts vary but continuation is the same (common suffix)
     tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
     # figure out the start and end of each context
     suffix_length = find_common_length(tokens, direction='right')
+
     end_indices = [len(x) for x in tokens]
     start_indices = [ei - suffix_length for ei in end_indices]
     return tokens, start_indices, end_indices
 
 
-def batch_sequences_lm(tokenizer, prompts):
+def batch_sequences_lm(tokenizer: RustBPETokenizer | HuggingFaceTokenizer, prompts: List[str]) -> Tuple[List[List[int]], List[int], List[int]]:
     # In LM tasks, we have two prompts: without and with continuation
     tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
     tokens_without, tokens_with = tokens
@@ -142,7 +148,7 @@ def batch_sequences_lm(tokenizer, prompts):
 
 
 @torch.no_grad()
-def forward_model(model, input_ids):
+def forward_model(model: GPT, input_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Take BxT tensor of token ids, return BxT tensor of losses and argmax predictions.
     The last column of losses is set to nan because we don't have autoregressive targets there.
@@ -165,7 +171,7 @@ def forward_model(model, input_ids):
 
 
 @torch.no_grad()
-def evaluate_example(idx, model, tokenizer, data, device, task_meta):
+def evaluate_example(idx: int, model: GPT, tokenizer: RustBPETokenizer | HuggingFaceTokenizer, data: List[Any], device: torch.device, task_meta: Dict[str, Any]):
     """Evaluate a single example, return True if correct, False otherwise"""
     item = data[idx]
     task_type = task_meta['task_type']
@@ -241,7 +247,7 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
     return is_correct
 
 
-def evaluate_task(model, tokenizer, data, device, task_meta):
+def evaluate_task(model: GPT, tokenizer: RustBPETokenizer | HuggingFaceTokenizer, data: List[Any], device, task_meta):
     """
     This function is responsible for evaluating one task across many examples.
     It also handles dispatch to all processes if the script is run with torchrun.

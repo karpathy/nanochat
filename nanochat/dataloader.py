@@ -1,4 +1,5 @@
 from collections import deque
+from typing import Literal, Dict
 
 import torch
 import pyarrow.parquet as pq
@@ -7,7 +8,9 @@ from nanochat.common import get_dist_info
 from nanochat.dataset import list_parquet_files
 from nanochat.tokenizer import get_tokenizer
 
-def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda", resume_state_dict=None):
+def tokenizing_distributed_data_loader_with_state(B: int, T: int, split: Literal["train", "val"],
+                                                  tokenizer_threads: int = 4, tokenizer_batch_size: int = 128,
+                                                  device: str ="cuda", resume_state_dict: Dict | None = None):
     """
     Stream pretraining text from parquet files, tokenize, yield training batches.
 

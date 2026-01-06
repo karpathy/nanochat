@@ -3,6 +3,7 @@ SmolTalk by HuggingFace. Good "general" conversational dataset.
 https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk
 We use the "smol" version, which is more appropriate for smaller models.
 """
+from typing import Literal, Dict, List
 
 from datasets import load_dataset
 from tasks.common import Task
@@ -10,16 +11,16 @@ from tasks.common import Task
 class SmolTalk(Task):
     """ smol-smoltalk dataset. train is 460K rows, test is 24K rows. """
 
-    def __init__(self, split, **kwargs):
+    def __init__(self, split: Literal["train", "test"], **kwargs):
         super().__init__(**kwargs)
         assert split in ["train", "test"], "SmolTalk split must be train|test"
         self.ds = load_dataset("HuggingFaceTB/smol-smoltalk", split=split).shuffle(seed=42)
         self.length = len(self.ds)
 
-    def num_examples(self):
+    def num_examples(self) -> int:
         return self.length
 
-    def get_example(self, index):
+    def get_example(self, index: int) -> Dict[str, List[Dict]]:
         row = self.ds[index]
         messages = row["messages"]
         # ---------------------------------------------------------------------

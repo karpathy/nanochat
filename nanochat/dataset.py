@@ -10,6 +10,8 @@ For details of how the dataset was prepared, see `repackage_data_reference.py`.
 import os
 import argparse
 import time
+from typing import List, Generator, Literal
+
 import requests
 import pyarrow.parquet as pq
 from multiprocessing import Pool
@@ -30,7 +32,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
 
-def list_parquet_files(data_dir=None):
+def list_parquet_files(data_dir: str | None = None) -> List[str]:
     """ Looks into a data dir and returns full paths to all parquet files. """
     data_dir = DATA_DIR if data_dir is None else data_dir
     parquet_files = sorted([
@@ -40,7 +42,7 @@ def list_parquet_files(data_dir=None):
     parquet_paths = [os.path.join(data_dir, f) for f in parquet_files]
     return parquet_paths
 
-def parquets_iter_batched(split, start=0, step=1):
+def parquets_iter_batched(split: Literal["train", "val"], start: int = 0, step: int = 1) -> Generator[List[str], None, None]:
     """
     Iterate through the dataset, in batches of underlying row_groups for efficiency.
     - split can be "train" or "val". the last parquet file will be val.
@@ -57,7 +59,7 @@ def parquets_iter_batched(split, start=0, step=1):
             yield texts
 
 # -----------------------------------------------------------------------------
-def download_single_file(index):
+def download_single_file(index: int) -> bool:
     """ Downloads a single file index, with some backoff """
 
     # Construct the local filepath for this file and skip if it already exists

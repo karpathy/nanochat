@@ -155,11 +155,11 @@ def get_batch():
 # -----------------------------------------------------------------------------
 # Simple evaluation loop for GSM8K pass@k
 def run_gsm8k_eval(task, tokenizer, engine,
-    max_examples=None,
-    num_samples=1,
-    max_completion_tokens=256,
-    temperature=0.0,
-    top_k=50
+    max_examples: int | None = None,
+    num_samples: int = 1,
+    max_completion_tokens: int = 256,
+    temperature = 0.0,
+    top_k: int = 50
 ):
     """
     Evaluates GSM8K task and returns a list of records of evaluation outcomes.
@@ -215,7 +215,7 @@ for opt in optimizers:
         group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
 
 # Learning rate scheduler: simple rampdown to zero over num_steps
-def get_lr_multiplier(it):
+def get_lr_multiplier(it: int) -> float:
     lrm = 1.0 - it / num_steps
     return lrm
 

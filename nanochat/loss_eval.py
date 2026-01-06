@@ -2,11 +2,14 @@
 A number of functions that help with evaluating a base model.
 """
 import math
+from typing import Iterator, Tuple
+
 import torch
 import torch.distributed as dist
+from nanochat.gpt import GPT
 
 @torch.no_grad()
-def evaluate_bpb(model, batches, steps, token_bytes):
+def evaluate_bpb(model: GPT, batches: Iterator[Tuple[torch.Tensor, torch.Tensor]], steps: int, token_bytes: torch.Tensor) -> float:
     """
     Instead of the naive 'mean loss', this function returns the bits per byte (bpb),
     which is a tokenization vocab size-independent metric, meaning you are still comparing

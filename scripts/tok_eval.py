@@ -1,6 +1,7 @@
 """
 Evaluate compression ratio of the tokenizer.
 """
+from typing import Tuple, List, Dict
 
 from nanochat.tokenizer import get_tokenizer, RustBPETokenizer
 from nanochat.dataset import parquets_iter_batched
@@ -157,6 +158,7 @@ all_text = [
     ("science", science_text),
     ("fwe-train", train_text),
 ]
+
 if val_text:
     all_text.append(("fwe-val", val_text))
 
@@ -164,7 +166,7 @@ if val_text:
 tokenizer_results = {}
 vocab_sizes = {}
 
-for tokenizer_name in ["gpt2", "gpt4", "ours"]:
+for tokenizer_name in ("gpt2", "gpt4", "ours"):
 
     if tokenizer_name == "gpt2":
         tokenizer = RustBPETokenizer.from_pretrained("gpt2") # gpt-2 base model tokenizer
@@ -200,7 +202,8 @@ print(f"GPT-2: {vocab_sizes['gpt2']}")
 print(f"GPT-4: {vocab_sizes['gpt4']}")
 print(f"Ours: {vocab_sizes['ours']}")
 
-def print_comparison(baseline_name, baseline_results, ours_results, all_text):
+def print_comparison(baseline_name: str, baseline_results: Dict[str, Dict], ours_results: Dict[str, Dict],
+                     all_text: List[Tuple[str, str]]) -> None:
     """Print comparison table between baseline tokenizer and ours."""
     print(f"\nComparison with {baseline_name}:")
     print("=" * 95)
@@ -245,7 +248,7 @@ print_comparison("GPT-4", tokenizer_results['gpt4'], tokenizer_results['ours'], 
 # Log to report
 from nanochat.report import get_report
 lines = []
-for baseline_name in ["GPT-2", "GPT-4"]:
+for baseline_name in ("GPT-2", "GPT-4"):
     baseline_key = baseline_name.lower().replace('-', '')
     baseline_results = tokenizer_results[baseline_key]
     ours_results = tokenizer_results['ours']

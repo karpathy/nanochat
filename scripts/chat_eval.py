@@ -4,8 +4,8 @@ All the generic code lives here, and all the evaluation-specific
 code lives in nanochat directory and is imported from here.
 
 Example runs:
-python -m scripts.chat_eval -a ARC-Easy
-torchrun --nproc_per_node=8 -m scripts.chat_eval -- -a ARC-Easy
+python -m scripts.chat_eval -i mid -a ARC-Easy
+torchrun --nproc_per_node=8 -m scripts.chat_eval -- -i mid -a ARC-Easy
 """
 
 import argparse
@@ -18,7 +18,10 @@ import torch.distributed as dist
 from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
+from nanochat.gpt import GPT
+from nanochat.tokenizer import RustBPETokenizer
 
+from tasks.common import Task
 from tasks.humaneval import HumanEval
 from tasks.mmlu import MMLU
 from tasks.arc import ARC
@@ -28,7 +31,8 @@ from tasks.spellingbee import SpellingBee
 # -----------------------------------------------------------------------------
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
 
-def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_new_tokens, temperature, top_k, max_problems=None):
+def run_generative_eval(task_object: Task, tokenizer: RustBPETokenizer, model: GPT, engine: Engine, num_samples: int,
+                        max_new_tokens: int, temperature: float, top_k: int, max_problems: int | None = None):
 
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     device = model.get_device()
@@ -87,8 +91,8 @@ def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_
 # A lot easier because we don't have to sample. Therefore, we can actually go
 # batches at a time and just check the logits for correct answer choices.
 
-def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems=None):
-
+def run_categorical_eval(task_object: Task, tokenizer: RustBPETokenizer, model: GPT, batch_size: int,
+                         max_problems: int | None = None):
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     device = model.get_device()
     bos = tokenizer.get_bos_token_id() # use BOS as pad token is ok, these positions are ignored
@@ -154,20 +158,24 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
     print0(f"Final: {num_passed}/{total} ({100*average:.2f}%)")
     return average
 
+
+
 # -----------------------------------------------------------------------------
 
-def run_chat_eval(task_name, model, tokenizer, engine,
-                   batch_size=1, num_samples=1, max_new_tokens=512, temperature=0.0, top_k=50,
-                   max_problems=None):
+TASK_MODULES = {
+    'HumanEval': HumanEval,
+    'MMLU': partial(MMLU, subset="all", split="test"),
+    'ARC-Easy': partial(ARC, subset="ARC-Easy", split="test"),
+    'ARC-Challenge': partial(ARC, subset="ARC-Challenge", split="test"),
+    'GSM8K': partial(GSM8K, subset="main", split="test"),
+    'SpellingBee': partial(SpellingBee, size=256, split="test"),
+}
+
+def run_chat_eval(task_name: str, model: GPT, tokenizer: RustBPETokenizer, engine: Engine,
+                   batch_size: int = 1, num_samples: int = 1, max_new_tokens: int = 512, temperature: float = 0.0,
+                  top_k: int = 50, max_problems: int | None = None):
     # Create the evaluation object
-    task_module = {
-        'HumanEval': HumanEval,
-        'MMLU': partial(MMLU, subset="all", split="test"),
-        'ARC-Easy': partial(ARC, subset="ARC-Easy", split="test"),
-        'ARC-Challenge': partial(ARC, subset="ARC-Challenge", split="test"),
-        'GSM8K': partial(GSM8K, subset="main", split="test"),
-        'SpellingBee': partial(SpellingBee, size=256, split="test"),
-    }[task_name]
+    task_module = TASK_MODULES[task_name]
     task_object = task_module()
     # Run the evaluation
     if task_object.eval_type == 'generative':
@@ -206,7 +214,8 @@ if __name__ == "__main__":
     engine = Engine(model, tokenizer)
 
     # Get the tasks to evaluate on
-    all_tasks = ['ARC-Easy', 'ARC-Challenge', 'MMLU', 'GSM8K', 'HumanEval', 'SpellingBee']
+    all_tasks = ('ARC-Easy', 'ARC-Challenge', 'MMLU', 'GSM8K', 'HumanEval', 'SpellingBee')
+
     baseline_accuracies = {
         'ARC-Easy': 0.25, # multiple choice 1 of 4 => 25%
         'ARC-Challenge': 0.25, # multiple choice 1 of 4 => 25%
@@ -215,6 +224,7 @@ if __name__ == "__main__":
         'HumanEval': 0.0, # open-ended => 0%
         'SpellingBee': 0.0, # open-ended => 0%
     }
+
     task_names = all_tasks if args.task_name is None else args.task_name.split('|')
 
     # Run all the task evaluations sequentially

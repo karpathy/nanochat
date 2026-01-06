@@ -6,21 +6,25 @@ import re
 import glob
 import json
 import logging
+from typing import Tuple, Dict, Any, Literal, List, OrderedDict, Optional
+
 import torch
 
 from nanochat.common import get_base_dir
 from nanochat.gpt import GPT, GPTConfig
-from nanochat.tokenizer import get_tokenizer
+from nanochat.tokenizer import get_tokenizer, RustBPETokenizer
 from nanochat.common import setup_default_logging
 
 # Set up logging
 setup_default_logging()
 logger = logging.getLogger(__name__)
+
 def log0(message):
     if int(os.environ.get('RANK', 0)) == 0:
         logger.info(message)
 
-def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
+def save_checkpoint(checkpoint_dir: str, step: int, model_data: Dict[str, torch.Tensor],
+                    optimizer_data: List[Dict] | None, meta_data: Dict, rank: int = 0):
     if rank == 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
         # Save the model state parameters
@@ -39,7 +43,7 @@ def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data,
         torch.save(optimizer_data, optimizer_path)
         logger.info(f"Saved optimizer state to: {optimizer_path}")
 
-def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
+def load_checkpoint(checkpoint_dir: str, step: int, device: torch.device, load_optimizer: bool = False, rank: int = 0) -> Tuple[Dict[str, torch.Tensor], Optional[Any], Dict[str, Any]]:
     # Load the model state
     model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
     model_data = torch.load(model_path, map_location=device)
@@ -55,7 +59,7 @@ def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
     return model_data, optimizer_data, meta_data
 
 
-def build_model(checkpoint_dir, step, device, phase):
+def build_model(checkpoint_dir: str, step: int, device: torch.device, phase: Literal["train", "eval"]) -> Tuple[GPT, RustBPETokenizer, Dict]:
     """
     A bunch of repetitive code to build a model from a given checkpoint.
     Returns:
@@ -82,11 +86,9 @@ def build_model(checkpoint_dir, step, device, phase):
     model.to_empty(device=device)
     model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
     model.load_state_dict(model_data, strict=True, assign=True)
+
     # Put the model in the right training phase / mode
-    if phase == "eval":
-        model.eval()
-    else:
-        model.train()
+    model.eval() if phase == "eval" else model.train()
     # Load the Tokenizer
     tokenizer = get_tokenizer()
     # Sanity check: compatibility between model and tokenizer
@@ -94,7 +96,7 @@ def build_model(checkpoint_dir, step, device, phase):
     return model, tokenizer, meta_data
 
 
-def find_largest_model(checkpoints_dir):
+def find_largest_model(checkpoints_dir: str) -> str:
     # attempt to guess the model tag: take the biggest model available
     model_tags = [f for f in os.listdir(checkpoints_dir) if os.path.isdir(os.path.join(checkpoints_dir, f))]
     if not model_tags:
@@ -114,7 +116,7 @@ def find_largest_model(checkpoints_dir):
     return model_tags[0]
 
 
-def find_last_step(checkpoint_dir):
+def find_last_step(checkpoint_dir: str) -> int:
     # Look into checkpoint_dir and find model_<step>.pt with the highest step
     checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "model_*.pt"))
     if not checkpoint_files:
@@ -125,28 +127,33 @@ def find_last_step(checkpoint_dir):
 # -----------------------------------------------------------------------------
 # convenience functions that take into account nanochat's directory structure
 
-def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None):
+def load_model_from_dir(checkpoints_dir: str, device: torch.device, phase: str, model_tag: str | None = None, step: int | None = None) -> Tuple[GPT, RustBPETokenizer, Dict]:
     if model_tag is None:
         # guess the model tag by defaulting to the largest model
         model_tag = find_largest_model(checkpoints_dir)
         log0(f"No model tag provided, guessing model tag: {model_tag}")
+
     checkpoint_dir = os.path.join(checkpoints_dir, model_tag)
+
     if step is None:
         # guess the step by defaulting to the last step
         step = find_last_step(checkpoint_dir)
     assert step is not None, f"No checkpoints found in {checkpoint_dir}"
+
     # build the model
     log0(f"Loading model from {checkpoint_dir} with step {step}")
     model, tokenizer, meta_data = build_model(checkpoint_dir, step, device, phase)
     return model, tokenizer, meta_data
 
-def load_model(source, *args, **kwargs):
-    model_dir = {
-        "base": "base_checkpoints",
-        "mid": "mid_checkpoints",
-        "sft": "chatsft_checkpoints",
-        "rl": "chatrl_checkpoints",
-    }[source]
+MODEL_DIRS = {
+    "base": "base_checkpoints",
+    "mid": "mid_checkpoints",
+    "sft": "chatsft_checkpoints",
+    "rl": "chatrl_checkpoints",
+}
+
+def load_model(source: Literal["base", "mid", "sft", "rl"], *args, **kwargs) -> Tuple[GPT, RustBPETokenizer, Dict]:
+    model_dir = MODEL_DIRS[source]
     base_dir = get_base_dir()
     checkpoints_dir = os.path.join(base_dir, model_dir)
     return load_model_from_dir(checkpoints_dir, *args, **kwargs)

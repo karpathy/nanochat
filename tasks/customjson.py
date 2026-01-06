@@ -5,6 +5,8 @@ Each line in the JSONL file should be a JSON array of messages.
 
 import os
 import json
+from typing import Dict, List
+
 from tasks.common import Task
 
 class CustomJSON(Task):
@@ -14,7 +16,7 @@ class CustomJSON(Task):
     Example line: [{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello"}]
     """
 
-    def __init__(self, filepath, **kwargs):
+    def __init__(self, filepath: str, **kwargs):
         super().__init__(**kwargs)
         self.filepath = filepath
         self.conversations = []
@@ -53,10 +55,10 @@ class CustomJSON(Task):
 
         self.length = len(self.conversations)
 
-    def num_examples(self):
+    def num_examples(self) -> int:
         return self.length
 
-    def get_example(self, index):
+    def get_example(self, index: int) -> Dict[str, List[Dict]]:
         messages = self.conversations[index]
         conversation = {
             "messages": messages,

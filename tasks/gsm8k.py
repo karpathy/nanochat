@@ -15,41 +15,45 @@ Notice that GSM8K uses tool calls inside << >> tags.
 """
 
 import re
+from typing import Literal, Dict, List
+
 from datasets import load_dataset
 from tasks.common import Task
 
 
 GSM_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
-def extract_answer(completion):
+
+def extract_answer(completion: str) -> str | None:
     """
     Extract the numerical answer after #### marker.
     Follows official code for normalization:
     https://github.com/openai/grade-school-math/blob/3101c7d5072418e28b9008a6636bde82a006892c/grade_school_math/dataset.py#L28
     """
     match = GSM_RE.search(completion)
+
     if match:
         match_str = match.group(1).strip()
         match_str = match_str.replace(",", "")
         return match_str
+
     return None
 
 
 class GSM8K(Task):
-
-    def __init__(self, subset, split, **kwargs):
+    def __init__(self, subset: Literal["main", "socratic"], split: Literal["train", "test"], **kwargs):
         super().__init__(**kwargs)
         assert subset in ["main", "socratic"], "GSM8K subset must be main|socratic"
         assert split in ["train", "test"], "GSM8K split must be train|test"
         self.ds = load_dataset("openai/gsm8k", subset, split=split).shuffle(seed=42)
 
     @property
-    def eval_type(self):
+    def eval_type(self) -> Literal["generative"]:
         return 'generative'
 
-    def num_examples(self):
+    def num_examples(self) -> int:
         return len(self.ds)
 
-    def get_example(self, index):
+    def get_example(self, index: int) -> Dict[str, List[Dict]]:
         """ Get a single problem from the dataset. """
         row = self.ds[index]
         question = row['question'] # string of the question prompt
@@ -84,7 +88,7 @@ class GSM8K(Task):
         }
         return conversation
 
-    def evaluate(self, conversation, assistant_response):
+    def evaluate(self, conversation: Dict[str, List[Dict]], assistant_response: str) -> Literal[0, 1]:
         """
         Given (conversation, completion), return evaluation outcome (0 = wrong, 1 = correct)
         Note that:
@@ -107,7 +111,7 @@ class GSM8K(Task):
         is_correct = int(pred_num == ref_num)
         return is_correct
 
-    def reward(self, conversation, assistant_response):
+    def reward(self, conversation: Dict[str, List[Dict]], assistant_response: str) -> float:
         """
         Used during RL. To keep things simple, just re-use the evaluation above.
         Later this could be made more complex (e.g. format matching etc.)

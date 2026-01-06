@@ -10,6 +10,7 @@ Notes:
 
 The whole thing is made as efficient as possible.
 """
+from typing import Tuple, List
 
 import torch
 import torch.nn.functional as F
@@ -19,13 +20,15 @@ from contextlib import contextmanager
 from collections import deque
 from nanochat.common import compute_init, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
+from nanochat.gpt import GPT
+from nanochat.tokenizer import RustBPETokenizer
 from contextlib import nullcontext
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
 @contextmanager
-def timeout(duration, formula):
-    def timeout_handler(signum, frame):
+def timeout(duration: int, formula: str):
+    def timeout_handler(signum: int, frame):
         raise Exception(f"'{formula}': timed out after {duration} seconds")
 
     signal.signal(signal.SIGALRM, timeout_handler)
@@ -33,7 +36,7 @@ def timeout(duration, formula):
     yield
     signal.alarm(0)
 
-def eval_with_timeout(formula, max_time=3):
+def eval_with_timeout(formula: str, max_time: int = 3) -> object | None:
     try:
         with timeout(max_time, formula):
             with warnings.catch_warnings():
@@ -44,10 +47,12 @@ def eval_with_timeout(formula, max_time=3):
         # print(f"Warning: Failed to eval {formula}, exception: {e}") # it's ok ignore wrong calculator usage
         return None
 
-def use_calculator(expr):
+def use_calculator(expr: str) -> object | None:
     """
     Evaluate a Python expression safely.
     Supports both math expressions and string operations like .count()
+
+    TODO: AST would be better and safer here.
     """
     # Remove commas from numbers
     expr = expr.replace(",", "")
@@ -86,7 +91,7 @@ class KVCache:
     Note that the .pos advances automatically after the last layer of the Transformer inserts.
     """
 
-    def __init__(self, batch_size, num_heads, seq_len, head_dim, num_layers):
+    def __init__(self, batch_size: int, num_heads: int, seq_len: int, head_dim: int, num_layers: int):
         # Each of K/V is of shape (B, H, T, D) and we have one per layer of the Transformer.
         self.kv_shape = (num_layers, 2, batch_size, num_heads, seq_len, head_dim)
         self.kv_cache = None
@@ -98,7 +103,7 @@ class KVCache:
     def get_pos(self):
         return self.pos
 
-    def prefill(self, other):
+    def prefill(self, other: "KVCache"):
         """
         Prefill given another KV cache. Optionally expand along batch dim.
         This is used when we do batch 1 prefill and then want to generate
@@ -132,7 +137,7 @@ class KVCache:
         # 4) update the pos
         self.pos = other.pos
 
-    def insert_kv(self, layer_idx, k, v):
+    def insert_kv(self, layer_idx: int, k: torch.Tensor, v: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         # Lazy initialize the cache here because we need to know the dtype/device
         if self.kv_cache is None:
             self.kv_cache = torch.empty(self.kv_shape, dtype=k.dtype, device=k.device)
@@ -162,7 +167,7 @@ class KVCache:
 
 # -----------------------------------------------------------------------------
 @torch.inference_mode()
-def sample_next_token(logits, rng, temperature=1.0, top_k=None):
+def sample_next_token(logits: torch.Tensor, rng: torch.Generator, temperature: float = 1.0, top_k: float | None = None) -> torch.Tensor:
     """Sample a single next token from given logits of shape (B, vocab_size). Returns (B, 1)."""
     assert temperature >= 0.0, "temperature must be non-negative"
     if temperature == 0.0:
@@ -190,14 +195,14 @@ class RowState:
         self.python_expr_tokens = [] # Tokens of the current python expression
         self.completed = False # Whether this row has completed generation
 
-class Engine:
 
-    def __init__(self, model, tokenizer):
+class Engine:
+    def __init__(self, model: GPT, tokenizer: RustBPETokenizer):
         self.model = model
         self.tokenizer = tokenizer # needed for tool use
 
     @torch.inference_mode()
-    def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
+    def generate(self, tokens: List[int], num_samples: int = 1, max_tokens: int | None = None, temperature: float = 1.0, top_k: int | None = None, seed: int = 42):
         """Same as generate, but does single prefill and then clones the KV cache."""
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
         device = self.model.get_device()
@@ -292,7 +297,7 @@ class Engine:
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
             logits = self.model.forward(ids, kv_cache=kv_cache_decode)[:, -1, :]  # (B, vocab_size)
 
-    def generate_batch(self, tokens, num_samples=1, **kwargs):
+    def generate_batch(self, tokens: List[int], num_samples=1, **kwargs) -> Tuple[List[List[int]], List[List[int]]]:
         """
         Non-streaming batch generation that just returns the final token sequences.
         Returns a list of token sequences (list of lists of ints).
