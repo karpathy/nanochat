@@ -14,7 +14,7 @@ source .venv/bin/activate
 ```bash
 # export latest base checkpoint to hf-export/moe_std (gpt2 tokenizer)
 uv run python -m nanochat.to_hf --source base --model-tag d20 --step 49000 --output hf-export/moe_std --tokenizer gpt2
-
+uv run python -m nanochat.to_hf --source base --model-tag d00 --output hf-export/moe_legacy --tokenizer gpt2
 # export latest SFT checkpoint (chat model, rustbpe tokenizer)
 uv run python -m nanochat.to_hf --source sft --output hf-export/moe_sft --tokenizer cache
 ```
@@ -38,17 +38,24 @@ uv run lm-eval run --model hf \
 # commonsense benchmarks: HellaSwag, BoolQ, PIQA, Winograd-style
 # (Winograd alternatives: winogrande (preferred) or wsc273 (classic WSC))
 HF_ALLOW_CODE_EVAL=1 uv run lm-eval run --confirm_run_unsafe_code --model hf \
-  --model_args pretrained=hf-export/moe_std,trust_remote_code=True,tokenizer=hf-export/moe_std,max_length=1024 \
+  --model_args pretrained=hf-export/moe_sft_lr8,trust_remote_code=True,tokenizer=hf-export/moe_sft_lr8,max_length=1024 \
   --tasks hellaswag,boolq,piqa,winogrande \
   --batch_size 1 \
   --log_samples \
-  --output_path lm_eval_sample_commonsense > commonsense.log 2>&1
+  --output_path lm_eval_sample_commonsense > sft_lr8_commonsense.log 2>&1
+
+HF_ALLOW_CODE_EVAL=1 uv run lm-eval run --confirm_run_unsafe_code --model hf \
+  --model_args pretrained=hf-export/moe_sft_lr0.9,trust_remote_code=True,tokenizer=hf-export/moe_sft_lr0.9,max_length=1024 \
+  --tasks hellaswag,boolq,piqa,winogrande,arc_easy,arc_challenge,mmlu \
+  --batch_size 1 \
+  --log_samples \
+  --output_path lm_eval_sample_commonsense > moe_sft_lr0.9_all.log 2>&1
 
 # arc_easy,arc_challenge,mmlu
 HF_ALLOW_CODE_EVAL=1 uv run lm-eval run --confirm_run_unsafe_code --model hf \
-  --model_args pretrained=hf-export/moe_std,trust_remote_code=True,tokenizer=hf-export/moe_std,max_length=1024 \
+  --model_args pretrained=hf-export/moe_mid,trust_remote_code=True,tokenizer=hf-export/moe_mid,max_length=1024 \
   --tasks arc_easy,arc_challenge,mmlu \
-  --batch_size 1 > moe_std_arc_mmlu.log 2>&1
+  --batch_size 1 > moe_mid_arc_mmlu.log 2>&1
 
 # gsm8k, humaneval
 
