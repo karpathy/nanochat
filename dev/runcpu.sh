@@ -19,9 +19,6 @@ source .venv/bin/activate
 if [ -z "$WANDB_RUN" ]; then
     WANDB_RUN=dummy
 fi
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 
 # wipe the report
 python -m nanochat.report reset
