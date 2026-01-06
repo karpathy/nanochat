@@ -1,11 +1,6 @@
-"""
-MoE Manager for tracking auxiliary losses across multiple MoE layers
-"""
-import torch
-
 class MOEManager:
     """
-    Basic wrapper class for tracking, storing, and aggregating auxiliary
+    basic wrapper class for tracking, storing, and aggregating auxiliary
     losses across multiple MoE layers in the model
     """
 
@@ -26,10 +21,10 @@ class MOEManager:
         self.router_z_loss.append(loss)
     
     def aggregate_aux_loss(self):
-        return sum(self.aux_loss) if self.aux_loss else torch.tensor(0.0)
-    
+        return sum(self.aux_loss)
+
     def aggregate_router_z_loss(self):
-        return sum(self.router_z_loss) if self.router_z_loss else torch.tensor(0.0)
+        return sum(self.router_z_loss)
 
 MANAGER = MOEManager()
 

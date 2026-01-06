@@ -58,7 +58,7 @@ def get_base_dir():
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
-def download_file_with_lock(url, filename, postprocess_fn=None, timeout=300):
+def download_file_with_lock(url, filename, postprocess_fn=None):
     """
     Downloads a file from a URL to a local path in the base directory.
     Uses a lock file to prevent concurrent downloads among multiple ranks.
@@ -70,19 +70,7 @@ def download_file_with_lock(url, filename, postprocess_fn=None, timeout=300):
     if os.path.exists(file_path):
         return file_path
 
-    # Check if lock file exists and is stale (older than timeout seconds)
-    if os.path.exists(lock_path):
-        import time
-        lock_age = time.time() - os.path.getmtime(lock_path)
-        if lock_age > timeout:
-            logger.warning(f"Lock file {lock_path} is {lock_age:.0f}s old, removing stale lock")
-            try:
-                os.remove(lock_path)
-            except:
-                pass
-
-    # FileLock timeout is for acquiring lock, not for download
-    with FileLock(lock_path, timeout=60):
+    with FileLock(lock_path):
         # Only a single rank can acquire this lock
         # All other ranks block until it is released
 
@@ -90,21 +78,10 @@ def download_file_with_lock(url, filename, postprocess_fn=None, timeout=300):
         if os.path.exists(file_path):
             return file_path
 
-        # Download the content as bytes with timeout
+        # Download the content as bytes
         print(f"Downloading {url}...")
-        import socket
-        socket.setdefaulttimeout(timeout)
-        try:
-            with urllib.request.urlopen(url, timeout=timeout) as response:
-                content = response.read() # bytes
-        except (urllib.error.URLError, socket.timeout) as e:
-            logger.error(f"Failed to download {url}: {e}")
-            # Clean up lock file on failure
-            try:
-                os.remove(lock_path)
-            except:
-                pass
-            raise
+        with urllib.request.urlopen(url) as response:
+            content = response.read() # bytes
 
         # Write to local file
         with open(file_path, 'wb') as f:

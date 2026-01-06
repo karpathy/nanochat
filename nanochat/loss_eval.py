@@ -6,7 +6,7 @@ import torch
 import torch.distributed as dist
 
 @torch.no_grad()
-def evaluate_bpb(model, batches, steps, token_bytes):
+def evaluate_bpb(model, batches, steps, token_bytes=None):
     """
     Instead of the naive 'mean loss', this function returns the bits per byte (bpb),
     which is a tokenization vocab size-independent metric, meaning you are still comparing
@@ -23,43 +23,80 @@ def evaluate_bpb(model, batches, steps, token_bytes):
     In addition to evaluate_loss, we need the token_bytes tensor:
     It is a 1D tensor of shape (vocab_size,), indicating the number of bytes for
     each token id, or 0 if the token is to not be counted (e.g. special tokens).
+    
+    If token_bytes is None (e.g., when using .bin data with tiktoken), we fall back to
+    simple mean loss calculation (which is equivalent to bits per token, not bits per byte).
     """
+    # Get device from model
+    device = next(model.parameters()).device
+    
     # record the losses
-    total_nats = torch.tensor(0.0, dtype=torch.float32, device=model.get_device())
-    total_bytes = torch.tensor(0, dtype=torch.int64, device=model.get_device())
+    total_nats = torch.tensor(0.0, dtype=torch.float32, device=device)
+    total_bytes = torch.tensor(0, dtype=torch.int64, device=device)
+    total_tokens = torch.tensor(0, dtype=torch.int64, device=device)
     batch_iter = iter(batches)
+    
     for _ in range(steps):
         x, y = next(batch_iter)
-        loss2d = model(x, y, loss_reduction='none') # (B, T)
+        # Model returns (logits, loss) tuple
+        logits, loss = model(x, y)
+        # Calculate per-token loss from logits for bpb calculation
+        loss2d = torch.nn.functional.cross_entropy(
+            logits.view(-1, logits.size(-1)), 
+            y.view(-1), 
+            ignore_index=-1, 
+            reduction='none'
+        ).view(y.shape)
         loss2d = loss2d.view(-1) # flatten
         y = y.view(-1) # flatten
-        if (y.int() < 0).any(): # mps does not currently have kernel for < 0 for int64, only int32
-            # slightly more complex code path if some target tokens are ignore_index (e.g. -1)
-            # any target token < 0 is to be ignored: do NOT index token_bytes with negatives
+        
+        if token_bytes is None:
+            # Fallback: simple token counting (for .bin data with tiktoken)
+            # Count valid tokens (not ignored)
             valid = y >= 0
-            y_safe = torch.where(valid, y, torch.zeros_like(y))
-            # map valid targets to their byte length; ignored targets contribute 0 bytes
-            num_bytes2d = torch.where(
-                valid,
-                token_bytes[y_safe],
-                torch.zeros_like(y, dtype=token_bytes.dtype)
-            )
-            total_nats += (loss2d * (num_bytes2d > 0)).sum()
-            total_bytes += num_bytes2d.sum()
+            total_nats += (loss2d * valid.float()).sum()
+            total_tokens += valid.sum()
         else:
-            # fast path: no ignored targets, safe to index directly
-            num_bytes2d = token_bytes[y]
-            total_nats += (loss2d * (num_bytes2d > 0)).sum()
-            total_bytes += num_bytes2d.sum()
+            # Original bpb calculation with token_bytes
+            if (y.int() < 0).any(): # mps does not currently have kernel for < 0 for int64, only int32
+                # slightly more complex code path if some target tokens are ignore_index (e.g. -1)
+                # any target token < 0 is to be ignored: do NOT index token_bytes with negatives
+                valid = y >= 0
+                y_safe = torch.where(valid, y, torch.zeros_like(y))
+                # map valid targets to their byte length; ignored targets contribute 0 bytes
+                num_bytes2d = torch.where(
+                    valid,
+                    token_bytes[y_safe],
+                    torch.zeros_like(y, dtype=token_bytes.dtype)
+                )
+                total_nats += (loss2d * (num_bytes2d > 0)).sum()
+                total_bytes += num_bytes2d.sum()
+            else:
+                # fast path: no ignored targets, safe to index directly
+                num_bytes2d = token_bytes[y]
+                total_nats += (loss2d * (num_bytes2d > 0)).sum()
+                total_bytes += num_bytes2d.sum()
+    
     # sum reduce across all ranks
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     if world_size > 1:
         dist.all_reduce(total_nats, op=dist.ReduceOp.SUM)
         dist.all_reduce(total_bytes, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_tokens, op=dist.ReduceOp.SUM)
+    
     # move both to cpu, calculate bpb and return
     total_nats = total_nats.item()
     total_bytes = total_bytes.item()
-    if total_bytes == 0:
-        return float('inf')
-    bpb = total_nats / (math.log(2) * total_bytes)
-    return bpb
+    total_tokens = total_tokens.item()
+    
+    if token_bytes is None:
+        # Return mean loss (bits per token) when token_bytes not available
+        if total_tokens == 0:
+            return float('inf')
+        return total_nats / (math.log(2) * total_tokens)
+    else:
+        # Return bits per byte
+        if total_bytes == 0:
+            return float('inf')
+        bpb = total_nats / (math.log(2) * total_bytes)
+        return bpb

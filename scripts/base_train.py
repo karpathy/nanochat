@@ -27,13 +27,14 @@ import wandb
 
 # Import from nanoMoE model (keeping train.py's original model)
 import sys
-sys.path.insert(0, '/root/nanoMoE')
-from model import GPTConfig, GPT
+from nanochat.gpt import GPTConfig, GPT
 
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type
-from nanochat.tokenizer import get_tokenizer
+from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.engine import Engine
+from nanochat.dataloader import tokenizing_distributed_data_loader_with_state, tokenizing_distributed_data_loader
+from nanochat.loss_eval import evaluate_bpb
 from scripts.base_eval import evaluate_model
 
 print_banner()
@@ -43,9 +44,6 @@ print_banner()
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
 # Runtime
 device_type = "" # cuda|cpu|mps (empty => autodetect good device type default, in order: CUDA > MPS > CPU)
-# Data loading
-use_bin_data = True # if True, use .bin files (nanoMoE format) instead of parquet/text
-data_dir = "" # directory containing train.bin and val.bin files (only used if use_bin_data=True)
 # Model architecture
 depth = 6 # the depth of the Transformer model to train (matches nanoMoE n_layer=6), rest of the kwargs are derived
 max_seq_len = 1024 # max context length (matches nanoMoE block_size=1024)
@@ -89,12 +87,12 @@ final_lr_frac = 0.1 # final learning rate as fraction of initial learning rate (
 
 resume_from_step = -1 # resume training from this step of the optimization (-1 = disable)
 # Evaluation
-eval_every = 500 # every how many steps to evaluate the model for val bpb (matches nanoMoE eval_interval=500)
+eval_every = 500000000 # every how many steps to evaluate the model for val bpb (matches nanoMoE eval_interval=500)
 eval_iters = 200 # number of iterations to evaluate val loss on (matches nanoMoE eval_iters=200)
 log_interval = 10 # every how many steps to log training metrics (matches nanoMoE log_interval=10)
 core_metric_every = -1 # every how many steps to evaluate the core metric (-1 = disable)
 core_metric_max_per_task = -1 # examples per task in estimating the core metric
-sample_every = 2000 # every how many steps to sample from the model
+sample_every = 200000000 # every how many steps to sample from the model
 save_every = 1000 # every how many steps to save model checkpoints (-1 = disable, and save only at the end of the run)
 # System
 compile = True # use PyTorch 2.0 to compile the model to be faster (matches nanoMoE)
@@ -130,11 +128,10 @@ use_dummy_wandb = run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=run, config=user_config)
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
-# Use tiktoken GPT-2 tokenizer for compatibility with nanoMoE .bin data format
-tokenizer = get_tokenizer(use_tiktoken_gpt2=True)
+tokenizer = get_tokenizer()
+token_bytes = get_token_bytes(device=device)
 vocab_size = tokenizer.get_vocab_size()
 print0(f"Vocab size: {vocab_size:,}")
-print0("Using tiktoken GPT-2 tokenizer (nanoMoE compatible)")
 
 # Model kwargs are derived from the desired depth of the model
 # For nanoMoE, we use n_layer, n_head, n_embd directly
@@ -162,26 +159,17 @@ print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {
 # -----------------------------------------------------------------------------
 # Initialize the Model
 
-# Create a new model with random weights (using nanoMoE GPT)
-if not data_dir:
-    # Default to nanoMoE data directory structure
-    data_dir = "/root/nanoMoE/data/openwebtext"
+# Get base directory for data and checkpoints
+base_dir = get_base_dir()
 
-# Attempt to derive vocab_size from the dataset
-meta_path = os.path.join(data_dir, 'meta.pkl')
-meta_vocab_size = None
-if os.path.exists(meta_path):
-    with open(meta_path, 'rb') as f:
-        meta = pickle.load(f)
-    meta_vocab_size = meta['vocab_size']
-    print0(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
-
+# Use vocab_size from tokenizer (already obtained above)
+# This ensures the model vocab_size matches the tokenizer vocab_size
 model_config_kwargs = dict(
     n_layer=n_layer, 
     n_head=n_head, 
     n_embd=n_embd,
     block_size=max_seq_len, 
-    vocab_size=meta_vocab_size if meta_vocab_size is not None else 50304, 
+    vocab_size=vocab_size,  # Use vocab_size from tokenizer, not hardcoded 
     dropout=dropout, 
     bias=bias,
     # MoE parameters (matching train_nano_moe.py)
@@ -206,10 +194,9 @@ model = GPT(gptconf)
 model.to(device)
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
-base_dir = get_base_dir()
 output_dirname = model_tag if model_tag else f"d{depth}" # e.g. d6
 checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
-resuming = resume_from_step != -1
+resuming = False
 # if resuming:
 #     print0(f"Resuming optimization from step {resume_from_step}")
 #     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, resume_from_step, device, load_optimizer=True, rank=ddp_rank)
@@ -272,48 +259,11 @@ print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 #     del optimizer_data # free up the memory
 
 # -----------------------------------------------------------------------------
-# Data loading (nanoMoE style - simple get_batch function)
-if not data_dir:
-    # Default to nanoMoE data directory structure
-    data_dir = "/root/nanoMoE/data/openwebtext"
-print0(f"Using .bin data loader from: {data_dir}")
-
-# poor man's data loader (matching nanoMoE/train.py)
-def get_batch(split):
-    # We recreate np.memmap every batch to avoid a memory leak, as per
-    # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
-    if split == 'train':
-        data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
-    else:
-        data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
-    ix = torch.randint(len(data) - max_seq_len, (device_batch_size,))
-    x = torch.stack([torch.from_numpy((data[i:i+max_seq_len]).astype(np.int64)) for i in ix])
-    y = torch.stack([torch.from_numpy((data[i+1:i+1+max_seq_len]).astype(np.int64)) for i in ix])
-    if device_type == 'cuda':
-        # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
-        x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
-    else:
-        x, y = x.to(device), y.to(device)
-    return x, y
-
-# helps estimate an arbitrarily accurate loss over either split using many batches (matching nanoMoE/train.py)
-@torch.no_grad()
-def estimate_loss():
-    out = {}
-    model.eval()
-    for split in ['train', 'val']:
-        losses = torch.zeros(eval_iters)
-        for k in range(eval_iters):
-            X, Y = get_batch(split)
-            with autocast_ctx:
-                _, loss = model(X, Y)
-            losses[k] = loss.item()
-        out[split] = losses.mean()
-    model.train()
-    return out
-
-# fetch the very first batch
-x, y = get_batch('train')
+# Initialize the DataLoaders for train/val (like nanochat-run)
+dataloader_resume_state_dict = None if not resuming else meta_data.get("dataloader_state_dict")
+train_loader = tokenizing_distributed_data_loader_with_state(device_batch_size, max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
+build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)
+x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
 # Set up hyperparameter schedulers
@@ -361,22 +311,23 @@ while True:
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
-    # once in a while: evaluate the val loss (all ranks participate, matching nanoMoE/train.py)
-    if last_step or step % eval_every == 0:
-        losses = estimate_loss()
-        val_loss = losses['val'].item()
-        train_loss_eval = losses['train'].item()
-        print0(f"Step {step:05d} | Train loss: {train_loss_eval:.4f}, Val loss: {val_loss:.4f}")
-        if val_loss < min_val_bpb:
-            min_val_bpb = val_loss
+    # once in a while: evaluate the val bpb (all ranks participate)
+    if step % eval_every == 0:
+        model.eval()
+        val_loader = build_val_loader()
+        eval_steps = eval_iters  # use eval_iters as number of evaluation steps
+        with autocast_ctx:
+            val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
+        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
+        if val_bpb < min_val_bpb:
+            min_val_bpb = val_bpb
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
-            "val/loss": val_loss,
-            "train/loss_eval": train_loss_eval,
+            "val/bpb": val_bpb,
         })
-        val_bpb = val_loss  # for compatibility with existing code
+        model.train()
 
     # once in a while: estimate the CORE metric (all ranks participate)
     # use the original uncompiled model because the inputs keep changing shape
@@ -433,6 +384,7 @@ while True:
                     "smooth_train_loss": smooth_train_loss,
                     "total_training_time": total_training_time,
                 },
+                "dataloader_state_dict": dataloader_state_dict, # for resuming data loading
             },
             rank=ddp_rank,
         )
@@ -457,7 +409,7 @@ while True:
             _, loss = model(x, y)  # nanoMoE model returns (logits, loss)
             loss = loss / grad_accum_steps # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
-        x, y = get_batch('train')
+        x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
         # backward pass, with gradient scaling if training in fp16
         scaler.scale(loss).backward()
     # clip the gradient

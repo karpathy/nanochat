@@ -8,10 +8,10 @@ import json
 import logging
 import torch
 
-from nanochat_moe.common import get_base_dir
-from nanochat_moe.gpt import GPT, GPTConfig
-from nanochat_moe.tokenizer import get_tokenizer
-from nanochat_moe.common import setup_default_logging
+from nanochat.common import get_base_dir
+from nanochat.gpt import GPT, GPTConfig
+from nanochat.tokenizer import get_tokenizer
+from nanochat.common import setup_default_logging
 
 # Set up logging
 setup_default_logging()
@@ -79,7 +79,7 @@ def build_model(checkpoint_dir, step, device, phase):
         model = GPT(model_config)
     # Load the model state
     model.to_empty(device=device)
-    model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
+    # Weights are already initialized in GPT.__init__ via self.apply(self._init_weights)
     model.load_state_dict(model_data, strict=True, assign=True)
     # Put the model in the right training phase / mode
     if phase == "eval":

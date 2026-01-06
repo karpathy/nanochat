@@ -377,10 +377,84 @@ class RustBPETokenizer:
         return ids
 
 # -----------------------------------------------------------------------------
+# Tiktoken GPT-2 Tokenizer (for compatibility with nanoMoE)
+class TiktokenGPT2Tokenizer:
+    """Wrapper around tiktoken GPT-2 tokenizer for compatibility with nanoMoE"""
+    
+    def __init__(self, enc=None):
+        import tiktoken
+        self.enc = enc if enc is not None else tiktoken.get_encoding("gpt2")
+        # GPT-2 uses 50256 as EOT token, which we can use as BOS
+        self.bos_token_id = self.enc.eot_token  # 50256
+    
+    @classmethod
+    def from_pretrained(cls, encoding_name="gpt2"):
+        import tiktoken
+        enc = tiktoken.get_encoding(encoding_name)
+        return cls(enc)
+    
+    def get_vocab_size(self):
+        return self.enc.n_vocab
+    
+    def get_special_tokens(self):
+        # GPT-2 doesn't have special tokens in the same way, but has EOT
+        return []
+    
+    def id_to_token(self, id):
+        try:
+            return self.enc.decode([id])
+        except:
+            return f"<unk_{id}>"
+    
+    def encode_special(self, text):
+        # GPT-2 doesn't have special tokens, return EOT token as fallback
+        return self.enc.eot_token
+    
+    def get_bos_token_id(self):
+        return self.bos_token_id
+    
+    def encode(self, text, prepend=None, append=None, num_threads=1):
+        """
+        Encode text using tiktoken GPT-2 tokenizer.
+        prepend/append can be token ids or None.
+        """
+        if isinstance(text, str):
+            ids = self.enc.encode_ordinary(text)  # encode_ordinary ignores special tokens
+            if prepend is not None:
+                prepend_id = prepend if isinstance(prepend, int) else self.get_bos_token_id()
+                ids = [prepend_id] + ids
+            if append is not None:
+                append_id = append if isinstance(append, int) else self.enc.eot_token
+                ids.append(append_id)
+            return ids
+        elif isinstance(text, list):
+            return [self.encode(t, prepend=prepend, append=append, num_threads=num_threads) for t in text]
+        else:
+            raise ValueError(f"Invalid input type: {type(text)}")
+    
+    def __call__(self, *args, **kwargs):
+        return self.encode(*args, **kwargs)
+    
+    def decode(self, ids):
+        if isinstance(ids, list) and len(ids) > 0 and isinstance(ids[0], list):
+            # List of lists
+            return [self.enc.decode(seq) for seq in ids]
+        else:
+            # Single sequence
+            return self.enc.decode(ids)
+
+# -----------------------------------------------------------------------------
 # nanochat-specific convenience functions
 
-def get_tokenizer():
-    from nanochat_moe.common import get_base_dir
+def get_tokenizer(use_tiktoken_gpt2=False):
+    """
+    Get tokenizer. If use_tiktoken_gpt2=True, returns TiktokenGPT2Tokenizer for nanoMoE compatibility.
+    Otherwise returns the default nanochat tokenizer.
+    """
+    if use_tiktoken_gpt2:
+        return TiktokenGPT2Tokenizer.from_pretrained("gpt2")
+    
+    from nanochat.common import get_base_dir
     base_dir = get_base_dir()
     tokenizer_dir = os.path.join(base_dir, "tokenizer")
     # return HuggingFaceTokenizer.from_directory(tokenizer_dir)
@@ -388,7 +462,7 @@ def get_tokenizer():
 
 def get_token_bytes(device="cpu"):
     import torch
-    from nanochat_moe.common import get_base_dir
+    from nanochat.common import get_base_dir
     base_dir = get_base_dir()
     tokenizer_dir = os.path.join(base_dir, "tokenizer")
     token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
