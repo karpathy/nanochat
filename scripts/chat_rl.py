@@ -6,7 +6,7 @@ simpler and more similar to just REINFORCE:
 
 1) Delete trust region, so there is no KL regularization to a reference model
 2) We are on policy, so there's no need for PPO ratio+clip.
-3) We use GAPO style normalization that is token-level, not sequence-level.
+3) We use DAPO style normalization that is token-level, not sequence-level.
 4) Instead of z-score normalization (r - mu)/sigma, only use (r - mu) as the advantage.
 
 1 GPU:
