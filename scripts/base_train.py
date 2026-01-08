@@ -39,6 +39,16 @@ from scripts.base_eval import evaluate_model
 
 print_banner()
 
+# Allow env overrides for common LR knobs used in cluster runs.
+def _get_env_float(name, default):
+    val = os.getenv(name)
+    if val is None or val == "":
+        return default
+    try:
+        return float(val)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {name} env value: {val}") from exc
+
 # -----------------------------------------------------------------------------
 # User settings
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
@@ -75,14 +85,14 @@ embedding_lr = 0.0006 # learning rate for the embedding parameters (Adam)
 unembedding_lr = 0.0006 # learning rate for the unembedding parameters (Adam)
 weight_decay = 0.1 # weight decay (matches nanoMoE weight_decay=1e-1)
 matrix_lr = 0.0006 # learning rate for the matrix parameters (Muon)
-learning_rate = 6e-4 # learning rate for AdamW optimizer (matches nanoMoE: 6e-4)
+learning_rate = _get_env_float("LEARNING_RATE", 6e-4) # learning rate for AdamW optimizer (matches nanoMoE: 6e-4)
 betas = (0.9, 0.95) # betas for AdamW optimizer (matches nanoMoE: beta1=0.9, beta2=0.95)
 grad_clip = 1.0 # gradient clipping value (0.0 = disabled)
 decay_lr = True # whether to decay the learning rate (matches train_nano_moe.py)
 # Learning rate decay parameters (matching train.py and train_nano_moe.py)
 warmup_iters = 2000 # how many steps to warm up for (matches train.py default)
 lr_decay_iters = 50000 # learning rate decay iterations (matches train_nano_moe.py)
-min_lr = 6e-5 # minimum learning rate (matches train.py default, which equals 6e-4 * 0.1)
+min_lr = _get_env_float("MIN_LR", 6e-5) # minimum learning rate (matches train.py default, which equals 6e-4 * 0.1)
 final_lr_frac = 0.1 # final learning rate as fraction of initial learning rate (for compatibility)
 
 resume_from_step = -1 # resume training from this step of the optimization (-1 = disable)
@@ -93,11 +103,11 @@ log_interval = 10 # every how many steps to log training metrics (matches nanoMo
 core_metric_every = -1 # every how many steps to evaluate the core metric (-1 = disable)
 core_metric_max_per_task = -1 # examples per task in estimating the core metric
 sample_every = 200000000 # every how many steps to sample from the model
-save_every = 1000 # every how many steps to save model checkpoints (-1 = disable, and save only at the end of the run)
+save_every = 10000 # every how many steps to save model checkpoints (-1 = disable, and save only at the end of the run)
 # System
 compile = True # use PyTorch 2.0 to compile the model to be faster (matches nanoMoE)
 # Output
-model_tag = "" # optionally override the model tag for the output checkpoint directory name
+model_tag = f"d6_min_lr{min_lr}_max_lr{learning_rate}" # optionally override the model tag for the output checkpoint directory name
 # now allow CLI to override the settings via the configurator lol
 
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
@@ -345,26 +355,6 @@ while True:
         })
         model.train()
 
-    # once in a while: sample from the model (only on master process)
-    # use the original uncompiled model because the inputs keep changing shape
-    if master_process and (last_step or (step > 0 and step % sample_every == 0)):
-        model.eval()
-        prompts = [
-            "The capital of France is",
-            "The chemical symbol of gold is",
-            "If yesterday was Friday, then tomorrow will be",
-            "The opposite of hot is",
-            "The planets of the solar system are:",
-            "My favorite color is",
-            "If 5*x + 3 = 13, then x is",
-        ]
-        engine = Engine(orig_model, tokenizer) # use orig_model to avoid recompilation
-        for prompt in prompts:
-            tokens = tokenizer(prompt, prepend="<|bos|>")
-            with autocast_ctx:
-                sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
-            print0(tokenizer.decode(sample[0]))
-        model.train()
 
     # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step
     if last_step or (step > 0 and step != resume_from_step and save_every > 0 and step % save_every == 0):

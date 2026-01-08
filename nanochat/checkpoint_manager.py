@@ -20,6 +20,14 @@ def log0(message):
     if int(os.environ.get('RANK', 0)) == 0:
         logger.info(message)
 
+def _optimizer_path(checkpoint_dir, step):
+    return os.path.join(checkpoint_dir, f"optim_{step:06d}.pt")
+
+
+def _legacy_optimizer_path(checkpoint_dir, step, rank):
+    return os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
+
+
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
     if rank == 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
@@ -32,11 +40,11 @@ def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data,
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta_data, f, indent=2)
         logger.info(f"Saved metadata to: {meta_path}")
-    # Note that optimizer state is sharded across ranks, so each rank must save its own.
-    if optimizer_data is not None:
-        optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
-        torch.save(optimizer_data, optimizer_path)
-        logger.info(f"Saved optimizer state to: {optimizer_path}")
+        # Save optimizer state once per step (non-sharded optimizer).
+        if optimizer_data is not None:
+            optimizer_path = _optimizer_path(checkpoint_dir, step)
+            torch.save(optimizer_data, optimizer_path)
+            logger.info(f"Saved optimizer state to: {optimizer_path}")
 
 def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
     # Load the model state
@@ -45,7 +53,11 @@ def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
     # Load the optimizer state if requested
     optimizer_data = None
     if load_optimizer:
-        optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
+        optimizer_path = _optimizer_path(checkpoint_dir, step)
+        if not os.path.exists(optimizer_path):
+            optimizer_path = _legacy_optimizer_path(checkpoint_dir, step, rank)
+            if rank != 0 and not os.path.exists(optimizer_path):
+                optimizer_path = _legacy_optimizer_path(checkpoint_dir, step, 0)
         optimizer_data = torch.load(optimizer_path, map_location=device)
     # Load the metadata
     meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
