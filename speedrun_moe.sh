@@ -159,11 +159,15 @@ fi
 
 MIN_LR=${MIN_LR:-6e-5}
 LEARNING_RATE=${LEARNING_RATE:-6e-4}
+DEPTH=${DEPTH:-${N_LAYER:-6}}
+MODEL_TAG=${MODEL_TAG:-d${DEPTH}_min_lr${MIN_LR}_max_lr${LEARNING_RATE}}
 # Number of processes/GPUs to use
 NPROC_PER_NODE=8
 # Master port for distributed training (default: 29500)
 # Set this to avoid port conflicts when running multiple torchrun tasks simultaneously
 # Example: MASTER_PORT=29501 bash speedrun.sh
 MASTER_PORT=${MASTER_PORT:-29501}
+LOG_TAG=${LOG_TAG:-$(date +%Y%m%d_%H%M%S)}
+LOG_FILE=${LOG_FILE:-$NANOCHAT_BASE_DIR/${MODEL_TAG}_${LOG_TAG}.log}
 # # # pretrain the d20 model
-MASTER_PORT=$MASTER_PORT torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train >> $NANOCHAT_BASE_DIR/d6_min_lr${MIN_LR}_max_lr${LEARNING_RATE}.log 2>&1
+MASTER_PORT=$MASTER_PORT torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train >> "$LOG_FILE" 2>&1
