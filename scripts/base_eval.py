@@ -13,6 +13,7 @@ import os
 import csv
 import time
 import json
+
 import yaml
 import shutil
 import random
@@ -23,9 +24,10 @@ from contextlib import nullcontext
 import torch
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
-from nanochat.tokenizer import HuggingFaceTokenizer
+from nanochat.tokenizer import HuggingFaceTokenizer, RustBPETokenizer
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
+from nanochat.gpt import GPT
 
 # -----------------------------------------------------------------------------
 # nanochat specific function dealing with I/O etc.
@@ -33,7 +35,7 @@ from nanochat.core_eval import evaluate_task
 # ~162MB of data needed to evaluate the CORE metric
 EVAL_BUNDLE_URL = "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip"
 
-def place_eval_bundle(file_path):
+def place_eval_bundle(file_path: str):
     # here file_path is the path to the eval_bundle.zip file
     # we need to unzip it and place it in the base directory
     base_dir = get_base_dir()
@@ -45,7 +47,40 @@ def place_eval_bundle(file_path):
         shutil.move(extracted_bundle_dir, eval_bundle_dir)
     print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
-def evaluate_model(model, tokenizer, device, max_per_task=-1):
+# -----------------------------------------------------------------------------
+# HuggingFace loading utilities and light wrappers for a model
+
+class ModelWrapper:
+    """Lightweight wrapper for a HuggingFace model"""
+
+    def __init__(self, model: "AutoModelForCausalLM", max_seq_len: int | None = None):
+        self.model = model
+        self.max_seq_len = max_seq_len
+
+    def __call__(self, input_ids: torch.Tensor) -> torch.Tensor:
+        outputs = self.model(input_ids)
+        logits = outputs.logits
+        return logits
+
+def load_hf_model(hf_path: str, device: torch.device) -> tuple[ModelWrapper, HuggingFaceTokenizer]:
+    print0(f"Loading model from: {hf_path}")
+    # Load the model
+    from transformers import AutoModelForCausalLM
+    model = AutoModelForCausalLM.from_pretrained(hf_path)
+    model.to(device)
+    model.eval()
+    max_seq_len = 1024 if "openai-community/gpt2" in hf_path else None
+    model = ModelWrapper(model, max_seq_len=max_seq_len)
+    # Load the tokenizer
+    tokenizer = HuggingFaceTokenizer.from_pretrained(hf_path)
+    return model, tokenizer
+
+def evaluate_model(
+    model: GPT | ModelWrapper,
+    tokenizer: RustBPETokenizer | HuggingFaceTokenizer,
+    device: torch.device,
+    max_per_task: int = -1
+) -> dict[str , float | dict[str , float]]:
     """
     Evaluate a base model on the CORE benchmark.
     - max_per_task: crop the data to this many examples per task for testing (-1 = disable)
@@ -116,32 +151,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     }
     return out
 
-# -----------------------------------------------------------------------------
-# HuggingFace loading utilities and light wrappers for a model
 
-class ModelWrapper:
-    """Lightweight wrapper for a HuggingFace model"""
-    def __init__(self, model, max_seq_len=None):
-        self.model = model
-        self.max_seq_len = max_seq_len
-
-    def __call__(self, input_ids):
-        outputs = self.model(input_ids)
-        logits = outputs.logits
-        return logits
-
-def load_hf_model(hf_path: str, device):
-    print0(f"Loading model from: {hf_path}")
-    # Load the model
-    from transformers import AutoModelForCausalLM
-    model = AutoModelForCausalLM.from_pretrained(hf_path)
-    model.to(device)
-    model.eval()
-    max_seq_len = 1024 if "openai-community/gpt2" in hf_path else None
-    model = ModelWrapper(model, max_seq_len=max_seq_len)
-    # Load the tokenizer
-    tokenizer = HuggingFaceTokenizer.from_pretrained(hf_path)
-    return model, tokenizer
 
 # -----------------------------------------------------------------------------
 def main():
@@ -156,6 +166,7 @@ def main():
     # distributed / precision setup
     device_type = autodetect_device_type()
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+
     autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 
     # Load model and tokenizer from command line or from file system

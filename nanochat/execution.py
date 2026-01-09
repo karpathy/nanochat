@@ -30,7 +30,8 @@ import platform
 import signal
 import tempfile
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Any, ContextManager
+
 
 # -----------------------------------------------------------------------------
 
@@ -87,7 +88,7 @@ def capture_io():
 
 
 @contextlib.contextmanager
-def create_tempdir():
+def create_tempdir() -> ContextManager[str]:
     with tempfile.TemporaryDirectory() as dirname:
         with chdir(dirname):
             yield dirname
@@ -119,7 +120,7 @@ class redirect_stdin(contextlib._RedirectStream):  # type: ignore
 
 
 @contextlib.contextmanager
-def chdir(root):
+def chdir(root: str):
     if root == ".":
         yield
         return
@@ -211,7 +212,7 @@ def reliability_guard(maximum_memory_bytes: Optional[int] = None):
     sys.modules["tkinter"] = None
 
 
-def _unsafe_execute(code: str, timeout: float, maximum_memory_bytes: Optional[int], result_dict):
+def _unsafe_execute(code: str, timeout: float, maximum_memory_bytes: Optional[int], result_dict: dict[str, Any]):
     """Execute code in a subprocess with safety guards. Results are written to result_dict."""
     with create_tempdir():
 

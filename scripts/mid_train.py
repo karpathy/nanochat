@@ -12,6 +12,8 @@ torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_
 import argparse
 from collections import deque
 import os
+from typing import Literal
+
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
@@ -125,7 +127,8 @@ val_dataset = TaskMixture([
 # these two global variables and update them from within the data generator.
 last_step = False # we will toggle this to True when we reach the end of the training dataset
 approx_progress = 0.0 # will go from 0 to 1 over the course of the epoch
-def mid_data_generator(split):
+
+def mid_data_generator(split: Literal["train", "val"]):
     global last_step, approx_progress
     assert split in {"train", "val"}, "split must be 'train' or 'val'"
     dataset = train_dataset if split == "train" else val_dataset
@@ -171,12 +174,12 @@ build_val_loader = lambda: mid_data_generator("val")
 progress = 0 # will go from 0 to 1 over the course of the epoch
 
 # Learning rate scheduler
-def get_lr_multiplier(progress):
+def get_lr_multiplier(progress: float) -> float:
     # first 80% of training: no decay, then linearly ramp down to 0.
     return 1 if progress < 0.8 else 1 - (progress - 0.8) / 0.2
 
 # Momentum scheduler for Muon optimizer
-def get_muon_momentum(it):
+def get_muon_momentum(it: int) -> float:
     frac = min(it / 300, 1)
     momentum = (1 - frac) * 0.85 + frac * 0.95
     return momentum

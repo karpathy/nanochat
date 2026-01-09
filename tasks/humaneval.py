@@ -5,11 +5,13 @@ It is a coding benchmark.
 """
 
 import re
+from typing import Literal
+
 from datasets import load_dataset
 from nanochat.execution import execute_code
 from tasks.common import Task
 
-def extract_imports(prompt):
+def extract_imports(prompt: str) -> str:
     """Extract import statements from the beginning of a code block."""
     imports = []
     for line in prompt.split('\n'):
@@ -21,7 +23,7 @@ def extract_imports(prompt):
             break
     return '\n'.join(imports)
 
-def extract_program(completion):
+def extract_program(completion: str) -> str:
     """
     Extract Python code from LLM completion.
 
@@ -45,19 +47,18 @@ def extract_program(completion):
     return completion.strip()
 
 class HumanEval(Task):
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.ds = load_dataset("openai/openai_humaneval", split="test").shuffle(seed=42)
 
     @property
-    def eval_type(self):
+    def eval_type(self) -> Literal["generative"]:
         return 'generative'
 
-    def num_examples(self):
+    def num_examples(self) -> int:
         return len(self.ds)
 
-    def get_example(self, index):
+    def get_example(self, index: int) -> dict[str, list[dict[str, str]] | str]:
         """ Get a single problem from the dataset. """
         row = self.ds[index]
         prompt = row['prompt'] # prompts in HumanEval are the beginning of the program
@@ -76,7 +77,7 @@ class HumanEval(Task):
         }
         return conversation
 
-    def evaluate(self, conversation, completion):
+    def evaluate(self, conversation: dict[str, list[dict[str, str]] | str], completion: str) -> bool:
         """ Given (conversation, completion), return boolean success of the completion. """
         # the prompt will contain the imports and the function signature
         imports = extract_imports(conversation['messages'][0]['content'])

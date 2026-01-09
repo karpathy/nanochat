@@ -2,12 +2,14 @@
 Muon optimizer from Keller et al.
 Also a lot of borrowing of ideas from modded-nanogpt.
 """
+from typing import Iterable
+
 import torch
 from torch import Tensor
 import torch.distributed as dist
 
 @torch.compile
-def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
+def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int) -> torch.Tensor:
     """
     Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
     quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
@@ -57,7 +59,13 @@ class Muon(torch.optim.Optimizer):
         nesterov: Whether to use Nesterov-style momentum in the internal SGD. (recommended)
         ns_steps: The number of Newton-Schulz iteration steps to use.
     """
-    def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True, ns_steps=5):
+    def __init__(self,
+        params: Iterable[torch.Tensor],
+        lr: float = 0.02,
+        momentum: float = 0.95,
+        nesterov: bool = True,
+        ns_steps: int = 5,
+    ):
         defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
         params: list[Tensor] = [*params]
         param_groups = []
@@ -104,8 +112,13 @@ class DistMuon(torch.optim.Optimizer):
         nesterov: if True, Nesterov-style update (g <- lerp(g, buf, momentum)); else use buf
         ns_steps: number of Newton–Schulz iterations for the orthogonalization
     """
-    def __init__(self, params, lr: float = 0.02, momentum: float = 0.95,
-                 nesterov: bool = True, ns_steps: int = 5):
+    def __init__(
+        self,
+        params: Iterable[torch.Tensor],
+        lr: float = 0.02,
+        momentum: float = 0.95,
+        nesterov: bool = True, ns_steps: int = 5,
+    ):
         defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
         params = list(params)
         assert all(p.ndim == 2 for p in params), "Muon expects 2D parameters only"
