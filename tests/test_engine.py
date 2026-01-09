@@ -4,9 +4,26 @@ Test Engine class. Example run:
 python -m pytest tests/test_engine.py -v
 """
 
+import os
+import json
 import torch
-from nanochat.engine import KVCache, Engine
+import pytest
 from dataclasses import dataclass
+
+from huggingface_hub import snapshot_download
+from nanochat.engine import KVCache, Engine
+from nanochat.gpt import GPT, GPTConfig
+from nanochat.tokenizer import RustBPETokenizer
+from nanochat.checkpoint_manager import find_last_step
+
+# -----------------------------------------------------------------------------
+# Ensure deterministic behavior for reproducible tests
+# See: https://docs.pytorch.org/docs/stable/notes/randomness.html
+
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  # Required for CUDA >= 10.2 determinism
+torch.manual_seed(0)
+torch.use_deterministic_algorithms(True)
+torch.backends.cudnn.benchmark = False
 
 
 # -----------------------------------------------------------------------------
@@ -36,7 +53,7 @@ class MockModel:
     def get_device(self):
         return self._device
 
-    def forward(self, ids, kv_cache=None):
+    def forward(self, ids, kv_cache=None, attention_mask=None):
         """Return uniform logits so sampling is spread across vocab."""
         B, T = ids.shape
         # Simulate what a real transformer does: insert k,v into the cache for each layer
@@ -84,6 +101,80 @@ class ByteTokenizer:
         # Filter out special tokens before decoding
         byte_tokens = [t for t in tokens if t < 256]
         return bytes(byte_tokens).decode("utf-8", errors="replace")
+
+
+def get_model_and_tokenizer(use_pretrained=False):
+    """
+    Get a model and tokenizer for testing. Requires CUDA.
+
+    Args:
+        use_pretrained: If True, download and load the pretrained nanochat-d34 model.
+                       If False, create a small randomly initialized model.
+
+    Returns:
+        (model, tokenizer) tuple
+    """
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is required for these tests")
+    device = torch.device("cuda")
+
+    if use_pretrained:
+        # Download the checkpoint
+        cache_dir = snapshot_download(repo_id="karpathy/nanochat-d34")
+
+        # Find the last step
+        step = find_last_step(cache_dir)
+
+        # Load model data
+        model_path = os.path.join(cache_dir, f"model_{step:06d}.pt")
+        model_data = torch.load(model_path, map_location=device)
+
+        # Fix torch compile key prefix
+        model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
+
+        # Convert all tensors to bfloat16 for consistent dtypes (checkpoint has mixed bfloat16/float32)
+        model_data = {
+            k: v.bfloat16() if v.is_floating_point() else v
+            for k, v in model_data.items()
+        }
+
+        # Load metadata
+        meta_path = os.path.join(cache_dir, f"meta_{step:06d}.json")
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta_data = json.load(f)
+
+        # Build model
+        model_config = GPTConfig(**meta_data["model_config"])
+        with torch.device("meta"):
+            model = GPT(model_config)
+        model.to_empty(device=device)
+        model.init_weights()
+        model.load_state_dict(model_data, strict=True, assign=True)
+        model.eval()
+
+        # Load tokenizer from the checkpoint directory
+        tokenizer = RustBPETokenizer.from_directory(cache_dir)
+    else:
+        # Small model for fast testing
+        config = GPTConfig(
+            sequence_len=256,
+            vocab_size=262,  # 256 bytes + 6 special tokens
+            n_layer=2,
+            n_head=4,
+            n_kv_head=4,
+            n_embd=64,
+        )
+        model = GPT(config)
+        model.init_weights()
+        model = model.to(device)
+        model.eval()
+        tokenizer = ByteTokenizer()
+
+    return model, tokenizer
+
+
+# -----------------------------------------------------------------------------
+# KVCache tests
 
 def test_kv_cache_resize():
     """
@@ -185,3 +276,134 @@ def test_multi_sample_first_token_diversity():
         f"With uniform logits, this is statistically impossible (~10^-36 probability) "
         f"unless tokens are being broadcast instead of independently sampled."
     )
+
+
+# -----------------------------------------------------------------------------
+# Batched generation tests
+
+@pytest.mark.parametrize("use_pretrained", [False, True])
+def test_batched_generation_consistency(use_pretrained):
+    """
+    Test that batched generation produces the same results as individual generation.
+
+    This test:
+    1. Generates from each prompt individually (existing single-prompt behavior)
+    2. Generates from all prompts together in a batch (new batched behavior)
+    3. Asserts that the results match exactly
+
+    Uses temperature=0.0 for deterministic outputs.
+    """
+    try:
+        model, tokenizer = get_model_and_tokenizer(use_pretrained=use_pretrained)
+    except Exception as e:
+        if use_pretrained:
+            pytest.skip(f"Could not load pretrained model: {e}")
+        raise
+
+    engine = Engine(model, tokenizer)
+
+    # Define test prompts with different lengths
+    bos = tokenizer.get_bos_token_id()
+    prompts = [
+        tokenizer.encode("hi", prepend=bos),
+        tokenizer.encode("the capital of France is", prepend=bos),
+        tokenizer.encode("hello, I'm a", prepend=bos),
+    ]
+
+    num_samples = 2
+    # Deterministic decoding
+    generation_kwargs = dict(max_tokens=10, temperature=0.0, seed=0)
+
+    # 1) Generate individually for each prompt
+    individual_results = []
+    individual_masks = []
+    for prompt in prompts:
+        results, masks = engine.generate_batch(prompt, num_samples=num_samples, **generation_kwargs)
+        individual_results.append(results)  # results is list[list[int]] of shape (num_samples, seq_len)
+        individual_masks.append(masks)  # masks is list[list[int]] of shape (num_samples, seq_len)
+
+    # 2) Generate batched (all prompts together)
+    batched_results, batched_masks = engine.generate_batch(prompts, num_samples=num_samples, **generation_kwargs)
+
+    # 3) Assert results match
+    assert len(individual_results) == len(batched_results), \
+        f"Prompt count mismatch: {len(individual_results)} vs {len(batched_results)}"
+
+    for prompt_idx, (ind_samples, batch_samples, ind_masks, batch_masks) in enumerate(
+            zip(individual_results, batched_results, individual_masks, batched_masks)):
+        assert len(ind_samples) == len(batch_samples), f"Sample count mismatch for prompt {prompt_idx}"
+        for sample_idx, (ind_result, batch_result, ind_mask, batch_mask) in enumerate(
+                zip(ind_samples, batch_samples, ind_masks, batch_masks)):
+            assert ind_result == batch_result, (
+                f"Mismatch for prompt {prompt_idx}, sample {sample_idx}:\n"
+                f"  Individual: {ind_result}\n"
+                f"  Batched:    {batch_result}"
+            )
+            assert ind_mask == batch_mask, (
+                f"Mask mismatch for prompt {prompt_idx}, sample {sample_idx}:\n"
+                f"  Individual: {ind_mask}\n"
+                f"  Batched:    {batch_mask}"
+            )
+
+
+def test_batched_generation_single_prompt():
+    """
+    Test that batched generation with a single prompt in the batch
+    produces the same result as non-batched single prompt generation.
+    """
+    model, tokenizer = get_model_and_tokenizer(use_pretrained=False)
+    engine = Engine(model, tokenizer)
+
+    bos = tokenizer.get_bos_token_id()
+    prompt = tokenizer.encode("the capital of France is", prepend=bos)
+    num_samples = 3
+    generation_kwargs = dict(max_tokens=8, temperature=0.0, seed=0)
+
+    # Generate non-batched: returns shape (num_samples, seq_len)
+    single_results, single_masks = engine.generate_batch(prompt, num_samples=num_samples, **generation_kwargs)
+
+    # Generate batched with single prompt: returns shape (1, num_samples, seq_len)
+    batched_results, batched_masks = engine.generate_batch([prompt], num_samples=num_samples, **generation_kwargs)
+
+    assert single_results == batched_results[0], (
+        f"Single vs batched single-prompt mismatch:\n"
+        f"  Single:  {single_results}\n"
+        f"  Batched: {batched_results[0]}"
+    )
+    assert single_masks == batched_masks[0], (
+        f"Single vs batched single-prompt mask mismatch:\n"
+        f"  Single:  {single_masks}\n"
+        f"  Batched: {batched_masks[0]}"
+    )
+
+
+def test_batched_generation_stochastic():
+    """
+    Test that batched generation with temperature > 0 produces diverse outputs.
+    """
+    model, tokenizer = get_model_and_tokenizer(use_pretrained=False)
+    engine = Engine(model, tokenizer)
+
+    bos = tokenizer.get_bos_token_id()
+    prompts = [
+        tokenizer.encode("hi", prepend=bos),
+        tokenizer.encode("the capital of France is", prepend=bos),
+    ]
+
+    num_samples = 4
+    generation_kwargs = dict(max_tokens=64, temperature=1.0, seed=0)
+
+    # Generate batched: returns shape (num_prompts, num_samples, seq_len)
+    results, _ = engine.generate_batch(prompts, num_samples=num_samples, **generation_kwargs)
+
+    # Check structure
+    assert len(results) == len(prompts)
+
+    # Check that samples within each prompt are diverse (not all identical)
+    for prompt_idx, samples in enumerate(results):
+        assert len(samples) == num_samples
+        unique_samples = set(tuple(s) for s in samples)
+        assert len(unique_samples) > 1, (
+            f"All {num_samples} samples for prompt {prompt_idx} are identical. "
+            f"With temperature=1.0, samples should differ."
+        )
