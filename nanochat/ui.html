@@ -838,6 +838,7 @@
                         if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.slice(6));
+
                                 if (data.token) {
                                     fullResponse += data.token;
                                     assistantContent.textContent = fullResponse;
@@ -877,6 +878,31 @@
                     if (samplingParamsElement && receivedLogitLensData.sampling_params) {
                         const params = receivedLogitLensData.sampling_params;
                         samplingParamsElement.textContent = `Temperature: ${params.temperature}, Top-K: ${params.top_k}`;
+                    }
+
+                    // Show fallback message if using fallback data
+                    if (receivedLogitLensData.fallback) {
+                        const infoElement = document.querySelector(`.logit-lens-panel[data-message-index="${assistantMessageIndex}"] .logit-lens-info`);
+                        if (infoElement) {
+                            infoElement.innerHTML += `
+                                <div style="margin-top: 6px; font-size: 11px; color: #f59e0b; font-weight: 500;">
+                                    ⚠️ Limited mode: showing actual generated text for all layers
+                                </div>
+                            `;
+                        }
+                    }
+
+                    // Automatically show the logit-lens panel
+                    const panel = document.querySelector(`.logit-lens-panel[data-message-index="${assistantMessageIndex}"]`);
+                    const playButton = document.querySelector(`.logit-lens-toggle[data-message-index="${assistantMessageIndex}"]`);
+                    if (panel) {
+                        panel.classList.add('active');
+                        if (playButton) {
+                            playButton.classList.add('active');
+                            playButton.innerHTML = '⏸';
+                        }
+                        // Update to show the final layer by default
+                        updateLayerDisplay(assistantMessageIndex, receivedLogitLensData.layer_texts.length - 1);
                     }
                 }
 

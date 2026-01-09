@@ -492,14 +492,41 @@ async def generate_stream(
                         "top_k": top_k
                     }
                 }
-                print(f"LOGIT-LENS: Successfully created logit_lens_data with {len(layer_texts)} layers")
         except Exception as e:
             import traceback
-            print(f"LOGIT-LENS: Error capturing logit-lens data: {e}")
-            print(f"LOGIT-LENS: Full traceback: {traceback.format_exc()}")
-            logit_lens_data = None
+            print(f"Error capturing logit-lens data: {e}")
+            print(f"Traceback: {traceback.format_exc()}")
 
-    yield f"data: {json.dumps({'done': True, 'logit_lens': logit_lens_data})}\n\n"
+            # Fallback: create minimal logit-lens data with just the actual generated text
+            try:
+                fallback_layers = 32  # Default number of layers
+                layer_texts = [current_text] * fallback_layers
+                layer_names = ["embedding"] + [f"layer_{i}" for i in range(fallback_layers-1)]
+
+                logit_lens_data = {
+                    "input_tokens": tokens,
+                    "generated_tokens": accumulated_tokens,
+                    "layer_texts": layer_texts,
+                    "token_info": [[] for _ in range(fallback_layers)],  # Empty token info for fallback
+                    "layer_names": layer_names,
+                    "final_text": current_text,
+                    "actual_generated_text": current_text,
+                    "decoding_method": "greedy",
+                    "sampling_params": {
+                        "temperature": temperature,
+                        "top_k": top_k
+                    },
+                    "fallback": True  # Flag that this is fallback data
+                }
+            except Exception as fallback_e:
+                print(f"Fallback logit-lens creation failed: {fallback_e}")
+                logit_lens_data = None
+
+    # Create the final response payload
+    final_payload = {'done': True, 'logit_lens': logit_lens_data}
+    final_json = json.dumps(final_payload, ensure_ascii=False)
+
+    yield f"data: {final_json}\n\n"
 
 @app.post("/chat/completions")
 async def chat_completions(request: ChatRequest):
