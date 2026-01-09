@@ -24,7 +24,7 @@ fi
 python -m nanochat.report reset
 
 # train tokenizer on ~1B characters
-python -m nanochat.dataset -n 4
+python -m nanochat.dataset -n 6
 python -m scripts.tok_train --max_chars=1000000000
 python -m scripts.tok_eval
 
