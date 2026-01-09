@@ -6,7 +6,7 @@ import os
 import re
 import logging
 import urllib.request
-from typing import Tuple, Callable, Literal
+from typing import Callable, Literal
 
 import torch
 import torch.distributed as dist
@@ -24,7 +24,7 @@ class ColoredFormatter(logging.Formatter):
     }
     RESET = '\033[0m'
     BOLD = '\033[1m'
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         # Add color to the level name
         levelname = record.levelname
         if levelname in self.COLORS:
@@ -96,7 +96,7 @@ def download_file_with_lock(url: str, filename: str, postprocess_fn: Callable | 
 
     return file_path
 
-def print0(s: str ="", **kwargs):
+def print0(s: str = "", **kwargs):
     ddp_rank = int(os.environ.get('RANK', 0))
     if ddp_rank == 0:
         print(s, **kwargs)
@@ -129,7 +129,7 @@ def is_ddp_initialized() -> bool:
     """
     return dist.is_available() and dist.is_initialized()
 
-def get_dist_info() -> Tuple[bool, int, int, int]:
+def get_dist_info() -> tuple[bool, int, int, int]:
     if is_ddp_requested():
         # We rely on torchrun's env to decide if we SHOULD init.
         # (Initialization itself happens in compute init.)
@@ -152,7 +152,15 @@ def autodetect_device_type() -> str:
     print0(f"Autodetected device type: {device_type}")
     return device_type
 
-def compute_init(device_type: Literal["cuda", "mps", "cpu"] = "cuda") -> Tuple[bool, int, int , int, torch.device]: # cuda|cpu|mps
+def compute_init(
+    device_type: Literal["cuda", "mps", "cpu"] = "cuda",
+) -> tuple[
+    bool,
+    int,
+    int ,
+    int,
+    torch.device
+]: # cuda|cpu|mps
     """Basic initialization that we keep doing over and over, so make common."""
 
     assert device_type in ["cuda", "mps", "cpu"], "Invalid device type atm"

@@ -7,7 +7,7 @@ Example tasks: MMLU, ARC-Easy, ARC-Challenge, GSM8K, HumanEval, SmolTalk.
 
 import random
 
-from typing import List, Dict
+from typing import Literal, Any
 
 
 class Task:
@@ -25,14 +25,14 @@ class Task:
         self.step = step
 
     @property
-    def eval_type(self):
+    def eval_type(self) -> Literal["generative", "categorical"]:
         # one of 'generative' | 'categorical'
         raise NotImplementedError
 
     def num_examples(self) -> int:
         raise NotImplementedError
 
-    def get_example(self, index: int) -> Dict:
+    def get_example(self, index: int) -> dict[str, Any]:
         raise NotImplementedError
 
     def __len__(self) -> int:
@@ -44,7 +44,7 @@ class Task:
         assert num >= 0, f"Negative number of examples???: {num}" # prevent footguns
         return num
 
-    def __getitem__(self, index: int) -> Dict:
+    def __getitem__(self, index: int) -> dict:
         assert isinstance(index, int), f"Index must be an integer, got {type(index)}"
         physical_index = self.start + index * self.step
         conversation = self.get_example(physical_index)
@@ -60,7 +60,7 @@ class TaskMixture(Task):
     Fun trick: if you wish to oversample any task, just pass it in multiple times in the list.
     """
 
-    def __init__(self, tasks: List[Task], **kwargs):
+    def __init__(self, tasks: list[Task], **kwargs):
         super().__init__(**kwargs)
         # tasks is a list of Task objects
         self.tasks = tasks
@@ -79,7 +79,7 @@ class TaskMixture(Task):
     def num_examples(self) -> int:
         return self.num_conversations
 
-    def get_example(self, index: int) -> Dict:
+    def get_example(self, index: int) -> dict[str, Any]:
         """
         Access conversations according to a deterministic shuffle of all examples.
         This ensures tasks are mixed throughout training, regardless of dataset size.
@@ -95,7 +95,7 @@ class TaskSequence(Task):
     This is useful for cases that require a training curriculum.
     """
 
-    def __init__(self, tasks: List[Task], **kwargs):
+    def __init__(self, tasks: list[Task], **kwargs):
         super().__init__(**kwargs)
         self.tasks = tasks
         self.lengths = [len(task) for task in self.tasks]
@@ -104,7 +104,7 @@ class TaskSequence(Task):
     def num_examples(self) -> int:
         return self.num_conversations
 
-    def get_example(self, index: int) -> Dict | None:
+    def get_example(self, index: int) -> dict[str, Any] | None:
         assert 0 <= index < self.num_conversations, f"Index {index} out of range for sequence with {self.num_conversations} conversations"
 
         for task_idx, task_length in enumerate(self.lengths):
@@ -113,7 +113,7 @@ class TaskSequence(Task):
             index -= task_length
 
 
-def render_mc(question: str, letters: List[str], choices: List[str]) -> str:
+def render_mc(question: str, letters: list[str], choices: list[str]) -> str:
     """
     The common multiple choice rendering format we will use.
 

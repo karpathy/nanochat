@@ -10,8 +10,6 @@ Notes:
 
 The whole thing is made as efficient as possible.
 """
-from typing import Tuple, List
-
 import torch
 import torch.nn.functional as F
 import signal
@@ -19,8 +17,8 @@ import warnings
 from contextlib import contextmanager
 from collections import deque
 from nanochat.common import compute_init, autodetect_device_type
-from nanochat.checkpoint_manager import load_model
 from nanochat.gpt import GPT
+from nanochat.checkpoint_manager import load_model
 from nanochat.tokenizer import RustBPETokenizer
 from contextlib import nullcontext
 
@@ -100,7 +98,7 @@ class KVCache:
     def reset(self):
         self.pos = 0
 
-    def get_pos(self):
+    def get_pos(self) -> int:
         return self.pos
 
     def prefill(self, other: "KVCache"):
@@ -137,7 +135,7 @@ class KVCache:
         # 4) update the pos
         self.pos = other.pos
 
-    def insert_kv(self, layer_idx: int, k: torch.Tensor, v: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def insert_kv(self, layer_idx: int, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # Lazy initialize the cache here because we need to know the dtype/device
         if self.kv_cache is None:
             self.kv_cache = torch.empty(self.kv_shape, dtype=k.dtype, device=k.device)
@@ -167,7 +165,12 @@ class KVCache:
 
 # -----------------------------------------------------------------------------
 @torch.inference_mode()
-def sample_next_token(logits: torch.Tensor, rng: torch.Generator, temperature: float = 1.0, top_k: float | None = None) -> torch.Tensor:
+def sample_next_token(
+    logits: torch.Tensor,
+    rng: torch.Generator,
+    temperature: float = 1.0,
+    top_k: float | None = None,
+) -> torch.Tensor:
     """Sample a single next token from given logits of shape (B, vocab_size). Returns (B, 1)."""
     assert temperature >= 0.0, "temperature must be non-negative"
     if temperature == 0.0:
@@ -188,7 +191,7 @@ def sample_next_token(logits: torch.Tensor, rng: torch.Generator, temperature: f
 
 class RowState:
     # Per-row state tracking during generation
-    def __init__(self, current_tokens=None):
+    def __init__(self, current_tokens: list[int] | None = None):
         self.current_tokens = current_tokens or [] # Current token sequence for this row
         self.forced_tokens = deque() # Queue of tokens to force inject
         self.in_python_block = False # Whether we are inside a python block
@@ -202,7 +205,14 @@ class Engine:
         self.tokenizer = tokenizer # needed for tool use
 
     @torch.inference_mode()
-    def generate(self, tokens: List[int], num_samples: int = 1, max_tokens: int | None = None, temperature: float = 1.0, top_k: int | None = None, seed: int = 42):
+    def generate(self,
+         tokens: list[int],
+         num_samples: int = 1,
+         max_tokens: int | None = None,
+         temperature: float = 1.0,
+         top_k: int | None = None,
+         seed: int = 42,
+    ):
         """Same as generate, but does single prefill and then clones the KV cache."""
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
         device = self.model.get_device()
@@ -297,7 +307,14 @@ class Engine:
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
             logits = self.model.forward(ids, kv_cache=kv_cache_decode)[:, -1, :]  # (B, vocab_size)
 
-    def generate_batch(self, tokens: List[int], num_samples=1, **kwargs) -> Tuple[List[List[int]], List[List[int]]]:
+    def generate_batch(self,
+       tokens: list[int],
+       num_samples: int = 1,
+       **kwargs,
+    ) -> tuple[
+        list[list[int]],
+        list[list[int]],
+    ]:
         """
         Non-streaming batch generation that just returns the final token sequences.
         Returns a list of token sequences (list of lists of ints).

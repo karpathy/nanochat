@@ -1,7 +1,6 @@
 """
 Evaluate compression ratio of the tokenizer.
 """
-from typing import Tuple, List, Dict
 
 from nanochat.tokenizer import get_tokenizer, RustBPETokenizer
 from nanochat.dataset import parquets_iter_batched
@@ -202,8 +201,12 @@ print(f"GPT-2: {vocab_sizes['gpt2']}")
 print(f"GPT-4: {vocab_sizes['gpt4']}")
 print(f"Ours: {vocab_sizes['ours']}")
 
-def print_comparison(baseline_name: str, baseline_results: Dict[str, Dict], ours_results: Dict[str, Dict],
-                     all_text: List[Tuple[str, str]]) -> None:
+def print_comparison(
+    baseline_name: str,
+    baseline_results: dict[str, dict[str, int | float]],
+    ours_results: dict[str, dict[str, int | float]],
+    all_text: list[tuple[str, str]],
+) -> None:
     """Print comparison table between baseline tokenizer and ours."""
     print(f"\nComparison with {baseline_name}:")
     print("=" * 95)

@@ -5,7 +5,7 @@ In the style of GPT-4 tokenizer.
 import os
 import time
 import argparse
-from typing import Generator
+from typing import Iterator
 
 import torch
 from nanochat.tokenizer import RustBPETokenizer
@@ -27,7 +27,7 @@ print(f"vocab_size: {args.vocab_size:,}")
 # -----------------------------------------------------------------------------
 # Text iterator
 
-def text_iterator() -> Generator[str, None, None]:
+def text_iterator() -> Iterator[str]:
     """
     1) Flatten the batches into a single iterator
     2) Crop every document to args.doc_cap characters

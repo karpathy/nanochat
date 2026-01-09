@@ -9,10 +9,12 @@ import subprocess
 import socket
 import datetime
 import platform
+from typing import Any
+
 import psutil
 import torch
 
-def run_command(cmd):
+def run_command(cmd: str) -> str | None:
     """Run a shell command and return output, or None if it fails."""
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
@@ -25,7 +27,7 @@ def run_command(cmd):
     except:
         return None
 
-def get_git_info():
+def get_git_info() -> dict[str, str]:
     """Get current git commit, branch, and dirty status."""
     info = {}
     info['commit'] = run_command("git rev-parse --short HEAD") or "unknown"
@@ -41,7 +43,7 @@ def get_git_info():
 
     return info
 
-def get_gpu_info():
+def get_gpu_info() -> dict[str, bool | int | list[str] | list[float]]:
     """Get GPU information."""
     if not torch.cuda.is_available():
         return {"available": False}
@@ -64,7 +66,7 @@ def get_gpu_info():
 
     return info
 
-def get_system_info():
+def get_system_info() -> dict[str, str | int | float]:
     """Get system information."""
     info = {}
 
@@ -86,7 +88,7 @@ def get_system_info():
 
     return info
 
-def estimate_cost(gpu_info, runtime_hours=None):
+def estimate_cost(gpu_info: dict[str, bool | int | list[str] | list[float]], runtime_hours=None):
     """Estimate training cost based on GPU type and runtime."""
 
     # Rough pricing, from Lambda Cloud
@@ -117,7 +119,7 @@ def estimate_cost(gpu_info, runtime_hours=None):
         "estimated_total": hourly_rate * runtime_hours if runtime_hours else None
     }
 
-def generate_header():
+def generate_header() -> str:
     """Generate the header for a training report."""
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -221,7 +223,7 @@ EXPECTED_FILES = [
 # the metrics we're currently interested in
 chat_metrics = ["ARC-Easy", "ARC-Challenge", "MMLU", "GSM8K", "HumanEval", "ChatCORE"]
 
-def extract(section, keys):
+def extract(section: str, keys: str | list[str]) -> dict[str, str]:
     """simple def to extract a single key from a section"""
     if not isinstance(keys, list):
         keys = [keys] # convenience
@@ -232,7 +234,7 @@ def extract(section, keys):
                 out[key] = line.split(":")[1].strip()
     return out
 
-def extract_timestamp(content, prefix):
+def extract_timestamp(content: str, prefix: str) -> datetime.datetime | None:
     """Extract timestamp from content with given prefix."""
     for line in content.split('\n'):
         if line.startswith(prefix):
@@ -246,11 +248,11 @@ def extract_timestamp(content, prefix):
 class Report:
     """Maintains a bunch of logs, generates a final markdown report."""
 
-    def __init__(self, report_dir):
+    def __init__(self, report_dir: str):
         os.makedirs(report_dir, exist_ok=True)
         self.report_dir = report_dir
 
-    def log(self, section, data):
+    def log(self, section: str, data: list[str | dict[str, Any]]) -> str:
         """Log a section of data to the report."""
         slug = slugify(section)
         file_name = f"{slug}.md"

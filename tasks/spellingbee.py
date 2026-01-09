@@ -29,7 +29,7 @@ python -m tasks.spellingbee
 import re
 import random
 import string
-from typing import Literal, Dict, List
+from typing import Literal
 
 from tasks.common import Task
 from nanochat.common import download_file_with_lock
@@ -117,7 +117,7 @@ USER_MSG_TEMPLATES = [
 ]
 
 class SpellingBee(Task):
-    def __init__(self, size: int = 1000, split: Literal["train", "test"]="train", **kwargs):
+    def __init__(self, size: int = 1000, split: Literal["train", "test"] = "train", **kwargs):
         super().__init__(**kwargs)
         assert split in ["train", "test"], "SpellingBee split must be train|test"
         self.size = size
@@ -135,7 +135,7 @@ class SpellingBee(Task):
     def num_examples(self) -> int:
         return self.size
 
-    def get_example(self, index: int) -> Dict[str, List[Dict]]:
+    def get_example(self, index: int) -> dict[str, list[dict[str, str]]]:
         seed = index if self.split == 'train' else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
 
@@ -207,7 +207,7 @@ Then count the occurrences of '{letter}':
         }
         return conversation
 
-    def evaluate(self, conversation: Dict[str, List[Dict]], assistant_response: str) -> Literal[0, 1]:
+    def evaluate(self, conversation: dict[str, list[dict[str, str]]], assistant_response: str) -> Literal[0, 1]:
         """
         Given (conversation, completion), return evaluation outcome (0 = wrong, 1 = correct)
         Identical to gsm8k's evaluation.
@@ -226,7 +226,7 @@ Then count the occurrences of '{letter}':
         is_correct = int(pred_num == ref_num)
         return is_correct
 
-    def reward(self, conversation: Dict[str, List[Dict]], assistant_response: str) -> float:
+    def reward(self, conversation: dict[str, list[dict[str, str]]], assistant_response: str) -> float:
         """ Use simple 0-1 reward just like gsm8k."""
         is_correct = self.evaluate(conversation, assistant_response)
         is_correct_float = float(is_correct)
@@ -256,7 +256,7 @@ class SimpleSpelling(Task):
     def num_examples(self) -> int:
         return self.size
 
-    def get_example(self, index: int) -> Dict[str, List[Dict]]:
+    def get_example(self, index: int) -> dict[str, list[dict[str, str]]]:
         seed = index if self.split == 'train' else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
         # pick a random word

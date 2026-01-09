@@ -11,6 +11,8 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft
 
 import argparse
 import os
+from typing import Iterator
+
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import wandb
@@ -98,10 +100,10 @@ val_ds = SmolTalk(split="test") # general conversations, 24K rows (though we don
 # -----------------------------------------------------------------------------
 # DataLoader
 
-def sft_data_generator(dataset, batch_size):
+def sft_data_generator(dataset: TaskMixture | SmolTalk, batch_size: int) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     pad_token_id = tokenizer.encode_special("<|assistant_end|>") # use <|assistant_end|> as the pad token is ok, these positions are masked in the loss
     # prepares a list of tokenized conversations into a batch and yields
-    def collate_and_yield(batch):
+    def collate_and_yield(batch: list[tuple[list[int], list[int]]]) -> tuple[torch.Tensor, torch.Tensor]:
         nrows = len(batch)
         ncols = max(len(ids) for ids, mask in batch) - 1 # seq of n creates inputs/targets of n-1
         inputs = torch.full((nrows, ncols), pad_token_id, dtype=torch.long)

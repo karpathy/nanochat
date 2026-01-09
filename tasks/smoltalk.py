@@ -3,7 +3,7 @@ SmolTalk by HuggingFace. Good "general" conversational dataset.
 https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk
 We use the "smol" version, which is more appropriate for smaller models.
 """
-from typing import Literal, Dict, List
+from typing import Literal
 
 from datasets import load_dataset
 from tasks.common import Task
@@ -20,7 +20,7 @@ class SmolTalk(Task):
     def num_examples(self) -> int:
         return self.length
 
-    def get_example(self, index: int) -> Dict[str, List[Dict]]:
+    def get_example(self, index: int) -> dict[str, list[dict[str, str]]]:
         row = self.ds[index]
         messages = row["messages"]
         # ---------------------------------------------------------------------

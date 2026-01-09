@@ -19,6 +19,8 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
 import argparse
 import os
 import itertools
+from typing import Iterator
+
 import wandb
 import torch
 import torch.distributed as dist
@@ -27,6 +29,7 @@ from contextlib import nullcontext
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type
 from nanochat.checkpoint_manager import save_checkpoint, load_model
 from nanochat.engine import Engine
+from nanochat.tokenizer import RustBPETokenizer
 from tasks.gsm8k import GSM8K
 
 # -----------------------------------------------------------------------------
@@ -154,13 +157,16 @@ def get_batch():
 
 # -----------------------------------------------------------------------------
 # Simple evaluation loop for GSM8K pass@k
-def run_gsm8k_eval(task, tokenizer, engine,
+def run_gsm8k_eval(
+    task: GSM8K,
+    tokenizer: RustBPETokenizer,
+    engine: Engine,
     max_examples: int | None = None,
     num_samples: int = 1,
     max_completion_tokens: int = 256,
     temperature = 0.0,
     top_k: int = 50
-):
+) -> Iterator[dict[str, int | list[dict[str, int]]]]:
     """
     Evaluates GSM8K task and returns a list of records of evaluation outcomes.
     In a distributed setting, all ranks cooperate but this function will NOT

@@ -11,9 +11,9 @@ Notable features:
 - Group-Query Attention (GQA) support for more efficient inference
 """
 
-import math
 from functools import partial
 from dataclasses import dataclass
+from typing import Iterator, Optional
 
 import torch
 import torch.nn as nn
@@ -33,7 +33,7 @@ class GPTConfig:
     n_embd: int = 768
 
 
-def norm(x):
+def norm(x: torch.Tensor) -> torch.Tensor:
     # Purely functional rmsnorm with no learnable params
     return F.rms_norm(x, (x.size(-1),))
 
@@ -47,7 +47,7 @@ def apply_rotary_emb(x, cos, sin):
     return torch.cat([y1, y2], 3)
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, config, layer_idx):
+    def __init__(self, config: GPTConfig, layer_idx: int):
         super().__init__()
         self.layer_idx = layer_idx
         self.n_head = config.n_head
@@ -61,7 +61,7 @@ class CausalSelfAttention(nn.Module):
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
 
-    def forward(self, x, cos_sin, kv_cache):
+    def forward(self, x, cos_sin: tuple[torch.Tensor, torch.Tensor], kv_cache: Optional["KVCache"] = None) -> torch.Tensor:
         B, T, C = x.size()
 
         # Project the input to get queries, keys, and values
@@ -108,12 +108,12 @@ class CausalSelfAttention(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.c_fc(x)
         x = F.relu(x).square()
         x = self.c_proj(x)
@@ -121,19 +121,19 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, config, layer_idx):
+    def __init__(self, config: GPTConfig, layer_idx: int):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, cos_sin, kv_cache):
+    def forward(self, x: torch.Tensor, cos_sin: torch.Tensor, kv_cache: "KVCache") -> torch.Tensor:
         x = x + self.attn(norm(x), cos_sin, kv_cache)
         x = x + self.mlp(norm(x))
         return x
 
 
 class GPT(nn.Module):
-    def __init__(self, config, pad_vocab_size_to=64):
+    def __init__(self, config: GPTConfig, pad_vocab_size_to: int = 64):
         super().__init__()
         self.config = config
         # For DDP, we want vocab_size divisible by world_size. Also, there are potential performance benefits, see:
@@ -195,7 +195,13 @@ class GPT(nn.Module):
         if self.transformer.wte.weight.device.type == "cuda":
             self.transformer.wte.to(dtype=torch.bfloat16)
 
-    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
+    def _precompute_rotary_embeddings(
+        self,
+        seq_len: int,
+        head_dim: int,
+        base: int = 10000,
+        device: torch.device | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         # TODO: bump base theta more? e.g. 100K is more common more recently
         # autodetect the device from model embeddings
         if device is None:
@@ -212,10 +218,10 @@ class GPT(nn.Module):
         cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
         return cos, sin
 
-    def get_device(self):
+    def get_device(self) -> torch.device:
         return self.transformer.wte.weight.device
 
-    def estimate_flops(self):
+    def estimate_flops(self) -> int:
         """
         Return the estimated FLOPs per token for the model (forward + backward).
         Each matmul weight parameter contributes 2 FLOPs (multiply *, accumulate +) in forward, and 2X that in backward => 2+4=6.
@@ -244,7 +250,14 @@ class GPT(nn.Module):
         nparams = sum(p.numel() for p in self.parameters())
         return nparams
 
-    def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95)):
+    def setup_optimizers(
+        self,
+        unembedding_lr: float = 0.004,
+        embedding_lr: float = 0.2,
+        matrix_lr: float = 0.02,
+        weight_decay: float =0.0,
+        adam_betas: tuple[float, float] = (0.8, 0.95),
+    ):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
         # Separate out all parameters into 3 groups (matrix, embedding, lm_head)
@@ -274,7 +287,13 @@ class GPT(nn.Module):
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+    def forward(
+        self,
+        idx: torch.Tensor,
+        targets: torch.Tensor | None = None,
+        kv_cache: Optional["KVCache"] = None,
+        loss_reduction: str = 'mean',
+    ) -> torch.Tensor:
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
@@ -309,7 +328,13 @@ class GPT(nn.Module):
             return logits
 
     @torch.inference_mode()
-    def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
+    def generate(self,
+        tokens: list[int],
+        max_tokens: int,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        seed: int = 42,
+    ) -> Iterator[int]:
         """
         Naive autoregressive streaming inference.
         To make it super simple, let's assume:

@@ -42,7 +42,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 from pydantic import BaseModel
-from typing import List, Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator
 from dataclasses import dataclass
 from contextlib import nullcontext
 from nanochat.common import compute_init, autodetect_device_type
@@ -105,7 +105,7 @@ class WorkerPool:
             else:
                 num_gpus = 1 # e.g. cpu|mps
         self.num_gpus = num_gpus
-        self.workers: List[Worker] = []
+        self.workers: list[Worker] = []
         self.available_workers: asyncio.Queue = asyncio.Queue()
 
     async def initialize(self, source: str, model_tag: Optional[str] = None, step: Optional[int] = None):
@@ -147,15 +147,18 @@ class WorkerPool:
         """Return a worker to the pool."""
         await self.available_workers.put(worker)
 
+
 class ChatMessage(BaseModel):
     role: str
     content: str
 
+
 class ChatRequest(BaseModel):
-    messages: List[ChatMessage]
+    messages: list[ChatMessage]
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     top_k: Optional[int] = None
+
 
 def validate_chat_request(request: ChatRequest):
     """Validate chat request to prevent abuse."""
@@ -240,7 +243,7 @@ app.add_middleware(
 )
 
 @app.get("/")
-async def root():
+async def root() -> HTMLResponse:
     """Serve the chat UI."""
     ui_html_path = os.path.join("nanochat", "ui.html")
     with open(ui_html_path, "r", encoding="utf-8") as f:
@@ -254,7 +257,7 @@ async def root():
 
 
 @app.get("/logo.svg")
-async def logo():
+async def logo() -> FileResponse:
     """Serve the NanoChat logo for favicon and header."""
     logo_path = os.path.join("nanochat", "logo.svg")
     return FileResponse(logo_path, media_type="image/svg+xml")
@@ -262,9 +265,9 @@ async def logo():
 async def generate_stream(
     worker: Worker,
     tokens,
-    temperature=None,
-    max_new_tokens=None,
-    top_k=None
+    temperature: float | None = None,
+    max_new_tokens: int | None = None,
+    top_k: int | None = None
 ) -> AsyncGenerator[str, None]:
     """Generate assistant response with streaming."""
     temperature = temperature if temperature is not None else args.temperature
@@ -311,7 +314,7 @@ async def generate_stream(
     yield f"data: {json.dumps({'done': True})}\n\n"
 
 @app.post("/chat/completions")
-async def chat_completions(request: ChatRequest):
+async def chat_completions(request: ChatRequest) -> StreamingResponse:
     """Chat completion endpoint (streaming only) - uses worker pool for multi-GPU."""
 
     # Basic validation to prevent abuse
@@ -382,7 +385,7 @@ async def chat_completions(request: ChatRequest):
         raise e
 
 @app.get("/health")
-async def health():
+async def health() -> dict[str, str | bool | int]:
     """Health check endpoint."""
     worker_pool = getattr(app.state, 'worker_pool', None)
     return {
@@ -393,7 +396,7 @@ async def health():
     }
 
 @app.get("/stats")
-async def stats():
+async def stats() -> dict[str, int | list[dict[str, str]]]:
     """Get worker pool statistics."""
     worker_pool = app.state.worker_pool
     return {

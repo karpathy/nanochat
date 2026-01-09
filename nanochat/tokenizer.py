@@ -9,7 +9,7 @@ Two implementations are available:
 import os
 import copy
 from functools import lru_cache
-from typing import List, Dict, Set, Tuple, Iterator
+from typing import Iterator
 
 import torch
 from tokenizers import Tokenizer as HFTokenizer
@@ -99,7 +99,7 @@ class HuggingFaceTokenizer:
     def get_vocab_size(self) -> int:
         return self.tokenizer.get_vocab_size()
 
-    def get_special_tokens(self) -> List[str]:
+    def get_special_tokens(self) -> list[str]:
         special_tokens_map = self.tokenizer.get_added_tokens_decoder()
         special_tokens = [w.content for w in special_tokens_map.values()]
         return special_tokens
@@ -107,7 +107,7 @@ class HuggingFaceTokenizer:
     def id_to_token(self, id: int) -> str:
         return self.tokenizer.id_to_token(id)
 
-    def _encode_one(self, text: str, prepend: str| int | None = None, append: str | int | None = None) -> List[int]:
+    def _encode_one(self, text: str, prepend: str| int | None = None, append: str | int | None = None) -> list[int]:
         # encode a single string
         # prepend/append can be either a string of a special token or a token id directly.
         assert isinstance(text, str)
@@ -147,7 +147,7 @@ class HuggingFaceTokenizer:
     def __call__(self, *args, **kwargs):
         return self.encode(*args, **kwargs)
 
-    def decode(self, ids: List[int]) -> str:
+    def decode(self, ids: list[int]) -> str:
         return self.tokenizer.decode(ids, skip_special_tokens=False)
 
     def save(self, tokenizer_dir: str):
@@ -212,7 +212,7 @@ class RustBPETokenizer:
     def get_vocab_size(self) -> int:
         return self.enc.n_vocab
 
-    def get_special_tokens(self) -> Set[str]:
+    def get_special_tokens(self) -> set[str]:
         return self.enc.special_tokens_set
 
     def id_to_token(self, id: int) -> str:
@@ -225,7 +225,13 @@ class RustBPETokenizer:
     def get_bos_token_id(self) -> int:
         return self.bos_token_id
 
-    def encode(self, text: str, prepend: int | str | None = None, append: int | str | None = None, num_threads: int = 8) -> List[int]:
+    def encode(
+        self,
+        text: str,
+        prepend: int | str | None = None,
+        append: int | str | None = None,
+        num_threads: int = 8
+    ) -> list[int]:
         # text can be either a string or a list of strings
 
         if prepend is not None:
@@ -255,7 +261,7 @@ class RustBPETokenizer:
     def __call__(self, *args, **kwargs):
         return self.encode(*args, **kwargs)
 
-    def decode(self, ids: List[int]) -> str:
+    def decode(self, ids: list[int]) -> str:
         return self.enc.decode(ids)
 
     def save(self, tokenizer_dir: str):
@@ -266,7 +272,11 @@ class RustBPETokenizer:
             pickle.dump(self.enc, f)
         print(f"Saved tokenizer encoding to {pickle_path}")
 
-    def render_conversation(self, conversation: Dict[str, List[Dict]], max_tokens: int = 2048) -> Tuple[List[int], List[int]]:
+    def render_conversation(
+        self,
+        conversation: dict[str, list[dict[str, str]]],
+        max_tokens: int = 2048
+    ) -> tuple[list[int], list[int]]:
         """
         Tokenize a single Chat conversation (which we call a "doc" or "document" here).
         Returns:
@@ -352,7 +362,7 @@ class RustBPETokenizer:
         mask = mask[:max_tokens]
         return ids, mask
 
-    def visualize_tokenization(self, ids: List[int], masks: List[int], with_token_id: bool = False) -> str:
+    def visualize_tokenization(self, ids: list[int], masks: list[int], with_token_id: bool = False) -> str:
         """Small helper function useful in debugging: visualize the tokenization of render_conversation"""
         RED = '\033[91m'
         GREEN = '\033[92m'
@@ -367,7 +377,7 @@ class RustBPETokenizer:
                 tokens.append(f"{GRAY}({token_id}){RESET}")
         return '|'.join(tokens)
 
-    def render_for_completion(self, conversation: Dict[str, List[Dict]]) -> List[int]:
+    def render_for_completion(self, conversation: dict[str, list[dict[str, str]]]) -> list[int]:
         """
         Used during Reinforcement Learning. In that setting, we want to
         render the conversation priming the Assistant for a completion.
@@ -406,23 +416,3 @@ def get_token_bytes(device: str | torch.device = "cpu") -> torch.Tensor:
     with open(token_bytes_path, "rb") as f:
         token_bytes = torch.load(f, map_location=device)
     return token_bytes
-
-if __name__ == "__main__":
-    conv = {
-        'messages': [
-            {
-                "role": "user",
-                "content": "Hello World",
-            },
-            {
-                "role": "assistant",
-                "content": "Hello World",
-            }
-        ]
-    }
-
-    tokenizer = get_tokenizer()
-
-    from nanochat.core_eval import batch_sequences_mc
-
-    print(batch_sequences_mc(tokenizer, prompts=["Hello", "Hello World"]))

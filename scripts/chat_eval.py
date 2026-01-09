@@ -31,9 +31,16 @@ from tasks.spellingbee import SpellingBee
 # -----------------------------------------------------------------------------
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
 
-def run_generative_eval(task_object: Task, tokenizer: RustBPETokenizer, model: GPT, engine: Engine, num_samples: int,
-                        max_new_tokens: int, temperature: float, top_k: int, max_problems: int | None = None):
-
+def run_generative_eval(
+    task_object: Task,
+    tokenizer: RustBPETokenizer,
+    model: GPT, engine: Engine,
+    num_samples: int,
+    max_new_tokens: int,
+    temperature: float,
+    top_k: int,
+    max_problems: int | None = None
+) -> float:
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     device = model.get_device()
 
@@ -91,8 +98,13 @@ def run_generative_eval(task_object: Task, tokenizer: RustBPETokenizer, model: G
 # A lot easier because we don't have to sample. Therefore, we can actually go
 # batches at a time and just check the logits for correct answer choices.
 
-def run_categorical_eval(task_object: Task, tokenizer: RustBPETokenizer, model: GPT, batch_size: int,
-                         max_problems: int | None = None):
+def run_categorical_eval(
+    task_object: Task,
+    tokenizer: RustBPETokenizer,
+    model: GPT,
+    batch_size: int,
+    max_problems: int | None = None
+) -> float:
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     device = model.get_device()
     bos = tokenizer.get_bos_token_id() # use BOS as pad token is ok, these positions are ignored
@@ -159,7 +171,6 @@ def run_categorical_eval(task_object: Task, tokenizer: RustBPETokenizer, model: 
     return average
 
 
-
 # -----------------------------------------------------------------------------
 
 TASK_MODULES = {
@@ -171,9 +182,18 @@ TASK_MODULES = {
     'SpellingBee': partial(SpellingBee, size=256, split="test"),
 }
 
-def run_chat_eval(task_name: str, model: GPT, tokenizer: RustBPETokenizer, engine: Engine,
-                   batch_size: int = 1, num_samples: int = 1, max_new_tokens: int = 512, temperature: float = 0.0,
-                  top_k: int = 50, max_problems: int | None = None):
+def run_chat_eval(
+    task_name: str,
+    model: GPT,
+    tokenizer: RustBPETokenizer,
+    engine: Engine,
+    batch_size: int = 1,
+    num_samples: int = 1,
+    max_new_tokens: int = 512,
+    temperature: float = 0.0,
+    top_k: int = 50,
+    max_problems: int | None = None,
+) -> float:
     # Create the evaluation object
     task_module = TASK_MODULES[task_name]
     task_object = task_module()
@@ -225,7 +245,7 @@ if __name__ == "__main__":
         'SpellingBee': 0.0, # open-ended => 0%
     }
 
-    task_names = all_tasks if args.task_name is None else args.task_name.split('|')
+    task_names = tuple(baseline_accuracies.keys()) if args.task_name is None else args.task_name.split('|')
 
     # Run all the task evaluations sequentially
     results = {}
@@ -233,7 +253,9 @@ if __name__ == "__main__":
         with autocast_ctx:
             acc = run_chat_eval(
                 task_name,
-                model, tokenizer, engine,
+                model,
+                tokenizer,
+                engine,
                 batch_size=args.batch_size,
                 num_samples=args.num_samples,
                 max_new_tokens=args.max_new_tokens,

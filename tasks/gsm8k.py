@@ -15,7 +15,7 @@ Notice that GSM8K uses tool calls inside << >> tags.
 """
 
 import re
-from typing import Literal, Dict, List
+from typing import Literal
 
 from datasets import load_dataset
 from tasks.common import Task
@@ -53,7 +53,7 @@ class GSM8K(Task):
     def num_examples(self) -> int:
         return len(self.ds)
 
-    def get_example(self, index: int) -> Dict[str, List[Dict]]:
+    def get_example(self, index: int) -> dict[str, list[dict[str, str]]]:
         """ Get a single problem from the dataset. """
         row = self.ds[index]
         question = row['question'] # string of the question prompt
@@ -88,7 +88,7 @@ class GSM8K(Task):
         }
         return conversation
 
-    def evaluate(self, conversation: Dict[str, List[Dict]], assistant_response: str) -> Literal[0, 1]:
+    def evaluate(self, conversation: dict[str, list[dict[str, str]]], assistant_response: str) -> int:
         """
         Given (conversation, completion), return evaluation outcome (0 = wrong, 1 = correct)
         Note that:
@@ -111,7 +111,7 @@ class GSM8K(Task):
         is_correct = int(pred_num == ref_num)
         return is_correct
 
-    def reward(self, conversation: Dict[str, List[Dict]], assistant_response: str) -> float:
+    def reward(self, conversation: dict[str, list[dict[str, str]]], assistant_response: str) -> float:
         """
         Used during RL. To keep things simple, just re-use the evaluation above.
         Later this could be made more complex (e.g. format matching etc.)
