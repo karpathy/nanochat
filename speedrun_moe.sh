@@ -156,13 +156,14 @@ fi
 # echo "Waiting for dataset download to complete..."
 # wait $DATASET_DOWNLOAD_PID
 
-
+MODEL_DIM=${MODEL_DIM:-384}
+GLOBAL_BS=${GLOBAL_BS:-480}
 MIN_LR=${MIN_LR:-6e-5}
 LEARNING_RATE=${LEARNING_RATE:-6e-4}
 DEPTH=${DEPTH:-${N_LAYER:-6}}
 MODEL_TAG=${MODEL_TAG:-d${DEPTH}_min_lr${MIN_LR}_max_lr${LEARNING_RATE}}
 # Number of processes/GPUs to use
-NPROC_PER_NODE=8
+NPROC_PER_NODE=${NPROC_PER_NODE:-8}
 # Master port for distributed training (default: 29500)
 # Set this to avoid port conflicts when running multiple torchrun tasks simultaneously
 # Example: MASTER_PORT=29501 bash speedrun.sh

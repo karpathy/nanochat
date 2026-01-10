@@ -89,8 +89,15 @@ num_iterations = 50000 # explicit number of steps (matches nanoMoE max_iters=500
 target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
 target_param_data_ratio = -1 # calculate num_iterations to maintain fixed data:param ratio (Chinchilla=20) (-1 = disable)
 # Optimization
-device_batch_size = 12 # per-device batch size (matches nanoMoE batch_size=12)
-total_batch_size = 491520 # total desired batch size in #tokens (matches nanoMoE: 12 * 1024 * 40 = 491,520 for 8 GPUs)
+device_batch_size = _get_env_int("MICRO_BS", 12) # per-device batch size (matches nanoMoE batch_size=12)
+glabal_batch_size = _get_env_int("GLOBAL_BS", 480) # total batch size (overrides total_batch_size if set)
+gpu_number = _get_env_int("NPROC_PER_NODE", -1)
+if glabal_batch_size > 0:
+    total_batch_size = max_seq_len * glabal_batch_size
+    if gpu_number > 0:
+        assert total_batch_size % (device_batch_size * gpu_number) == 0, "GLOBAL_BS must be compatible with MICRO_BS and NPROC_PER_NODE"
+else:
+    total_batch_size = 491520 # total desired batch size in #tokens (matches nanoMoE: 12 * 1024 * 40 = 491,520 for 8 GPUs)
 embedding_lr = 0.0006 # learning rate for the embedding parameters (Adam)
 unembedding_lr = 0.0006 # learning rate for the unembedding parameters (Adam)
 weight_decay = 0.1 # weight decay (matches nanoMoE weight_decay=1e-1)
@@ -123,7 +130,7 @@ model_tag = os.getenv("MODEL_TAG", "") # optionally override the model tag for t
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 if model_tag == "":
-    model_tag = f"d{depth}_min_lr{min_lr}_max_lr{learning_rate}"
+    model_tag = f"d{depth}_e{n_exp}_min_lr{min_lr}_max_lr{learning_rate}"
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
 
@@ -158,7 +165,7 @@ print0(f"Vocab size: {vocab_size:,}")
 # Model kwargs are derived from the desired depth of the model
 # For nanoMoE, we use n_layer, n_head, n_embd directly
 n_layer = depth
-model_dim = 384  # matches train_nano_moe.py
+model_dim = _get_env_int("MODEL_DIM", 384)  # matches train_nano_moe.py
 num_heads = 6  # matches train_nano_moe.py
 n_head = num_heads
 n_embd = model_dim
