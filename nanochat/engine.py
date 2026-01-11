@@ -339,6 +339,7 @@ if __name__ == "__main__":
     generated_tokens = []
     torch.cuda.synchronize()
     t0 = time.time()
+    print(tokenizer.decode(prompt_tokens))
     stream = model.generate(prompt_tokens, **kwargs)
     with autocast_ctx:
         for token in stream:
@@ -353,6 +354,7 @@ if __name__ == "__main__":
     # generate tokens with Engine
     generated_tokens = []
     engine = Engine(model, tokenizer)
+    print(tokenizer.decode(prompt_tokens))
     stream = engine.generate(prompt_tokens, num_samples=1, **kwargs) # note: runs in fp32
     torch.cuda.synchronize()
     t0 = time.time()
