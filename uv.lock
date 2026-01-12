@@ -1090,6 +1090,21 @@ wheels = [
 ]
 
 [[package]]
+name = "kernels"
+version = "0.11.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "packaging" },
+    { name = "pyyaml" },
+    { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d6/c8/2d4fea16366d34069af6d4c4f61218f55e5d0daea5d4c24d58849e9fd626/kernels-0.11.7.tar.gz", hash = "sha256:99c3aa518965518902f4dc26053d6051f06abc904ae33d9486c28674a2ea0fa5", size = 50282, upload-time = "2026-01-08T15:41:57.383Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/49/e62183353374ec71306ef354781233ac8d12fdfd1cf3d47c875055a99603/kernels-0.11.7-py3-none-any.whl", hash = "sha256:1421791b1e501fcb0a7f0a4d763c5385591756d9d6ed12ed8baa1e0d71bcd21a", size = 46501, upload-time = "2026-01-08T15:41:55.784Z" },
+]
+
+[[package]]
 name = "kiwisolver"
 version = "1.4.9"
 source = { registry = "https://pypi.org/simple" }
@@ -1478,6 +1493,7 @@ dependencies = [
     { name = "datasets" },
     { name = "fastapi" },
     { name = "ipykernel" },
+    { name = "kernels" },
     { name = "matplotlib" },
     { name = "psutil" },
     { name = "python-dotenv" },
@@ -1518,6 +1534,7 @@ requires-dist = [
     { name = "datasets", specifier = ">=4.0.0" },
     { name = "fastapi", specifier = ">=0.117.1" },
     { name = "ipykernel", specifier = ">=7.1.0" },
+    { name = "kernels", specifier = ">=0.11.7" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "psutil", specifier = ">=7.1.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },

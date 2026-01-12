@@ -42,6 +42,7 @@ parser.add_argument("--depth", type=int, default=20, help="depth of the Transfor
 parser.add_argument("--aspect_ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
 parser.add_argument("--head_dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max_seq_len", type=int, default=2048, help="max context length")
+parser.add_argument("--window_pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num_iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target_flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -51,8 +52,9 @@ parser.add_argument("--device_batch_size", type=int, default=32, help="per-devic
 parser.add_argument("--total_batch_size", type=int, default=524288, help="total batch size in tokens")
 parser.add_argument("--embedding_lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
 parser.add_argument("--unembedding_lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
-parser.add_argument("--weight_decay", type=float, default=0.0, help="weight decay for embedding/unembedding parameters (Adam)")
+parser.add_argument("--weight_decay", type=float, default=0.2, help="cautious weight decay for the Muon optimizer (for weights)")
 parser.add_argument("--matrix_lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
+parser.add_argument("--scalar_lr", type=float, default=0.5, help="learning rate for scalars (resid_lambdas, x0_lambdas)")
 parser.add_argument("--adam_beta1", type=float, default=0.8, help="Adam beta1 for embedding/unembedding")
 parser.add_argument("--adam_beta2", type=float, default=0.95, help="Adam beta2 for embedding/unembedding")
 parser.add_argument("--warmup_ratio", type=float, default=0.0, help="ratio of iterations for LR warmup")
@@ -129,11 +131,16 @@ if batch_ratio != 1.0:
     batch_lr_scale = batch_ratio ** 0.5
     print0(f"Scaling LRs by {batch_lr_scale:.4f} for batch size {args.total_batch_size:,} (reference: {reference_batch_size:,})")
 
+# Weight decay is tuned at d12 and its scaling seems to be \propto 1/channels^2 (or equivalently, \propto 1/depth^2 due to constant aspect ratio)
+weight_decay_scaled = args.weight_decay * (12 / args.depth)**2
+if args.depth != 12:
+    print0(f"Scaling weight decay from {args.weight_decay:.6f} to {weight_decay_scaled:.6f} for depth {args.depth}")
+
 # -----------------------------------------------------------------------------
 # Initialize the Model
 
 # Create a new model with random weights
-model_config_kwargs = dict(sequence_len=args.max_seq_len, vocab_size=vocab_size, n_layer=num_layers, n_head=num_heads, n_kv_head=num_kv_heads, n_embd=model_dim)
+model_config_kwargs = dict(sequence_len=args.max_seq_len, vocab_size=vocab_size, n_layer=num_layers, n_head=num_heads, n_kv_head=num_kv_heads, n_embd=model_dim, window_pattern=args.window_pattern)
 with torch.device("meta"):
     # All tensors are created as meta tensors (they have shape/dtype but no data)
     model_config = GPTConfig(**model_config_kwargs)
@@ -188,8 +195,9 @@ optimizers = model.setup_optimizers(
     unembedding_lr=args.unembedding_lr * batch_lr_scale,
     embedding_lr=args.embedding_lr * batch_lr_scale,
     matrix_lr=args.matrix_lr * batch_lr_scale,
-    weight_decay=args.weight_decay,
+    weight_decay=weight_decay_scaled,
     adam_betas=adam_betas,
+    scalar_lr=args.scalar_lr * batch_lr_scale,
 )
 adamw_optimizer, muon_optimizer = optimizers
 
@@ -227,6 +235,10 @@ def get_muon_momentum(it):
     momentum = (1 - frac) * 0.85 + frac * 0.95
     return momentum
 
+# Weight decay scheduler for Muon optimizer (linear to zero over the course of training)
+def get_weight_decay(it):
+    return weight_decay_scaled * (1 - it / num_iterations)
+
 # -----------------------------------------------------------------------------
 # Loop state (variables updated by the training loop)
 
@@ -257,7 +269,7 @@ while True:
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
         with autocast_ctx:
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
+        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
         wandb_run.log({
@@ -351,8 +363,10 @@ while True:
         for group in opt.param_groups:
             group["lr"] = group["initial_lr"] * lrm
     muon_momentum = get_muon_momentum(step)
+    muon_weight_decay = get_weight_decay(step)
     for group in muon_optimizer.param_groups:
         group["momentum"] = muon_momentum
+        group["weight_decay"] = muon_weight_decay
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
@@ -402,7 +416,7 @@ while True:
 print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 if val_bpb is not None:
-    print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
+    print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
 
 # Log to report
 from nanochat.report import get_report
