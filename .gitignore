@@ -12,3 +12,4 @@ eval_bundle/
 .claude
 CLAUDE.md
 wandb/
+*.egg-info/

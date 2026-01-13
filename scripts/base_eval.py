@@ -134,13 +134,16 @@ def load_hf_model(hf_path: str, device):
     print0(f"Loading model from: {hf_path}")
     # Load the model
     from transformers import AutoModelForCausalLM
-    model = AutoModelForCausalLM.from_pretrained(hf_path)
+    model = AutoModelForCausalLM.from_pretrained(hf_path, trust_remote_code=True)
     model.to(device)
     model.eval()
     max_seq_len = 1024 if "openai-community/gpt2" in hf_path else None
     model = ModelWrapper(model, max_seq_len=max_seq_len)
     # Load the tokenizer
-    tokenizer = HuggingFaceTokenizer.from_pretrained(hf_path)
+    if os.path.exists(hf_path):
+        tokenizer = HuggingFaceTokenizer.from_directory(hf_path)
+    else:
+        tokenizer = HuggingFaceTokenizer.from_pretrained(hf_path)
     return model, tokenizer
 
 # -----------------------------------------------------------------------------
