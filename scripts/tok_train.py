@@ -1,5 +1,5 @@
 """
-Train a tokenizer using the HuggingFace Tokenizers library.
+Train a tokenizer using our own BPE Tokenizer library.
 In the style of GPT-4 tokenizer.
 """
 import os
@@ -16,7 +16,7 @@ from nanochat.dataset import parquets_iter_batched
 parser = argparse.ArgumentParser(description='Train a BPE tokenizer')
 parser.add_argument('--max_chars', type=int, default=10_000_000_000, help='Maximum characters to train on (default: 10B)')
 parser.add_argument('--doc_cap', type=int, default=10_000, help='Maximum characters per document (default: 10,000)')
-parser.add_argument('--vocab_size', type=int, default=65536, help='Vocabulary size (default: 65536 = 2^16)')
+parser.add_argument('--vocab_size', type=int, default=32768, help='Vocabulary size (default: 32768 = 2^15)')
 args = parser.parse_args()
 print(f"max_chars: {args.max_chars:,}")
 print(f"doc_cap: {args.doc_cap:,}")

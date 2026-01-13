@@ -10,24 +10,14 @@
 
 # all the setup stuff
 export OMP_NUM_THREADS=1
-NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
+export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
-uv sync
+uv sync --extra cpu
 source .venv/bin/activate
 if [ -z "$WANDB_RUN" ]; then
     WANDB_RUN=dummy
-fi
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
-EVAL_BUNDLE_URL=https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip
-if [ ! -d "$NANOCHAT_BASE_DIR/eval_bundle" ]; then
-    curl -L -o eval_bundle.zip $EVAL_BUNDLE_URL
-    unzip -q eval_bundle.zip
-    rm eval_bundle.zip
-    mv eval_bundle $NANOCHAT_BASE_DIR
 fi
 
 # wipe the report

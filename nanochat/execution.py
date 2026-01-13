@@ -127,8 +127,6 @@ def chdir(root):
     os.chdir(root)
     try:
         yield
-    except BaseException as exc:
-        raise exc
     finally:
         os.chdir(cwd)
 
