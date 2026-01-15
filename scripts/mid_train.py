@@ -6,10 +6,10 @@ python -m scripts.mid_train
 
 Or torchrun for training:
 
-torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_size=16
+torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device-batch-size=16
 """
 
-from collections import deque
+import argparse
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
@@ -31,65 +31,75 @@ from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
 
 # -----------------------------------------------------------------------------
-run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
-device_type = "" # cuda|cpu|mps (empty => autodetect)
-model_tag = None # model tag to load the model from (base model or midtrained model)
-step = None # step to load the model from (base model or midtrained model)
-dtype = "bfloat16"
-num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
-max_seq_len = 2048
-device_batch_size = 32
-unembedding_lr = 0.004
-embedding_lr = 0.2
-matrix_lr = 0.02
-init_lr_frac = 1.0 # initial learning rate is this fraction of the base learning rate
-weight_decay = 0.0
-eval_every = 150 # -1 = disable
-eval_tokens = 20*524288
-total_batch_size = 524288
-dry_run = 0 # dry_run=1 is for experiments: we will log to wandb but we won't write checkpoints or report
-config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
-user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
+# CLI arguments
+parser = argparse.ArgumentParser(description="Midtrain the model")
+# Logging
+parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
+# Runtime
+parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--dtype", type=str, default="bfloat16", help="float32|bfloat16")
+# Model loading
+parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
+parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
+# Training horizon
+parser.add_argument("--num-iterations", type=int, default=-1, help="number of optimization steps (-1 = full epoch)")
+# Batch sizes
+parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
+parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size")
+parser.add_argument("--total-batch-size", type=int, default=524288, help="total batch size in tokens")
+# Optimization
+parser.add_argument("--embedding-lr", type=float, default=0.2, help="learning rate for embedding parameters (Adam)")
+parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
+parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
+parser.add_argument("--weight-decay", type=float, default=0.0, help="weight decay for embedding/unembedding parameters (Adam)")
+parser.add_argument("--init-lr-frac", type=float, default=1.0, help="initial LR as fraction of base LR")
+# Evaluation
+parser.add_argument("--eval-every", type=int, default=150, help="evaluate val bpb every N steps (-1 = disable)")
+parser.add_argument("--eval-tokens", type=int, default=20*524288, help="number of tokens to evaluate val loss on")
+# Output
+parser.add_argument("--dry-run", action="store_true", help="log to wandb but skip checkpoints/report")
+args = parser.parse_args()
+user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
 
 # Compute init
-device_type = autodetect_device_type() if device_type == "" else device_type
+device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0
-autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+ptdtype = torch.float32 if args.dtype == 'float32' else torch.bfloat16
+autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 # wandb logging init
-use_dummy_wandb = run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-mid", name=run, config=user_config)
+use_dummy_wandb = args.run == "dummy" or not master_process
+wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-mid", name=args.run, config=user_config)
 
 # Load the model and tokenizer
-model, tokenizer, meta = load_model("base", device, phase="train", model_tag=model_tag, step=step)
+model, tokenizer, meta = load_model("base", device, phase="train", model_tag=args.model_tag, step=args.model_step)
 pretrain_batch_size = meta.get("device_batch_size", None)
-if pretrain_batch_size is not None and device_batch_size > pretrain_batch_size:
-    print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device_batch_size to this script?")
+if pretrain_batch_size is not None and args.device_batch_size > pretrain_batch_size:
+    print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device-batch-size to this script?")
 orig_model = model
 model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
-tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration for a single rank
+tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
 world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
-assert total_batch_size % world_tokens_per_fwdbwd == 0
-grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
-print0(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
+assert args.total_batch_size % world_tokens_per_fwdbwd == 0
+grad_accum_steps = args.total_batch_size // world_tokens_per_fwdbwd
+print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
-print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
+print0(f"Total batch size {args.total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 token_bytes = get_token_bytes(device=device)
 
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
-optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
+optimizers = model.setup_optimizers(unembedding_lr=args.unembedding_lr, embedding_lr=args.embedding_lr, matrix_lr=args.matrix_lr, weight_decay=args.weight_decay)
 adamw_optimizer, muon_optimizer = optimizers
 # Override the initial learning rate as a fraction of the base learning rate
 for opt in optimizers:
     for group in opt.param_groups:
-        group["lr"] = group["lr"] * init_lr_frac
+        group["lr"] = group["lr"] * args.init_lr_frac
         group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
 
 # Midtraining data mixture and DataLoader
@@ -114,49 +124,100 @@ val_dataset = TaskMixture([
 # these two global variables and update them from within the data generator.
 last_step = False # we will toggle this to True when we reach the end of the training dataset
 approx_progress = 0.0 # will go from 0 to 1 over the course of the epoch
-def mid_data_generator(split):
-    global last_step, approx_progress
+current_epoch = 1 # track epoch for logging
+def mid_data_generator_bos_bestfit(split, buffer_size=100):
+    """
+    BOS-aligned dataloader for midtraining with bestfit-crop packing.
+
+    Each row in the batch starts with BOS (beginning of a conversation).
+    Conversations are packed using best-fit algorithm to minimize cropping.
+    This matches the BOS-aligned approach used in pretraining.
+    """
+    global last_step, approx_progress, current_epoch
     assert split in {"train", "val"}, "split must be 'train' or 'val'"
     dataset = train_dataset if split == "train" else val_dataset
     dataset_size = len(dataset)
     assert dataset_size > 0
-    needed_tokens = device_batch_size * max_seq_len + 1 # to form one training batch of inputs,targets
-    token_buffer = deque()
-    # CUDA supports memory pinning for faster transfers between CPU and GPU:
-    scratch = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=(device_type == "cuda"))
-    cursor = ddp_rank # increments by ddp_world_size each time, so each rank processes unique documents
-    it = 0 # iteration counter
-    while True:
-        # Accumulate enough tokens for one iteration before yielding
-        while len(token_buffer) < needed_tokens:
+    row_capacity = args.max_seq_len + 1  # +1 for target at last position
+
+    # Conversation buffer: list of token lists
+    conv_buffer = []
+    cursor = ddp_rank  # Each rank processes different conversations (for fetching)
+    consumed = ddp_rank  # Track actual consumption separately from buffering
+    epoch = 1
+    it = 0  # iteration counter
+
+    def refill_buffer():
+        nonlocal cursor, epoch
+        while len(conv_buffer) < buffer_size:
             conversation = dataset[cursor]
             ids, _ = tokenizer.render_conversation(conversation)
-            token_buffer.extend(ids)
+            conv_buffer.append(ids)
             cursor += ddp_world_size
             if cursor >= dataset_size:
-                cursor -= dataset_size # wrap around for another epoch
-                if split == "train":
-                    last_step = True # toggle last_step to True, which will terminate the training loop
+                cursor = cursor % dataset_size
+                epoch += 1
+                # Note: last_step is now triggered based on consumption, not fetching
+
+    while True:
+        rows = []
+        for _ in range(args.device_batch_size):
+            row = []
+            while len(row) < row_capacity:
+                # Ensure buffer has conversations
+                while len(conv_buffer) < buffer_size:
+                    refill_buffer()
+
+                remaining = row_capacity - len(row)
+
+                # Find largest conversation that fits entirely
+                best_idx = -1
+                best_len = 0
+                for i, conv in enumerate(conv_buffer):
+                    conv_len = len(conv)
+                    if conv_len <= remaining and conv_len > best_len:
+                        best_idx = i
+                        best_len = conv_len
+
+                if best_idx >= 0:
+                    # Found a conversation that fits - use it entirely
+                    conv = conv_buffer.pop(best_idx)
+                    row.extend(conv)
+                    consumed += ddp_world_size  # Track actual consumption
+                else:
+                    # No conversation fits - crop first conversation to fill remaining
+                    conv = conv_buffer.pop(0)
+                    row.extend(conv[:remaining])
+                    consumed += ddp_world_size  # Track actual consumption
+
+            rows.append(row[:row_capacity])
+
         # Stopping condition to respect num_iterations, if given
         it += 1
-        if 0 < num_iterations <= it and split == "train":
-            last_step = True # toggle last_step to True, which will terminate the training loop
-        # Build up inputs/targets and yield
-        for i in range(needed_tokens):
-            scratch[i] = token_buffer.popleft()
-        inputs_cpu = scratch[:-1].to(dtype=torch.int32)
-        targets_cpu = scratch[1:]
-        inputs = inputs_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int32, non_blocking=True)
-        targets = targets_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int64, non_blocking=True)
+        if 0 < args.num_iterations <= it and split == "train":
+            last_step = True
+
+        # Update progress tracking (based on consumed, not cursor, to account for buffering)
         if split == "train":
-            if num_iterations > 0:
-                approx_progress = it / num_iterations # calculate progress from the max number of iterations
+            current_epoch = epoch
+            if args.num_iterations > 0:
+                approx_progress = it / args.num_iterations
             else:
-                approx_progress = cursor / dataset_size # approximate progress as a fraction of the dataset
+                approx_progress = consumed / dataset_size
+            # Trigger last_step when we've consumed enough (instead of when cursor wraps)
+            if consumed >= dataset_size:
+                last_step = True
+
+        # Build tensors
+        use_cuda = device_type == "cuda"
+        batch_tensor = torch.tensor(rows, dtype=torch.long, pin_memory=use_cuda)
+        inputs = batch_tensor[:, :-1].to(device=device, dtype=torch.int32, non_blocking=use_cuda)
+        targets = batch_tensor[:, 1:].to(device=device, dtype=torch.int64, non_blocking=use_cuda)
+
         yield inputs, targets
 
-train_loader = mid_data_generator("train")
-build_val_loader = lambda: mid_data_generator("val")
+train_loader = mid_data_generator_bos_bestfit("train")
+build_val_loader = lambda: mid_data_generator_bos_bestfit("val")
 progress = 0 # will go from 0 to 1 over the course of the epoch
 
 # Learning rate scheduler
@@ -179,7 +240,7 @@ ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
 step = 0
 while True:
-    flops_so_far = num_flops_per_token * total_batch_size * step
+    flops_so_far = num_flops_per_token * args.total_batch_size * step
 
     # Synchronize last_step across all ranks to avoid hangs in the distributed setting
     if ddp:
@@ -188,10 +249,10 @@ while True:
         last_step = bool(last_step_tensor.item())
 
     # once in a while: evaluate the val bpb (all ranks participate)
-    if eval_every > 0 and (last_step or step % eval_every == 0):
+    if args.eval_every > 0 and (last_step or step % args.eval_every == 0):
         model.eval()
         val_loader = build_val_loader()
-        eval_steps = eval_tokens // (device_batch_size * max_seq_len * ddp_world_size)
+        eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
         with autocast_ctx:
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
@@ -206,8 +267,8 @@ while True:
         model.train()
 
     # save checkpoint at the end of the run (only on master process)
-    if master_process and last_step and not dry_run:
-        output_dirname = model_tag if model_tag else f"d{depth}" # e.g. d12
+    if master_process and last_step and not args.dry_run:
+        output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
         checkpoint_dir = os.path.join(base_dir, "mid_checkpoints", output_dirname)
         save_checkpoint(
             checkpoint_dir,
@@ -218,7 +279,7 @@ while True:
                 "step": step,
                 "val_bpb": val_bpb, # loss at last step
                 "model_config": {
-                    "sequence_len": max_seq_len,
+                    "sequence_len": args.max_seq_len,
                     "vocab_size": tokenizer.get_vocab_size(),
                     "n_layer": depth,
                     "n_head": model.config.n_head,
@@ -268,13 +329,13 @@ while True:
     smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss.item() # EMA the training loss
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1)) # debias the EMA
     pct_done = 100 * progress
-    tok_per_sec = int(total_batch_size / dt)
-    flops_per_sec = num_flops_per_token * total_batch_size / dt
+    tok_per_sec = int(args.total_batch_size / dt)
+    flops_per_sec = num_flops_per_token * args.total_batch_size / dt
     promised_flops_per_sec_h100 = 989e12 * ddp_world_size # bfloat16 H100 SXM and without 2:4 sparsity
     mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
-    print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
+    print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {total_training_time/60:.2f}m")
     if step % 10 == 0:
         wandb_run.log({
             "step": step,
@@ -285,6 +346,7 @@ while True:
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,
             "train/mfu": mfu,
+            "train/epoch": current_epoch,
         })
 
 # print a few more stats
@@ -293,7 +355,7 @@ print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
 # Log to report
-if not dry_run:
+if not args.dry_run:
     from nanochat.report import get_report
     get_report().log(section="Midtraining", data=[
         user_config, # CLI args

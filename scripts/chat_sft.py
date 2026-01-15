@@ -9,6 +9,7 @@ Or torchrun for training:
 torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft
 """
 
+import argparse
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -31,49 +32,51 @@ from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
 
 # -----------------------------------------------------------------------------
-# SFT Hyperparameters
-run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
-# input model options
-source = "mid" # base|mid , which checkpoint to load the model from (base model or midtrained model)
-model_tag = None # model tag to load the model from (base model or midtrained model)
-step = None # step to load the model from (base model or midtrained model)
-# compute/precision
-device_type = "" # cuda|cpu|mps (empty => autodetect)
-dtype = "bfloat16"
-device_batch_size = 4 # max to avoid OOM
-# optimization
-num_epochs = 1
-num_iterations = -1 # override number of iterations (-1 = disable, use num_epochs to derive it)
-target_examples_per_step = 32
-unembedding_lr = 0.004
-embedding_lr = 0.2
-matrix_lr = 0.02
-weight_decay = 0.0
-init_lr_frac = 0.02
-# evaluation and logging there of
-eval_every = 100
-eval_steps = 100
-eval_metrics_every = 200
-eval_metrics_max_problems = 1024
-# now allow CLI to override the settings via the configurator lol
-config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
-user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
+# CLI arguments
+parser = argparse.ArgumentParser(description="Supervised finetuning for chat")
+# Logging
+parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
+# Runtime
+parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--dtype", type=str, default="bfloat16", help="float32|bfloat16")
+# Model loading
+parser.add_argument("--source", type=str, default="mid", help="base|mid - which checkpoint to load from")
+parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
+parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
+# Training horizon
+parser.add_argument("--num-epochs", type=int, default=1, help="number of epochs")
+parser.add_argument("--num-iterations", type=int, default=-1, help="override number of iterations (-1 = use num_epochs)")
+# Batch sizes
+parser.add_argument("--device-batch-size", type=int, default=4, help="per-device batch size")
+parser.add_argument("--target-examples-per-step", type=int, default=32, help="target examples per optimization step")
+# Optimization
+parser.add_argument("--embedding-lr", type=float, default=0.2, help="learning rate for embedding parameters (Adam)")
+parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
+parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
+parser.add_argument("--weight-decay", type=float, default=0.0, help="weight decay for embedding/unembedding parameters (Adam)")
+parser.add_argument("--init-lr-frac", type=float, default=0.02, help="initial LR as fraction of base LR")
+# Evaluation
+parser.add_argument("--eval-every", type=int, default=100, help="evaluate val loss every N steps")
+parser.add_argument("--eval-steps", type=int, default=100, help="number of batches for val loss evaluation")
+parser.add_argument("--eval-metrics-every", type=int, default=200, help="evaluate accuracy metrics every N steps")
+parser.add_argument("--eval-metrics-max-problems", type=int, default=1024, help="max problems per metric evaluation")
+args = parser.parse_args()
+user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
 
 # Compute init
-device_type = autodetect_device_type() if device_type == "" else device_type
+device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0
-ptdtype = torch.float32 if dtype == 'float32' else torch.bfloat16
+ptdtype = torch.float32 if args.dtype == 'float32' else torch.bfloat16
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
 
 # wandb logging init
-use_dummy_wandb = run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sft", name=run, config=user_config, save_code=True)
+use_dummy_wandb = args.run == "dummy" or not master_process
+wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sft", name=args.run, config=user_config, save_code=True)
 
 # Load the model and tokenizer
-model, tokenizer, meta = load_model(source, device, phase="train", model_tag=model_tag, step=step)
+model, tokenizer, meta = load_model(args.source, device, phase="train", model_tag=args.model_tag, step=args.model_step)
 orig_model = model # original, uncompiled model
 # model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs
 engine = Engine(model, tokenizer) # will be used for inline model evaluation only
@@ -127,34 +130,36 @@ def sft_data_generator(dataset, batch_size):
                 yield collate_and_yield(batch)
                 batch = []
 
-examples_per_step = device_batch_size * ddp_world_size
-print0(f"Target examples per step: {target_examples_per_step}")
-print0(f"Device batch size: {device_batch_size}")
+examples_per_step = args.device_batch_size * ddp_world_size
+print0(f"Target examples per step: {args.target_examples_per_step}")
+print0(f"Device batch size: {args.device_batch_size}")
 print0(f"Examples per step is device_batch_size * ddp_world_size: {examples_per_step}")
-assert target_examples_per_step % examples_per_step == 0, "Target examples per step must be divisible by examples per step"
-grad_accum_steps = target_examples_per_step // examples_per_step
+assert args.target_examples_per_step % examples_per_step == 0, "Target examples per step must be divisible by examples per step"
+grad_accum_steps = args.target_examples_per_step // examples_per_step
 print0(f"=> Setting grad accum steps: {grad_accum_steps}")
 
-if num_iterations == -1:
+if args.num_iterations == -1:
     # derive num_iterations from num_epochs and the size of the dataset
-    assert num_epochs > 0, "num_epochs must be positive if num_iterations is -1"
-    num_iterations = (len(train_ds) // target_examples_per_step) * num_epochs
-train_loader = sft_data_generator(train_ds, batch_size=device_batch_size)
-build_val_loader = lambda: sft_data_generator(val_ds, batch_size=device_batch_size)
+    assert args.num_epochs > 0, "num_epochs must be positive if num_iterations is -1"
+    num_iterations = (len(train_ds) // args.target_examples_per_step) * args.num_epochs
+else:
+    num_iterations = args.num_iterations
+train_loader = sft_data_generator(train_ds, batch_size=args.device_batch_size)
+build_val_loader = lambda: sft_data_generator(val_ds, batch_size=args.device_batch_size)
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer
 
 optimizers = model.setup_optimizers(
-    unembedding_lr=unembedding_lr,
-    embedding_lr=embedding_lr,
-    matrix_lr=matrix_lr,
-    weight_decay=weight_decay,
+    unembedding_lr=args.unembedding_lr,
+    embedding_lr=args.embedding_lr,
+    matrix_lr=args.matrix_lr,
+    weight_decay=args.weight_decay,
 )
 # Set the initial learning rate as a fraction of the base learning rate
 for opt in optimizers:
     for group in opt.param_groups:
-        group["lr"] = group["lr"] * init_lr_frac
+        group["lr"] = group["lr"] * args.init_lr_frac
         group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
 
 # -----------------------------------------------------------------------------
@@ -171,11 +176,11 @@ for step in range(num_iterations):
     last_step = step == num_iterations - 1
 
     # evaluate the validation loss
-    if last_step or step % eval_every == 0:
+    if last_step or step % args.eval_every == 0:
         model.eval()
         val_loader = build_val_loader()
         losses = []
-        for _ in range(eval_steps):
+        for _ in range(args.eval_steps):
             val_inputs, val_targets = next(val_loader)
             with torch.no_grad(), autocast_ctx:
                 loss = model(val_inputs, val_targets)
@@ -192,13 +197,13 @@ for step in range(num_iterations):
         model.train()
 
     # evaluate accuracy of the multiple choice tasks (which are quick to run)
-    if last_step or (step > 0 and step % eval_metrics_every == 0):
+    if last_step or (step > 0 and step % args.eval_metrics_every == 0):
         model.eval()
         metrics = {}
         with torch.no_grad(), autocast_ctx:
             # note that because these are inside no_grad, we can usually afford to at least ~2X the batch size
-            metrics["mmlu_acc"] = run_chat_eval("MMLU", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=eval_metrics_max_problems)
-            metrics["arc_easy_acc"] = run_chat_eval("ARC-Easy", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=eval_metrics_max_problems)
+            metrics["mmlu_acc"] = run_chat_eval("MMLU", model, tokenizer, engine, batch_size=args.device_batch_size*2, max_problems=args.eval_metrics_max_problems)
+            metrics["arc_easy_acc"] = run_chat_eval("ARC-Easy", model, tokenizer, engine, batch_size=args.device_batch_size*2, max_problems=args.eval_metrics_max_problems)
         metrics_str = ', '.join(f'{k}: {v:.6f}' for k, v in metrics.items())
         print0(f"Step {step:05d} | {metrics_str}")
         wandb_run.log({
@@ -250,7 +255,7 @@ for step in range(num_iterations):
 if master_process:
     base_dir = get_base_dir()
     depth = model.config.n_layer
-    output_dirname = model_tag if model_tag else f"d{depth}" # e.g. d12
+    output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
     checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
     model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
     save_checkpoint(
