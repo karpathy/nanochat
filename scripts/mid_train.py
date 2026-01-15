@@ -6,11 +6,10 @@ python -m scripts.mid_train
 
 Or torchrun for training:
 
-torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device_batch_size=16
+torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device-batch-size=16
 """
 
 import argparse
-from collections import deque
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
@@ -37,28 +36,28 @@ parser = argparse.ArgumentParser(description="Midtrain the model")
 # Logging
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
 # Runtime
-parser.add_argument("--device_type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 parser.add_argument("--dtype", type=str, default="bfloat16", help="float32|bfloat16")
 # Model loading
-parser.add_argument("--model_tag", type=str, default=None, help="model tag to load from")
-parser.add_argument("--model_step", type=int, default=None, help="model step to load from")
+parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
+parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
 # Training horizon
-parser.add_argument("--num_iterations", type=int, default=-1, help="number of optimization steps (-1 = full epoch)")
+parser.add_argument("--num-iterations", type=int, default=-1, help="number of optimization steps (-1 = full epoch)")
 # Batch sizes
-parser.add_argument("--max_seq_len", type=int, default=2048, help="max context length")
-parser.add_argument("--device_batch_size", type=int, default=32, help="per-device batch size")
-parser.add_argument("--total_batch_size", type=int, default=524288, help="total batch size in tokens")
+parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
+parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size")
+parser.add_argument("--total-batch-size", type=int, default=524288, help="total batch size in tokens")
 # Optimization
-parser.add_argument("--embedding_lr", type=float, default=0.2, help="learning rate for embedding parameters (Adam)")
-parser.add_argument("--unembedding_lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
-parser.add_argument("--matrix_lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
-parser.add_argument("--weight_decay", type=float, default=0.0, help="weight decay for embedding/unembedding parameters (Adam)")
-parser.add_argument("--init_lr_frac", type=float, default=1.0, help="initial LR as fraction of base LR")
+parser.add_argument("--embedding-lr", type=float, default=0.2, help="learning rate for embedding parameters (Adam)")
+parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
+parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
+parser.add_argument("--weight-decay", type=float, default=0.0, help="weight decay for embedding/unembedding parameters (Adam)")
+parser.add_argument("--init-lr-frac", type=float, default=1.0, help="initial LR as fraction of base LR")
 # Evaluation
-parser.add_argument("--eval_every", type=int, default=150, help="evaluate val bpb every N steps (-1 = disable)")
-parser.add_argument("--eval_tokens", type=int, default=20*524288, help="number of tokens to evaluate val loss on")
+parser.add_argument("--eval-every", type=int, default=150, help="evaluate val bpb every N steps (-1 = disable)")
+parser.add_argument("--eval-tokens", type=int, default=20*524288, help="number of tokens to evaluate val loss on")
 # Output
-parser.add_argument("--dry_run", action="store_true", help="log to wandb but skip checkpoints/report")
+parser.add_argument("--dry-run", action="store_true", help="log to wandb but skip checkpoints/report")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
@@ -80,7 +79,7 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-mi
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=args.model_tag, step=args.model_step)
 pretrain_batch_size = meta.get("device_batch_size", None)
 if pretrain_batch_size is not None and args.device_batch_size > pretrain_batch_size:
-    print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device_batch_size to this script?")
+    print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device-batch-size to this script?")
 orig_model = model
 model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
@@ -125,49 +124,100 @@ val_dataset = TaskMixture([
 # these two global variables and update them from within the data generator.
 last_step = False # we will toggle this to True when we reach the end of the training dataset
 approx_progress = 0.0 # will go from 0 to 1 over the course of the epoch
-def mid_data_generator(split):
-    global last_step, approx_progress
+current_epoch = 1 # track epoch for logging
+def mid_data_generator_bos_bestfit(split, buffer_size=100):
+    """
+    BOS-aligned dataloader for midtraining with bestfit-crop packing.
+
+    Each row in the batch starts with BOS (beginning of a conversation).
+    Conversations are packed using best-fit algorithm to minimize cropping.
+    This matches the BOS-aligned approach used in pretraining.
+    """
+    global last_step, approx_progress, current_epoch
     assert split in {"train", "val"}, "split must be 'train' or 'val'"
     dataset = train_dataset if split == "train" else val_dataset
     dataset_size = len(dataset)
     assert dataset_size > 0
-    needed_tokens = args.device_batch_size * args.max_seq_len + 1 # to form one training batch of inputs,targets
-    token_buffer = deque()
-    # CUDA supports memory pinning for faster transfers between CPU and GPU:
-    scratch = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=(device_type == "cuda"))
-    cursor = ddp_rank # increments by ddp_world_size each time, so each rank processes unique documents
-    it = 0 # iteration counter
-    while True:
-        # Accumulate enough tokens for one iteration before yielding
-        while len(token_buffer) < needed_tokens:
+    row_capacity = args.max_seq_len + 1  # +1 for target at last position
+
+    # Conversation buffer: list of token lists
+    conv_buffer = []
+    cursor = ddp_rank  # Each rank processes different conversations (for fetching)
+    consumed = ddp_rank  # Track actual consumption separately from buffering
+    epoch = 1
+    it = 0  # iteration counter
+
+    def refill_buffer():
+        nonlocal cursor, epoch
+        while len(conv_buffer) < buffer_size:
             conversation = dataset[cursor]
             ids, _ = tokenizer.render_conversation(conversation)
-            token_buffer.extend(ids)
+            conv_buffer.append(ids)
             cursor += ddp_world_size
             if cursor >= dataset_size:
-                cursor -= dataset_size # wrap around for another epoch
-                if split == "train":
-                    last_step = True # toggle last_step to True, which will terminate the training loop
+                cursor = cursor % dataset_size
+                epoch += 1
+                # Note: last_step is now triggered based on consumption, not fetching
+
+    while True:
+        rows = []
+        for _ in range(args.device_batch_size):
+            row = []
+            while len(row) < row_capacity:
+                # Ensure buffer has conversations
+                while len(conv_buffer) < buffer_size:
+                    refill_buffer()
+
+                remaining = row_capacity - len(row)
+
+                # Find largest conversation that fits entirely
+                best_idx = -1
+                best_len = 0
+                for i, conv in enumerate(conv_buffer):
+                    conv_len = len(conv)
+                    if conv_len <= remaining and conv_len > best_len:
+                        best_idx = i
+                        best_len = conv_len
+
+                if best_idx >= 0:
+                    # Found a conversation that fits - use it entirely
+                    conv = conv_buffer.pop(best_idx)
+                    row.extend(conv)
+                    consumed += ddp_world_size  # Track actual consumption
+                else:
+                    # No conversation fits - crop first conversation to fill remaining
+                    conv = conv_buffer.pop(0)
+                    row.extend(conv[:remaining])
+                    consumed += ddp_world_size  # Track actual consumption
+
+            rows.append(row[:row_capacity])
+
         # Stopping condition to respect num_iterations, if given
         it += 1
         if 0 < args.num_iterations <= it and split == "train":
-            last_step = True # toggle last_step to True, which will terminate the training loop
-        # Build up inputs/targets and yield
-        for i in range(needed_tokens):
-            scratch[i] = token_buffer.popleft()
-        inputs_cpu = scratch[:-1].to(dtype=torch.int32)
-        targets_cpu = scratch[1:]
-        inputs = inputs_cpu.view(args.device_batch_size, args.max_seq_len).to(device=device, dtype=torch.int32, non_blocking=True)
-        targets = targets_cpu.view(args.device_batch_size, args.max_seq_len).to(device=device, dtype=torch.int64, non_blocking=True)
+            last_step = True
+
+        # Update progress tracking (based on consumed, not cursor, to account for buffering)
         if split == "train":
+            current_epoch = epoch
             if args.num_iterations > 0:
-                approx_progress = it / args.num_iterations # calculate progress from the max number of iterations
+                approx_progress = it / args.num_iterations
             else:
-                approx_progress = cursor / dataset_size # approximate progress as a fraction of the dataset
+                approx_progress = consumed / dataset_size
+            # Trigger last_step when we've consumed enough (instead of when cursor wraps)
+            if consumed >= dataset_size:
+                last_step = True
+
+        # Build tensors
+        use_cuda = device_type == "cuda"
+        batch_tensor = torch.tensor(rows, dtype=torch.long, pin_memory=use_cuda)
+        inputs = batch_tensor[:, :-1].to(device=device, dtype=torch.int32, non_blocking=use_cuda)
+        targets = batch_tensor[:, 1:].to(device=device, dtype=torch.int64, non_blocking=use_cuda)
+
         yield inputs, targets
 
-train_loader = mid_data_generator("train")
-build_val_loader = lambda: mid_data_generator("val")
+train_loader = mid_data_generator_bos_bestfit("train")
+build_val_loader = lambda: mid_data_generator_bos_bestfit("val")
 progress = 0 # will go from 0 to 1 over the course of the epoch
 
 # Learning rate scheduler
@@ -285,7 +335,7 @@ while True:
     mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
-    print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
+    print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {total_training_time/60:.2f}m")
     if step % 10 == 0:
         wandb_run.log({
             "step": step,
@@ -296,6 +346,7 @@ while True:
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,
             "train/mfu": mfu,
+            "train/epoch": current_epoch,
         })
 
 # print a few more stats

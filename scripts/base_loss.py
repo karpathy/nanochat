@@ -7,14 +7,14 @@ Example run as:
 torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
 
 To evaluate a HuggingFace model:
-python -m scripts.base_loss --hf_path openai-community/gpt2
+python -m scripts.base_loss --hf-path openai-community/gpt2
 """
 import argparse
 from contextlib import nullcontext
 import torch
 from nanochat.checkpoint_manager import load_model
 from nanochat.common import compute_init, print0, compute_cleanup, autodetect_device_type
-from nanochat.dataloader import tokenizing_distributed_data_loader
+from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
 from nanochat.tokenizer import get_token_bytes, HuggingFaceTokenizer
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
@@ -61,12 +61,12 @@ def get_hf_token_bytes(tokenizer, device="cpu"):
 
 # CLI arguments
 parser = argparse.ArgumentParser(description="Evaluate loss on train/val splits and sample from model")
-parser.add_argument("--device_batch_size", type=int, default=32, help="per-device batch size")
-parser.add_argument("--split_tokens", type=int, default=40*524288, help="number of tokens to evaluate per split")
-parser.add_argument("--model_tag", type=str, default=None, help="model tag for checkpoint directory")
-parser.add_argument("--model_step", type=int, default=None, help="model step to load")
-parser.add_argument("--device_type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
-parser.add_argument("--hf_path", type=str, default=None, help="HuggingFace model path (e.g. openai-community/gpt2)")
+parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size")
+parser.add_argument("--split-tokens", type=int, default=40*524288, help="number of tokens to evaluate per split")
+parser.add_argument("--model-tag", type=str, default=None, help="model tag for checkpoint directory")
+parser.add_argument("--model-step", type=int, default=None, help="model step to load")
+parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--hf-path", type=str, default=None, help="HuggingFace model path (e.g. openai-community/gpt2)")
 args = parser.parse_args()
 
 # Load the base model and the tokenizer
@@ -97,7 +97,7 @@ assert args.split_tokens % tokens_per_step == 0, "split_tokens must be divisible
 steps = args.split_tokens // tokens_per_step
 bpb_results = {}
 for split_name in ["train", "val"]:
-    loader = tokenizing_distributed_data_loader(tokenizer, args.device_batch_size, sequence_len, split_name, device=device)
+    loader = tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, sequence_len, split_name, device=device)
     with autocast_ctx:
         bpb = evaluate_bpb(model, loader, steps, token_bytes)
     print0(f"{split_name} bpb: {bpb:.4f}")

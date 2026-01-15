@@ -17,9 +17,10 @@ if [ -z "$SKIP_SETUP" ]; then
     uv sync --extra gpu
     source .venv/bin/activate
 
-    # Tokenizer
-    python -m nanochat.dataset -n 240
-    python -m scripts.tok_train --max_chars=2000000000 --vocab_size=32768
+    # Tokenizer, download 1000 shards for pretraining
+    # (probably this can be reduced but it's tricky to determine the exact right number, TODO).
+    python -m nanochat.dataset -n 1000
+    python -m scripts.tok_train --max-chars=2000000000 --vocab-size=32768
 else
     source .venv/bin/activate
 fi
@@ -57,16 +58,16 @@ for d in "${DEPTHS[@]}"; do
     START_TIME=$(date +%s)
 
     # Train the model with natural horizon (target_param_data_ratio default)
-    # No --target_flops, let it use the default ratio from base_train
+    # No --target-flops, let it use the default ratio from base_train
     torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- \
         --depth=$d \
-        --target_param_data_ratio=8 \
+        --target-param-data-ratio=8 \
         --run="${WANDB_RUN}_d${d}" \
-        --model_tag="${TAG}" \
-        --core_metric_every=999999 \
-        --core_metric_max_per_task=-1 \
-        --sample_every=-1 \
-        --save_every=-1 \
+        --model-tag="${TAG}" \
+        --core-metric-every=999999 \
+        --core-metric-max-per-task=-1 \
+        --sample-every=-1 \
+        --save-every=-1 \
         2>&1 | tee "$RESULTS_DIR/${TAG}_train.log"
 
     END_TIME=$(date +%s)
