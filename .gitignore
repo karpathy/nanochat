@@ -19,3 +19,7 @@ agent.md
 lm_eval_sample_*/
 *.pt
 hf-export/**/*
+lm_eval_pretrain/
+benchmark.md
+d*.png
+loss*.png

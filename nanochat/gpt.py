@@ -585,7 +585,7 @@ class GPT(nn.Module):
         return optimizer
 
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, return_full_logits: bool = False):
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -599,22 +599,32 @@ class GPT(nn.Module):
             x = block(x)
         x = self.transformer.ln_f(x)
 
-        if targets is not None:
-            # if we are given some desired targets also calculate the loss
+        if targets is not None or return_full_logits:
+            # full logits are needed for eval tooling; loss is optional
             logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            if targets is not None:
+                # if we are given some desired targets also calculate the loss
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
 
-            # add the auxiliary load balancing loss and router z loss to the main loss
-            if self.config.n_exp > 1 and self.config.use_aux_loss:
-                loss += self.config.aux_loss_weight * MANAGER.aggregate_aux_loss()
-                MANAGER.reset_aux_loss()
-            if self.config.n_exp > 1 and self.config.use_router_z_loss:
-                loss += self.config.router_z_loss_weight * MANAGER.aggregate_router_z_loss()
-                MANAGER.reset_router_z_loss()
+                # add the auxiliary load balancing loss and router z loss to the main loss
+                if self.config.n_exp > 1 and self.config.use_aux_loss:
+                    loss += self.config.aux_loss_weight * MANAGER.aggregate_aux_loss()
+                    MANAGER.reset_aux_loss()
+                if self.config.n_exp > 1 and self.config.use_router_z_loss:
+                    loss += self.config.router_z_loss_weight * MANAGER.aggregate_router_z_loss()
+                    MANAGER.reset_router_z_loss()
+            else:
+                loss = None
+                if self.config.n_exp > 1:
+                    MANAGER.reset_aux_loss()
+                    MANAGER.reset_router_z_loss()
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             loss = None
+            if self.config.n_exp > 1:
+                MANAGER.reset_aux_loss()
+                MANAGER.reset_router_z_loss()
 
         return logits, loss
 
