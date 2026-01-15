@@ -20,33 +20,52 @@ def log0(message):
     if int(os.environ.get('RANK', 0)) == 0:
         logger.info(message)
 
-def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data):
-    assert int(os.environ.get('RANK', 0)) == 0 # prevent footguns for now
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    # Save the model state (parameters)
-    model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
-    torch.save(model_data, model_path)
-    log0(f"Saved model file to: {model_path}")
-    # Save the optimizer state (useful for SFT or any other fine-tuning)
+def _patch_missing_config_keys(model_config_kwargs):
+    """Add default values for new config keys missing in old checkpoints."""
+    # Old models were trained with full context (no sliding window)
+    if "window_pattern" not in model_config_kwargs:
+        model_config_kwargs["window_pattern"] = "L"
+        log0(f"Patching missing window_pattern in model config to 'L'")
+
+def _patch_missing_keys(model_data, model_config):
+    """Add default values for new parameters that may be missing in old checkpoints."""
+    n_layer = model_config.n_layer
+    # resid_lambdas defaults to 1.0 (identity scaling)
+    if "resid_lambdas" not in model_data:
+        model_data["resid_lambdas"] = torch.ones(n_layer)
+        log0(f"Patching missing resid_lambdas in model data to 1.0")
+    # x0_lambdas defaults to 0.0 (disabled)
+    if "x0_lambdas" not in model_data:
+        model_data["x0_lambdas"] = torch.zeros(n_layer)
+        log0(f"Patching missing x0_lambdas in model data to 0.0")
+
+def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
+    if rank == 0:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        # Save the model state parameters
+        model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
+        torch.save(model_data, model_path)
+        logger.info(f"Saved model parameters to: {model_path}")
+        # Save the metadata dict as json
+        meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta_data, f, indent=2)
+        logger.info(f"Saved metadata to: {meta_path}")
+    # Note that optimizer state is sharded across ranks, so each rank must save its own.
     if optimizer_data is not None:
-        optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}.pt")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
         torch.save(optimizer_data, optimizer_path)
-        log0(f"Saved optimizer file to: {optimizer_path}")
-    # Save the metadata dict as json
-    meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta_data, f, indent=2)
-    log0(f"Saved metadata file to: {meta_path}")
+        logger.info(f"Saved optimizer state to: {optimizer_path}")
 
-
-def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False):
+def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
     # Load the model state
     model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
     model_data = torch.load(model_path, map_location=device)
     # Load the optimizer state if requested
     optimizer_data = None
     if load_optimizer:
-        optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}.pt")
+        optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
         optimizer_data = torch.load(optimizer_path, map_location=device)
     # Load the metadata
     meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
@@ -74,8 +93,10 @@ def build_model(checkpoint_dir, step, device, phase):
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
     model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
+    _patch_missing_config_keys(model_config_kwargs)
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)
+    _patch_missing_keys(model_data, model_config)
     with torch.device("meta"):
         model = GPT(model_config)
     # Load the model state
@@ -90,15 +111,15 @@ def build_model(checkpoint_dir, step, device, phase):
     # Load the Tokenizer
     tokenizer = get_tokenizer()
     # Sanity check: compatibility between model and tokenizer
-    assert tokenizer.get_vocab_size() == model_config_kwargs["vocab_size"]
+    assert tokenizer.get_vocab_size() == model_config_kwargs["vocab_size"], f"Tokenizer vocab size {tokenizer.get_vocab_size()} does not match model config vocab size {model_config_kwargs['vocab_size']}"
     return model, tokenizer, meta_data
 
 
-def find_largest_model(checkpoint_dir):
+def find_largest_model(checkpoints_dir):
     # attempt to guess the model tag: take the biggest model available
-    model_tags = [f for f in os.listdir(checkpoint_dir) if os.path.isdir(os.path.join(checkpoint_dir, f))]
+    model_tags = [f for f in os.listdir(checkpoints_dir) if os.path.isdir(os.path.join(checkpoints_dir, f))]
     if not model_tags:
-        raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
+        raise FileNotFoundError(f"No checkpoints found in {checkpoints_dir}")
     # 1) normally all model tags are of the form d<number>, try that first:
     candidates = []
     for model_tag in model_tags:
@@ -110,7 +131,7 @@ def find_largest_model(checkpoint_dir):
         candidates.sort(key=lambda x: x[0], reverse=True)
         return candidates[0][1]
     # 2) if that failed, take the most recently updated model:
-    model_tags.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)), reverse=True)
+    model_tags.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoints_dir, x)), reverse=True)
     return model_tags[0]
 
 

@@ -19,16 +19,13 @@ source .venv/bin/activate
 if [ -z "$WANDB_RUN" ]; then
     WANDB_RUN=dummy
 fi
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 
 # wipe the report
 python -m nanochat.report reset
 
 # train tokenizer on ~1B characters
 python -m nanochat.dataset -n 4
-python -m scripts.tok_train --max_chars=1000000000
+python -m scripts.tok_train --max-chars=1000000000
 python -m scripts.tok_eval
 
 # train a very small 4 layer model on the CPU
@@ -36,37 +33,37 @@ python -m scripts.tok_eval
 # we only run 50 steps of optimization (bump this to get better results)
 python -m scripts.base_train \
     --depth=4 \
-    --max_seq_len=1024 \
-    --device_batch_size=1 \
-    --total_batch_size=1024 \
-    --eval_every=50 \
-    --eval_tokens=4096 \
-    --core_metric_every=50 \
-    --core_metric_max_per_task=12 \
-    --sample_every=50 \
-    --num_iterations=50
-python -m scripts.base_loss --device_batch_size=1 --split_tokens=4096
+    --max-seq-len=1024 \
+    --device-batch-size=1 \
+    --total-batch-size=1024 \
+    --eval-every=50 \
+    --eval-tokens=4096 \
+    --core-metric-every=50 \
+    --core-metric-max-per-task=12 \
+    --sample-every=50 \
+    --num-iterations=50
+python -m scripts.base_loss --device-batch-size=1 --split-tokens=4096
 python -m scripts.base_eval --max-per-task=16
 
 # midtraining
 python -m scripts.mid_train \
-    --max_seq_len=1024 \
-    --device_batch_size=1 \
-    --eval_every=50 \
-    --eval_tokens=4096 \
-    --total_batch_size=1024 \
-    --num_iterations=100
+    --max-seq-len=1024 \
+    --device-batch-size=1 \
+    --eval-every=50 \
+    --eval-tokens=4096 \
+    --total-batch-size=1024 \
+    --num-iterations=100
 # eval results will be terrible, this is just to execute the code paths.
 # note that we lower the execution memory limit to 1MB to avoid warnings on smaller systems
 python -m scripts.chat_eval --source=mid --max-new-tokens=128 --max-problems=20
 
 # SFT
 python -m scripts.chat_sft \
-    --device_batch_size=1 \
-    --target_examples_per_step=4 \
-    --num_iterations=100 \
-    --eval_steps=4 \
-    --eval_metrics_max_problems=16
+    --device-batch-size=1 \
+    --target-examples-per-step=4 \
+    --num-iterations=100 \
+    --eval-steps=4 \
+    --eval-metrics-max-problems=16
 
 # Chat CLI
 # python -m scripts.chat_cli -p "Why is the sky blue?"

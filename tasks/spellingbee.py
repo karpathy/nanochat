@@ -35,6 +35,8 @@ from nanochat.common import download_file_with_lock
 LETTERS = "abcdefghijklmnopqrstuvwxyz"
 # A list of 370K English words of large variety
 WORD_LIST_URL = "https://raw.githubusercontent.com/dwyl/english-words/refs/heads/master/words_alpha.txt"
+# A number bigger than 370K to separate train and test random seeds
+TEST_RANDOM_SEED_OFFSET = 10_000_000
 
 # Identical to gsm8k's answer extraction
 ANSWER_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
@@ -131,7 +133,7 @@ class SpellingBee(Task):
         return self.size
 
     def get_example(self, index):
-        seed = index if self.split == "train" else -(index + 1) # avoid collision at 0
+        seed = index if self.split == 'train' else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
 
         # pick a random word
@@ -252,7 +254,7 @@ class SimpleSpelling(Task):
         return self.size
 
     def get_example(self, index):
-        seed = index if self.split == "train" else -(index + 1) # avoid collision at 0
+        seed = index if self.split == 'train' else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
         # pick a random word
         word = rng.choice(self.words)
