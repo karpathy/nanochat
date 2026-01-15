@@ -38,11 +38,31 @@ class ColoredFormatter(logging.Formatter):
 
 def setup_default_logging():
     handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO) 
     handler.setFormatter(ColoredFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logging.basicConfig(
         level=logging.INFO,
         handlers=[handler]
     )
+
+def setup_file_logger(logger_name, filename, level=logging.DEBUG, formatter=None):
+    clean_name = os.path.basename(filename)
+    if clean_name != filename or not clean_name:
+        raise ValueError(f"Invalid log filename provided: {filename}")
+    if not clean_name.endswith(".log"):
+        clean_name += ".log"
+    logs_dir = get_logs_dir()
+    path = os.path.join(logs_dir, clean_name)
+
+    handler = logging.FileHandler(path, mode="w")
+    handler.setLevel(level)
+    handler.setFormatter(
+        formatter
+        or ColoredFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
+    logger = logging.getLogger(logger_name)
+    logger.addHandler(handler)
+    return path
 
 setup_default_logging()
 logger = logging.getLogger(__name__)
@@ -57,6 +77,38 @@ def get_base_dir():
         nanochat_dir = os.path.join(cache_dir, "nanochat")
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
+
+def get_project_root():
+    # locates the project root by walking upward from this file
+    _PROJECT_MARKERS = ('.git', 'uv.lock')
+    curr = os.path.dirname(os.path.abspath(__file__))
+    while True:
+        if any(os.path.exists(os.path.join(curr, m)) for m in _PROJECT_MARKERS):
+            return curr 
+        parent = os.path.dirname(curr) 
+        if parent == curr: # reached filesystem root 
+            return None 
+        curr = parent 
+
+def get_logs_dir():
+    """ 
+    Resolves the directory where log files should be written.
+    - if $LOG_DIR is set, use that.
+    - else if, project root is detected, use <project_root>/logs. 
+    - else, fall back to <get_base_dir()>/logs 
+    """
+    env = os.environ.get("LOG_DIR")
+    if env:
+        path = os.path.abspath(env)
+        os.makedirs(path, exist_ok=True)
+        return path 
+
+    root = get_project_root() 
+    if not root:
+        root = get_base_dir()
+    logs = os.path.join(root, 'logs')
+    os.makedirs(logs, exist_ok=True)
+    return logs
 
 def download_file_with_lock(url, filename, postprocess_fn=None):
     """
