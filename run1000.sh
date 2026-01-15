@@ -20,18 +20,18 @@ curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-publ
 
 # train tokenizer on ~4B characters and kick off download of the rest for pretraining
 python -m nanochat.dataset -n 16
-# start downloading the rest of the shards for a total of 800 (see below why 800)
-python -m nanochat.dataset -n 800 &
+# start downloading the rest of the shards for a total of 1200 (see below why 1200)
+python -m nanochat.dataset -n 1200 &
 # todo: download the rest of it
-python -m scripts.tok_train --max_chars=4000000000 --vocab_size=65536
+python -m scripts.tok_train --max-chars=4000000000 --vocab-size=65536
 python -m scripts.tok_eval
 
 # Documenting my process for determining the hyperparameters for this run1000.sh script:
 # We want a budget of approx. $1000 ~= 41.6 hours of 8XH100 compute
 # 1) I guessed the model size for this to be about depth=32
 # 2) Determine the device_batch_size that fits:
-# Running the base_train.py script with --depth=32, I saw that --device_batch_size=16
-# runs out of memory, but --device_batch_size=8 fits. Inspecting `nvidia-smi` during training,
+# Running the base_train.py script with --depth=32, I saw that --device-batch-size=16
+# runs out of memory, but --device-batch-size=8 fits. Inspecting `nvidia-smi` during training,
 # I saw all GPUs were at about 78/80GB VRAM, so it just barely fits and we have good MFU at ~50%.
 # So the training script was running ok and showed:
 # Vocab size: 65,536
@@ -62,7 +62,9 @@ python -m scripts.tok_eval
 # The tok_eval.py script reports about ~4.8 chars/token on average for the default tokenizer settings.
 # So ~38B tokens # ~4.8 chars/token = ~185B chars.
 # Each data shard is ~250M chars, so we need ~185B / 250M ~= 740 shards.
-# For safety, I bumped that up to 800 shards, and that's why up above I used -n 800 when pre-downloading dataset shards.
+# For safety, I bumped that up to 800 shards.
+# The new DataLoader wastes about 35% of tokens to cropping, so 800 / (1 - 0.35) ~= 1200 shards are needed.
+# => why up above I used -n 1200 when pre-downloading dataset shards.
 # If we didn't have enough data, the training script would loop around and do multiple epochs over the same data,
 # which would decrease model performance. Possibly 2, 3 or so epochs is ~ok, but certainly not ideal and at 10+ epochs we'd
 # start to overfit hard.
@@ -71,13 +73,13 @@ python -m scripts.tok_eval
 # Number of processes/GPUs to use
 NPROC_PER_NODE=8
 
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=32 --target_param_data_ratio=20 --device_batch_size=8 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=32 --target-param-data-ratio=20 --device-batch-size=8 --run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval
 
 # midtrain
 # NOTE: ensure that we use the same device_batch_size here as the base training script.
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train -- --device_batch_size=8 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train -- --device-batch-size=8 --run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i mid
 
 # sft

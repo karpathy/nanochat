@@ -64,15 +64,15 @@ for flops in "${FLOPS_BUDGETS[@]}"; do
         # CORE eval happens once at the end (999999 ensures only final step)
         torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- \
             --depth=$d \
-            --target_flops=$flops \
-            --target_param_data_ratio=-1 \
+            --target-flops=$flops \
+            --target-param-data-ratio=-1 \
             --run="${WANDB_RUN}_${TAG}" \
-            --model_tag="${TAG}" \
-            --eval_tokens=$EVAL_TOKENS \
-            --core_metric_every=999999 \
-            --core_metric_max_per_task=-1 \
-            --sample_every=-1 \
-            --save_every=-1 \
+            --model-tag="${TAG}" \
+            --eval-tokens=$EVAL_TOKENS \
+            --core-metric-every=999999 \
+            --core-metric-max-per-task=-1 \
+            --sample-every=-1 \
+            --save-every=-1 \
             2>&1 | tee "$RESULTS_DIR/${TAG}_train.log"
 
         END_TIME=$(date +%s)

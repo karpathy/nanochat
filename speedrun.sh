@@ -55,11 +55,11 @@ python -m nanochat.report reset
 # each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
 python -m nanochat.dataset -n 8
 # Immediately also kick off downloading more shards in the background while tokenizer trains
-# See comment below for why 240 is the right number here
-python -m nanochat.dataset -n 240 &
+# See comment below for why 370 is the right number here
+python -m nanochat.dataset -n 370 &
 DATASET_DOWNLOAD_PID=$!
 # train the tokenizer with vocab size 2**16 = 65536 on ~2B characters of data
-python -m scripts.tok_train --max_chars=2000000000 --vocab_size=65536
+python -m scripts.tok_train --max-chars=2000000000 --vocab-size=65536
 # evaluate the tokenizer (report compression ratio etc.)
 python -m scripts.tok_eval
 
@@ -70,7 +70,9 @@ python -m scripts.tok_eval
 # Chinchilla says #tokens = 20X #params, so we need 561e6 * 20 = 11.2B tokens.
 # Assume our tokenizer is 4.8 chars/token, this is 11.2B * 4.8 ~= 54B chars.
 # At 250M chars/shard, this is 54B / 250M ~= 216 shards needed for pretraining.
-# Round up to 240 for safety. At ~100MB/shard, this downloads ~24GB of data to disk.
+# Round up to 240 for safety. Also, the new DataLoader wastes about 35% of tokens to cropping
+# so 240 / (1 - 0.35) = 370 shards are needed.
+# At ~100MB/shard, this downloads ~37GB of data to disk.
 # (The total number of shards available in the entire dataset is 1822.)
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
@@ -79,7 +81,7 @@ wait $DATASET_DOWNLOAD_PID
 NPROC_PER_NODE=8
 
 # pretrain the d20 model
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=20 --target_param_data_ratio=20 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=20 --target-param-data-ratio=20 --run=$WANDB_RUN
 # evaluate the model on a larger chunk of train/val data and draw some samples
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss
 # evaluate the model on CORE tasks

@@ -1,29 +1,40 @@
 #!/bin/bash
 
 # See speedrun.sh for more comments
+# Usage: ./miniseries.sh [series_name]
+# Example: ./miniseries.sh jan11
+# Default series name is today's date (e.g., jan11)
 
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
-# uv
-command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-[ -d ".venv" ] || uv venv
-uv sync --extra gpu
-source .venv/bin/activate
+# Setup (skip with SKIP_SETUP=1)
+if [ -z "$SKIP_SETUP" ]; then
+    # uv
+    command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+    [ -d ".venv" ] || uv venv
+    uv sync --extra gpu
+    source .venv/bin/activate
 
-# Tokenizer
-python -m nanochat.dataset -n 240
-python -m scripts.tok_train --max_chars=2000000000 --vocab_size=32768
+    # Tokenizer, download 1000 shards for pretraining
+    # (probably this can be reduced but it's tricky to determine the exact right number, TODO).
+    python -m nanochat.dataset -n 1000
+    python -m scripts.tok_train --max-chars=2000000000 --vocab-size=32768
+else
+    source .venv/bin/activate
+fi
 
+# Series name: from arg, env var, or default to today's date (e.g., jan11)
+SERIES_NAME="${1:-${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}}"
 # Depths to train (the "miniseries")
 DEPTHS=(10 11 12 13 14 15 16 17 18 19 20)
 # Hardware
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 # Logging
-WANDB_RUN="${WANDB_RUN:-jan7_miniseries}"
+WANDB_RUN="${WANDB_RUN:-${SERIES_NAME}_miniseries}"
 
-RESULTS_DIR="$NANOCHAT_BASE_DIR/jan7_miniseries_results"
+RESULTS_DIR="$NANOCHAT_BASE_DIR/${SERIES_NAME}_miniseries_results"
 mkdir -p "$RESULTS_DIR"
 RESULTS_FILE="$RESULTS_DIR/results.csv"
 
@@ -37,26 +48,26 @@ log() {
 }
 
 log "=============================================="
-log "Jan 7 Miniseries Training"
+log "${SERIES_NAME} Miniseries Training"
 log "=============================================="
 
 for d in "${DEPTHS[@]}"; do
     log "Training d=$d..."
 
-    TAG="jan7_miniseries_d${d}"
+    TAG="${SERIES_NAME}_miniseries_d${d}"
     START_TIME=$(date +%s)
 
     # Train the model with natural horizon (target_param_data_ratio default)
-    # No --target_flops, let it use the default ratio from base_train
+    # No --target-flops, let it use the default ratio from base_train
     torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- \
         --depth=$d \
-        --target_param_data_ratio=8 \
+        --target-param-data-ratio=8 \
         --run="${WANDB_RUN}_d${d}" \
-        --model_tag="${TAG}" \
-        --core_metric_every=999999 \
-        --core_metric_max_per_task=-1 \
-        --sample_every=-1 \
-        --save_every=-1 \
+        --model-tag="${TAG}" \
+        --core-metric-every=999999 \
+        --core-metric-max-per-task=-1 \
+        --sample-every=-1 \
+        --save-every=-1 \
         2>&1 | tee "$RESULTS_DIR/${TAG}_train.log"
 
     END_TIME=$(date +%s)
@@ -84,7 +95,7 @@ for d in "${DEPTHS[@]}"; do
 done
 
 log "=============================================="
-log "Jan 7 Miniseries Complete!"
+log "${SERIES_NAME} Miniseries Complete!"
 log "=============================================="
 log "Results saved to: $RESULTS_FILE"
 echo ""
