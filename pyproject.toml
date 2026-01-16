@@ -23,6 +23,7 @@ dependencies = [
     "transformers>=4.57.3",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
+    "zstandard>=0.25.0",
 ]
 
 [dependency-groups]
