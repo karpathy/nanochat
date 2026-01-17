@@ -19,7 +19,7 @@ python -m nanochat.report reset
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
 # train tokenizer on ~4B characters and kick off download of the rest for pretraining
-python -m nanochat.dataset -n 16
+python -m nanochat.dataset -n 21
 # start downloading the rest of the shards for a total of 1200 (see below why 1200)
 python -m nanochat.dataset -n 1200 &
 # todo: download the rest of it
