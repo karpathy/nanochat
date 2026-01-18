@@ -24,8 +24,7 @@ prompt:
    manually generate any kind of entropy you can think of and include it in your prompts
    to maintain healthy and good diversity in the data.
 
-NOTE: You need OpenRouter API key in a file called "openroutertoken.txt" in the root directory of the repo.
-      (obviously you can tune this arbitrarily to your liking)
+NOTE: You need OPENROUTER_API_KEY set in .env or as an environment variable.
 NOTE: For more details see this discussion: https://github.com/karpathy/nanochat/discussions/139
 """
 import requests
@@ -34,10 +33,12 @@ import os
 import copy
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dotenv import load_dotenv
 
 from nanochat.common import get_base_dir
 
-api_key = open("openroutertoken.txt", "r", encoding="utf-8").read().strip()
+load_dotenv()
+api_key = os.environ["OPENROUTER_API_KEY"]
 
 url = "https://openrouter.ai/api/v1/chat/completions"
 headers = {
