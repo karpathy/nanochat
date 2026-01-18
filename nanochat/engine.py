@@ -308,7 +308,7 @@ if __name__ == "__main__":
     # init compute
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
     device_type = autodetect_device_type()
-    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type != "cpu" else nullcontext()
 
     # load the model and tokenizer
     model, tokenizer, meta = load_model("base", device, phase="eval")

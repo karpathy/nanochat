@@ -87,7 +87,7 @@ else:
     token_bytes = get_token_bytes(device=device)
     model_name = f"base_model (step {meta['step']})"
 
-autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type != "cpu" else nullcontext()
 
 print0(f"Evaluating model: {model_name}")
 
