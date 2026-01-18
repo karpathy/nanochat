@@ -5,6 +5,15 @@ import math
 import torch
 import torch.distributed as dist
 
+
+def _unpack_xy(batch):
+    # Supports loaders that yield (x, y) or (x, y, *extras)
+    if isinstance(batch, (tuple, list)):
+        if len(batch) < 2:
+            raise ValueError(f"Expected batch to have at least 2 items (x, y), got {len(batch)}")
+        return batch[0], batch[1]
+    raise ValueError(f"Expected batch to be a tuple/list (x, y, ...), got {type(batch)}")
+
 @torch.no_grad()
 def evaluate_bpb(model, batches, steps, token_bytes=None):
     """
@@ -37,7 +46,7 @@ def evaluate_bpb(model, batches, steps, token_bytes=None):
     batch_iter = iter(batches)
     
     for _ in range(steps):
-        x, y = next(batch_iter)
+        x, y = _unpack_xy(next(batch_iter))
         # Model returns (logits, loss) tuple
         logits, loss = model(x, y)
         # Calculate per-token loss from logits for bpb calculation

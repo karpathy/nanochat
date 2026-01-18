@@ -93,7 +93,7 @@ class CausalSelfAttention(nn.Module):
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                         .view(1, 1, config.block_size, config.block_size))
 
-    def forward(self, x):
+    def forward(self, x, kv_cache=None, layer_idx: int | None = None):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -101,6 +101,30 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # Optional KV-cache path for fast autoregressive decoding in Engine.
+        # We only use the cache for decode-time single-token forward (T==1).
+        # For prefill (T>1), we still populate the cache but use normal causal attention.
+        if kv_cache is not None:
+            assert layer_idx is not None, "layer_idx is required when using kv_cache"
+            # Insert the new keys/values and get a view of the full cache so far.
+            full_k, full_v = kv_cache.insert_kv(layer_idx, k, v)  # (B, nh, T_total, hs)
+            if T == 1:
+                # Query is length-1; no causal mask needed (no future keys are present).
+                if self.flash:
+                    y = torch.nn.functional.scaled_dot_product_attention(
+                        q, full_k, full_v,
+                        attn_mask=None,
+                        dropout_p=0.0,
+                        is_causal=False,
+                    )
+                else:
+                    att = (q @ full_k.transpose(-2, -1)) * (1.0 / math.sqrt(full_k.size(-1)))
+                    att = F.softmax(att, dim=-1)
+                    y = att @ full_v
+                y = y.transpose(1, 2).contiguous().view(B, T, C)
+                y = self.resid_dropout(self.c_proj(y))
+                return y
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
@@ -378,8 +402,8 @@ class Block(nn.Module):
         else:
             self.mlp = MLP(config)
 
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x, kv_cache=None, layer_idx: int | None = None):
+        x = x + self.attn(self.ln_1(x), kv_cache=kv_cache, layer_idx=layer_idx)
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -443,6 +467,9 @@ class GPT(nn.Module):
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
+    def get_device(self):
+        return self.transformer.wte.weight.device
+    
     @torch.no_grad()
     def _init_weights(self, module):
         # optionally use switch transformer-style initialization
@@ -585,18 +612,32 @@ class GPT(nn.Module):
         return optimizer
 
 
-    def forward(self, idx, targets=None, return_full_logits: bool = False):
+    def forward(
+        self,
+        idx,
+        targets=None,
+        return_full_logits: bool = False,
+        loss_reduction: str = 'mean',
+        return_moe_losses: bool = False,
+        kv_cache=None,
+    ):
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
+
+        # When decoding with a KV cache, the position indices must continue from kv_cache.pos.
+        if kv_cache is not None and t == 1:
+            pos0 = int(kv_cache.get_pos())
+            pos = torch.tensor([pos0], dtype=torch.long, device=device)
+        else:
+            pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
-        for block in self.transformer.h:
-            x = block(x)
+        for layer_idx, block in enumerate(self.transformer.h):
+            x = block(x, kv_cache=kv_cache, layer_idx=layer_idx)
         x = self.transformer.ln_f(x)
 
         if targets is not None or return_full_logits:
@@ -604,15 +645,47 @@ class GPT(nn.Module):
             logits = self.lm_head(x)
             if targets is not None:
                 # if we are given some desired targets also calculate the loss
-                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+                if loss_reduction not in {'mean', 'none'}:
+                    raise ValueError(f"Unsupported loss_reduction: {loss_reduction}")
+                loss = F.cross_entropy(
+                    logits.view(-1, logits.size(-1)),
+                    targets.view(-1),
+                    ignore_index=-1,
+                    reduction=loss_reduction,
+                )
+                if loss_reduction == 'none':
+                    # Return token-level NLL (B, T). Do NOT add MoE auxiliary losses here.
+                    loss = loss.view(b, t)
 
-                # add the auxiliary load balancing loss and router z loss to the main loss
-                if self.config.n_exp > 1 and self.config.use_aux_loss:
-                    loss += self.config.aux_loss_weight * MANAGER.aggregate_aux_loss()
-                    MANAGER.reset_aux_loss()
-                if self.config.n_exp > 1 and self.config.use_router_z_loss:
-                    loss += self.config.router_z_loss_weight * MANAGER.aggregate_router_z_loss()
-                    MANAGER.reset_router_z_loss()
+                    moe_aux = None
+                    moe_z = None
+                    if return_moe_losses and self.config.n_exp > 1:
+                        # Return the *weighted* contributions that would normally be added
+                        # to the scalar training loss. Caller decides how to scale/accumulate.
+                        if self.config.use_aux_loss:
+                            moe_aux = self.config.aux_loss_weight * MANAGER.aggregate_aux_loss()
+                        else:
+                            moe_aux = torch.zeros((), device=loss.device, dtype=loss.dtype)
+                        if self.config.use_router_z_loss:
+                            moe_z = self.config.router_z_loss_weight * MANAGER.aggregate_router_z_loss()
+                        else:
+                            moe_z = torch.zeros((), device=loss.device, dtype=loss.dtype)
+
+                    # Always reset to avoid cross-step accumulation.
+                    if self.config.n_exp > 1:
+                        MANAGER.reset_aux_loss()
+                        MANAGER.reset_router_z_loss()
+
+                    if return_moe_losses:
+                        return logits, loss, moe_aux, moe_z
+                else:
+                    # add the auxiliary load balancing loss and router z loss to the main loss
+                    if self.config.n_exp > 1 and self.config.use_aux_loss:
+                        loss += self.config.aux_loss_weight * MANAGER.aggregate_aux_loss()
+                        MANAGER.reset_aux_loss()
+                    if self.config.n_exp > 1 and self.config.use_router_z_loss:
+                        loss += self.config.router_z_loss_weight * MANAGER.aggregate_router_z_loss()
+                        MANAGER.reset_router_z_loss()
             else:
                 loss = None
                 if self.config.n_exp > 1:

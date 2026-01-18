@@ -190,6 +190,13 @@ class Engine:
         self.model = model
         self.tokenizer = tokenizer # needed for tool use
 
+    @staticmethod
+    def _unwrap_logits(model_out):
+        """Some model variants return (logits, loss). Engine only needs logits."""
+        if isinstance(model_out, (tuple, list)):
+            return model_out[0]
+        return model_out
+
     @torch.inference_mode()
     def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
         """Same as generate, but does single prefill and then clones the KV cache."""
@@ -216,7 +223,7 @@ class Engine:
             **kv_model_kwargs,
         )
         ids = torch.tensor([tokens], dtype=torch.long, device=device)
-        logits = self.model.forward(ids, kv_cache=kv_cache_prefill)
+        logits = self._unwrap_logits(self.model.forward(ids, kv_cache=kv_cache_prefill))
         logits = logits[:, -1, :]
         next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
         sampled_tokens = next_ids[:, 0].tolist()
@@ -253,7 +260,7 @@ class Engine:
                 first_iteration = False
             else:
                 # Forward the model and get the next token for each row
-                logits = self.model.forward(ids, kv_cache=kv_cache_decode)  # (B, T, vocab_size)
+                logits = self._unwrap_logits(self.model.forward(ids, kv_cache=kv_cache_decode))  # (B, T, vocab_size)
                 logits = logits[:, -1, :]  # (B, vocab_size) at last time step
                 next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
                 sampled_tokens = next_ids[:, 0].tolist()

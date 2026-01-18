@@ -113,8 +113,9 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
         prompt_ids = torch.tensor(padded_prompt_ids, dtype=torch.long, device=device)
 
         # Get the logits for the whole batch of conversations in parallel (efficiency win here)
+        # GPT.forward returns (logits, loss); we need full logits across the sequence for categorical eval.
         with torch.no_grad():
-            logits = model(prompt_ids) # (B, T, V)
+            logits, _ = model(prompt_ids, return_full_logits=True) # (B, T, V)
 
         # Focus on the available answer on just the letters corresponding to choices
         # Note that this helps the evaluation a lot because it specifically narrows the focus to only the available letters

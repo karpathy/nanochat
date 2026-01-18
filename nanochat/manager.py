@@ -7,6 +7,10 @@ class MOEManager:
     def __init__(self):
         self.aux_loss = []
         self.router_z_loss = []
+        # Cache the most recently aggregated sums for logging/debugging.
+        # These values persist across reset_* calls.
+        self.last_aux_loss_sum = 0.0
+        self.last_router_z_loss_sum = 0.0
     
     def reset_aux_loss(self):
         self.aux_loss = []
@@ -21,10 +25,14 @@ class MOEManager:
         self.router_z_loss.append(loss)
     
     def aggregate_aux_loss(self):
-        return sum(self.aux_loss)
+        s = sum(self.aux_loss)
+        self.last_aux_loss_sum = s 
+        return s
 
     def aggregate_router_z_loss(self):
-        return sum(self.router_z_loss)
+        s = sum(self.router_z_loss)
+        self.last_router_z_loss_sum = s 
+        return s
 
 MANAGER = MOEManager()
 

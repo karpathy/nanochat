@@ -50,11 +50,20 @@ embedding_lr = 0.2
 matrix_lr = 0.02
 weight_decay = 0.0
 init_lr_frac = 0.02
+learning_rate = 9e-5 # 5e-5 for d6 model, 9e-5 for d12 model
+betas = (0.9, 0.95) 
 # evaluation and logging there of
 eval_every = 100
 eval_steps = 100
 eval_metrics_every = 200
 eval_metrics_max_problems = 1024
+
+# Debug knobs for MoE loss components (defaults preserve existing behavior)
+disable_aux_loss = False
+disable_router_z_loss = False
+override_aux_loss_weight = -1.0  # <0 means do not override
+override_router_z_loss_weight = -1.0  # <0 means do not override
+
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
@@ -78,6 +87,23 @@ orig_model = model # original, uncompiled model
 # model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs
 engine = Engine(model, tokenizer) # will be used for inline model evaluation only
 
+# Optional overrides for MoE auxiliary losses (useful when total loss plateaus)
+if hasattr(model, "config"):
+    if disable_aux_loss and getattr(model.config, "n_exp", 1) > 1:
+        print0("Disabling MoE aux loss for this midtraining run")
+        model.config.use_aux_loss = False
+    if disable_router_z_loss and getattr(model.config, "n_exp", 1) > 1:
+        print0("Disabling MoE router z loss for this midtraining run")
+        model.config.use_router_z_loss = False
+    if override_aux_loss_weight >= 0 and getattr(model.config, "n_exp", 1) > 1:
+        print0(f"Overriding MoE aux_loss_weight to {override_aux_loss_weight}")
+        model.config.aux_loss_weight = float(override_aux_loss_weight)
+    if override_router_z_loss_weight >= 0 and getattr(model.config, "n_exp", 1) > 1:
+        print0(f"Overriding MoE router_z_loss_weight to {override_router_z_loss_weight}")
+        model.config.router_z_loss_weight = float(override_router_z_loss_weight)
+
+print0(f"MoE training loss is configured to use aux_loss: {getattr(model.config, 'use_aux_loss', False)} with weight {getattr(model.config, 'aux_loss_weight', 0.0)}, router_z_loss: {getattr(model.config, 'use_router_z_loss', False)} with weight {getattr(model.config, 'router_z_loss_weight', 0.0)}")
+
 # -----------------------------------------------------------------------------
 # Task data mixture we'll train on
 identity_conversations_filepath = os.path.join(get_base_dir(), "identity_conversations.jsonl")
@@ -97,6 +123,10 @@ val_ds = SmolTalk(split="test") # general conversations, 24K rows (though we don
 
 def sft_data_generator(dataset, batch_size):
     pad_token_id = tokenizer.encode_special("<|assistant_end|>") # use <|assistant_end|> as the pad token is ok, these positions are masked in the loss
+    # Ensure we never feed sequences longer than the model block size.
+    # render_conversation returns a sequence that includes a BOS token, and we then create
+    # inputs/targets by shifting by 1, so cap to block_size+1 tokens.
+    max_tokens = int(getattr(model.config, "block_size", getattr(model.config, "sequence_len", 1024))) + 1
     # prepares a list of tokenized conversations into a batch and yields
     def collate_and_yield(batch):
         nrows = len(batch)
@@ -121,7 +151,7 @@ def sft_data_generator(dataset, batch_size):
     while True:
         for i in range(ddp_rank, len(dataset), ddp_world_size):
             doc = dataset[i]
-            ids, mask = tokenizer.render_conversation(doc)
+            ids, mask = tokenizer.render_conversation(doc, max_tokens=max_tokens)
             batch.append((ids, mask))
             if len(batch) == batch_size:
                 yield collate_and_yield(batch)
@@ -144,18 +174,30 @@ build_val_loader = lambda: sft_data_generator(val_ds, batch_size=device_batch_si
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer
-
-optimizers = model.setup_optimizers(
-    unembedding_lr=unembedding_lr,
-    embedding_lr=embedding_lr,
-    matrix_lr=matrix_lr,
+# Initialize the Optimizer (AdamW for all parameters) - BEFORE DDP wrapping (matching nanoMoE)
+adamw_optimizer = model.configure_optimizers(
     weight_decay=weight_decay,
+    learning_rate=learning_rate,
+    betas=betas,
+    device_type=device_type,
 )
-# Set the initial learning rate as a fraction of the base learning rate
+optimizers = [adamw_optimizer]
 for opt in optimizers:
     for group in opt.param_groups:
         group["lr"] = group["lr"] * init_lr_frac
-        group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
+        group["initial_lr"] = group["lr"] 
+
+# optimizers = model.setup_optimizers(
+#     unembedding_lr=unembedding_lr,
+#     embedding_lr=embedding_lr,
+#     matrix_lr=matrix_lr,
+#     weight_decay=weight_decay,
+# )
+# # Set the initial learning rate as a fraction of the base learning rate
+# for opt in optimizers:
+#     for group in opt.param_groups:
+#         group["lr"] = group["lr"] * init_lr_frac
+#         group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
 
 # -----------------------------------------------------------------------------
 # Training loop
@@ -179,7 +221,7 @@ for step in range(num_iterations):
         for _ in range(eval_steps):
             val_inputs, val_targets = next(val_iter)
             with torch.no_grad(), autocast_ctx:
-                loss = model(val_inputs, val_targets)
+                _, loss = model(val_inputs, val_targets)
             losses.append(loss)
         val_loss = torch.stack(losses).mean() # average over eval_steps
         if ddp:
@@ -216,7 +258,7 @@ for step in range(num_iterations):
     for micro_step in range(grad_accum_steps):
         train_inputs, train_targets = next(train_iter)
         with autocast_ctx:
-            loss = model(train_inputs, train_targets)
+            _, loss = model(train_inputs, train_targets)
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         loss.backward() # accumulate the gradient
@@ -251,8 +293,18 @@ for step in range(num_iterations):
 if master_process:
     base_dir = get_base_dir()
     depth = model.config.n_layer
-    model_tag = f"d{depth}" # base the model tag on the depth of the base model
-    checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", model_tag)
+    # output-dirname = f"d{depth}" # base the model tag on the depth of the base model
+    if disable_aux_loss:
+        aux_tag = "noaux"
+    else:
+        aux_tag = "aux"
+    if disable_router_z_loss:
+        z_tag = "noz"
+    else:
+        z_tag = "z"
+    # output_dirname = f"d{depth}_{aux_tag}_{z_tag}_lr{learning_rate}_model{model_tag}"
+    output_dirname = f"d{depth}_lr{learning_rate}_init{init_lr_frac}_model{model_tag}"
+    checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
     model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
     save_checkpoint(
         checkpoint_dir,

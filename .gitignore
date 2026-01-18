@@ -23,3 +23,5 @@ lm_eval_pretrain/
 benchmark.md
 d*.png
 loss*.png
+
+wandb/

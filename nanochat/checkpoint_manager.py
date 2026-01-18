@@ -75,6 +75,11 @@ def build_model(checkpoint_dir, step, device, phase):
     - meta data saved during base model training
     """
     assert phase in ["train", "eval"], f"Invalid phase: {phase}"
+
+    # Allow callers to pass strings like "cuda" / "cuda:0".
+    if isinstance(device, str):
+        device = torch.device(device)
+
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, device, load_optimizer=False)
     if device.type in {"cpu", "mps"}:
         # Convert bfloat16 tensors to float for CPU inference
@@ -85,6 +90,25 @@ def build_model(checkpoint_dir, step, device, phase):
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
     model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
+
+    # Backward-compat: older checkpoints may not store MoE fields (e.g. n_exp) in meta.json.
+    # If missing, infer from checkpoint tensor shapes to avoid load_state_dict size mismatches.
+    if "n_exp" not in model_config_kwargs:
+        inferred_n_exp = None
+        for k, v in model_data.items():
+            if not isinstance(v, torch.Tensor):
+                continue
+            # Router gate weight: [n_exp, n_embd]
+            if k.endswith("mlp.router.w_g.weight") and v.ndim == 2:
+                inferred_n_exp = int(v.shape[0])
+                break
+            # Expert FC: [n_exp, n_embd, 4*n_embd]
+            if k.endswith("mlp.experts.c_fc") and v.ndim == 3:
+                inferred_n_exp = int(v.shape[0])
+                break
+        if inferred_n_exp is not None:
+            model_config_kwargs["n_exp"] = inferred_n_exp
+            log0(f"Inferred missing model_config.n_exp={inferred_n_exp} from checkpoint weights")
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)
     with torch.device("meta"):
@@ -137,6 +161,9 @@ def find_last_step(checkpoint_dir):
 # convenience functions that take into account nanochat's directory structure
 
 def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None):
+    # Normalize for callers that pass strings (e.g. "cuda").
+    if isinstance(device, str):
+        device = torch.device(device)
     if model_tag is None:
         # guess the model tag by defaulting to the largest model
         model_tag = find_largest_model(checkpoints_dir)
