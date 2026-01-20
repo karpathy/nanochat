@@ -205,7 +205,7 @@ If you find nanochat helpful in your research cite simply as:
 ```bibtex
 @misc{nanochat,
   author = {Andrej Karpathy},
-  title = {nanochat: The best ChatGPT that $100 can buy},
+  title = {nanochat: The best ChatGPT that \$100 can buy},
   year = {2025},
   publisher = {GitHub},
   url = {https://github.com/karpathy/nanochat}
