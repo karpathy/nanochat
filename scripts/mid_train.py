@@ -93,14 +93,12 @@ print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {args.total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 token_bytes = get_token_bytes(device=device)
 
-# Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
-optimizers = model.setup_optimizers(unembedding_lr=args.unembedding_lr, embedding_lr=args.embedding_lr, matrix_lr=args.matrix_lr, weight_decay=args.weight_decay)
-adamw_optimizer, muon_optimizer = optimizers
+# Initialize the Optimizer (Muon for matrix params, AdamW for embeddings and scalars)
+optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_lr=args.embedding_lr, matrix_lr=args.matrix_lr, weight_decay=args.weight_decay)
 # Override the initial learning rate as a fraction of the base learning rate
-for opt in optimizers:
-    for group in opt.param_groups:
-        group["lr"] = group["lr"] * args.init_lr_frac
-        group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
+for group in optimizer.param_groups:
+    group["lr"] = group["lr"] * args.init_lr_frac
+    group["initial_lr"] = group["lr"] # save the initial learning rate so we can decay easily later
 
 # Midtraining data mixture and DataLoader
 base_dir = get_base_dir()
@@ -274,7 +272,7 @@ while True:
             checkpoint_dir,
             step,
             orig_model.state_dict(),
-            [opt.state_dict() for opt in optimizers], # TODO: make sure saving across ranks is done correctly
+            optimizer.state_dict(), # TODO: make sure saving across ranks is done correctly
             {
                 "step": step,
                 "val_bpb": val_bpb, # loss at last step
@@ -306,16 +304,13 @@ while True:
         loss.backward()
         x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
         progress = max(progress, approx_progress) # only increase progress monotonically
-    # step the optimizers
+    # step the optimizer
     lrm = get_lr_multiplier(progress)
-    for opt in optimizers:
-        for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * lrm
-    muon_momentum = get_muon_momentum(step)
-    for group in muon_optimizer.param_groups:
-        group["momentum"] = muon_momentum
-    for opt in optimizers:
-        opt.step()
+    for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
+        if group["kind"] == "muon":
+            group["momentum"] = get_muon_momentum(step)
+    optimizer.step()
     model.zero_grad(set_to_none=True)
     synchronize()
     t1 = time.time()

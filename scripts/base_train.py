@@ -206,9 +206,9 @@ print0(f"Tokens : Params ratio: {args.total_batch_size * num_iterations / num_sc
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # -----------------------------------------------------------------------------
-# Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
+# Initialize the Optimizer (Muon for matrix params, AdamW for embeddings and scalars)
 adam_betas = (args.adam_beta1, args.adam_beta2)
-optimizers = model.setup_optimizers(
+optimizer = model.setup_optimizer(
     unembedding_lr=args.unembedding_lr * batch_lr_scale,
     embedding_lr=args.embedding_lr * batch_lr_scale,
     matrix_lr=args.matrix_lr * batch_lr_scale,
@@ -216,11 +216,9 @@ optimizers = model.setup_optimizers(
     adam_betas=adam_betas,
     scalar_lr=args.scalar_lr * batch_lr_scale,
 )
-adamw_optimizer, muon_optimizer = optimizers
 
 if resuming:
-    for opt, dat in zip(optimizers, optimizer_data):
-        opt.load_state_dict(dat)
+    optimizer.load_state_dict(optimizer_data)
     del optimizer_data # free up the memory
 
 # -----------------------------------------------------------------------------
@@ -339,7 +337,7 @@ while True:
             checkpoint_dir,
             step,
             orig_model.state_dict(), # model parameters
-            [opt.state_dict() for opt in optimizers], # optimizer states
+            optimizer.state_dict(), # optimizer state
             { # metadata saved as json
                 "step": step,
                 "val_bpb": val_bpb, # loss at last step
@@ -373,18 +371,19 @@ while True:
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         loss.backward()
         x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
-    # step the optimizers
+    # step the optimizer
     lrm = get_lr_multiplier(step)
-    for opt in optimizers:
-        for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * lrm
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(step)
-    for group in muon_optimizer.param_groups:
-        group["momentum"] = muon_momentum
-        group["weight_decay"] = muon_weight_decay
-    for opt in optimizers:
-        opt.step()
+    
+    # Update all hyperparams via param_groups
+    for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
+        if group["kind"] == "muon":
+            group["momentum"] = muon_momentum
+            group["weight_decay"] = muon_weight_decay
+    
+    optimizer.step()
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
     synchronize()

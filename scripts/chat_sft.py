@@ -150,17 +150,16 @@ build_val_loader = lambda: sft_data_generator(val_ds, batch_size=args.device_bat
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer
 
-optimizers = model.setup_optimizers(
+optimizer = model.setup_optimizer(
     unembedding_lr=args.unembedding_lr,
     embedding_lr=args.embedding_lr,
     matrix_lr=args.matrix_lr,
     weight_decay=args.weight_decay,
 )
 # Set the initial learning rate as a fraction of the base learning rate
-for opt in optimizers:
-    for group in opt.param_groups:
-        group["lr"] = group["lr"] * args.init_lr_frac
-        group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
+for group in optimizer.param_groups:
+    group["lr"] = group["lr"] * args.init_lr_frac
+    group["initial_lr"] = group["lr"] # save the initial learning rate so we can decay easily later
 
 # -----------------------------------------------------------------------------
 # Training loop
@@ -230,13 +229,11 @@ for step in range(num_iterations):
 
     # learning rate scheduler
     lrm = get_lr_multiplier(step)
-    for opt in optimizers:
-        for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * lrm
+    for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
 
-    # step the optimizers
-    for opt in optimizers:
-        opt.step()
+    # step the optimizer
+    optimizer.step()
     model.zero_grad(set_to_none=True)
 
     # logging
