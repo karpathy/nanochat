@@ -1,20 +1,23 @@
 #!/bin/bash
 
+LABEL="jan16"
+
 FLOPS_BUDGETS=(
     1e18
     3e18
     6e18
 )
-DEPTHS=(8 10 12 14 16 18 20)
+DEPTHS=(6 7 8 9 10 11 12 13 14)
+
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
-WANDB_RUN="${WANDB_RUN:-scaling}"
+WANDB_RUN="${WANDB_RUN:-scaling_${LABEL}}"
 EVAL_TOKENS=$((100 * 524288))  # ~100M tokens for final eval (default is ~10M)
 
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
 source .venv/bin/activate
 
-RESULTS_DIR="$NANOCHAT_BASE_DIR/scaling_laws_results"
+RESULTS_DIR="$NANOCHAT_BASE_DIR/scaling_laws_results_${LABEL}"
 mkdir -p "$RESULTS_DIR"
 RESULTS_FILE="$RESULTS_DIR/results.csv"
 
@@ -64,15 +67,15 @@ for flops in "${FLOPS_BUDGETS[@]}"; do
         # CORE eval happens once at the end (999999 ensures only final step)
         torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- \
             --depth=$d \
-            --target_flops=$flops \
-            --target_param_data_ratio=-1 \
+            --target-flops=$flops \
+            --target-param-data-ratio=-1 \
             --run="${WANDB_RUN}_${TAG}" \
-            --model_tag="${TAG}" \
-            --eval_tokens=$EVAL_TOKENS \
-            --core_metric_every=999999 \
-            --core_metric_max_per_task=-1 \
-            --sample_every=-1 \
-            --save_every=-1 \
+            --model-tag="${TAG}" \
+            --eval-tokens=$EVAL_TOKENS \
+            --core-metric-every=999999 \
+            --core-metric-max-per-task=-1 \
+            --sample-every=-1 \
+            --save-every=-1 \
             2>&1 | tee "$RESULTS_DIR/${TAG}_train.log"
 
         END_TIME=$(date +%s)
