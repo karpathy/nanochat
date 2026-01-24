@@ -1,35 +1,63 @@
+"""Trains a tokenizer using the BPE Tokenizer library.
+
+This script trains a BPE tokenizer in the style of GPT-4 tokenizer
+using text data from parquet files.
 """
-Train a tokenizer using our own BPE Tokenizer library.
-In the style of GPT-4 tokenizer.
-"""
+
+from __future__ import annotations
+
+import argparse
 import os
 import time
-import argparse
+from collections.abc import Iterator
+
 import torch
-from nanochat.tokenizer import RustBPETokenizer
+
 from nanochat.common import get_base_dir
 from nanochat.dataset import parquets_iter_batched
+from nanochat.tokenizer import RustBPETokenizer
 
 # -----------------------------------------------------------------------------
 # Parse command line arguments
 
-parser = argparse.ArgumentParser(description='Train a BPE tokenizer')
-parser.add_argument('--max-chars', type=int, default=10_000_000_000, help='Maximum characters to train on (default: 10B)')
-parser.add_argument('--doc-cap', type=int, default=10_000, help='Maximum characters per document (default: 10,000)')
-parser.add_argument('--vocab-size', type=int, default=32768, help='Vocabulary size (default: 32768 = 2^15)')
+parser = argparse.ArgumentParser(description="Train a BPE tokenizer")
+parser.add_argument(
+    "--max-chars",
+    type=int,
+    default=10_000_000_000,
+    help="Maximum characters to train on (default: 10B)",
+)
+parser.add_argument(
+    "--doc-cap",
+    type=int,
+    default=10_000,
+    help="Maximum characters per document (default: 10,000)",
+)
+parser.add_argument(
+    "--vocab-size",
+    type=int,
+    default=32768,
+    help="Vocabulary size (default: 32768 = 2^15)",
+)
 args = parser.parse_args()
 print(f"max_chars: {args.max_chars:,}")
 print(f"doc_cap: {args.doc_cap:,}")
 print(f"vocab_size: {args.vocab_size:,}")
 
+
 # -----------------------------------------------------------------------------
 # Text iterator
 
-def text_iterator():
-    """
-    1) Flatten the batches into a single iterator
-    2) Crop every document to args.doc_cap characters
-    3) Break when we've seen args.max_chars characters
+
+def text_iterator() -> Iterator[str]:
+    """Iterates over text documents from the training dataset.
+
+    Flattens the batches into a single iterator, crops every document
+    to args.doc_cap characters, and breaks when args.max_chars
+    characters have been seen.
+
+    Yields:
+        Text documents cropped to the maximum document length.
     """
     nchars = 0
     for batch in parquets_iter_batched(split="train"):
@@ -41,6 +69,8 @@ def text_iterator():
             yield doc_text
             if nchars > args.max_chars:
                 return
+
+
 text_iter = text_iterator()
 
 # -----------------------------------------------------------------------------
@@ -76,25 +106,26 @@ assert decoded == test_text
 vocab_size = tokenizer.get_vocab_size()
 special_set = set(tokenizer.get_special_tokens())
 token_strings = [tokenizer.decode([token_id]) for token_id in range(vocab_size)]
-token_bytes = []
+token_bytes: list[int] = []
 for token_id in range(vocab_size):
-    token_str = token_strings[token_id] # the Python string representation of this token
+    token_str = token_strings[token_id]  # the Python string representation of this token
     if token_str in special_set:
-        token_bytes.append(0) # special characters are not counted
+        token_bytes.append(0)  # special characters are not counted
     else:
-        id_bytes = len(token_str.encode("utf-8")) # number of bytes that make up this token
+        id_bytes = len(token_str.encode("utf-8"))  # number of bytes that make up this token
         token_bytes.append(id_bytes)
-token_bytes = torch.tensor(token_bytes, dtype=torch.int32, device='cpu')
+token_bytes_tensor = torch.tensor(token_bytes, dtype=torch.int32, device="cpu")
 token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
 with open(token_bytes_path, "wb") as f:
-    torch.save(token_bytes, f)
+    torch.save(token_bytes_tensor, f)
 print(f"Saved token_bytes to {token_bytes_path}")
 
 # Log to report
 from nanochat.report import get_report
-token_bytes_nonzero = (token_bytes[token_bytes > 0]).to(dtype=torch.float32)
+
+token_bytes_nonzero = (token_bytes_tensor[token_bytes_tensor > 0]).to(dtype=torch.float32)
 get_report().log(section="Tokenizer training", data=[
-    vars(args), # argparse command line arguments
+    vars(args),  # argparse command line arguments
     {"train_time": train_time},
     {"num_special_tokens": len(special_set)},
     {
@@ -102,5 +133,5 @@ get_report().log(section="Tokenizer training", data=[
         "token_bytes_max": int(token_bytes_nonzero.max().item()),
         "token_bytes_mean": token_bytes_nonzero.mean().item(),
         "token_bytes_std": token_bytes_nonzero.std().item(),
-    }
+    },
 ])
