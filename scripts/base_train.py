@@ -23,26 +23,28 @@ from contextlib import nullcontext
 import torch
 import wandb
 
-from nanochat.checkpoint_manager import load_checkpoint, save_checkpoint
-from nanochat.common import (
-    DummyWandb,
-    autodetect_device_type,
-    compute_cleanup,
-    compute_init,
-    get_base_dir,
-    get_peak_flops,
-    print0,
-    print_banner,
-)
+from nanochat.checkpoint_manager import load_checkpoint
+from nanochat.checkpoint_manager import save_checkpoint
+from nanochat.common import DummyWandb
+from nanochat.common import autodetect_device_type
+from nanochat.common import compute_cleanup
+from nanochat.common import compute_init
+from nanochat.common import get_base_dir
+from nanochat.common import get_peak_flops
+from nanochat.common import print0
+from nanochat.common import print_banner
+from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
 from nanochat.dataloader import (
-    tokenizing_distributed_data_loader_bos_bestfit,
     tokenizing_distributed_data_loader_with_state_bos_bestfit,
 )
 from nanochat.engine import Engine
 from nanochat.flash_attention import HAS_FA3
-from nanochat.gpt import GPT, GPTConfig
+from nanochat.gpt import GPT
+from nanochat.gpt import GPTConfig
 from nanochat.loss_eval import evaluate_bpb
-from nanochat.tokenizer import get_token_bytes, get_tokenizer
+from nanochat.report import get_report
+from nanochat.tokenizer import get_token_bytes
+from nanochat.tokenizer import get_tokenizer
 from scripts.base_eval import evaluate_model
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
@@ -235,7 +237,7 @@ device_type = (
     autodetect_device_type() if args.device_type == "" else args.device_type
 )
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
-master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
+master_process: bool = (ddp_rank == 0)  # this process will do logging, checkpointing etc.
 autocast_ctx = (
     torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16)
     if device_type == "cuda"
@@ -253,7 +255,7 @@ else:
     gpu_peak_flops = float("inf")  # MFU not meaningful for CPU/MPS
 
 # wandb logging init
-use_dummy_wandb = args.run == "dummy" or not master_process
+use_dummy_wandb: bool = (args.run == "dummy" or not master_process)
 wandb_run = (
     DummyWandb()
     if use_dummy_wandb
@@ -373,7 +375,7 @@ model.init_weights()
 base_dir = get_base_dir()
 output_dirname = args.model_tag if args.model_tag else f"d{args.depth}"  # e.g. d12
 checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
-resuming = args.resume_from_step != -1
+resuming: bool = args.resume_from_step != -1
 if resuming:
     print0(f"Resuming optimization from step {args.resume_from_step}")
     model_data, optimizer_data, meta_data = load_checkpoint(
@@ -449,9 +451,15 @@ train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
     device=device,
     resume_state_dict=dataloader_resume_state_dict,
 )
-build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(
-    tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device
-)
+
+
+def build_val_loader():
+    """Builds a validation data loader."""
+    return tokenizing_distributed_data_loader_bos_bestfit(
+        tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device
+    )
+
+
 # Kick off load of the very first batch of data.
 x, y, dataloader_state_dict = next(train_loader)
 
@@ -720,8 +728,6 @@ if val_bpb is not None:
     print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
 
 # Log to report.
-from nanochat.report import get_report
-
 get_report().log(
     section="Base model training",
     data=[

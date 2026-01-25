@@ -12,27 +12,32 @@ Notable features:
 - Flash Attention 3 integration
 """
 
-from functools import partial
 from dataclasses import dataclass
+from functools import partial
+from typing import Any, Generator, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 
-from nanochat.common import get_dist_info, print0
-from nanochat.muon import Muon, DistMuon
 from nanochat.adamw import DistAdamW
+from nanochat.common import get_dist_info
+from nanochat.common import print0
 
 # Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
 from nanochat.flash_attention import flash_attn
+from nanochat.muon import DistMuon
+from nanochat.muon import Muon
+
 
 @dataclass
 class GPTConfig:
     sequence_len: int = 2048
     vocab_size: int = 32768
     n_layer: int = 12
-    n_head: int = 6 # number of query heads
-    n_kv_head: int = 6 # number of key/value heads (GQA)
+    n_head: int = 6  # number of query heads
+    n_kv_head: int = 6  # number of key/value heads (GQA)
     n_embd: int = 768
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
     # Characters: L=long (full context), S=short (half context)
@@ -40,25 +45,59 @@ class GPTConfig:
     window_pattern: str = "SSSL"
 
 
-def norm(x):
-    # Purely functional rmsnorm with no learnable params
+def norm(x: Tensor) -> Tensor:
+    """Applies RMSNorm to the input tensor.
+
+    Purely functional rmsnorm with no learnable params.
+
+    Args:
+        x: Input tensor to normalize.
+
+    Returns:
+        Normalized tensor.
+    """
     return F.rms_norm(x, (x.size(-1),))
 
 
-def has_ve(layer_idx, n_layer):
-    """Returns True if GPT layer should have Value Embedding (alternating, last layer always included)."""
+def has_ve(layer_idx: int, n_layer: int) -> bool:
+    """Checks if a GPT layer should have Value Embedding.
+
+    Value Embeddings are applied to alternating layers, with the last layer
+    always included.
+
+    Args:
+        layer_idx: Index of the layer.
+        n_layer: Total number of layers.
+
+    Returns:
+        True if the layer should have Value Embedding.
+    """
     return layer_idx % 2 == (n_layer - 1) % 2
 
-def apply_rotary_emb(x, cos, sin):
+
+def apply_rotary_emb(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
+    """Applies rotary positional embeddings to the input tensor.
+
+    Args:
+        x: Input tensor of shape (B, T, H, D).
+        cos: Cosine component of rotary embeddings.
+        sin: Sine component of rotary embeddings.
+
+    Returns:
+        Tensor with rotary embeddings applied.
+    """
     assert x.ndim == 4  # multihead attention
     d = x.shape[3] // 2
-    x1, x2 = x[..., :d], x[..., d:] # split up last dim into two halves
-    y1 = x1 * cos + x2 * sin # rotate pairs of dims
+    x1, x2 = x[..., :d], x[..., d:]  # split up last dim into two halves
+    y1 = x1 * cos + x2 * sin  # rotate pairs of dims
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat([y1, y2], 3)
 
+
 class CausalSelfAttention(nn.Module):
-    def __init__(self, config, layer_idx):
+    """Causal self-attention module with support for GQA and sliding windows."""
+
+    def __init__(self, config: GPTConfig, layer_idx: int) -> None:
         super().__init__()
         self.layer_idx = layer_idx
         self.n_head = config.n_head
@@ -72,12 +111,23 @@ class CausalSelfAttention(nn.Module):
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
-        self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        self.ve_gate: Optional[nn.Linear] = (
+            nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False)
+            if has_ve(layer_idx, config.n_layer)
+            else None
+        )
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache):
-        B, T, C = x.size()
+    def forward(
+        self,
+        x: Tensor,
+        ve: Optional[Tensor],
+        cos_sin: tuple[Tensor, Tensor],
+        window_size: tuple[int, int],
+        kv_cache: Optional[object],
+    ) -> Tensor:
+        B, T, _ = x.size()
 
-        # Project the input to get queries, keys, and values
+        # Project the input to get queries, keys, and values.
         # Shape: (B, T, H, D) - FA3's native layout, no transpose needed!
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
@@ -86,13 +136,14 @@ class CausalSelfAttention(nn.Module):
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
             ve = ve.view(B, T, self.n_kv_head, self.head_dim)
-            gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))  # (B, T, n_kv_head), range (0, 2)
+            # (B, T, n_kv_head), range (0, 2)
+            gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
             v = v + gate.unsqueeze(-1) * ve
 
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
         cos, sin = cos_sin
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
-        q, k = norm(q), norm(k) # QK norm
+        q, k = norm(q), norm(k)  # QK norm
 
         # Flash Attention (FA3 on Hopper+, PyTorch SDPA fallback elsewhere)
         # window_size is (left, right) tuple: (N, 0) for causal, (-1, 0) for full context
@@ -120,12 +171,14 @@ class CausalSelfAttention(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, config):
+    """Feed-forward MLP with squared ReLU activation."""
+
+    def __init__(self, config: GPTConfig) -> None:
         super().__init__()
         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         x = self.c_fc(x)
         x = F.relu(x).square()
         x = self.c_proj(x)
@@ -133,23 +186,39 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, config, layer_idx):
+    """Transformer block with attention and MLP."""
+
+    def __init__(self, config: GPTConfig, layer_idx: int) -> None:
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache):
+    def forward(
+        self,
+        x: Tensor,
+        ve: Optional[Tensor],
+        cos_sin: tuple[Tensor, Tensor],
+        window_size: tuple[int, int],
+        kv_cache: Optional[object],
+    ) -> Tensor:
         x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
         x = x + self.mlp(norm(x))
         return x
 
 
 class GPT(nn.Module):
-    def __init__(self, config, pad_vocab_size_to=64):
-        """
-        NOTE a major footgun: this __init__ function runs in meta device context (!!)
-        Therefore, any calculations inside here are shapes and dtypes only, no actual data.
-        => We actually initialize all data (parameters, buffers, etc.) in init_weights() instead.
+    """GPT language model with Flash Attention and sliding window support."""
+
+    def __init__(self, config: GPTConfig, pad_vocab_size_to: int = 64) -> None:
+        """Initializes the GPT model.
+
+        NOTE: This __init__ function runs in meta device context, so calculations
+        inside here are shapes and dtypes only, no actual data. We actually
+        initialize all data (parameters, buffers, etc.) in init_weights() instead.
+
+        Args:
+            config: Model configuration.
+            pad_vocab_size_to: Pad vocabulary size to this multiple for efficiency.
         """
         super().__init__()
         self.config = config
@@ -170,8 +239,9 @@ class GPT(nn.Module):
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
         # x0_lambdas: blends initial embedding back in at each layer (init 0.0 = disabled)
         # Separate parameters so they can have different optimizer treatment
-        self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))   # fake init, real init in init_weights()
-        self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))     # fake init, real init in init_weights()
+        # fake init, real init in init_weights()
+        self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))
+        self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
         # Value embeddings (ResFormer-style): alternating layers, last layer always included
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
@@ -180,26 +250,28 @@ class GPT(nn.Module):
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
         # In the future we can dynamically grow the cache, for now it's fine.
-        self.rotary_seq_len = config.sequence_len * 10 # 10X over-compute should be enough, TODO make nicer?
+        # 10X over-compute should be enough, TODO make nicer?
+        self.rotary_seq_len = config.sequence_len * 10
         head_dim = config.n_embd // config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
+        # persistent=False means it's not saved to the checkpoint
+        self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
 
     @torch.no_grad()
-    def init_weights(self):
-        """
-        Initialize the full model in this one function for maximum clarity.
+    def init_weights(self) -> None:
+        """Initializes the full model weights.
 
-        wte (embedding):     normal, std=1.0
-        lm_head:             normal, std=0.001
-        for each block:
-            attn.c_q:        uniform, std=1/sqrt(n_embd)
-            attn.c_k:        uniform, std=1/sqrt(n_embd)
-            attn.c_v:        uniform, std=1/sqrt(n_embd)
-            attn.c_proj:     zeros
-            mlp.c_fc:        uniform, std=1/sqrt(n_embd)
-            mlp.c_proj:      zeros
+        Weight initialization scheme:
+            wte (embedding):     normal, std=1.0
+            lm_head:             normal, std=0.001
+            for each block:
+                attn.c_q:        uniform, std=1/sqrt(n_embd)
+                attn.c_k:        uniform, std=1/sqrt(n_embd)
+                attn.c_v:        uniform, std=1/sqrt(n_embd)
+                attn.c_proj:     zeros
+                mlp.c_fc:        uniform, std=1/sqrt(n_embd)
+                mlp.c_proj:      zeros
         """
 
         # Embedding and unembedding
@@ -208,18 +280,20 @@ class GPT(nn.Module):
 
         # Transformer blocks: uniform init with bound = sqrt(3) * std (same standard deviation as normal)
         n_embd = self.config.n_embd
-        s = 3**0.5 * n_embd**-0.5 # sqrt(3) multiplier makes sure Uniform achieves the same std as Normal
+        # sqrt(3) multiplier makes sure Uniform achieves the same std as Normal
+        s = 3**0.5 * n_embd**-0.5
         for block in self.transformer.h:
-            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
+            # weights use Uniform to avoid outliers
+            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-            torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
+            torch.nn.init.zeros_(block.attn.c_proj.weight)  # projections are zero
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
         # Per-layer scalars
-        self.resid_lambdas.fill_(1.0)   # 1.0 => typical residual connections at init
-        self.x0_lambdas.fill_(0.0)      # 0.0 => skip connection to input is disabled at init
+        self.resid_lambdas.fill_(1.0)  # 1.0 => typical residual connections at init
+        self.x0_lambdas.fill_(0.0)  # 0.0 => skip connection to input is disabled at init
 
         # Value embeddings (init like c_v: uniform with same std)
         for ve in self.value_embeds.values():
@@ -241,7 +315,24 @@ class GPT(nn.Module):
             for ve in self.value_embeds.values():
                 ve.to(dtype=torch.bfloat16)
 
-    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
+    def _precompute_rotary_embeddings(
+        self,
+        seq_len: int,
+        head_dim: int,
+        base: int = 10000,
+        device: Optional[torch.device] = None,
+    ) -> tuple[Tensor, Tensor]:
+        """Precomputes rotary positional embeddings.
+
+        Args:
+            seq_len: Maximum sequence length.
+            head_dim: Dimension of each attention head.
+            base: Base for frequency calculation.
+            device: Device to create tensors on.
+
+        Returns:
+            Tuple of (cos, sin) tensors for rotary embeddings.
+        """
         # TODO: bump base theta more? e.g. 100K is more common more recently
         # autodetect the device from model embeddings
         if device is None:
@@ -254,17 +345,21 @@ class GPT(nn.Module):
         # calculate the rotation frequencies at each (time, channel) pair
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16() # keep them in bfloat16
-        cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
+        cos, sin = cos.bfloat16(), sin.bfloat16()  # keep them in bfloat16
+        # add batch and head dims for later broadcasting
+        cos, sin = cos[None, :, None, :], sin[None, :, None, :]
         return cos, sin
 
-    def _compute_window_sizes(self, config):
-        """
-        Compute per-layer window sizes for sliding window attention.
+    def _compute_window_sizes(self, config: GPTConfig) -> list[tuple[int, int]]:
+        """Computes per-layer window sizes for sliding window attention.
 
-        Returns list of (left, right) tuples for FA3's window_size parameter:
-        - left: how many tokens before current position to attend to (-1 = unlimited)
-        - right: how many tokens after current position to attend to (0 for causal)
+        Args:
+            config: Model configuration.
+
+        Returns:
+            List of (left, right) tuples for FA3's window_size parameter:
+            - left: how many tokens before current position to attend to (-1 = unlimited)
+            - right: how many tokens after current position to attend to (0 for causal)
 
         Pattern string is tiled across layers. Final layer always gets L (full context).
         Characters: L=long (full context), S=short (half context)
@@ -287,26 +382,39 @@ class GPT(nn.Module):
         window_sizes[-1] = (long_window, 0)
         return window_sizes
 
-    def get_device(self):
+    def get_device(self) -> torch.device:
+        """Returns the device of the model."""
         return self.transformer.wte.weight.device
 
-    def estimate_flops(self):
-        """
-        Return the estimated FLOPs per token for the model (forward + backward).
-        Each matmul weight parameter contributes 2 FLOPs (multiply *, accumulate +) in forward, and 2X that in backward => 2+4=6.
-        Cleanest explanation of this: https://medium.com/@dzmitrybahdanau/the-flops-calculus-of-language-model-training-3b19c1f025e4
-        On top of that, 12 * h * q * effective_seq_len accounts for key @ query matmul flops inside attention.
-        With sliding windows, effective_seq_len varies per layer (capped by window size).
+    def estimate_flops(self) -> int:
+        """Returns the estimated FLOPs per token for the model (forward + backward).
+
+        Each matmul weight parameter contributes 2 FLOPs (multiply *, accumulate +)
+        in forward, and 2X that in backward => 2+4=6.
+        Cleanest explanation:
+        https://medium.com/@dzmitrybahdanau/the-flops-calculus-of-language-model-training-3b19c1f025e4
+
+        On top of that, 12 * h * q * effective_seq_len accounts for key @ query
+        matmul flops inside attention. With sliding windows, effective_seq_len
+        varies per layer (capped by window size).
         Ref: https://arxiv.org/abs/2204.02311 (PaLM paper).
-        This is ~1% off from the exact formulas of Chinchilla paper, the difference is:
-        - Chinchilla counts the embedding layer as flops (? weird, it's just a lookup => we ignore)
-        - Chinchilla counts exp/sum/divide in attention softmax as flops (a little sus and very tiny => we ignore)
+
+        This is ~1% off from the exact formulas of Chinchilla paper:
+        - Chinchilla counts the embedding layer as flops (we ignore)
+        - Chinchilla counts exp/sum/divide in attention softmax (we ignore)
+
+        Returns:
+            Estimated FLOPs per token.
         """
         nparams = sum(p.numel() for p in self.parameters())
         # Exclude non-matmul params: embeddings and per-layer scalars
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
-        nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
-                          self.resid_lambdas.numel() + self.x0_lambdas.numel())
+        nparams_exclude = (
+            self.transformer.wte.weight.numel()
+            + value_embeds_numel
+            + self.resid_lambdas.numel()
+            + self.x0_lambdas.numel()
+        )
         h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window
         attn_flops = 0
@@ -317,19 +425,47 @@ class GPT(nn.Module):
         num_flops_per_token = 6 * (nparams - nparams_exclude) + attn_flops
         return num_flops_per_token
 
-    def num_scaling_params(self):
-        """
-        Return all of the parameters, same as Chinchilla paper.
-        Kaplan et al. did not include embedding parameters and said that this led to cleaner scaling laws.
-        But Kaplan et al. also had a bug in their results (as pointed out by Chinchilla).
-        My own experiments in nanochat confirm the Chinchilla approach gives the much cleaner scaling law.
+    def num_scaling_params(self) -> int:
+        """Returns all of the parameters, same as Chinchilla paper.
+
+        Kaplan et al. did not include embedding parameters and said that this
+        led to cleaner scaling laws. But Kaplan et al. also had a bug in their
+        results (as pointed out by Chinchilla). My own experiments in nanochat
+        confirm the Chinchilla approach gives the much cleaner scaling law.
+
         Ref: https://arxiv.org/abs/2203.15556 (Chinchilla paper <- good).
         Ref: https://arxiv.org/abs/2001.08361 (Kaplan et al. original scaling laws paper <- bad)
+
+        Returns:
+            Total number of parameters.
         """
         nparams = sum(p.numel() for p in self.parameters())
         return nparams
 
-    def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
+    def setup_optimizers(
+        self,
+        unembedding_lr: float = 0.004,
+        embedding_lr: float = 0.2,
+        matrix_lr: float = 0.02,
+        weight_decay: float = 0.0,
+        adam_betas: tuple[float, float] = (0.8, 0.95),
+        scalar_lr: float = 0.5,
+    ) -> list[torch.optim.Optimizer]:
+        """Sets up the optimizers for training.
+
+        Uses AdamW for embeddings/unembeddings/scalars and Muon for matrix params.
+
+        Args:
+            unembedding_lr: Learning rate for unembedding parameters.
+            embedding_lr: Learning rate for embedding parameters.
+            matrix_lr: Learning rate for matrix parameters (Muon).
+            weight_decay: Weight decay for Muon optimizer.
+            adam_betas: Beta parameters for AdamW.
+            scalar_lr: Learning rate for scalar parameters.
+
+        Returns:
+            List of optimizers [adamw_optimizer, muon_optimizer].
+        """
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
         # Separate out all parameters into groups
@@ -347,25 +483,34 @@ class GPT(nn.Module):
         adam_groups = [
             dict(params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale),
             dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
-            dict(params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale),  # same LR as token embedding
-            dict(params=resid_params, lr=scalar_lr * 0.01), # these are a lot more sensitive because they accumulate in the residual stream
+            # same LR as token embedding
+            dict(params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale),
+            # these are a lot more sensitive because they accumulate in the residual stream
+            dict(params=resid_params, lr=scalar_lr * 0.01),
             dict(params=x0_params, lr=scalar_lr),
         ]
-        adamw_kwargs = dict(betas=adam_betas, eps=1e-10, weight_decay=0.0) # NOTE: weight decay is hardcoded to 0.0 for AdamW, only used in Muon
+        # NOTE: weight decay is hardcoded to 0.0 for AdamW, only used in Muon
+        adamw_kwargs = dict(betas=adam_betas, eps=1e-10, weight_decay=0.0)
         AdamWFactory = DistAdamW if ddp else partial(torch.optim.AdamW, fused=True)
         adamw_optimizer = AdamWFactory(adam_groups, **adamw_kwargs)
         # Create the Muon optimizer for the linear layers
         muon_kwargs = dict(lr=matrix_lr, momentum=0.95, weight_decay=weight_decay)
         MuonFactory = DistMuon if ddp else Muon
         muon_optimizer = MuonFactory(matrix_params, **muon_kwargs)
-        # Combine them the two optimizers into one list
+        # Combine the two optimizers into one list
         optimizers = [adamw_optimizer, muon_optimizer]
         for opt in optimizers:
             for group in opt.param_groups:
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+    def forward(
+        self,
+        idx: Tensor,
+        targets: Optional[Tensor] = None,
+        kv_cache: Optional[object] = None,
+        loss_reduction: str = "mean",
+    ) -> Tensor:
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
@@ -374,7 +519,8 @@ class GPT(nn.Module):
         assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
-        cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
+        # truncate cache to current sequence length
+        cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T]
 
         # Forward the trunk of the Transformer
         x = self.transformer.wte(idx)
@@ -387,11 +533,13 @@ class GPT(nn.Module):
         x = norm(x)
 
         # Forward the lm_head (compute logits)
-        softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
-        logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
-        logits = logits[..., :self.config.vocab_size] # slice to remove padding
-        logits = logits.float() # switch to fp32 for logit softcap and loss computation
-        logits = softcap * torch.tanh(logits / softcap) # squash the logits
+        # smoothly cap the logits to the range [-softcap, softcap]
+        softcap = 15
+        # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
+        logits = self.lm_head(x)
+        logits = logits[..., :self.config.vocab_size]  # slice to remove padding
+        logits = logits.float()  # switch to fp32 for logit softcap and loss computation
+        logits = softcap * torch.tanh(logits / softcap)  # squash the logits
 
         if targets is not None:
             # training: given the targets, compute and return the loss
@@ -403,12 +551,28 @@ class GPT(nn.Module):
             return logits
 
     @torch.inference_mode()
-    def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
-        """
-        Naive autoregressive streaming inference.
-        To make it super simple, let's assume:
-        - batch size is 1
-        - ids and the yielded tokens are simple Python lists and ints
+    def generate(
+        self,
+        tokens: list[int],
+        max_tokens: int,
+        temperature: float = 1.0,
+        top_k: Optional[int] = None,
+        seed: int = 42,
+    ) -> Generator[Any, None, None]:
+        """Generates tokens autoregressively.
+
+        Naive autoregressive streaming inference. Assumes batch size is 1 and
+        ids and yielded tokens are simple Python lists and ints.
+
+        Args:
+            tokens: Input token IDs.
+            max_tokens: Maximum number of tokens to generate.
+            temperature: Sampling temperature (0 = greedy).
+            top_k: Top-k sampling parameter.
+            seed: Random seed for sampling.
+
+        Yields:
+            Generated token IDs one at a time.
         """
         assert isinstance(tokens, list)
         device = self.get_device()
@@ -416,13 +580,13 @@ class GPT(nn.Module):
         if temperature > 0:
             rng = torch.Generator(device=device)
             rng.manual_seed(seed)
-        ids = torch.tensor([tokens], dtype=torch.long, device=device) # add batch dim
+        ids = torch.tensor([tokens], dtype=torch.long, device=device)  # add batch dim
         for _ in range(max_tokens):
-            logits = self.forward(ids) # (B, T, vocab_size)
-            logits = logits[:, -1, :] # (B, vocab_size)
+            logits = self.forward(ids)  # (B, T, vocab_size)
+            logits = logits[:, -1, :]  # (B, vocab_size)
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float('Inf')
+                logits[logits < v[:, [-1]]] = -float("Inf")
             if temperature > 0:
                 logits = logits / temperature
                 probs = F.softmax(logits, dim=-1)
