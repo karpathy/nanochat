@@ -104,7 +104,7 @@ for split_name in ["train", "val"]:
     bpb_results[split_name] = bpb
     print0(f"Model: {model_name}, {split_name} bpb: {bpb:.6f}")
 
-# Master process also samples from the model (only for nanochat models)
+# Master process also samples from the model for some basic knowledge-eliciting prompts (only for nanochat models)
 samples = []
 if ddp_rank == 0 and args.hf_path is None:
     prompts = [
@@ -122,8 +122,22 @@ if ddp_rank == 0 and args.hf_path is None:
         with autocast_ctx:
             sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
         sample_str = tokenizer.decode(sample[0])
+        print0("-" * 80)
         print0(sample_str)
         samples.append(sample_str)
+
+# Draw some unconditioned samples from the model (only for nanochat models)
+unconditioned_samples = []
+if ddp_rank == 0 and args.hf_path is None:
+    engine = Engine(model, tokenizer)
+    tokens = tokenizer("", prepend="<|bos|>")
+    with autocast_ctx:
+        samples, _ = engine.generate_batch(tokens, num_samples=8, max_tokens=128, temperature=1.0)
+    for sample in samples:
+        sample_str = tokenizer.decode(sample)
+        print0("-" * 80)
+        print0(sample_str)
+        unconditioned_samples.append(sample_str)
 
 # Log to report
 from nanochat.report import get_report
@@ -134,6 +148,7 @@ get_report().log(section="Base model loss", data=[
         "val bpb": bpb_results["val"],
     },
     {f"sample {i}": sample for i, sample in enumerate(samples)},
+    {f"unconditioned sample {i}": sample for i, sample in enumerate(unconditioned_samples)},
 ])
 
 # Cleanup

@@ -61,7 +61,6 @@ for d in "${DEPTHS[@]}"; do
     # No --target-flops, let it use the default ratio from base_train
     torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- \
         --depth=$d \
-        --target-param-data-ratio=8 \
         --run="${WANDB_RUN}_d${d}" \
         --model-tag="${TAG}" \
         --core-metric-every=999999 \

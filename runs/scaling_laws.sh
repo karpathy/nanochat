@@ -1,20 +1,23 @@
 #!/bin/bash
 
+LABEL="jan16"
+
 FLOPS_BUDGETS=(
     1e18
     3e18
     6e18
 )
-DEPTHS=(8 10 12 14 16 18 20)
+DEPTHS=(6 7 8 9 10 11 12 13 14)
+
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
-WANDB_RUN="${WANDB_RUN:-scaling}"
+WANDB_RUN="${WANDB_RUN:-scaling_${LABEL}}"
 EVAL_TOKENS=$((100 * 524288))  # ~100M tokens for final eval (default is ~10M)
 
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
 source .venv/bin/activate
 
-RESULTS_DIR="$NANOCHAT_BASE_DIR/scaling_laws_results"
+RESULTS_DIR="$NANOCHAT_BASE_DIR/scaling_laws_results_${LABEL}"
 mkdir -p "$RESULTS_DIR"
 RESULTS_FILE="$RESULTS_DIR/results.csv"
 

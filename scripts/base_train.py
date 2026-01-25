@@ -22,11 +22,12 @@ import torch
 
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
+from nanochat.flash_attention import HAS_FA3
 from scripts.base_eval import evaluate_model
 print_banner()
 
@@ -46,7 +47,7 @@ parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding 
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
-parser.add_argument("--target-param-data-ratio", type=int, default=8, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
+parser.add_argument("--target-param-data-ratio", type=int, default=4, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
 # Optimization
 parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size")
 parser.add_argument("--total-batch-size", type=int, default=524288, help="total batch size in tokens")
@@ -81,10 +82,28 @@ master_process = ddp_rank == 0 # this process will do logging, checkpointing etc
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
+if device_type == "cuda":
+    gpu_device_name = torch.cuda.get_device_name(0)
+    gpu_peak_flops = get_peak_flops(gpu_device_name)
+    print0(f"GPU: {gpu_device_name} | Peak FLOPS (BF16): {gpu_peak_flops:.2e}")
+else:
+    gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
+
+# Flash Attention status
+if HAS_FA3:
+    print0("✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.")
+else:
+    print0("!" * 80)
+    print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback")
+    print0("WARNING: Training will be less efficient without FA3")
+    if args.window_pattern != "L":
+        print0(f"WARNING: SDPA has no support for sliding window attention (window_pattern='{args.window_pattern}'). Your GPU utilization will be terrible.")
+        print0("WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.")
+    print0("!" * 80)
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
 tokenizer = get_tokenizer()
@@ -93,21 +112,19 @@ vocab_size = tokenizer.get_vocab_size()
 print0(f"Vocab size: {vocab_size:,}")
 
 # Model kwargs are derived from the desired depth of the model
+# We nudge model_dim up to the nearest multiple of head_dim to ensure clean division
+# (FA3 requires head_dim divisible by 8, and this guarantees head_dim == args.head_dim exactly)
+# (For very small depths, this gives a slight "unfair" advantage to models with odd depths)
 num_layers = args.depth
-model_dim = args.depth * args.aspect_ratio
-def find_num_heads(model_dim, target_head_dim):
-    # Find num_heads that divides model_dim evenly, with head_dim closest to target.
-    ideal = max(1, round(model_dim / target_head_dim))
-    for offset in range(model_dim):
-        for candidate in [ideal + offset, ideal - offset]:
-            if candidate > 0 and model_dim % candidate == 0:
-                return candidate
-    return 1
-num_heads = find_num_heads(model_dim, args.head_dim)
+base_dim = args.depth * args.aspect_ratio
+model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
+num_heads = model_dim // args.head_dim
 num_kv_heads = num_heads # default is 1:1 GQA (Group Query Attention) ratio (i.e. GQA is disabled)
+head_dim = model_dim // num_heads
 print0(f"num_layers: {num_layers}")
-print0(f"model_dim: {model_dim}")
+print0(f"model_dim: {model_dim} (base: {base_dim}, nudge: {model_dim - base_dim:+d})")
 print0(f"num_heads: {num_heads}")
+print0(f"head_dim: {head_dim}")
 print0(f"num_kv_heads: {num_kv_heads}")
 
 # Optimizer / data / training length related hyperparameters
@@ -208,7 +225,6 @@ if resuming:
 
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
-tokens_dir = os.path.join(base_dir, "tokenized_data")
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
 train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
 build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
@@ -370,20 +386,20 @@ while True:
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
+    train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
     synchronize()
     t1 = time.time()
     dt = t1 - t0
     # -------------------------------------------------------------------------
 
-    # logging
+    # logging (CPU action only)
     ema_beta = 0.9 # EMA decay factor for some smoothing just for nicer logging
-    smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss.item() # EMA the training loss
+    smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f # EMA the training loss
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1)) # debias the EMA
     pct_done = 100 * step / num_iterations
     tok_per_sec = int(args.total_batch_size / dt)
     flops_per_sec = num_flops_per_token * args.total_batch_size / dt
-    promised_flops_per_sec_h100 = 989e12 * ddp_world_size # bfloat16 H100 SXM and without 2:4 sparsity
-    mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
+    mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
     # Calculate ETA based on average time per step (excluding first 10 steps)
