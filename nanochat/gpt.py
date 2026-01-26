@@ -350,8 +350,8 @@ class GPT(nn.Module):
             dict(params=x0_params, lr=scalar_lr),
         ]
         
-        # MuonAdamW for single-GPU, DistMuonAdamW for multi-GPU (with communication overlap)
-        OptimizerClass = DistMuonAdamW if ddp else MuonAdamW
+        # MuonAdamW for single-GPU, DistMuonAdamW for multi-GPU
+        OptimizerClass = DistMuonAdamW if (ddp and world_size > 1) else MuonAdamW
         optimizer = OptimizerClass(
             adamw_groups=adam_groups,
             muon_params=matrix_params,
