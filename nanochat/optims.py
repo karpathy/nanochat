@@ -1,7 +1,3 @@
-"""
-Distributed AdamW optimizer with a fused step function.
-A bunch of ideas (e.g. dist comms in slices) are borrowed from modded-nanogpt.
-"""
 import torch
 import torch.distributed as dist
 from torch import Tensor
@@ -60,33 +56,6 @@ Some of the changes in nanochat implementation:
 - Uses a single fused kernel for the momentum -> polar_express -> variance_reduction -> update step
 - Makes no assumptions about model architecture (e.g. that attention weights are fused into QKVO format)
 """
-
-"""
-Muon - MomentUm Orthogonalized by Newton-schulz
-
-https://kellerjordan.github.io/posts/muon/
-
-Muon internally runs standard SGD-momentum, and then performs an orthogonalization post-
-processing step, in which each 2D parameter's update is replaced with the nearest orthogonal
-matrix. To efficiently orthogonalize each update, we use a Newton-Schulz iteration, which has
-the advantage that it can be stably run in bfloat16 on the GPU.
-
-Some warnings:
-- This optimizer should not be used for the embedding layer, the final fully connected layer,
-or any {0,1}-D parameters; those should all be optimized by a standard method (e.g., AdamW).
-- To use it with 4D convolutional filters, it works well to just flatten their last 3 dimensions.
-
-Arguments:
-    lr: The learning rate used by the internal SGD.
-    momentum: The momentum used by the internal SGD.
-    ns_steps: The number of Newton-Schulz iteration steps to use.
-    beta2: The decay rate for the second moment (variance) estimate. Set to None to disable.
-    weight_decay: Cautious weight decay coefficient. Only decays where update and weight agree.
-"""
-
-import torch
-from torch import Tensor
-import torch.distributed as dist
 
 # Coefficients for Polar Express (computed for num_iters=5, safety_factor=2e-2, cushion=2)
 # From https://arxiv.org/pdf/2505.16932
@@ -157,27 +126,43 @@ def muon_step_fused(
 class MuonAdamW(torch.optim.Optimizer):
     """
     Combined optimizer: Muon for 2D matrix params, AdamW for others.
-    Non-distributed version for single-GPU training.
-    
-    Args:
+
+    AdamW - Distributed AdamW optimizer with a fused step function.
+
+    Muon - MomentUm Orthogonalized by Newton-schulz
+
+    https://kellerjordan.github.io/posts/muon/
+
+    Muon internally runs standard SGD-momentum, and then performs an orthogonalization post-
+    processing step, in which each 2D parameter's update is replaced with the nearest orthogonal
+    matrix. To efficiently orthogonalize each update, we use a Newton-Schulz iteration, which has
+    the advantage that it can be stably run in bfloat16 on the GPU.
+
+    Some warnings:
+    - The Muon optimizer should not be used for the embedding layer, the final fully connected layer,
+    or any {0,1}-D parameters; those should all be optimized by a standard method (e.g., AdamW).
+    - To use it with 4D convolutional filters, it works well to just flatten their last 3 dimensions.
+
+    AdamW Arguments:
         adamw_groups: List of dicts with 'params' and optional 'lr' for AdamW params
         muon_params: List of 2D tensors to optimize with Muon
-        adamw_lr: Default learning rate for AdamW (default: 1e-3)
         adamw_betas: Beta coefficients for AdamW (default: (0.9, 0.999))
-        adamw_eps: Epsilon for AdamW numerical stability (default: 1e-8)
+        adamw_eps: Epsilon for AdamW numerical stability (default: 1e-8)    
         adamw_weight_decay: Weight decay for AdamW (default: 0.01)
-        muon_lr: Learning rate for Muon (default: 0.02)
-        muon_momentum: Momentum for Muon (default: 0.95)
-        muon_ns_steps: Number of Newton-Schulz iterations (default: 5)
-        muon_beta2: Second moment decay for Muon variance reduction (default: 0.95)
-        muon_weight_decay: Cautious weight decay for Muon (default: 0.0)
+    
+    Muon Arguments:
+        muon_lr: The learning rate used by the internal SGD.
+        muon_momentum: The momentum used by the internal SGD.
+        muon_ns_steps: The number of Newton-Schulz iteration steps to use.
+        muon_beta2: The decay rate for the second moment (variance) estimate. Set to None to disable.
+        muon_weight_decay: Cautious weight decay coefficient. Only decays where update and weight agree.
     """
     def __init__(
         self,
         adamw_groups: list[dict],
         muon_params,
         # AdamW hyperparams
-        adamw_lr: float = 1e-3,
+        adamw_lr: float = 1e-3, # can be overridden per-group
         adamw_betas: tuple[float, float] = (0.9, 0.999),
         adamw_eps: float = 1e-8,
         adamw_weight_decay: float = 0.01,
@@ -198,7 +183,7 @@ class MuonAdamW(torch.optim.Optimizer):
         for group in adamw_groups:
             assert isinstance(group, dict) and 'params' in group
             params = list(group['params'])
-            lr = group.get('lr', adamw_lr)
+            lr = group.get('lr', adamw_lr) # AdamW supports per-group learning rates
             for p in params:
                 print(f"AdamW: 1 param of shape {p.shape}")
             param_groups.append(dict(
@@ -217,7 +202,7 @@ class MuonAdamW(torch.optim.Optimizer):
                 beta2=muon_beta2, weight_decay=muon_weight_decay,
             ))
         
-        defaults = dict(lr=adamw_lr)
+        defaults = dict(lr=adamw_lr) # torch.optim.Optimizer requires a default lr
         super().__init__(param_groups, defaults)
         
         # 0-D CPU tensors to avoid torch.compile recompilation when values change
@@ -331,21 +316,16 @@ class MuonAdamW(torch.optim.Optimizer):
 class DistMuonAdamW(torch.optim.Optimizer):
     """
     Combined distributed optimizer: Muon for 2D matrix params, AdamW for others.
-    
-    Communication optimization: starts communications for largest tensors first,
-    then processes smallest tensors first while large tensor comms complete.
-    This overlaps communication with computation for better efficiency.
-    
-    Args:
-        adamw_groups: List of dicts with 'params' and optional 'lr' for AdamW params
-        muon_params: List of 2D tensors to optimize with Muon
-        adamw_betas: Beta coefficients for AdamW (default: (0.9, 0.999))
-        adamw_eps: Epsilon for AdamW numerical stability (default: 1e-8)
-        muon_lr: Learning rate for Muon (default: 0.02)
-        muon_momentum: Momentum for Muon (default: 0.95)
-        muon_ns_steps: Number of Newton-Schulz iterations (default: 5)
-        muon_beta2: Second moment decay for Muon variance reduction (default: 0.95)
-        muon_weight_decay: Cautious weight decay for Muon (default: 0.0)
+
+    (See MuonAdamW for algorithmic details.)
+
+    AdamW Communication:
+    In the style of ZeRO-2, i.e. sharded optimizer states and gradient reduction.
+    A bunch of ideas (e.g. dist comms in slices) are borrowed from modded-nanogpt.
+
+    Muon Communication:
+    Parameters are grouped by shape, then stacked into single Tensors for efficient communication.
+    We launch comms largest-first, then process smallest-first so large comms finish in time.
     """
     def __init__(
         self,
@@ -374,11 +354,11 @@ class DistMuonAdamW(torch.optim.Optimizer):
 
         rank = dist.get_rank()
         world_size = dist.get_world_size()
-        # Validate
-        if rank == 0:
-
-            # AdamW groups: each input group becomes one param_group
-            for group in adamw_groups:
+        
+        # AdamW groups: each input group becomes one param_group
+        for group in adamw_groups:
+            # Validate
+            if rank == 0:
                 assert isinstance(group, dict), "expecting param_groups to be a list of dicts"
                 assert isinstance(group['params'], list), "expecting group['params'] to be a list of tensors"
                 for p in group['params']:
@@ -386,18 +366,16 @@ class DistMuonAdamW(torch.optim.Optimizer):
                     print(f"AdamW: 1 param of shape {p.shape}, sliced={sliced}")
                     if sliced: # large parameter tensors will be operated on in slices
                         assert p.shape[0] % world_size == 0, f"First dim of parameter shape {p.shape} must be divisible by world size {world_size}"
-        
-        # AdamW groups: each input group becomes one param_group
-        for group in adamw_groups:
+            # Add to param_groups
             params = list(group['params'])
-            lr = group.get('lr', adamw_lr)
+            lr = group.get('lr', adamw_lr) # AdamW supports per-group learning rates
             param_groups.append(dict(
                 params=params, lr=lr, kind='adamw',
                 betas=adamw_betas, eps=adamw_eps, weight_decay=adamw_weight_decay,
             ))
         
         # Muon groups: group by shape for stacking, with all Muon hyperparams in the group
-        muon_shapes = sorted({p.shape for p in muon_params})
+        muon_shapes = sorted({p.shape for p in muon_params}) # sort for deterministic ordering across ranks
         for shape in muon_shapes:
             group_params = [p for p in muon_params if p.shape == shape]
             device, dtype = group_params[0].device, group_params[0].dtype
@@ -413,9 +391,9 @@ class DistMuonAdamW(torch.optim.Optimizer):
                 beta2=muon_beta2, weight_decay=muon_weight_decay,
             ))
         
-        defaults = dict(lr=adamw_lr)
+        defaults = dict(lr=adamw_lr) # torch.optim.Optimizer requires a default lr
         super().__init__(param_groups, defaults)
-        
+
         # 0-D CPU tensors to avoid torch.compile recompilation when values change
         # AdamW tensors
         self._adamw_step_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
@@ -429,25 +407,6 @@ class DistMuonAdamW(torch.optim.Optimizer):
         self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        
-        # Precompute group order sorted by communication size for optimal overlap
-        # We launch comms largest-first, then process smallest-first so large comms finish in time
-        group_comm_sizes = []
-        for group_idx, group in enumerate(self.param_groups):
-            if group['kind'] == 'adamw':
-                # AdamW group comm size = size of first param (all params in group have same shape)
-                comm_size = group['params'][0].numel()
-            else:  # muon
-                # Muon group comm size = padded stacked tensor size
-                chunk_size = group['chunk_size']
-                comm_size = chunk_size * world_size * group['params'][0].numel()
-            group_comm_sizes.append((comm_size, group_idx))
-        
-        # Sort: largest first for comms, we'll reverse for compute
-        group_comm_sizes.sort(key=lambda x: x[0], reverse=True)
-        self._group_order = [group_idx for _, group_idx in group_comm_sizes]
-        if rank == 0:
-            print(f"DistMuonAdamW: {len(self._group_order)} groups, comm order by size (largest first)")
 
     @torch.no_grad()
     def step(self):
@@ -457,13 +416,11 @@ class DistMuonAdamW(torch.optim.Optimizer):
         # Ensure all grads exist
         assert all(p.grad is not None for group in self.param_groups for p in group["params"]), "All params must have grads"
 
-        # First pass: launch all async communications (largest groups first)
+        # First pass: launch all async communications
         adamw_infos: dict[Tensor, dict] = {}  # param -> {reduce_future, grad_slice, is_small}
         muon_infos: dict[int, dict] = {}  # group_idx -> {reduce_future, grad_chunk, stacked_grads}
 
-        for group_idx in self._group_order:
-            group = self.param_groups[group_idx]
-
+        for group_idx, group in enumerate(self.param_groups):
             if group['kind'] == 'adamw':
                 params: list[Tensor] = group['params']
                 for p in params:
@@ -474,7 +431,6 @@ class DistMuonAdamW(torch.optim.Optimizer):
                         adamw_infos[p] = dict(reduce_future=reduce_future, grad_slice=grad, is_small=True)
                     # Large param: reduce_scatter
                     else:
-                        
                         rank_size = grad.shape[0] // world_size # p.shape[0] % world_size == 0 is checked in __init__
                         grad_slice = torch.empty_like(grad[:rank_size])
                         reduce_future = dist.reduce_scatter_tensor(grad_slice, grad, op=dist.ReduceOp.AVG, async_op=True).get_future()
@@ -508,13 +464,10 @@ class DistMuonAdamW(torch.optim.Optimizer):
                     stacked_grads=stacked_grads,  # reuse for all_gather output
                 )
 
-        # Second pass: process groups (smallest first, so large comms finish in time) wait for reduce, compute batched updates, kick off all_gather
-        gather_futures: list[torch.Future] = []
-        muon_gather_infos: list[dict] = []
+        # Second pass: wait for reduce, compute updates, kick off all_gather
+        gather_infos: list[dict] = []  # unified list for both AdamW and Muon gathers
 
-        for group_idx in reversed(self._group_order):
-            group = self.param_groups[group_idx]
-
+        for group_idx, group in enumerate(self.param_groups):
             if group['kind'] == 'adamw':
                 beta1, beta2 = group['betas']
                 eps = group['eps']
@@ -561,7 +514,8 @@ class DistMuonAdamW(torch.optim.Optimizer):
 
                     # Only large params need all_gather
                     if not info['is_small']:
-                        gather_futures.append(dist.all_gather_into_tensor(p, p_slice, async_op=True).get_future())
+                        gather_future = dist.all_gather_into_tensor(p, p_slice, async_op=True).get_future()
+                        gather_infos.append(dict(gather_future=gather_future, params=None))
 
             else:  # muon
                 info = muon_infos[group_idx]
@@ -642,19 +596,18 @@ class DistMuonAdamW(torch.optim.Optimizer):
                     stacked_params, updated_params, async_op=True
                 ).get_future()
 
-                muon_gather_infos.append(dict(
+                gather_infos.append(dict(
                     gather_future=gather_future,
                     stacked_params=stacked_params,
                     params=params,
                 ))
 
-        # Final pass: wait for all_gather and copy back to params
-        if gather_futures:
-            torch.futures.collect_all(gather_futures).wait()
-
-        for info in muon_gather_infos:
+        # Final pass: wait for all_gather and copy back to params (Muon only)
+        for info in gather_infos:
             info["gather_future"].wait()
-            stacked_params = info["stacked_params"]
-            params = info["params"]
-            # Batched copy back (single kernel instead of N individual copies)
-            torch._foreach_copy_(params, list(stacked_params[:len(params)].unbind(0)))
+            # Muon params need to be copied back from stacked buffer
+            if info["params"] is not None:
+                stacked_params = info["stacked_params"]
+                params = info["params"]
+                # Batched copy back (single kernel instead of N individual copies)
+                torch._foreach_copy_(params, list(stacked_params[:len(params)].unbind(0)))
