@@ -21,7 +21,7 @@ from contextlib import nullcontext
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from nanochat.gpt import GPT, GPTConfig
+from nanochat.unet import UNet, UNetConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
@@ -40,23 +40,23 @@ parser = argparse.ArgumentParser(description="Pretrain base model")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 # Model architecture
-parser.add_argument("--depth", type=int, default=12, help="depth of the Transformer model")
-parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
+parser.add_argument("--depth", type=int, nargs="+", default=[12], help="depth of the Transformer model (one or more integers, e.g., '--depth 4 8 12')")
+parser.add_argument("--model-dim", type=int, nargs="+", default=[768], help="hidden size of the model")
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
-parser.add_argument("--window-pattern", type=str, default="L", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
 # Training horizon (only one used, in order of precedence)
-parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
+parser.add_argument("--num-iterations", type=int, default=100_000, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
-parser.add_argument("--target-param-data-ratio", type=int, default=4, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
+parser.add_argument("--target-param-data-ratio", type=int, default=-1.0, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
 # Optimization
-parser.add_argument("--device-batch-size", type=int, default=128, help="per-device batch size")
+parser.add_argument("--device-batch-size", type=int, default=64, help="per-device batch size")
 parser.add_argument("--total-batch-size", type=int, default=524288, help="total batch size in tokens")
 parser.add_argument("--embedding-lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
+parser.add_argument("--pool-lr", type=float, default=0.004, help="learning rate for pool parameters (Adam)")
+parser.add_argument("--unpool-lr", type=float, default=0.004, help="learning rate for unpool parameters (Adam)")
 parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
-parser.add_argument("--weight-decay", type=float, default=0.2, help="cautious weight decay for the Muon optimizer (for weights)")
 parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
-parser.add_argument("--scalar-lr", type=float, default=0.5, help="learning rate for scalars (resid_lambdas, x0_lambdas)")
+parser.add_argument("--weight-decay", type=float, default=0.2, help="cautious weight decay for the Muon optimizer (for weights)")
 parser.add_argument("--adam-beta1", type=float, default=0.8, help="Adam beta1 for embedding/unembedding")
 parser.add_argument("--adam-beta2", type=float, default=0.95, help="Adam beta2 for embedding/unembedding")
 parser.add_argument("--warmup-ratio", type=float, default=0.0, help="ratio of iterations for LR warmup")
@@ -101,9 +101,6 @@ else:
     print0("!" * 80)
     print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback")
     print0("WARNING: Training will be less efficient without FA3")
-    if args.window_pattern != "L":
-        print0(f"WARNING: SDPA has no support for sliding window attention (window_pattern='{args.window_pattern}'). Your GPU utilization will be terrible.")
-        print0("WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.")
     print0("!" * 80)
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
@@ -116,14 +113,13 @@ print0(f"Vocab size: {vocab_size:,}")
 # We nudge model_dim up to the nearest multiple of head_dim to ensure clean division
 # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == args.head_dim exactly)
 # (For very small depths, this gives a slight "unfair" advantage to models with odd depths)
-num_layers = args.depth
-base_dim = args.depth * args.aspect_ratio
-model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
-num_heads = model_dim // args.head_dim
+num_layers = tuple(args.depth)
+head_dim = args.head_dim
+model_dim = tuple(args.model_dim)
+num_heads = tuple(d // head_dim for d in model_dim)
 num_kv_heads = num_heads # default is 1:1 GQA (Group Query Attention) ratio (i.e. GQA is disabled)
-head_dim = model_dim // num_heads
 print0(f"num_layers: {num_layers}")
-print0(f"model_dim: {model_dim} (base: {base_dim}, nudge: {model_dim - base_dim:+d})")
+print0(f"model_dim: {model_dim}")
 print0(f"num_heads: {num_heads}")
 print0(f"head_dim: {head_dim}")
 print0(f"num_kv_heads: {num_kv_heads}")
@@ -150,25 +146,25 @@ if batch_ratio != 1.0:
     print0(f"Scaling LRs by {batch_lr_scale:.4f} for batch size {args.total_batch_size:,} (reference: {reference_batch_size:,})")
 
 # Weight decay is tuned at d12 and its scaling seems to be \propto 1/channels^2 (or equivalently, \propto 1/depth^2 due to constant aspect ratio)
-weight_decay_scaled = args.weight_decay * (12 / args.depth)**2
-if args.depth != 12:
+weight_decay_scaled = args.weight_decay * (12 / sum(args.depth))**2
+if sum(args.depth) != 12:
     print0(f"Scaling weight decay from {args.weight_decay:.6f} to {weight_decay_scaled:.6f} for depth {args.depth}")
 
 # -----------------------------------------------------------------------------
 # Initialize the Model
 
 # Create a new model with random weights
-model_config_kwargs = dict(sequence_len=args.max_seq_len, vocab_size=vocab_size, n_layer=num_layers, n_head=num_heads, n_kv_head=num_kv_heads, n_embd=model_dim, window_pattern=args.window_pattern)
+model_config_kwargs = dict(sequence_len=args.max_seq_len, vocab_size=vocab_size, n_layer=num_layers, n_head=num_heads, n_kv_head=num_kv_heads, n_embd=model_dim)
 with torch.device("meta"):
     # All tensors are created as meta tensors (they have shape/dtype but no data)
-    model_config = GPTConfig(**model_config_kwargs)
-    model = GPT(model_config)
+    model_config = UNetConfig(**model_config_kwargs)
+    model = UNet(model_config)
 model.to_empty(device=device) # All tensors get storage on target device but with uninitialized (garbage) data
 model.init_weights() # All tensors get initialized
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 base_dir = get_base_dir()
-model_tag = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
+model_tag = args.model_tag if args.model_tag else f"d{args.depth}-h{args.model_dim}".replace(" ", "")  # e.g. d[6,12]-d[768,1536]
 checkpoint_dir = os.path.join(base_dir, "base_checkpoints", model_tag)
 resuming = args.resume_from_step != -1
 if resuming:
@@ -210,12 +206,13 @@ print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
 adam_betas = (args.adam_beta1, args.adam_beta2)
 optimizers = model.setup_optimizers(
-    unembedding_lr=args.unembedding_lr * batch_lr_scale,
     embedding_lr=args.embedding_lr * batch_lr_scale,
+    pool_lr=args.pool_lr * batch_lr_scale,
+    unpool_lr=args.unpool_lr * batch_lr_scale,
+    unembedding_lr=args.unembedding_lr * batch_lr_scale,
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,
     adam_betas=adam_betas,
-    scalar_lr=args.scalar_lr * batch_lr_scale,
 )
 adamw_optimizer, muon_optimizer = optimizers
 
@@ -337,8 +334,10 @@ while True:
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
             with autocast_ctx:
-                sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
-            print0(tokenizer.decode(sample[0]))
+                # sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
+                for token in model.generate(tokens, max_tokens=16, temperature=0):
+                    tokens.append(token)
+            print0(tokenizer.decode(tokens))
         model.train()
 
     # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step
