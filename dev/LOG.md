@@ -6,7 +6,7 @@ A running summary documenting some experiments and findings. Started ~Jan 7 2026
 
 ## 2026-01-27: Bigram Hash Embeddings (Engram-lite)
 
-Explored N-gram memory modules inspired by the [DeepSeek Engram paper](https://www.arxiv.org/abs/2601.07372) and [modded-nanogpt PR #201](https://github.com/KellerJordan/modded-nanogpt/pull/201).
+Explored N-gram memory modules inspired by the [DeepSeek Engram paper](https://arxiv.org/abs/2601.07372) and [modded-nanogpt PR #201](https://github.com/KellerJordan/modded-nanogpt/pull/201).
 
 ### Background
 
