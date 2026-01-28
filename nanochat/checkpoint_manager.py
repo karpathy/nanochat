@@ -10,6 +10,7 @@ import torch
 
 from nanochat.common import get_base_dir
 from nanochat.gpt import GPT, GPTConfig
+from nanochat.unet import UNet, UNetConfig
 from nanochat.tokenizer import get_tokenizer
 from nanochat.common import setup_default_logging
 
@@ -93,12 +94,35 @@ def build_model(checkpoint_dir, step, device, phase):
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
     model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
-    _patch_missing_config_keys(model_config_kwargs)
-    log0(f"Building model with config: {model_config_kwargs}")
-    model_config = GPTConfig(**model_config_kwargs)
-    _patch_missing_keys(model_data, model_config)
-    with torch.device("meta"):
-        model = GPT(model_config)
+    
+    # Detect model type: UNet has n_layer as list/tuple, GPT has n_layer as int
+    n_layer = model_config_kwargs.get("n_layer")
+    is_unet = isinstance(n_layer, (list, tuple))
+    
+    if is_unet:
+        # UNet-specific handling
+        # Convert lists to tuples for UNet config (JSON saves tuples as lists)
+        for key in ["n_layer", "n_head", "n_kv_head", "n_embd"]:
+            if key in model_config_kwargs and isinstance(model_config_kwargs[key], list):
+                model_config_kwargs[key] = tuple(model_config_kwargs[key])
+        
+        # Filter to only UNet-supported keys
+        unet_keys = {"sequence_len", "vocab_size", "n_layer", "n_head", "n_kv_head", "n_embd"}
+        model_config_kwargs = {k: v for k, v in model_config_kwargs.items() if k in unet_keys}
+        
+        log0(f"Building model with config: {model_config_kwargs}")
+        model_config = UNetConfig(**model_config_kwargs)
+        # Note: Skip _patch_missing_keys for UNet - it's GPT-specific (adds resid_lambdas, x0_lambdas)
+        with torch.device("meta"):
+            model = UNet(model_config)
+    else:
+        # GPT-specific handling
+        _patch_missing_config_keys(model_config_kwargs)
+        log0(f"Building model with config: {model_config_kwargs}")
+        model_config = GPTConfig(**model_config_kwargs)
+        _patch_missing_keys(model_data, model_config)
+        with torch.device("meta"):
+            model = GPT(model_config)
     # Load the model state
     model.to_empty(device=device)
     model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init

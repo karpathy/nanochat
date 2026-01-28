@@ -95,62 +95,21 @@ def test_unet_kv_cache_basic():
     # Check initial state
     assert cache.get_pos() == 0
     assert cache.n_stages == 2
-    assert not cache.prefill_complete
     
-    # Check cache structure
-    assert 0 in cache.kv_caches
-    assert 1 in cache.kv_caches
-    assert 'encoder' in cache.kv_caches[0]
-    assert 'decoder' in cache.kv_caches[0]
+    # Check cache structure (flat layer caches)
+    assert len(cache.layer_caches) == cache.n_layers
+    assert len(cache.layer_to_stage) == cache.n_layers
     
     # Test advance
     cache.advance(10)
     assert cache.get_pos() == 10
-    assert not cache.prefill_complete  # Still not complete (T=10, not T=1)
     
     cache.advance(1)
     assert cache.get_pos() == 11
-    assert cache.prefill_complete  # Now complete
     
     # Test reset
     cache.reset()
     assert cache.get_pos() == 0
-    assert not cache.prefill_complete
-
-
-def test_unet_kv_cache_encoder_outputs():
-    """Test encoder output caching."""
-    from inference.unet_engine import UNetKVCache
-    
-    config = MockUNetConfig()
-    cache = UNetKVCache(
-        batch_size=1,
-        config=config,
-        max_seq_len=128,
-        device=torch.device("cpu"),
-        dtype=torch.float32,
-    )
-    
-    # Set encoder outputs
-    output0 = torch.randn(1, 64, 64)
-    output1 = torch.randn(1, 32, 128)
-    
-    cache.set_encoder_output(0, output0)
-    cache.set_encoder_output(1, output1)
-    
-    # Complete prefill
-    cache.advance(64)
-    
-    # Get encoder outputs
-    retrieved0 = cache.get_encoder_output(0)
-    retrieved1 = cache.get_encoder_output(1)
-    
-    assert retrieved0 is not None
-    assert retrieved1 is not None
-    assert retrieved0.shape == output0.shape
-    assert retrieved1.shape == output1.shape
-    assert torch.allclose(retrieved0, output0)
-    assert torch.allclose(retrieved1, output1)
 
 
 def test_unet_kv_cache_prefill():
@@ -169,7 +128,6 @@ def test_unet_kv_cache_prefill():
     )
     
     # Simulate prefill
-    src_cache.set_encoder_output(0, torch.randn(1, 64, 64))
     src_cache.advance(64)
     
     # Create destination cache for multiple samples
@@ -186,12 +144,6 @@ def test_unet_kv_cache_prefill():
     
     # Check position was copied
     assert dst_cache.get_pos() == 64
-    assert dst_cache.prefill_complete
-    
-    # Check encoder outputs were replicated
-    output = dst_cache.get_encoder_output(0)
-    assert output is not None
-    assert output.shape[0] == 4  # Batch dimension expanded
 
 
 def test_unet_engine_initialization():
@@ -341,15 +293,26 @@ def test_memory_profiler():
     """Test MemoryProfiler utility."""
     from inference.profiler import MemoryProfiler
     
-    profiler = MemoryProfiler(device_type="cpu")
+    # Test CPU mode (snapshots disabled)
+    profiler_cpu = MemoryProfiler(device_type="cpu")
+    profiler_cpu.snapshot("start")
+    profiler_cpu.snapshot("end")
+    assert len(profiler_cpu.snapshots) == 0  # No snapshots on CPU
+    assert not profiler_cpu.enabled
     
-    profiler.snapshot("start")
-    profiler.snapshot("end")
+    summary = profiler_cpu.summary()
+    assert "not available" in summary
     
-    assert len(profiler.snapshots) == 2
-    
-    summary = profiler.summary()
-    assert "Memory Profile" in summary or "not available" in summary
+    # Test CUDA mode if available
+    if torch.cuda.is_available():
+        profiler_cuda = MemoryProfiler(device_type="cuda")
+        profiler_cuda.snapshot("start")
+        profiler_cuda.snapshot("end")
+        assert len(profiler_cuda.snapshots) == 2  # Snapshots work on CUDA
+        assert profiler_cuda.enabled
+        
+        summary_cuda = profiler_cuda.summary()
+        assert "Memory Profile" in summary_cuda
 
 
 if __name__ == "__main__":
@@ -358,9 +321,6 @@ if __name__ == "__main__":
     
     test_unet_kv_cache_basic()
     print("✓ test_unet_kv_cache_basic")
-    
-    test_unet_kv_cache_encoder_outputs()
-    print("✓ test_unet_kv_cache_encoder_outputs")
     
     test_unet_kv_cache_prefill()
     print("✓ test_unet_kv_cache_prefill")

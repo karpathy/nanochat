@@ -23,14 +23,16 @@ class UNetKVCache:
     """
     KV Cache for UNet architecture with hierarchical stages.
     
-    During prefill (T > 1): caches KV for all encoder + decoder blocks
-    During generation (T=1): only uses stage 0, but needs cached encoder outputs for skip connections
-    
     The UNet has stages with progressively pooled sequences:
     - Stage 0: seq_len
     - Stage 1: seq_len // 2
     - Stage 2: seq_len // 4
     etc.
+    
+    Key points:
+    - Each layer gets its own K/V cache with stage-appropriate sequence length
+    - During T=1 generation, only stage 0 processes (higher stages can't pool)
+    - Skip connections use encoder outputs from the current forward pass
     """
 
     def __init__(self, batch_size, config, max_seq_len, device, dtype):
@@ -41,10 +43,13 @@ class UNetKVCache:
         self.dtype = dtype
         self.max_seq_len = max_seq_len
         
-        # KV cache for transformer blocks
-        # Structure: dict[stage_idx] -> {'encoder': [...], 'decoder': [...]}
-        # Each list contains (k_cache, v_cache) tuples for each block
-        self.kv_caches = {}
+        # Build flat KV cache with varying dimensions per stage
+        # Map layer_idx -> (k_cache, v_cache) with stage-appropriate dimensions
+        self.layer_caches = []
+        self.layer_to_stage = []  # Track which stage each layer belongs to
+        
+        # Total number of layers across all encoder + decoder blocks
+        self.n_layers = sum(config.n_layer)
         
         for stage_idx in range(self.n_stages):
             n_layer = config.n_layer[stage_idx]
@@ -55,37 +60,30 @@ class UNetKVCache:
             # Sequence length at this stage (gets pooled by 2^stage_idx)
             stage_seq_len = max_seq_len // (2 ** stage_idx)
             
-            self.kv_caches[stage_idx] = {
-                'encoder': self._create_stage_cache(
-                    n_layer // 2, batch_size, stage_seq_len, n_kv_head, head_dim
-                ),
-                'decoder': self._create_stage_cache(
-                    n_layer // 2, batch_size, stage_seq_len, n_kv_head, head_dim
-                ),
-            }
-        
-        # Cache encoder outputs for skip connections
-        # During prefill: stores activations at each stage
-        # During generation: reuses prefill encoder outputs (they don't change for T=1)
-        self.prefill_encoder_outputs = [None] * self.n_stages
+            # Create caches for encoder blocks at this stage
+            for _ in range(n_layer // 2):
+                k = torch.zeros(batch_size, stage_seq_len, n_kv_head, head_dim, 
+                              device=device, dtype=dtype)
+                v = torch.zeros(batch_size, stage_seq_len, n_kv_head, head_dim,
+                              device=device, dtype=dtype)
+                self.layer_caches.append((k, v))
+                self.layer_to_stage.append(stage_idx)
+            
+            # Create caches for decoder blocks at this stage
+            for _ in range(n_layer // 2):
+                k = torch.zeros(batch_size, stage_seq_len, n_kv_head, head_dim,
+                              device=device, dtype=dtype)
+                v = torch.zeros(batch_size, stage_seq_len, n_kv_head, head_dim,
+                              device=device, dtype=dtype)
+                self.layer_caches.append((k, v))
+                self.layer_to_stage.append(stage_idx)
         
         # Track current position (in terms of original sequence, not pooled)
         self.cache_seqlens = torch.zeros(batch_size, dtype=torch.int32, device=device)
-        
-        # Track whether we've completed prefill
-        self.prefill_complete = False
-        self.prefill_length = 0
 
-    def _create_stage_cache(self, n_blocks, batch_size, seq_len, n_heads, head_dim):
-        """Create KV cache tensors for a stage's transformer blocks."""
-        caches = []
-        for _ in range(n_blocks):
-            k = torch.zeros(batch_size, seq_len, n_heads, head_dim, 
-                          device=self.device, dtype=self.dtype)
-            v = torch.zeros(batch_size, seq_len, n_heads, head_dim,
-                          device=self.device, dtype=self.dtype)
-            caches.append((k, v))
-        return caches
+    def get_layer_cache(self, layer_idx):
+        """Return (k_cache, v_cache) for a specific layer (GPT-compatible interface)."""
+        return self.layer_caches[layer_idx]
 
     def get_pos(self):
         """Get current position in original (unpooled) sequence."""
@@ -94,25 +92,10 @@ class UNetKVCache:
     def advance(self, num_tokens):
         """Advance cache position (called after each forward pass)."""
         self.cache_seqlens += num_tokens
-        if not self.prefill_complete and num_tokens > 1:
-            self.prefill_length = self.get_pos()
-            self.prefill_complete = True
 
     def reset(self):
         """Reset cache to empty state."""
         self.cache_seqlens.zero_()
-        self.prefill_complete = False
-        self.prefill_length = 0
-        self.prefill_encoder_outputs = [None] * self.n_stages
-
-    def set_encoder_output(self, stage_idx, output):
-        """Cache encoder output at a stage for skip connections (only during prefill)."""
-        if not self.prefill_complete:
-            self.prefill_encoder_outputs[stage_idx] = output.clone()
-
-    def get_encoder_output(self, stage_idx):
-        """Get cached encoder output for skip connection."""
-        return self.prefill_encoder_outputs[stage_idx]
 
     def prefill(self, other):
         """
@@ -120,37 +103,27 @@ class UNetKVCache:
         Used to replicate a single prefill across multiple parallel samples.
         """
         assert self.get_pos() == 0, "Cannot prefill a non-empty cache"
-        assert self.n_stages == other.n_stages
+        assert self.n_layers == other.n_layers
         
         other_pos = other.get_pos()
         
-        # Copy KV caches for each stage
-        for stage_idx in range(self.n_stages):
+        # Copy KV caches for all layers
+        for layer_idx in range(self.n_layers):
+            stage_idx = self.layer_to_stage[layer_idx]
+            # Calculate how many tokens were cached at this stage
             stage_pos = other_pos // (2 ** stage_idx)
             if stage_pos == 0:
                 continue
-                
-            for block_type in ['encoder', 'decoder']:
-                for block_idx in range(len(self.kv_caches[stage_idx][block_type])):
-                    k_self, v_self = self.kv_caches[stage_idx][block_type][block_idx]
-                    k_other, v_other = other.kv_caches[stage_idx][block_type][block_idx]
-                    
-                    # Copy up to the current position at this stage
-                    k_self[:, :stage_pos] = k_other[:, :stage_pos]
-                    v_self[:, :stage_pos] = v_other[:, :stage_pos]
+            
+            k_other, v_other = other.layer_caches[layer_idx]
+            k_self, v_self = self.layer_caches[layer_idx]
+            
+            # Copy up to the current position at this stage
+            k_self[:, :stage_pos] = k_other[:, :stage_pos]
+            v_self[:, :stage_pos] = v_other[:, :stage_pos]
         
-        # Copy encoder outputs
-        for stage_idx in range(self.n_stages):
-            if other.prefill_encoder_outputs[stage_idx] is not None:
-                # Replicate across batch dimension
-                self.prefill_encoder_outputs[stage_idx] = other.prefill_encoder_outputs[stage_idx].expand(
-                    self.batch_size, -1, -1
-                ).clone()
-        
-        # Copy position and state
+        # Copy position
         self.cache_seqlens.fill_(other_pos)
-        self.prefill_complete = other.prefill_complete
-        self.prefill_length = other.prefill_length
 
 
 # -----------------------------------------------------------------------------
@@ -191,6 +164,28 @@ def sample_next_token(logits, rng, temperature=1.0, top_k=None):
 # -----------------------------------------------------------------------------
 # UNet Engine
 # -----------------------------------------------------------------------------
+def fix_unet_layer_indices(model):
+    """
+    Fix UNet layer indices to be globally unique for KV caching.
+    
+    The UNet model assigns layer_idx per-stage (0, 1, 2, ...), but KV cache
+    needs globally unique indices. This function patches the model in-place
+    after loading to make indices globally unique across all blocks.
+    
+    This allows us to use KV caching without modifying the core unet.py code.
+    """
+    global_layer_idx = 0
+    for stage_idx in range(model.n_stage):
+        # Fix encoder blocks
+        for block in model.encoder[f"transformer_{stage_idx}"]:
+            block.attn.layer_idx = global_layer_idx
+            global_layer_idx += 1
+        # Fix decoder blocks
+        for block in model.decoder[f"transformer_{stage_idx}"]:
+            block.attn.layer_idx = global_layer_idx
+            global_layer_idx += 1
+
+
 class UNetEngine:
     """
     Efficient inference engine for UNet LLM with KV caching.
@@ -203,19 +198,32 @@ class UNetEngine:
     """
 
     def __init__(self, model, tokenizer):
+        # Fix layer indices for KV caching (must be globally unique)
+        fix_unet_layer_indices(model)
         self.model = model
         self.tokenizer = tokenizer
-
-    def _forward_with_cache(self, ids, kv_cache):
+    
+    def _safe_forward(self, ids, kv_cache):
         """
-        Forward pass using KV cache.
-        This is a modified version of UNet.forward() that properly manages the cache.
+        Safe wrapper around model.forward() that fixes T=1 edge case.
+        
+        UNet.forward() has a bug: when T=1, the encoder breaks early but last_stage_idx
+        is set OUTSIDE the loop, capturing the wrong value. This causes dimension
+        mismatches in the decoder. This method fixes it by tracking last_stage_idx correctly.
+        
+        For T>1, we use the original model.forward() to avoid any subtle differences.
         """
         B, T = ids.size()
-        model = self.model
-        config = model.config
         
-        # Get rotary embeddings
+        # Only use custom logic for T=1 (the edge case with the bug)
+        # For T>1, use original forward (including prefill)
+        if T > 1:
+            return self.model.forward(ids, kv_cache=kv_cache)
+        
+        # T=1 case: use fixed forward logic
+        model = self.model
+        
+        #  Get rotary embeddings
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = model.cos[:, T0:T0+T], model.sin[:, T0:T0+T]
         
@@ -232,56 +240,31 @@ class UNetEngine:
         x = model.wte(ids)
         x = norm(x)
         
-        # Encoder
+        # Encoder - track completed stage INSIDE loop (fix for T=1 bug)
         encoder_outputs = []
+        last_stage_idx = 0
         for stage_idx in range(model.n_stage):
             if stage_idx > 0:
                 if x.size(1) == 1:
-                    # During T=1 generation, pooling breaks early
-                    # We'll use cached encoder outputs from prefill
                     break
-                # Pool
                 x = model.encoder[f"pool_{stage_idx - 1}->{stage_idx}"](x)
                 x = norm(x)
             
-            # Run encoder blocks for this stage
             pooled_cos_sin = pool_cos_sin(*cos_sin, stage_idx)
-            for block_idx, block in enumerate(model.encoder[f"transformer_{stage_idx}"]):
-                # Manual forward to use our cache
-                if kv_cache is not None:
-                    # Get cache for this specific block
-                    # We need to manually manage KV cache per block
-                    x = block(x, pooled_cos_sin, None)  # UNet blocks expect kv_cache=None for now
-                else:
-                    x = block(x, pooled_cos_sin, None)
-            
+            for block in model.encoder[f"transformer_{stage_idx}"]:
+                x = block(x, pooled_cos_sin, kv_cache)
             encoder_outputs.append(x)
-            if kv_cache is not None:
-                kv_cache.set_encoder_output(stage_idx, x)
-        
-        last_stage_idx = stage_idx
+            last_stage_idx = stage_idx  # Track INSIDE loop (the fix!)
         
         # Decoder
         for stage_idx in reversed(range(last_stage_idx + 1)):
-            # Run decoder blocks for this stage
             pooled_cos_sin = pool_cos_sin(*cos_sin, stage_idx)
-            for block_idx, block in enumerate(model.decoder[f"transformer_{stage_idx}"]):
-                x = block(x, pooled_cos_sin, None)
-            
+            for block in model.decoder[f"transformer_{stage_idx}"]:
+                x = block(x, pooled_cos_sin, kv_cache)
             if stage_idx > 0:
-                # Unpool, shift & skip-connection
                 x = norm(x)
                 x = model.decoder[f"unpool_{stage_idx}->{stage_idx - 1}"](x)
-                
-                # Get encoder output for skip connection
-                if kv_cache is not None and kv_cache.prefill_complete:
-                    # During generation: use cached encoder output
-                    y = kv_cache.get_encoder_output(stage_idx - 1)
-                else:
-                    # During prefill: use current encoder output
-                    y = encoder_outputs[stage_idx - 1]
-                
-                # Apply shift and skip connection
+                y = encoder_outputs[stage_idx - 1]
                 if x.size(1) == y.size(1):
                     x = x[:, :-1]
                 shifted_x = torch.zeros_like(y)
@@ -292,13 +275,9 @@ class UNetEngine:
         x = norm(x)
         softcap = 15
         logits = model.lm_head(x)
-        logits = logits[..., :config.vocab_size]
+        logits = logits[..., :model.config.vocab_size]
         logits = logits.float()
         logits = softcap * torch.tanh(logits / softcap)
-        
-        # Advance cache position
-        if kv_cache is not None:
-            kv_cache.advance(T)
         
         return logits
 
@@ -345,7 +324,7 @@ class UNetEngine:
         
         # Run prefill forward pass
         ids = torch.tensor([tokens], dtype=torch.long, device=device)
-        logits = self._forward_with_cache(ids, kv_cache_prefill)
+        logits = self._safe_forward(ids, kv_cache_prefill)
         logits = logits[:, -1, :].expand(num_samples, -1)  # (num_samples, vocab_size)
 
         # 2) Clone cache for multi-sample generation
@@ -395,7 +374,7 @@ class UNetEngine:
 
             # Prepare logits for next iteration
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
-            logits = self._forward_with_cache(ids, kv_cache_decode)[:, -1, :]
+            logits = self._safe_forward(ids, kv_cache_decode)[:, -1, :]
 
     def generate_batch(self, tokens, num_samples=1, **kwargs):
         """
