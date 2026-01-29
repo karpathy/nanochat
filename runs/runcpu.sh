@@ -4,15 +4,13 @@
 # This script was last updated/tuned on Jan 17, 2026.
 
 # Run as:
-# bash dev/cpu_demo_run.sh
+# bash runs/runcpu.sh
 
 # NOTE: Training LLMs requires GPU compute and $$$. You will not get far on your Macbook.
 # Think of this run as educational/fun demo, not something you should expect to work well.
-# (This is why I hide this script away in dev/)
 # You may also want to run this script manually and one by one, copy pasting commands into your terminal.
 
 # all the setup stuff
-export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
