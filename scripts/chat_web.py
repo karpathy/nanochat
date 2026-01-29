@@ -26,7 +26,7 @@ Abuse Prevention:
   - Maximum 8000 characters per message
   - Maximum 32000 characters total conversation length
   - Temperature clamped to 0.0-2.0
-  - Top-k clamped to 1-200
+  - Top-k clamped to 0-200 (0 disables top-k filtering, using full vocabulary)
   - Max tokens clamped to 1-4096
 """
 
@@ -55,7 +55,7 @@ MAX_MESSAGE_LENGTH = 8000
 MAX_TOTAL_CONVERSATION_LENGTH = 32000
 MIN_TEMPERATURE = 0.0
 MAX_TEMPERATURE = 2.0
-MIN_TOP_K = 1
+MIN_TOP_K = 0 # 0 disables top-k filtering, using full vocabulary
 MAX_TOP_K = 200
 MIN_MAX_TOKENS = 1
 MAX_MAX_TOKENS = 4096
