@@ -23,6 +23,9 @@ if [ -z "$WANDB_RUN" ]; then
     WANDB_RUN=dummy
 fi
 
+# wipe the report
+python -m nanochat.report reset
+
 # train tokenizer on ~2B characters (~34 seconds on my MacBook Pro M3 Max)
 python -m nanochat.dataset -n 8
 python -m scripts.tok_train --max-chars=2000000000
@@ -68,3 +71,6 @@ python -m scripts.mid_train \
 
 # Chat with the model over a pretty WebUI ChatGPT style
 # python -m scripts.chat_web -i mid
+
+# generate final report
+python -m nanochat.report generate
