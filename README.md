@@ -10,7 +10,7 @@ For questions about the repo, I recommend either using [DeepWiki](https://deepwi
 ## Updates
 
 - (Jan 31 2026) Major revamp of all scripts/README ongoing, deleting midtraining stage, might be a bit messy briefly...
-- (Jan 30 2026) With all the latest improvements we're able to train GPT-2 grade LLM in about $73. The [runs/speedrun.sh](runs/speedrun.sh) script will become the refernece way to train GPT-2 grade model and talk to it.
+- (Jan 30 2026) With all the latest improvements we're able to train GPT-2 grade LLM in about $73. The [runs/speedrun.sh](runs/speedrun.sh) script will become the reference way to train GPT-2 grade model and talk to it.
 
 ## Leaderboard
 
