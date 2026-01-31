@@ -21,9 +21,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from nanochat.adamw import DistAdamW
-from nanochat.common import get_dist_info
-from nanochat.common import print0
+from nanochat.common import get_dist_info, print0
+from nanochat.optim import MuonAdamW, DistMuonAdamW
 
 # Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
 from nanochat.flash_attention import flash_attn
@@ -292,8 +291,8 @@ class GPT(nn.Module):
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
         # Per-layer scalars
-        self.resid_lambdas.fill_(1.0)  # 1.0 => typical residual connections at init
-        self.x0_lambdas.fill_(0.0)  # 0.0 => skip connection to input is disabled at init
+        self.resid_lambdas.fill_(1.0)   # 1.0 => typical residual connections at init
+        self.x0_lambdas.fill_(0.1)      # 0.1 => small initial weight for skip connection to input embedding
 
         # Value embeddings (init like c_v: uniform with same std)
         for ve in self.value_embeds.values():
@@ -425,49 +424,39 @@ class GPT(nn.Module):
         num_flops_per_token = 6 * (nparams - nparams_exclude) + attn_flops
         return num_flops_per_token
 
-    def num_scaling_params(self) -> int:
-        """Returns all of the parameters, same as Chinchilla paper.
-
-        Kaplan et al. did not include embedding parameters and said that this
-        led to cleaner scaling laws. But Kaplan et al. also had a bug in their
-        results (as pointed out by Chinchilla). My own experiments in nanochat
-        confirm the Chinchilla approach gives the much cleaner scaling law.
-
-        Ref: https://arxiv.org/abs/2203.15556 (Chinchilla paper <- good).
-        Ref: https://arxiv.org/abs/2001.08361 (Kaplan et al. original scaling laws paper <- bad)
-
-        Returns:
-            Total number of parameters.
+    def num_scaling_params(self):
         """
-        nparams = sum(p.numel() for p in self.parameters())
-        return nparams
+        Return detailed parameter counts for scaling law analysis.
+        Different papers use different conventions:
+        - Kaplan et al. excluded embedding parameters
+        - Chinchilla included all parameters
+        Ref: https://arxiv.org/abs/2203.15556 (Chinchilla paper)
+        Ref: https://arxiv.org/abs/2001.08361 (Kaplan et al. original scaling laws paper)
 
-    def setup_optimizers(
-        self,
-        unembedding_lr: float = 0.004,
-        embedding_lr: float = 0.2,
-        matrix_lr: float = 0.02,
-        weight_decay: float = 0.0,
-        adam_betas: tuple[float, float] = (0.8, 0.95),
-        scalar_lr: float = 0.5,
-    ) -> list[torch.optim.Optimizer]:
-        """Sets up the optimizers for training.
-
-        Uses AdamW for embeddings/unembeddings/scalars and Muon for matrix params.
-
-        Args:
-            unembedding_lr: Learning rate for unembedding parameters.
-            embedding_lr: Learning rate for embedding parameters.
-            matrix_lr: Learning rate for matrix parameters (Muon).
-            weight_decay: Weight decay for Muon optimizer.
-            adam_betas: Beta parameters for AdamW.
-            scalar_lr: Learning rate for scalar parameters.
-
-        Returns:
-            List of optimizers [adamw_optimizer, muon_optimizer].
+        Returns a dict with counts for each parameter group, so downstream analysis
+        can experiment with which combination gives the cleanest scaling laws.
         """
+        # Count each group separately (mirrors the grouping in setup_optimizers)
+        wte = sum(p.numel() for p in self.transformer.wte.parameters())
+        value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
+        lm_head = sum(p.numel() for p in self.lm_head.parameters())
+        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
+        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
+        total = wte + value_embeds + lm_head + transformer_matrices + scalars
+        assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
+        return {
+            'wte': wte,
+            'value_embeds': value_embeds,
+            'lm_head': lm_head,
+            'transformer_matrices': transformer_matrices,
+            'scalars': scalars,
+            'total': total,
+        }
+
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
+
         # Separate out all parameters into groups
         matrix_params = list(self.transformer.h.parameters())
         value_embeds_params = list(self.value_embeds.parameters())
@@ -476,33 +465,33 @@ class GPT(nn.Module):
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
         assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params)
-        # Create the AdamW optimizer for the embedding, lm_head, and per-layer scalars
-        # Scale the LR for the AdamW parameters by ∝1/√dmodel (having tuned the LRs for 768 dim model)
+
+        # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print0(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
-        adam_groups = [
-            dict(params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale),
-            dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
-            # same LR as token embedding
-            dict(params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale),
-            # these are a lot more sensitive because they accumulate in the residual stream
-            dict(params=resid_params, lr=scalar_lr * 0.01),
-            dict(params=x0_params, lr=scalar_lr),
+
+        # Build param_groups with all required fields explicit
+        param_groups = [
+            # AdamW groups (embeddings, lm_head, scalars)
+            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
         ]
-        # NOTE: weight decay is hardcoded to 0.0 for AdamW, only used in Muon
-        adamw_kwargs = dict(betas=adam_betas, eps=1e-10, weight_decay=0.0)
-        AdamWFactory = DistAdamW if ddp else partial(torch.optim.AdamW, fused=True)
-        adamw_optimizer = AdamWFactory(adam_groups, **adamw_kwargs)
-        # Create the Muon optimizer for the linear layers
-        muon_kwargs = dict(lr=matrix_lr, momentum=0.95, weight_decay=weight_decay)
-        MuonFactory = DistMuon if ddp else Muon
-        muon_optimizer = MuonFactory(matrix_params, **muon_kwargs)
-        # Combine the two optimizers into one list
-        optimizers = [adamw_optimizer, muon_optimizer]
-        for opt in optimizers:
-            for group in opt.param_groups:
-                group["initial_lr"] = group["lr"]
-        return optimizers
+        # Muon groups (matrix params, grouped by shape for stacking)
+        for shape in sorted({p.shape for p in matrix_params}):
+            group_params = [p for p in matrix_params if p.shape == shape]
+            param_groups.append(dict(
+                kind='muon', params=group_params, lr=matrix_lr,
+                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+            ))
+
+        Factory = DistMuonAdamW if ddp else MuonAdamW
+        optimizer = Factory(param_groups)
+        for group in optimizer.param_groups:
+            group["initial_lr"] = group["lr"]
+        return optimizer
 
     def forward(
         self,
@@ -523,7 +512,7 @@ class GPT(nn.Module):
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T]
 
         # Forward the trunk of the Transformer
-        x = self.transformer.wte(idx)
+        x = self.transformer.wte(idx) # embed current token
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
         for i, block in enumerate(self.transformer.h):
@@ -582,9 +571,9 @@ class GPT(nn.Module):
             rng.manual_seed(seed)
         ids = torch.tensor([tokens], dtype=torch.long, device=device)  # add batch dim
         for _ in range(max_tokens):
-            logits = self.forward(ids)  # (B, T, vocab_size)
-            logits = logits[:, -1, :]  # (B, vocab_size)
-            if top_k is not None:
+            logits = self.forward(ids) # (B, T, vocab_size)
+            logits = logits[:, -1, :] # (B, vocab_size)
+            if top_k is not None and top_k > 0:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float("Inf")
             if temperature > 0:

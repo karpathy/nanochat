@@ -1,12 +1,10 @@
 """Trains a base model.
 
-From root directory of the project, run as:
-
-    python -m scripts.base_train.py
+python -m scripts.base_train
 
 or distributed as:
 
-    torchrun --nproc_per_node=8 -m scripts.base_train.py
+torchrun --nproc_per_node=8 -m scripts.base_train
 
 If you are only on CPU/Macbook, you'll want to train a much much smaller LLM.
 Example:
@@ -92,96 +90,23 @@ parser.add_argument(
 )
 
 # Training horizon (only one used, in order of precedence)
-parser.add_argument(
-    "--num-iterations",
-    type=int,
-    default=-1,
-    help="explicit number of optimization steps (-1 = disable)",
-)
-parser.add_argument(
-    "--target-flops",
-    type=float,
-    default=-1.0,
-    help="calculate num_iterations to reach target_flops (-1 = disable)",
-)
-parser.add_argument(
-    "--target-param-data-ratio",
-    type=int,
-    default=4,
-    help="calculate num_iterations for data:param ratio (Chinchilla=20, -1 = disable)",
-)
-
+parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
+parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
+parser.add_argument("--target-param-data-ratio", type=float, default=10.5, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
 # Optimization
-parser.add_argument(
-    "--device-batch-size", type=int, default=32, help="per-device batch size"
-)
-parser.add_argument(
-    "--total-batch-size", type=int, default=524288, help="total batch size in tokens"
-)
-parser.add_argument(
-    "--embedding-lr",
-    type=float,
-    default=0.3,
-    help="learning rate for embedding parameters (Adam)",
-)
-parser.add_argument(
-    "--unembedding-lr",
-    type=float,
-    default=0.004,
-    help="learning rate for unembedding parameters (Adam)",
-)
-parser.add_argument(
-    "--weight-decay",
-    type=float,
-    default=0.2,
-    help="cautious weight decay for Muon optimizer (for weights)",
-)
-parser.add_argument(
-    "--matrix-lr",
-    type=float,
-    default=0.02,
-    help="learning rate for matrix parameters (Muon)",
-)
-parser.add_argument(
-    "--scalar-lr",
-    type=float,
-    default=0.5,
-    help="learning rate for scalars (resid_lambdas, x0_lambdas)",
-)
-parser.add_argument(
-    "--adam-beta1",
-    type=float,
-    default=0.8,
-    help="Adam beta1 for embedding/unembedding",
-)
-parser.add_argument(
-    "--adam-beta2",
-    type=float,
-    default=0.95,
-    help="Adam beta2 for embedding/unembedding",
-)
-parser.add_argument(
-    "--warmup-ratio", type=float, default=0.0, help="ratio of iterations for LR warmup"
-)
-parser.add_argument(
-    "--warmdown-ratio",
-    type=float,
-    default=0.4,
-    help="ratio of iterations for LR warmdown",
-)
-parser.add_argument(
-    "--final-lr-frac",
-    type=float,
-    default=0.0,
-    help="final LR as fraction of initial LR",
-)
-parser.add_argument(
-    "--resume-from-step",
-    type=int,
-    default=-1,
-    help="resume training from this step (-1 = disable)",
-)
-
+parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size")
+parser.add_argument("--total-batch-size", type=int, default=524288, help="total batch size in tokens")
+parser.add_argument("--embedding-lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
+parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
+parser.add_argument("--weight-decay", type=float, default=0.2, help="cautious weight decay for the Muon optimizer (for weights)")
+parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
+parser.add_argument("--scalar-lr", type=float, default=0.5, help="learning rate for scalars (resid_lambdas, x0_lambdas)")
+parser.add_argument("--adam-beta1", type=float, default=0.8, help="Adam beta1 for embedding/unembedding")
+parser.add_argument("--adam-beta2", type=float, default=0.95, help="Adam beta2 for embedding/unembedding")
+parser.add_argument("--warmup-ratio", type=float, default=0.0, help="ratio of iterations for LR warmup")
+parser.add_argument("--warmdown-ratio", type=float, default=0.5, help="ratio of iterations for LR warmdown")
+parser.add_argument("--final-lr-frac", type=float, default=0.0, help="final LR as fraction of initial LR")
+parser.add_argument("--resume-from-step", type=int, default=-1, help="resume training from this step (-1 = disable)")
 # Evaluation
 parser.add_argument(
     "--eval-every",
@@ -388,14 +313,16 @@ if resuming:
     model.load_state_dict(model_data, strict=True, assign=True)
     del model_data  # free up this memory after the copy
 
-# Original, uncompiled model, for saving raw model state_dict and for
-# inference/evaluation (because the shapes may change shape).
-orig_model = model
-# The inputs to model will never change shape so dynamic=False is safe.
-model = torch.compile(model, dynamic=False)
-num_params = sum(p.numel() for p in model.parameters())
-num_scaling_params = orig_model.num_scaling_params()
-print0(f"Number of parameters: {num_params:,} (scaling: {num_scaling_params:,})")
+orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
+model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+
+# Detailed parameter counts
+param_counts = orig_model.num_scaling_params()
+print0(f"Parameter counts:")
+for key, value in param_counts.items():
+    print0(f"{key:24s}: {value:,}")
+num_params = param_counts['total']
+num_scaling_params = param_counts['transformer_matrices'] + param_counts['lm_head'] # determined to give the cleanest scaling laws, see dev/LOG.md Jan 27, 2026
 num_flops_per_token = model.estimate_flops()
 print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
@@ -410,20 +337,20 @@ elif args.target_flops > 0:
     print0(f"Calculated number of iterations from target FLOPs: {num_iterations:,}")
 elif args.target_param_data_ratio > 0:
     # calculate the number of iterations from the target param data ratio (use scaling params per Kaplan et al.)
-    target_tokens = args.target_param_data_ratio * num_scaling_params
+    target_tokens = int(args.target_param_data_ratio * num_scaling_params)
     num_iterations = target_tokens // args.total_batch_size
     print0(f"Calculated number of iterations from target data:param ratio: {num_iterations:,}")
 else:
     raise ValueError("No training horizon specified")
 total_tokens = args.total_batch_size * num_iterations
 print0(f"Total number of training tokens: {total_tokens:,}")
-print0(f"Tokens : Params ratio: {args.total_batch_size * num_iterations / num_scaling_params:.2f}") # Chinchilla is ~20
+print0(f"Tokens : Scaling params ratio: {args.total_batch_size * num_iterations / num_scaling_params:.2f}") # Chinchilla is ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # -----------------------------------------------------------------------------
-# Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
+# Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
 adam_betas = (args.adam_beta1, args.adam_beta2)
-optimizers = model.setup_optimizers(
+optimizer = model.setup_optimizer(
     unembedding_lr=args.unembedding_lr * batch_lr_scale,
     embedding_lr=args.embedding_lr * batch_lr_scale,
     matrix_lr=args.matrix_lr * batch_lr_scale,
@@ -431,12 +358,10 @@ optimizers = model.setup_optimizers(
     adam_betas=adam_betas,
     scalar_lr=args.scalar_lr * batch_lr_scale,
 )
-adamw_optimizer, muon_optimizer = optimizers
 
 if resuming:
-    for opt, dat in zip(optimizers, optimizer_data):
-        opt.load_state_dict(dat)
-    del optimizer_data # free up the memory
+    optimizer.load_state_dict(optimizer_data)
+    del optimizer_data
 
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
@@ -620,9 +545,9 @@ while True:
         save_checkpoint(
             checkpoint_dir,
             step,
-            orig_model.state_dict(),  # model parameters
-            [opt.state_dict() for opt in optimizers],  # optimizer states
-            {  # metadata saved as json
+            orig_model.state_dict(), # model parameters
+            optimizer.state_dict(), # optimizer state
+            { # metadata saved as json
                 "step": step,
                 "val_bpb": val_bpb,  # loss at last step
                 "model_config": model_config_kwargs,
@@ -655,20 +580,17 @@ while True:
         # Each .backward() is a grad sum => normalize loss here.
         loss = loss / grad_accum_steps
         loss.backward()
-        # Prefetch the next batch while the GPU is busy with forward/backward.
-        x, y, dataloader_state_dict = next(train_loader)
-    # Step the optimizers.
+        x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+    # step the optimizer
     lrm = get_lr_multiplier(step)
-    for opt in optimizers:
-        for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * lrm
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(step)
-    for group in muon_optimizer.param_groups:
-        group["momentum"] = muon_momentum
-        group["weight_decay"] = muon_weight_decay
-    for opt in optimizers:
-        opt.step()
+    for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
+        if group['kind'] == 'muon':
+            group["momentum"] = muon_momentum
+            group["weight_decay"] = muon_weight_decay
+    optimizer.step()
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item()  # .item() is a CPU-GPU sync point
     synchronize()
@@ -727,35 +649,31 @@ print0(f"Total training time: {total_training_time / 60:.2f}m")
 if val_bpb is not None:
     print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
 
-# Log to report.
-get_report().log(
-    section="Base model training",
-    data=[
-        user_config,  # CLI args
-        {  # stats about the training setup
-            "Number of parameters": num_params,
-            "Number of FLOPs per token": f"{num_flops_per_token:e}",
-            "Calculated number of iterations": num_iterations,
-            "Number of training tokens": total_tokens,
-            "Tokens : Params ratio": (
-                args.total_batch_size * num_iterations / num_params
-            ),
-            "DDP world size": ddp_world_size,
-            "warmup_ratio": args.warmup_ratio,
-            "warmdown_ratio": args.warmdown_ratio,
-            "final_lr_frac": args.final_lr_frac,
-        },
-        {  # stats about training outcomes
-            "Minimum validation bpb": min_val_bpb if val_bpb is not None else None,
-            "Final validation bpb": val_bpb,
-            "CORE metric estimate": results.get("core_metric", None),
-            "MFU %": f"{mfu:.2f}%",
-            "Total training flops": f"{flops_so_far:e}",
-            "Total training time": f"{total_training_time / 60:.2f}m",
-            "Peak memory usage": f"{get_max_memory() / 1024 / 1024:.2f}MiB",
-        },
-    ],
-)
+# Log to report
+from nanochat.report import get_report
+get_report().log(section="Base model training", data=[
+    user_config, # CLI args
+    { # stats about the training setup
+        "Number of parameters": num_params,
+        "Number of FLOPs per token": f"{num_flops_per_token:e}",
+        "Calculated number of iterations": num_iterations,
+        "Number of training tokens": total_tokens,
+        "Tokens : Scaling params ratio": args.total_batch_size * num_iterations / num_scaling_params,
+        "DDP world size": ddp_world_size,
+        "warmup_ratio": args.warmup_ratio,
+        "warmdown_ratio": args.warmdown_ratio,
+        "final_lr_frac": args.final_lr_frac,
+    },
+    { # stats about training outcomes
+        "Minimum validation bpb": min_val_bpb if val_bpb is not None else None,
+        "Final validation bpb": val_bpb,
+        "CORE metric estimate": results.get("core_metric", None),
+        "MFU %": f"{mfu:.2f}%",
+        "Total training flops": f"{flops_so_far:e}",
+        "Total training time": f"{total_training_time/60:.2f}m",
+        "Peak memory usage": f"{get_max_memory() / 1024 / 1024:.2f}MiB",
+    }
+])
 
 # Cleanup.
 wandb_run.finish()  # wandb run finish
