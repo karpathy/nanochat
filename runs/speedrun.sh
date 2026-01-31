@@ -4,11 +4,11 @@
 # It is designed to run in ~4 hours on 8XH100 node at $3/GPU/hour.
 
 # 1) Example launch (simplest):
-# bash speedrun.sh
+# bash runs/speedrun.sh
 # 2) Example launch in a screen session (because the run takes ~4 hours):
-# screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
+# screen -L -Logfile speedrun.log -S speedrun bash runs/speedrun.sh
 # 3) Example launch with wandb logging, but see below for setting up wandb first:
-# WANDB_RUN=speedrun screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
+# WANDB_RUN=speedrun screen -L -Logfile speedrun.log -S speedrun bash runs/speedrun.sh
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
@@ -16,10 +16,20 @@ export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # -----------------------------------------------------------------------------
+# System dependencies (Python dev headers needed for Triton/torch compilation)
+
+if ! dpkg -s python3-dev &> /dev/null; then
+    echo "Installing python3-dev (required for Python.h)..."
+    sudo apt-get update && sudo apt-get install -y python3-dev
+fi
+
+# -----------------------------------------------------------------------------
 # Python venv setup with uv
 
 # install uv (if not already installed)
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+# add uv to PATH (the installer puts it in ~/.local/bin)
+export PATH="$HOME/.local/bin:$PATH"
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
 # install the repo dependencies
@@ -81,7 +91,7 @@ wait $DATASET_DOWNLOAD_PID
 NPROC_PER_NODE=8
 
 # pretrain the d20 model
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=20 --target-param-data-ratio=20 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=24 --target-param-data-ratio=12 --device-batch-size=16 --run=$WANDB_RUN
 # evaluate the model on a larger chunk of train/val data and draw some samples
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss
 # evaluate the model on CORE tasks
