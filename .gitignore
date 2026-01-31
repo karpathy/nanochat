@@ -1,7 +1,13 @@
 .venv/
 __pycache__/
 *.pyc
-rustbpe/target/
 dev-ignore/
 report.md
 eval_bundle/
+
+# Secrets
+.env
+
+# Local setup
+CLAUDE.md
+wandb/
