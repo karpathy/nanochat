@@ -25,7 +25,7 @@ def _load_flash_attention_3():
     if not torch.cuda.is_available():
         return None
     try:
-        major, minor = torch.cuda.get_device_capability()
+        major, _ = torch.cuda.get_device_capability()
         # FA3 kernels are compiled for Hopper (sm90) only
         # Ada (sm89), Blackwell (sm100) need SDPA fallback until FA3 is recompiled
         if major != 9:
