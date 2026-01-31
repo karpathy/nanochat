@@ -92,17 +92,54 @@ def select_checkpoints(sorted_checkpoints: list[tuple[str, int]],
     Returns:
         List of checkpoint paths (newest to oldest)
     """
-    required_checkpoints = (num_models - 1) * step_size + 1
-    if len(sorted_checkpoints) < required_checkpoints:
+    if len(sorted_checkpoints) < num_models:
         raise InsufficientCheckpointsError(
-            f"Need at least {required_checkpoints} checkpoints to select {num_models} "
-            f"with step_size={step_size}, but only found {len(sorted_checkpoints)}"
+            f"Need at least {num_models} checkpoints, but only found {len(sorted_checkpoints)}"
         )
 
-    selected = []
-    for i in range(num_models):
-        idx = i * step_size
-        selected.append(sorted_checkpoints[idx][0])
+    # Determine the expected step distance from the first two checkpoints
+    step_distance = sorted_checkpoints[0][1] - sorted_checkpoints[1][1]
+    if step_distance <= 0:
+        raise InsufficientCheckpointsError(
+            "Checkpoints are not in descending step order"
+        )
+
+    if step_size % step_distance != 0:
+        raise InsufficientCheckpointsError(
+            f"step_size={step_size} is not a multiple of the checkpoint "
+            f"interval={step_distance}, so exact matches are impossible"
+        )
+
+    expected_distance = step_size
+
+    newest_step = sorted_checkpoints[0][1]
+    oldest_needed = newest_step - expected_distance * (num_models - 1)
+    oldest_available = sorted_checkpoints[-1][1]
+    if oldest_needed < oldest_available:
+        raise InsufficientCheckpointsError(
+            f"Need checkpoint at step {oldest_needed} but oldest available is "
+            f"step {oldest_available} (selecting {num_models} models with "
+            f"step_size={step_size}, checkpoint interval={step_distance})"
+        )
+
+    selected = [sorted_checkpoints[0][0]]
+    prev_step = newest_step
+
+    for i in range(1, num_models):
+        target_step = prev_step - expected_distance
+        # Find the checkpoint matching this target step
+        match = None
+        for path, step in sorted_checkpoints:
+            if step == target_step:
+                match = path
+                break
+        if match is None:
+            raise InsufficientCheckpointsError(
+                f"No checkpoint found at step {target_step} (expected step distance "
+                f"of {expected_distance} between selected models)"
+            )
+        selected.append(match)
+        prev_step = target_step
 
     return selected
 
