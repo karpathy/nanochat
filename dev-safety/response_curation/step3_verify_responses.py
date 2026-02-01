@@ -24,6 +24,10 @@ try:
     from openai import OpenAI
 except ModuleNotFoundError:
     raise SystemExit("Missing dependency: openai. Install with `pip install openai` or `uv sync`.")
+try:
+    from tqdm import tqdm
+except ModuleNotFoundError:
+    raise SystemExit("Missing dependency: tqdm. Install with `uv sync` or `pip install tqdm`.")
 
 POLICY_TEXT = (
     "Policy for 'Requests with Safety Concerns' (CoCoNot):\n"
@@ -215,29 +219,31 @@ def main() -> None:
     with output_path.open("a", encoding="utf-8") as f:
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
             futures = {executor.submit(worker, row): row for row in requests_iter}
-            for future in as_completed(futures):
-                row = futures[future]
-                try:
-                    record = future.result()
-                    f.write(json.dumps(record, ensure_ascii=True) + "\n")
-                except Exception as exc:
-                    error_record = {
-                        "id": row.get("id"),
-                        "prompt": row.get("prompt"),
-                        "category": row.get("category"),
-                        "subcategory": row.get("subcategory"),
-                        "source_split": row.get("source_split"),
-                        "generation_id": row.get("generation_id"),
-                        "response": row.get("response"),
-                        "verified": False,
-                        "verdict": "FAIL",
-                        "reason": f"Verifier error: {exc}",
-                        "verifier_model": args.model,
-                        "verifier_response": None,
-                        "created_at": datetime.utcnow().isoformat() + "Z",
-                    }
-                    f.write(json.dumps(error_record, ensure_ascii=True) + "\n")
-                f.flush()
+            with tqdm(total=len(futures), desc="verify") as progress:
+                for future in as_completed(futures):
+                    row = futures[future]
+                    try:
+                        record = future.result()
+                        f.write(json.dumps(record, ensure_ascii=True) + "\n")
+                    except Exception as exc:
+                        error_record = {
+                            "id": row.get("id"),
+                            "prompt": row.get("prompt"),
+                            "category": row.get("category"),
+                            "subcategory": row.get("subcategory"),
+                            "source_split": row.get("source_split"),
+                            "generation_id": row.get("generation_id"),
+                            "response": row.get("response"),
+                            "verified": False,
+                            "verdict": "FAIL",
+                            "reason": f"Verifier error: {exc}",
+                            "verifier_model": args.model,
+                            "verifier_response": None,
+                            "created_at": datetime.utcnow().isoformat() + "Z",
+                        }
+                        f.write(json.dumps(error_record, ensure_ascii=True) + "\n")
+                    f.flush()
+                    progress.update(1)
 
     print(f"Wrote verifications to {output_path}")
 

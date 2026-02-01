@@ -23,6 +23,10 @@ except ModuleNotFoundError:
     raise SystemExit(
         "Missing dependency: datasets. Install with `uv sync` or `pip install datasets`."
     )
+try:
+    from tqdm import tqdm
+except ModuleNotFoundError:
+    raise SystemExit("Missing dependency: tqdm. Install with `uv sync` or `pip install tqdm`.")
 
 DEFAULT_CATEGORY = "Requests with safety concerns"
 
@@ -74,7 +78,7 @@ def main() -> None:
 
     records = []
     for split_name, split_ds in _iter_splits(dataset, include_splits):
-        for row in split_ds:
+        for row in tqdm(split_ds, total=len(split_ds), desc=f"scan {split_name}"):
             category = _normalize_category(str(row.get("category", "")))
             if category != target_category:
                 continue

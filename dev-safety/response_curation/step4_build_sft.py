@@ -17,6 +17,10 @@ try:
     from nanochat.common import get_base_dir
 except Exception as exc:  # pragma: no cover
     raise SystemExit(f"Failed to import nanochat.common: {exc}")
+try:
+    from tqdm import tqdm
+except ModuleNotFoundError:
+    raise SystemExit("Missing dependency: tqdm. Install with `uv sync` or `pip install tqdm`.")
 
 
 def _default_output_dir() -> str:
@@ -53,7 +57,7 @@ def main() -> None:
     verified_by_id = defaultdict(list)
 
     with Path(args.input).open("r", encoding="utf-8") as f:
-        for line in f:
+        for line in tqdm(f, desc="load verifications"):
             line = line.strip()
             if not line:
                 continue
@@ -75,7 +79,7 @@ def main() -> None:
     selected_ids = rng.sample(eligible_ids, k=sample_size)
 
     with sft_path.open("w", encoding="utf-8") as sft_file, meta_path.open("w", encoding="utf-8") as meta_file:
-        for record_id in selected_ids:
+        for record_id in tqdm(selected_ids, desc="write sft"):
             options = verified_by_id[record_id]
             chosen = rng.choice(options)
             prompt = chosen.get("prompt", "")
