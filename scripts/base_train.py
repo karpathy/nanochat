@@ -429,7 +429,13 @@ while True:
         wandb_run.log(log_data)
 
     # state update
+    first_step_of_run = (step == 0) or (resuming and step == args.resume_from_step)
     step += 1
+
+    # After first step of this run, flush torch.compile garbage and freeze long-lived objects
+    if first_step_of_run:
+        gc.collect()
+        gc.freeze()  # move survivors to permanent generation, won't be scanned in future GCs
 
 # print a few more stats
 print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
