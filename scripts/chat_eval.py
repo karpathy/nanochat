@@ -9,6 +9,7 @@ torchrun --nproc_per_node=8 -m scripts.chat_eval -- -a ARC-Easy
 """
 
 import argparse
+import os
 from functools import partial
 from contextlib import nullcontext
 
@@ -24,21 +25,100 @@ from tasks.mmlu import MMLU
 from tasks.arc import ARC
 from tasks.gsm8k import GSM8K
 from tasks.spellingbee import SpellingBee
+from tasks.aime_2024 import AIME2024I, AIME2024II, AIME2024
+from tasks.aime_2025 import AIME2025
+
+import numpy as np
+from collections import defaultdict
+import json
+
+# -----------------------------------------------------------------------------
+# Pass@k calculation utilities
+
+def unbiased_pass_at_k(n_correct_per_question, n_total_per_question, k):
+    """
+    Calculate unbiased pass@k probability using the estimator from the OpenAI paper.
+    
+    Args:
+        n_correct_per_question: List of number of correct samples per question
+        n_total_per_question: List of total samples per question
+        k: The k in pass@k
+    
+    Returns:
+        Average pass@k probability across all questions
+    """
+    total_pass_k_prob = 0.0
+    for c, n in zip(n_correct_per_question, n_total_per_question):
+        assert n >= k, f"n ({n}) must be >= k ({k})"
+        # If at least k samples are correct, pass@k = 1
+        if n - c < k:
+            prob = 1.0
+        else:
+            # 1 - (n-c)/n * (n-c-1)/(n-1) * ... * (n-c-k+1)/(n-k+1)
+            prob = 1.0 - np.prod(1.0 - k / np.arange(n - c + 1, n + 1))
+        total_pass_k_prob += prob
+    return total_pass_k_prob / len(n_correct_per_question) if n_correct_per_question else 0.0
+
+
+def compute_pass_at_k_from_results(results_per_question, ks=[1, 2, 4, 8, 16]):
+    """
+    Compute pass@k for various k values from per-question results.
+    
+    Args:
+        results_per_question: Dict mapping question_id -> list of (correct: bool, completion: str)
+        ks: List of k values to compute
+    
+    Returns:
+        Dict mapping k -> pass@k score
+    """
+    # Get n (total samples per question) - assume all questions have same n
+    n = len(next(iter(results_per_question.values())))
+    
+    # Count correct per question
+    n_correct_per_question = []
+    for question_id, results in results_per_question.items():
+        c = sum(1 for correct, _ in results if correct)
+        n_correct_per_question.append(c)
+    
+    n_total_per_question = [n] * len(n_correct_per_question)
+    
+    pass_at_k_scores = {}
+    for k in ks:
+        if k <= n:
+            score = unbiased_pass_at_k(n_correct_per_question, n_total_per_question, k)
+            pass_at_k_scores[k] = score
+    
+    return pass_at_k_scores
+
 
 # -----------------------------------------------------------------------------
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
 
-def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_new_tokens, temperature, top_k, max_problems=None):
-
+def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_new_tokens, temperature, top_k, max_problems=None, save_results_path=None, compute_passatk=False, passatk_ks=None):
+    """
+    Run generative evaluation with optional pass@k computation.
+    
+    Args:
+        compute_passatk: If True, compute and report pass@k scores
+        passatk_ks: List of k values for pass@k (default: [1, 2, 4, 8, 16] if compute_passatk)
+        save_results_path: If provided, save detailed results to this JSONL file
+    """
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     device = model.get_device()
+    
+    if passatk_ks is None:
+        passatk_ks = [1, 2, 4, 8, 16]
 
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
 
     # Run the evaluation
     num_passed, total = 0, 0
+    # For pass@k, we need to track all outcomes per question
+    local_results_per_question = {} if compute_passatk or save_results_path else None
+    
     for i in range(ddp_rank, num_problems, ddp_world_size):
         conversation = task_object[i]
+        question_id = conversation.get('question_id', f'q_{i}')
 
         # Tokenize the prompt
         encoded_prompt = tokenizer.render_for_completion(conversation)
@@ -60,6 +140,12 @@ def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_
         # Keep stats
         total += 1
         num_passed += int(passed)
+        
+        # Track results for pass@k if needed
+        if local_results_per_question is not None:
+            local_results_per_question[question_id] = [
+                (bool(outcome), completion) for outcome, completion in zip(outcomes, completions)
+            ]
 
         # Logging (overwrite the same line in the console)
         print(f"\r\033[KRank {ddp_rank} | {num_passed}/{total} ({100*num_passed/total:.2f}%)", end='', flush=True)
@@ -78,9 +164,85 @@ def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_
 
     print0("=" * 50)
     print0(f"Final: {num_passed}/{total} ({100*num_passed/total:.2f}%)")
+    
+    # Compute pass@k if requested
+    passatk_scores = {}
+    if compute_passatk:
+        # Gather results from all ranks
+        if ddp:
+            # Serialize local results
+            local_data = json.dumps(local_results_per_question)
+            # Gather sizes
+            local_size = torch.tensor([len(local_data)], dtype=torch.long, device=device)
+            sizes = [torch.zeros(1, dtype=torch.long, device=device) for _ in range(ddp_world_size)]
+            dist.all_gather(sizes, local_size)
+            # Gather data
+            max_size = max(s.item() for s in sizes)
+            local_padded = local_data.ljust(max_size, '\0')
+            gathered = [torch.zeros(max_size, dtype=torch.uint8, device=device) for _ in range(ddp_world_size)]
+            local_tensor = torch.tensor([ord(c) for c in local_padded], dtype=torch.uint8, device=device)
+            dist.all_gather(gathered, local_tensor)
+            
+            # Deserialize on rank 0
+            if ddp_rank == 0:
+                all_results = {}
+                for rank, data_tensor in enumerate(gathered):
+                    data_str = ''.join(chr(x.item()) for x in data_tensor[:sizes[rank].item()])
+                    rank_results = json.loads(data_str)
+                    all_results.update(rank_results)
+            else:
+                all_results = None
+        else:
+            all_results = local_results_per_question
+        
+        # Compute pass@k on rank 0
+        if ddp_rank == 0 or not ddp:
+            passatk_scores = compute_pass_at_k_from_results(all_results, ks=passatk_ks)
+            print0("\nPass@k scores:")
+            for k in sorted(passatk_scores.keys()):
+                print0(f"  Pass@{k}: {passatk_scores[k]:.4f}")
+        
+        # Broadcast passatk_scores to all ranks
+        if ddp:
+            if ddp_rank == 0:
+                scores_data = json.dumps(passatk_scores)
+                scores_size = torch.tensor([len(scores_data)], dtype=torch.long, device=device)
+            else:
+                scores_size = torch.zeros(1, dtype=torch.long, device=device)
+            dist.broadcast(scores_size, src=0)
+            
+            if ddp_rank == 0:
+                scores_padded = scores_data.ljust(scores_size.item(), '\0')
+                scores_tensor = torch.tensor([ord(c) for c in scores_padded], dtype=torch.uint8, device=device)
+            else:
+                scores_tensor = torch.zeros(scores_size.item(), dtype=torch.uint8, device=device)
+            dist.broadcast(scores_tensor, src=0)
+            
+            if ddp_rank != 0:
+                scores_str = ''.join(chr(x.item()) for x in scores_tensor)
+                passatk_scores = json.loads(scores_str)
+    
+    # Save results if requested (only on rank 0)
+    if save_results_path and (ddp_rank == 0 or not ddp):
+        if local_results_per_question is not None:
+            # In non-DDP mode, we have all results locally
+            # In DDP mode, we gathered them above
+            results_to_save = all_results if ddp else local_results_per_question
+            
+            with open(save_results_path, 'w') as f:
+                for question_id, results in results_to_save.items():
+                    for sample_idx, (correct, completion) in enumerate(results):
+                        record = {
+                            'question_id': question_id,
+                            'sample_idx': sample_idx,
+                            'label': int(correct),
+                            'completion': completion,
+                        }
+                        f.write(json.dumps(record) + '\n')
+            print0(f"\nSaved detailed results to {save_results_path}")
 
-    # Return the accuracy
-    return num_passed/total
+    # Return the accuracy and pass@k scores
+    return num_passed/total, passatk_scores
 
 # -----------------------------------------------------------------------------
 # Categorical evaluation loop
@@ -158,8 +320,16 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
 
 def run_chat_eval(task_name, model, tokenizer, engine,
                    batch_size=1, num_samples=1, max_new_tokens=512, temperature=0.0, top_k=50,
-                   max_problems=None):
+                   max_problems=None, save_results_path=None, compute_passatk=False, passatk_ks=None):
+    """
+    Run evaluation for a single task.
+    
+    Returns:
+        If compute_passatk: (accuracy, passatk_scores_dict)
+        Otherwise: accuracy
+    """
     # Create the evaluation object
+    # Note: AIME tasks are available but NOT included in all_tasks (not auto-run)
     task_module = {
         'HumanEval': HumanEval,
         'MMLU': partial(MMLU, subset="all", split="test"),
@@ -167,16 +337,27 @@ def run_chat_eval(task_name, model, tokenizer, engine,
         'ARC-Challenge': partial(ARC, subset="ARC-Challenge", split="test"),
         'GSM8K': partial(GSM8K, subset="main", split="test"),
         'SpellingBee': partial(SpellingBee, size=256, split="test"),
+        'AIME-2024-I': AIME2024I,
+        'AIME-2024-II': AIME2024II,
+        'AIME-2024': AIME2024,
+        'AIME-2025': AIME2025,
     }[task_name]
     task_object = task_module()
     # Run the evaluation
     if task_object.eval_type == 'generative':
-        acc = run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_new_tokens, temperature, top_k, max_problems=max_problems)
+        result = run_generative_eval(
+            task_object, tokenizer, model, engine, num_samples, max_new_tokens, temperature, top_k,
+            max_problems=max_problems,
+            save_results_path=save_results_path,
+            compute_passatk=compute_passatk,
+            passatk_ks=passatk_ks,
+        )
     elif task_object.eval_type == 'categorical':
         acc = run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems=max_problems)
+        result = (acc, {}) if compute_passatk else acc
     else:
         raise ValueError(f"Unsupported task evaluation type: {task_object.eval_type}")
-    return acc
+    return result
 
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -195,7 +376,13 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
     parser.add_argument('-x', '--max-problems', type=int, default=None, help='Max problems to evaluate')
     parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
+    parser.add_argument('--passatk', action='store_true', help='Compute pass@k scores (for generative tasks)')
+    parser.add_argument('--passatk-ks', type=str, default='1,2,4,8,16', help='Comma-separated k values for pass@k (default: 1,2,4,8,16)')
+    parser.add_argument('--save-results', type=str, default=None, help='Save detailed results to this JSONL file')
     args = parser.parse_args()
+    
+    # Parse passatk_ks
+    passatk_ks = [int(k.strip()) for k in args.passatk_ks.split(',')] if args.passatk else None
 
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
@@ -219,9 +406,16 @@ if __name__ == "__main__":
 
     # Run all the task evaluations sequentially
     results = {}
+    passatk_results = {}
     for task_name in task_names:
         with autocast_ctx:
-            acc = run_chat_eval(
+            # Determine save path for this task (add task name suffix)
+            save_path = None
+            if args.save_results:
+                base, ext = os.path.splitext(args.save_results)
+                save_path = f"{base}_{task_name}{ext}"
+            
+            result = run_chat_eval(
                 task_name,
                 model, tokenizer, engine,
                 batch_size=args.batch_size,
@@ -230,7 +424,18 @@ if __name__ == "__main__":
                 temperature=args.temperature,
                 top_k=args.top_k,
                 max_problems=args.max_problems,
+                save_results_path=save_path,
+                compute_passatk=args.passatk,
+                passatk_ks=passatk_ks,
             )
+            
+            # Handle return value (may be tuple with pass@k scores)
+            if args.passatk and isinstance(result, tuple):
+                acc, passatk_scores = result
+                passatk_results[task_name] = passatk_scores
+            else:
+                acc = result
+            
             results[task_name] = acc
             print0(f"{task_name} accuracy: {100 * acc:.2f}%")
 
@@ -248,10 +453,13 @@ if __name__ == "__main__":
             centered_mean += centered_acc
         chatcore_metric = centered_mean / len(results)
         chatcore_metric_dict = {"ChatCORE metric": chatcore_metric}
-    get_report().log(section="Chat evaluation " + args.source, data=[
+    report_data = [
         vars(args), # CLI args
         results,
         chatcore_metric_dict,
-    ])
+    ]
+    if passatk_results:
+        report_data.append({"pass@k": passatk_results})
+    get_report().log(section="Chat evaluation " + args.source, data=report_data)
 
     compute_cleanup()

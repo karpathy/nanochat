@@ -4,6 +4,7 @@ __pycache__/
 dev-ignore/
 report.md
 eval_bundle/
+dev-aime/data/
 
 # Secrets
 .env
