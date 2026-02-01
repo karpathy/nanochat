@@ -19,7 +19,7 @@ dependencies = [
     "tabulate>=0.9.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
-    "torch>=2.9.0",
+    "torch>=2.9.1",
     "transformers>=4.57.3",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
@@ -40,12 +40,22 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-# target torch to cuda 12.8 or CPU
+# target torch to cuda 12.8, rocm6.4 or CPU
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu128", extra = "gpu" },
+    { index = "pytorch-rocm64", extra = "rocm" },
 ]
+
+pytorch-triton-rocm = [
+    { index = "pytorch-rocm64", extra = "rocm", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-rocm64"
+url = "https://download.pytorch.org/whl/rocm6.4"
+explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
@@ -64,11 +74,17 @@ cpu = [
 gpu = [
     "torch>=2.9.1",
 ]
+rocm = [
+    "torch>=2.9.1",
+    "pytorch-triton-rocm>=3.5.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
 
 [tool.uv]
 conflicts = [
     [
         { extra = "cpu" },
         { extra = "gpu" },
+        { extra = "rocm" },
     ],
 ]
