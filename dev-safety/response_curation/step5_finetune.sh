@@ -8,8 +8,19 @@ WORKSPACE_DIR="$(cd "${ROOT_DIR}/.." && pwd)"
 export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-${WORKSPACE_DIR}}"
 export SAFETY_CURATION_DIR="${SAFETY_CURATION_DIR:-${NANOCHAT_BASE_DIR}/safety_response_curation}"
 export SAFETY_FINETUNE_DIR="${SAFETY_FINETUNE_DIR:-${NANOCHAT_BASE_DIR}/safety_finetune_runs}"
+ORIG_BASE_DIR="$NANOCHAT_BASE_DIR"
+EXTRA_JSONL="${EXTRA_JSONL:-${SAFETY_CURATION_DIR}/step4_sft.jsonl}"
 
 mkdir -p "$SAFETY_FINETUNE_DIR"
+
+# Sanity check: extra data must exist and be non-empty
+if [ ! -s "$EXTRA_JSONL" ]; then
+  echo "Extra JSONL not found or empty: $EXTRA_JSONL"
+  echo "Set EXTRA_JSONL or SAFETY_CURATION_DIR to the correct location."
+  exit 1
+fi
+EXTRA_LINES="$(wc -l < "$EXTRA_JSONL" | tr -d ' ')"
+echo "Using extra JSONL: $EXTRA_JSONL ($EXTRA_LINES lines)"
 
 # Ensure identity conversations are available in the base dir.
 if [ ! -f "$NANOCHAT_BASE_DIR/identity_conversations.jsonl" ]; then
@@ -44,9 +55,19 @@ torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.chat_sft -- 
   --unembedding-lr "$UNEMBEDDING_LR" \
   --matrix-lr "$MATRIX_LR" \
   --weight-decay "$WEIGHT_DECAY" \
-  --extra-jsonl "$SAFETY_CURATION_DIR/step4_sft.jsonl" \
+  --extra-jsonl "$EXTRA_JSONL" \
   --output-base-dir "$SAFETY_FINETUNE_DIR"
 
 # Evaluate the new SFT checkpoints from the finetune runs directory
+TOKENIZER_SRC="${ORIG_BASE_DIR}/tokenizer"
+TOKENIZER_DST="${SAFETY_FINETUNE_DIR}/tokenizer"
+if [ ! -d "$TOKENIZER_DST" ]; then
+  if [ ! -d "$TOKENIZER_SRC" ]; then
+    echo "Tokenizer not found at $TOKENIZER_SRC. Run tokenizer training first (e.g., dev-safety/d12_train.sh) or set NANOCHAT_BASE_DIR to a location that already has tokenizer artifacts."
+    exit 1
+  fi
+  cp -R "$TOKENIZER_SRC" "$TOKENIZER_DST"
+fi
+
 NANOCHAT_BASE_DIR="$SAFETY_FINETUNE_DIR" \
 torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.chat_eval -- -i sft -g "$MODEL_TAG"
