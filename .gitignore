@@ -4,6 +4,7 @@ __pycache__/
 dev-ignore/
 report.md
 eval_bundle/
+*.egg-info/
 
 # Secrets
 .env
