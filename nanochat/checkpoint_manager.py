@@ -165,7 +165,7 @@ def load_model(source, *args, **kwargs):
     model_dir = {
         "base": "base_checkpoints",
         "mid": "mid_checkpoints",
-        "sft": "chatsft_checkpoints",
+        "sft": "sft_checkpoints",
         "rl": "chatrl_checkpoints",
     }[source]
     base_dir = get_base_dir()
