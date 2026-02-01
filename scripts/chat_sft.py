@@ -58,6 +58,10 @@ parser.add_argument("--eval-every", type=int, default=150, help="evaluate val bp
 parser.add_argument("--eval-tokens", type=int, default=20*524288, help="number of tokens to evaluate val loss on")
 # Output
 parser.add_argument("--dry-run", action="store_true", help="log to wandb but skip checkpoints/report")
+parser.add_argument("--output-base-dir", type=str, default="", help="override base dir for saving checkpoints")
+# Extra training data
+parser.add_argument("--extra-jsonl", action="append", default=[], help="extra JSONL conversation file(s) for SFT")
+parser.add_argument("--extra-jsonl-repeat", type=int, default=1, help="repeat each extra JSONL this many times")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
@@ -102,7 +106,14 @@ for group in optimizer.param_groups:
 
 # SFT data mixture and DataLoader
 base_dir = get_base_dir()
+output_base_dir = args.output_base_dir if args.output_base_dir else base_dir
 identity_conversations_filepath = os.path.join(base_dir, "identity_conversations.jsonl")
+extra_tasks = []
+if args.extra_jsonl:
+    repeat = max(1, args.extra_jsonl_repeat)
+    for path in args.extra_jsonl:
+        for _ in range(repeat):
+            extra_tasks.append(CustomJSON(filepath=path))
 train_dataset = TaskMixture([
     SmolTalk(split="train"), # 460K rows of general conversations
     MMLU(subset="auxiliary_train", split="train"), # 100K rows of multiple choice problems drawn from ARC, MC_TEST, OBQA, RACE
@@ -112,7 +123,7 @@ train_dataset = TaskMixture([
     CustomJSON(filepath=identity_conversations_filepath), # let's do 2 epochs of these
     SimpleSpelling(size=200000, split="train"), # 200K rows of Simple Spelling (e.g. spell the word 'apple')
     SpellingBee(size=80000, split="train"), # 80K rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
-]) # total: 460K + 100K + 16K + 200K + 80K = 856K rows
+] + extra_tasks) # total: 460K + 100K + 16K + 200K + 80K (+ extra)
 val_dataset = TaskMixture([
     SmolTalk(split="test"), # 24K rows in test set
     MMLU(subset="all", split="test", stop=5200), # 14K rows in test set, use only 5.2K to match the train ratios
@@ -285,7 +296,7 @@ while True:
     # save checkpoint at the end of the run (only on master process)
     if master_process and last_step and not args.dry_run:
         output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
-        checkpoint_dir = os.path.join(base_dir, "sft_checkpoints", output_dirname)
+        checkpoint_dir = os.path.join(output_base_dir, "sft_checkpoints", output_dirname)
         save_checkpoint(
             checkpoint_dir,
             step,
