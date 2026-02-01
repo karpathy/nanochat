@@ -10,7 +10,7 @@ import torch
 
 from nanochat.common import get_base_dir
 from nanochat.gpt import GPT, GPTConfig
-from nanochat.tokenizer import get_tokenizer
+from nanochat.tokenizer import get_tokenizer, HuggingFaceTokenizer
 from nanochat.common import setup_default_logging
 
 # Set up logging
@@ -27,17 +27,57 @@ def _patch_missing_config_keys(model_config_kwargs):
         model_config_kwargs["window_pattern"] = "L"
         log0(f"Patching missing window_pattern in model config to 'L'")
 
+def _has_ve(layer_idx, n_layer):
+    """Check if a layer should have value embeddings (odd layers only)."""
+    return layer_idx % 2 == 1
+
 def _patch_missing_keys(model_data, model_config):
     """Add default values for new parameters that may be missing in old checkpoints."""
     n_layer = model_config.n_layer
+    n_kv_head = model_config.n_kv_head
+    n_embd = model_config.n_embd
+    vocab_size = model_config.vocab_size
+    head_dim = n_embd // model_config.n_head
+    kv_dim = n_kv_head * head_dim
+    ve_gate_channels = 32  # Fixed size in current architecture
+
+    # Get dtype and device from existing model data
+    sample_tensor = next(iter(model_data.values()))
+    dtype = sample_tensor.dtype
+    device = sample_tensor.device
+
     # resid_lambdas defaults to 1.0 (identity scaling)
     if "resid_lambdas" not in model_data:
-        model_data["resid_lambdas"] = torch.ones(n_layer)
+        model_data["resid_lambdas"] = torch.ones(n_layer, dtype=dtype, device=device)
         log0(f"Patching missing resid_lambdas in model data to 1.0")
     # x0_lambdas defaults to 0.0 (disabled)
     if "x0_lambdas" not in model_data:
-        model_data["x0_lambdas"] = torch.zeros(n_layer)
+        model_data["x0_lambdas"] = torch.zeros(n_layer, dtype=dtype, device=device)
         log0(f"Patching missing x0_lambdas in model data to 0.0")
+
+    # Patch missing ve_gate weights (zeros - gate starts neutral)
+    # ve_gate is nn.Linear(32, n_kv_head) -> weight shape [n_kv_head, 32]
+    ve_gate_patched = False
+    for i in range(n_layer):
+        if _has_ve(i, n_layer):
+            key = f"transformer.h.{i}.attn.ve_gate.weight"
+            if key not in model_data or model_data[key].shape != (n_kv_head, ve_gate_channels):
+                model_data[key] = torch.zeros(n_kv_head, ve_gate_channels, dtype=dtype, device=device)
+                ve_gate_patched = True
+    if ve_gate_patched:
+        log0(f"Patching missing/incompatible ve_gate weights to zeros")
+
+    # Patch missing value_embeds (nn.Embedding(vocab_size, kv_dim))
+    # value_embeds.*.weight shape: [vocab_size, kv_dim]
+    value_embeds_patched = False
+    for i in range(n_layer):
+        if _has_ve(i, n_layer):
+            key = f"value_embeds.{i}.weight"
+            if key not in model_data or model_data[key].shape != (vocab_size, kv_dim):
+                model_data[key] = torch.randn(vocab_size, kv_dim, dtype=dtype, device=device) * 0.02
+                value_embeds_patched = True
+    if value_embeds_patched:
+        log0(f"Patching missing/incompatible value_embeds with random init")
 
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
     if rank == 0:
@@ -108,8 +148,13 @@ def build_model(checkpoint_dir, step, device, phase):
         model.eval()
     else:
         model.train()
-    # Load the Tokenizer
-    tokenizer = get_tokenizer()
+    # Load the Tokenizer (prefer local tokenizer.json if present in checkpoint dir)
+    local_tokenizer_path = os.path.join(checkpoint_dir, "tokenizer.json")
+    if os.path.exists(local_tokenizer_path):
+        log0(f"Using local tokenizer from {local_tokenizer_path}")
+        tokenizer = HuggingFaceTokenizer.from_directory(checkpoint_dir)
+    else:
+        tokenizer = get_tokenizer()
     # Sanity check: compatibility between model and tokenizer
     assert tokenizer.get_vocab_size() == model_config_kwargs["vocab_size"], f"Tokenizer vocab size {tokenizer.get_vocab_size()} does not match model config vocab size {model_config_kwargs['vocab_size']}"
     return model, tokenizer, meta_data
