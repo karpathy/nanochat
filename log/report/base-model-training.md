@@ -1,0 +1,50 @@
+## Base model training
+timestamp: 2026-02-02 00:09:59
+
+- run: d24-feb01
+- device_type: 
+- depth: 24
+- aspect_ratio: 64
+- head_dim: 128
+- max_seq_len: 2048
+- window_pattern: SSSL
+- num_iterations: -1
+- target_flops: -1.0000
+- target_param_data_ratio: 12.0000
+- device_batch_size: 16
+- total_batch_size: 524,288
+- embedding_lr: 0.3000
+- unembedding_lr: 0.0040
+- weight_decay: 0.2000
+- matrix_lr: 0.0200
+- scalar_lr: 0.5000
+- adam_beta1: 0.8000
+- adam_beta2: 0.9500
+- warmup_ratio: 0.0000
+- warmdown_ratio: 0.5000
+- final_lr_frac: 0.0000
+- resume_from_step: -1
+- eval_every: 250
+- eval_tokens: 10,485,760
+- core_metric_every: 3000
+- core_metric_max_per_task: -1
+- sample_every: -1
+- save_every: -1
+- model_tag: d24_feb01
+- Number of parameters: 1,384,124,976
+- Number of FLOPs per token: 4.945112e+09
+- Calculated number of iterations: 16,704
+- Number of training tokens: 8,757,706,752
+- Tokens : Scaling params ratio: 11.9999
+- DDP world size: 8
+- warmup_ratio: 0.0000
+- warmdown_ratio: 0.5000
+- final_lr_frac: 0.0000
+- Minimum validation bpb: 0.7533
+- Final validation bpb: 0.7533
+- CORE metric estimate: 0.2633
+- MFU %: 50.77%
+- Total training flops: 4.330784e+19
+- Total training time: 179.44m
+- Peak memory usage: 62389.67MiB
+
