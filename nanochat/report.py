@@ -211,8 +211,6 @@ EXPECTED_FILES = [
     "base-model-training.md",
     "base-model-loss.md",
     "base-model-evaluation.md",
-    "midtraining.md",
-    "chat-evaluation-mid.md",
     "chat-sft.md",
     "chat-evaluation-sft.md",
     "chat-rl.md",
@@ -316,8 +314,6 @@ class Report:
                 # extract the most important metrics from the sections
                 if file_name == "base-model-evaluation.md":
                     final_metrics["base"] = extract(section, "CORE")
-                if file_name == "chat-evaluation-mid.md":
-                    final_metrics["mid"] = extract(section, chat_metrics)
                 if file_name == "chat-evaluation-sft.md":
                     final_metrics["sft"] = extract(section, chat_metrics)
                 if file_name == "chat-evaluation-rl.md":
@@ -337,7 +333,7 @@ class Report:
             # Custom ordering: CORE first, ChatCORE last, rest in middle
             all_metrics = sorted(all_metrics, key=lambda x: (x != "CORE", x == "ChatCORE", x))
             # Fixed column widths
-            stages = ["base", "mid", "sft", "rl"]
+            stages = ["base", "sft", "rl"]
             metric_width = 15
             value_width = 8
             # Write table header
