@@ -117,14 +117,15 @@ class UNetKVCache:
         self.encoder_output_lens = [0] * self.n_stages
         
         # Decoder output cache for skip connections (unpooled outputs at each stage > 0)
-        # decoder_outputs[stage] = tensor of shape (batch_size, stage_seq_len_below, n_embd[stage-1])
+        # decoder_outputs[stage] = tensor of shape (batch_size, cache_seq_len, n_embd[stage-1])
         # These are the UNPOOLED decoder outputs that get added to encoder outputs in skip connections
+        # NOTE: During efficient decode, unpool tokens accumulate ~1.5x faster than sequence length
+        # because each deep stage run produces multiple unpool tokens. We use 2*max_seq_len for safety.
         self.decoder_outputs = [None]  # Stage 0 has no skip connection from above
         for stage_idx in range(1, self.n_stages):
-            # Decoder at stage S unpools to stage S-1's sequence length
-            below_seq_len = max_seq_len // (2 ** (stage_idx - 1))
             n_embd_below = config.n_embd[stage_idx - 1]
-            dec_out = torch.zeros(batch_size, below_seq_len, n_embd_below, device=device, dtype=dtype)
+            # Double the buffer to handle accumulation from efficient decode
+            dec_out = torch.zeros(batch_size, max_seq_len * 2, n_embd_below, device=device, dtype=dtype)
             self.decoder_outputs.append(dec_out)
         
         # Track how many tokens have been written to decoder output cache at each stage
@@ -870,6 +871,7 @@ if __name__ == "__main__":
                         help="Which test to run: 'tokens' (final output), 'intermediate' (step-by-step logits), or 'both'")
     parser.add_argument("--max-tokens", type=int, default=32, help="Maximum tokens to generate")
     parser.add_argument("--prompt", type=str, default="The chemical formula of water is", help="Prompt text")
+    parser.add_argument("--model-tag", type=str, default=None, help="Optional model tag to load a specific checkpoint")
     args = parser.parse_args()
 
     print0("=" * 80)
@@ -885,7 +887,7 @@ if __name__ == "__main__":
     # Load model
     print0("\nLoading UNet model...")
     try:
-        model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=None, step=None)
+        model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=args.model_tag, step=None)
         
         # Check if it's actually a UNet model
         if not hasattr(model, 'encoder') or not hasattr(model, 'decoder'):
@@ -1056,6 +1058,9 @@ if __name__ == "__main__":
                 
                 encoder_outputs.append(x)
                 activations[f'enc_s{stage_idx}_out'] = x[:, -1:, :].clone()
+                # Also capture second-to-last position for comparison with cached values
+                if x.size(1) >= 2:
+                    activations[f'enc_s{stage_idx}_pos_minus2'] = x[:, -2:-1, :].clone()
                 last_stage_idx = stage_idx
             
             # Decoder
@@ -1078,17 +1083,16 @@ if __name__ == "__main__":
                     
                     y = encoder_outputs[stage_idx - 1]
                     
-                    # Capture encoder output used in skip
-                    # In naive: y has ALL encoder positions, we need the one that corresponds to 
-                    # what cached decode uses. Cached uses get_encoder_output(0, skip_start_pos, unpool_len)
-                    # where skip_start_pos = encoder_len - unpool_len
-                    # So the last position in y slice is position (encoder_len - 1)
-                    # which equals y[:, -1:] - correct!
+                    # Capture encoder output used in skip (last position)
                     activations[f'skip_enc_{stage_idx}'] = y[:, -1:, :].clone()
                     
-                    # Also capture what position 6 looks like (the one from "cache" in efficient decode)
-                    skip_start_pos_naive = y.size(1) - x_unpooled.size(1)
-                    activations[f'skip_enc_{stage_idx}_pos6'] = y[:, skip_start_pos_naive:skip_start_pos_naive+1, :].clone()
+                    # Also capture the "cached" position - the second-to-last position
+                    # In efficient decode, skip uses positions [skip_start_pos : skip_start_pos + unpool_len]
+                    # where skip_start_pos = encoder_len - unpool_len
+                    # So the first position in that range is encoder_len - unpool_len
+                    # At step 1 with 8 encoder tokens and 2 unpool tokens: skip_start_pos = 6
+                    if y.size(1) >= 2:
+                        activations[f'skip_enc_{stage_idx}_pos6'] = y[:, -2:-1, :].clone()
                     
                     x = x_unpooled
                     if x.size(1) == y.size(1):
@@ -1163,6 +1167,9 @@ if __name__ == "__main__":
                 stage_token_counts[stage_idx] = x.size(1)
                 encoder_outputs.append(x)
                 activations[f'enc_s{stage_idx}_out'] = x[:, -1:, :].clone()
+                # Also capture second-to-last position for comparison
+                if x.size(1) >= 2:
+                    activations[f'enc_s{stage_idx}_pos_minus2'] = x[:, -2:-1, :].clone()
                 last_stage_idx = stage_idx
                 
                 if kv_cache is not None:
