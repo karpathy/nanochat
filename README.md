@@ -1,35 +1,62 @@
 # nanochat
 
 ![nanochat logo](dev/nanochat.png)
+![scaling laws](dev/scaling_laws_jan26.png)
 
-> The best ChatGPT that $100 can buy.
+nanochat is the simplest experimental harness for training LLMs. It is designed to run on a single GPU node, the code is minimal/hackable, and it covers all major LLM stages including tokenization, pretraining, finetuning, evaluation, inference, and a chat UI. For example, you can train your own GPT-2 capability LLM (which cost ~$50,000 to train in 2019) for only $73 (3 hours of 8XH100 GPU node) and then talk to it in a familiar ChatGPT-like web UI.
 
-This repo is a full-stack implementation of an LLM like ChatGPT in a single, clean, minimal, hackable, dependency-lite codebase. nanochat is designed to run on a single 8XH100 node via scripts like [speedrun.sh](runs/speedrun.sh), that run the entire pipeline start to end. This includes tokenization, pretraining, finetuning, evaluation, inference, and web serving over a simple UI so that you can talk to your own LLM just like ChatGPT. nanochat will become the capstone project of the course LLM101n being developed by Eureka Labs.
+For questions about the repo, I recommend either using [DeepWiki](https://deepwiki.com/karpathy/nanochat) from Devin/Cognition to ask questions about the repo, or use the [Discussions tab](https://github.com/karpathy/nanochat/discussions), or come by the [#nanochat](https://discord.com/channels/1020383067459821711/1427295580895314031) channel on Discord.
 
 ## Updates
 
-- (Jan 16 2026) The repo is in active development, I am currently fleshing out the pretraining stage.
-- (Jan 7 2026) See new post: [nanochat Miniseries v1](https://github.com/karpathy/nanochat/discussions/420) and the associated script [miniseries.sh](runs/miniseries.sh).
+- (Jan 31 2026) Major revamp of all scripts/README ongoing, deleting midtraining stage, might be a bit messy briefly...
+- (Jan 30 2026) With all the latest improvements we're able to train GPT-2 grade LLM in about $73. The [runs/speedrun.sh](runs/speedrun.sh) script will become the refernece way to train GPT-2 grade model and talk to it.
 
-## Talk to it
+## Leaderboard
 
-To get a sense of the endpoint of this repo, you can currently find [nanochat d34](https://github.com/karpathy/nanochat/discussions/314) hosted on [nanochat.karpathy.ai](https://nanochat.karpathy.ai/). "d34" means that this model has 34 layers in the Transformer neural network. This model has 2.2 billion parameters, it was trained on 88 billion tokens by simply running the training script [run1000.sh](runs/run1000.sh) with `--target_param_data_ratio=40` (2x longer than Chinchilla-optimal), and the total cost of training was ~$2,500 (about 100 hours training time on 8XH100 GPU node). While today this is enough to outperform GPT-2 of 2019, it falls dramatically short of modern Large Language Models like GPT-5. When talking to these micro models, you'll see that they make a lot of mistakes, they are a little bit naive and silly and they hallucinate a ton, a bit like children. It's kind of amusing. But what makes nanochat unique is that it is fully yours - fully configurable, tweakable, hackable, and trained by you from start to end. To train and talk to your own, we turn to...
+| # | Record time | Description | Date | Commit | Contributors |
+|---|-------------|-------------|------|--------|--------------|
+| 1 | 3.04 hours | d24 baseline, slightly overtrained | Jan 29 2026 | 348fbb3 | @karpathy |
 
-## Quick start
+The primary metric we care about is "time to GPT-2" - the wall clock time needed to outperform the GPT-2 (1.6B) CORE metric on an 8XH100 GPU node. In 2019, the training of GPT-2 cost approximately $50,000 so it is incredible that due to many advances over 7 years across the stack, we can now do so in 3 hours or less, for ~$73 and below. Once your repo is set up (see the [runs/speedrun.sh](runs/speedrun.sh) script for reference), e.g. the way I kicked off the jan29 run is as follows:
 
-The fastest way to feel the magic is to run the speedrun script [speedrun.sh](runs/speedrun.sh), which trains and inferences the $100 tier of nanochat. On an 8XH100 node at $24/hr, this gives a total run time of about 4 hours. Boot up a new 8XH100 GPU box from your favorite provider (e.g. I use and like [Lambda](https://lambda.ai/service/gpu-cloud)), and kick off the training script:
+```
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+    --depth=24 \
+    --run=d24-jan29 \
+    --model-tag=d24_jan29 \
+    --device-batch-size=16 \
+    --sample-every=-1 \
+    --save-every=-1 \
+    --core-metric-max-per-task=-1 \
+    --core-metric-every=3000 \
+    --target-param-data-ratio=12
+```
+
+After 3 hours we get output like this:
+
+```
+...
+wandb: Run summary:
+wandb:          core_metric 0.25851
+wandb:                 step 16704
+wandb: total_training_flops 4.330784131228946e+19
+wandb:  total_training_time 10949.46713
+```
+
+The GPT-2 CORE score (i.e. the target to beat) is 0.256525. So we see that this d24 CORE score is higher (0.25851). Then we look at the `total_training_time`, which is the time of the training iterations alone, excluding all the evaluations and logging, in seconds. We get: `10949/60/60 ~= 3.04` hours, the current record.
+
+## Getting started
+
+### Reproduce and talk to GPT-2
+
+The most fun you can have is to train your own GPT-2 and talk to it. The entire pipeline to do so is contained in the single file [runs/speedrun.sh](runs/speedrun.sh), which is designed to be run on an 8XH100 GPU node. Currently, at ~$24/hour for these nodes, pretraining GPT-2 grade model takes approximately 3 hours and will set you back about $75. Boot up a new 8XH100 GPU box from your favorite provider (e.g. I use and like [Lambda](https://lambda.ai/service/gpu-cloud)), and kick off the training script:
 
 ```bash
 bash runs/speedrun.sh
 ```
 
-Alternatively, since the script runs for 4 hours, I like to launch it like this inside a new screen session `speedrun` (and also log output to `speedrun.log`):
-
-```bash
-screen -L -Logfile speedrun.log -S speedrun bash runs/speedrun.sh
-```
-
-See the [screen cheatsheet](https://gist.github.com/jctosta/af918e1618682638aa82) if you are less familiar. You can watch it go inside the screen session, or detach with `Ctrl-a d` and `tail speedrun.log` to view progress. Now wait 4 hours. Once it's done, you can talk to your LLM via the ChatGPT-like web UI. Make sure again that your local uv virtual environment is active (run `source .venv/bin/activate`), and serve it:
+You mish to do so in a screen session as this will take ~3 hours to run. Once it's done, you can talk to it via the ChatGPT-like web UI. Make sure again that your local uv virtual environment is active (run `source .venv/bin/activate`), and serve it:
 
 ```bash
 python -m scripts.chat_web
@@ -43,84 +70,43 @@ And then visit the URL shown. Make sure to access it correctly, e.g. on Lambda u
 
 ---
 
-You can also `cat report.md` file which appeared in the project directory and contains the "report card" of the run, i.e. a bunch of evaluations and metrics. At the very end, you'll see a summary table, for example:
-
----
-
-- Characters: 333,989
-- Lines: 8,304
-- Files: 44
-- Tokens (approx): 83,497
-- Dependencies (uv.lock lines): 2,004
-
-| Metric          | BASE     | MID      | SFT      | RL       |
-|-----------------|----------|----------|----------|----------|
-| CORE            | 0.2219   | -        | -        | -        |
-| ARC-Challenge   | -        | 0.2875   | 0.2807   | -        |
-| ARC-Easy        | -        | 0.3561   | 0.3876   | -        |
-| GSM8K           | -        | 0.0250   | 0.0455   | 0.0758   |
-| HumanEval       | -        | 0.0671   | 0.0854   | -        |
-| MMLU            | -        | 0.3111   | 0.3151   | -        |
-| ChatCORE        | -        | 0.0730   | 0.0884   | -        |
-
-Total wall clock time: 3h51m
-
----
-
-(Your table might be missing the RL number by default). For a lot more information around the speedrun script and what to look for and expect, please refer to the walkthrough that I posted in Discussions of the repo: ["Introducing nanochat: The best ChatGPT that $100 can buy"](https://github.com/karpathy/nanochat/discussions/1).
-
-## Bigger models
-
-Unsurprisingly, $100 is not enough to train a highly performant ChatGPT clone. In fact, LLMs are famous for their multi-million dollar capex. For our purposes, I think there are two more scales of interest. First is the ~$300 tier d26 model (i.e. depth=26) that trains in ~12 hours, which slightly outperforms GPT-2 CORE score. Second is the $1000 tier (~41.6 hours), just because it's a nice round number. But both of these are not yet fully supported and therefore not attached here in the master branch yet.
-
-That said, to give a sense, the example changes needed for the [speedrun.sh](runs/speedrun.sh) file to train a GPT-2 grade model d26 only involve three changes:
-
-```bash
-...
-# you'll need to download more data shards for pretraining
-# get the number of parameters, multiply 20 to get tokens, multiply by 4.8 to get chars,
-# divide by 250 million to get number of shards. todo need to improve this...
-python -m nanochat.dataset -n 450 &
-...
-# use --depth to increase model size. to not oom, halve device batch size 32 -> 16:
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=26 --device-batch-size=16
-...
-# make sure to use the same later during midtraining:
-torchrun --standalone --nproc_per_node=8 -m scripts.mid_train -- --device-batch-size=16
-```
-
-That's it! The biggest thing to pay attention to is making sure you have enough data shards to train on (the code will loop and do more epochs over the same training set otherwise, decreasing learning speed a bit), and managing your memory/VRAM, primarily by decreasing the `device_batch_size` until things fit (the scripts automatically compensate by increasing the number of gradient accumulation loops, simply turning parallel compute to sequential compute).
-
-And a bit more about computing environments that will run nanochat:
+A few more notes:
 
 - The code will run just fine on the Ampere 8XA100 GPU node as well, but a bit slower.
 - All code will run just fine on even a single GPU by omitting `torchrun`, and will produce ~identical results (code will automatically switch to gradient accumulation), but you'll have to wait 8 times longer.
 - If your GPU(s) have less than 80GB, you'll have to tune some of the hyperparameters or you will OOM / run out of VRAM. Look for `--device_batch_size` in the scripts and reduce it until things fit. E.g. from 32 (default) to 16, 8, 4, 2, or even 1. Less than that you'll have to know a bit more what you're doing and get more creative.
-- Most of the code is fairly vanilla PyTorch so it should run on anything that supports that - xpu, mps, or etc, but I haven't implemented this out of the box so it might take a bit of tinkering.
+- Most of the code is fairly vanilla PyTorch so it should run on anything that supports that - xpu, mps, or etc, but I haven't personally exercised all of these code paths so there might be sharp edges.
+
+## Research
+
+If you are a researcher and wish to help improve nanochat, two scripts of interest are [runs/scaling_laws.sh](runs/scaling_laws.sh) and [runs/miniseries.sh](runs/miniseries.sh). See [Jan 7 miniseries v1](https://github.com/karpathy/nanochat/discussions/420) for related documentation. For quick experimentation (~5 min pretraining runs) my favorite scale is to train a 12-layer model (GPT-1 sized), e.g. like this:
+
+```
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+    --depth=12 \
+    --run="d12" \
+    --model-tag="d12" \
+    --core-metric-every=999999 \
+    --sample-every=-1 \
+    --save-every=-1 \
+```
+
+This uses wandb (run name "d12"), only runs the CORE metric on last step, and it doesn't sample and save intermediate checkpoints. I like to change something in the code, re-run a d12 (or a d16 etc) and see if it helped, in an iteration loop.
+
+The overall approach is to treat the depth of the model as the single dial of complexity. By sweeping out the depth, we get increasingly more powerful models. We determine the scaling laws, set the data budget to a compute optimal setting, train a whole miniseries of models of increasing sizes, and compare them to the GPT-2 and GPT-3 miniseries. Right now, beating GPT-2 specifically faster and faster is the most interesting target.
 
 ## Running on CPU / MPS
 
-nanochat can be run on CPU or on MPS (if you're on Macbook) in principle, and will automatically try to detect what device is best to run on. The script [runcpu.sh](runs/runcpu.sh) shows a very simple example that will exercise the code paths but basically produce garbage results. Unless you know what you're doing, I basically don't recommend using this script right now and hope to tune it a bit more in the future.
+The script [runs/runcpu.sh](runs/runcpu.sh) shows a very simple example of running on CPU or Apple Silicon. It dramatically shrinks the LLM tha tis being trained to make things fit into a reasonable time interval of a few ten minutes of training. You will not get strong results in this way.
 
-## Customization
+## Guides
 
-To customize your nanochat, see [Guide: infusing identity to your nanochat](https://github.com/karpathy/nanochat/discussions/139) in Discussions, which describes how you can tune your nanochat's personality through synthetic data generation and mixing that data into midtraining and SFT stages.
+I've published a number of guides that might contain helpful information:
 
-Additionally, to add new abilities to nanochat, see [Guide: counting r in strawberry (and how to add abilities generally)](https://github.com/karpathy/nanochat/discussions/164).
-
-## Questions
-
-I recommend using [DeepWiki](https://deepwiki.com/karpathy/nanochat) from Devin/Cognition to ask questions of this repo. In the URL of this repo, simply change github.com to deepwiki.com, and you're off.
-
-You can also come to the [#nanochat Discord channel](https://discord.com/channels/1020383067459821711/1427295580895314031) to ask questions, or use the Discussions.
-
-## Tests
-
-I haven't invested too much here but some tests exist, especially for the tokenizer. Run e.g. as:
-
-```bash
-python -m pytest tests/test_engine.py -v -s
-```
+- [Oct 13 2025 original nanochat post](https://github.com/karpathy/nanochat/discussions/1) introducing nanochat, though now it contains some deprecated information and the model is a lot older (with worse results) than current master.
+- [Jan 7 miniseries v1](https://github.com/karpathy/nanochat/discussions/420) documents the first nanochat miniseries of models.
+- To customize your nanochat, see [Guide: infusing identity to your nanochat](https://github.com/karpathy/nanochat/discussions/139) in Discussions, which describes how you can tune your nanochat's personality through synthetic data generation and mixing that data into the SFT stage.
+- To add new abilities to nanochat, see [Guide: counting r in strawberry (and how to add abilities generally)](https://github.com/karpathy/nanochat/discussions/164).
 
 ## File structure
 
@@ -135,7 +121,6 @@ python -m pytest tests/test_engine.py -v -s
 │   └── repackage_data_reference.py # Pretraining data shard generation
 ├── nanochat
 │   ├── __init__.py                 # empty
-│   ├── adamw.py                    # Distributed AdamW optimizer
 │   ├── checkpoint_manager.py       # Save/Load model checkpoints
 │   ├── common.py                   # Misc small utilities, quality of life
 │   ├── core_eval.py                # Evaluates base model CORE score (DCLM paper)
@@ -146,14 +131,13 @@ python -m pytest tests/test_engine.py -v -s
 │   ├── gpt.py                      # The GPT nn.Module Transformer
 │   ├── logo.svg
 │   ├── loss_eval.py                # Evaluate bits per byte (instead of loss)
-│   ├── muon.py                     # Distributed Muon optimizer
+│   ├── optim.py                    # AdamW + Muon optimizer, 1GPU and distributed
 │   ├── report.py                   # Utilities for writing the nanochat Report
 │   ├── tokenizer.py                # BPE Tokenizer wrapper in style of GPT-4
 │   └── ui.html                     # HTML/CSS/JS for nanochat frontend
 ├── pyproject.toml
 ├── runs
 │   ├── miniseries.sh               # Miniseries training script
-│   ├── run1000.sh                  # Train the ~$800 nanochat d32
 │   ├── runcpu.sh                   # Small example of how to run on CPU/MPS
 │   ├── scaling_laws.sh             # Scaling laws experiments
 │   └── speedrun.sh                 # Train the ~$100 nanochat d20
@@ -161,12 +145,11 @@ python -m pytest tests/test_engine.py -v -s
 │   ├── base_eval.py                # Base model: calculate CORE score
 │   ├── base_loss.py                # Base model: calculate bits per byte, sample
 │   ├── base_train.py               # Base model: train
-│   ├── chat_cli.py                 # Chat model (SFT/Mid): talk to over CLI
-│   ├── chat_eval.py                # Chat model (SFT/Mid): eval tasks
-│   ├── chat_rl.py                  # Chat model (SFT/Mid): reinforcement learning
+│   ├── chat_cli.py                 # Chat model: talk to over CLI
+│   ├── chat_eval.py                # Chat model: eval tasks
+│   ├── chat_rl.py                  # Chat model: reinforcement learning
 │   ├── chat_sft.py                 # Chat model: train SFT
-│   ├── chat_web.py                 # Chat model (SFT/Mid): talk to over WebUI
-│   ├── mid_train.py                # Chat model: midtraining
+│   ├── chat_web.py                 # Chat model: talk to over WebUI
 │   ├── tok_eval.py                 # Tokenizer: evaluate compression rate
 │   └── tok_train.py                # Tokenizer: train it
 ├── tasks
@@ -185,9 +168,9 @@ python -m pytest tests/test_engine.py -v -s
 
 ## Contributing
 
-nanochat is nowhere near finished. The goal is to improve the state of the art in micro models that are accessible to work with end to end on budgets of < $1000 dollars. Accessibility is about overall cost but also about cognitive complexity - nanochat is not an exhaustively configurable LLM "framework"; there will be no giant configuration objects, model factories, or if-then-else monsters in the code base. It is a single, cohesive, minimal, readable, hackable, maximally-forkable "strong baseline" codebase designed to run start to end and produce a concrete ChatGPT clone and its report card.
+The goal of nanochat is to improve the state of the art in micro models that are accessible to work with end to end on budgets of < $1000 dollars. Accessibility is about overall cost but also about cognitive complexity - nanochat is not an exhaustively configurable LLM "framework"; there are no giant configuration objects, model factories, or if-then-else monsters in the code base. It is a single, cohesive, minimal, readable, hackable, maximally-forkable "strong baseline" codebase designed to run start to end and produce a ChatGPT model you can talk to. Currently, the most interesting part personally is speeding up the latency to GPT-2 (i.e. getting a CORE score above 0.256525). Currently this takes ~3 hours, but by improving the pretraining stage we can improve this further.
 
-Current LLM policy: disclosure. When submitting a PR, please declare any parts that had substantial LLM contribution and that you have not written or that you do not fully understand.
+Current AI policy: disclosure. When submitting a PR, please declare any parts that had substantial LLM contribution and that you have not written or that you do not fully understand.
 
 ## Acknowledgements
 
@@ -205,7 +188,7 @@ If you find nanochat helpful in your research cite simply as:
 ```bibtex
 @misc{nanochat,
   author = {Andrej Karpathy},
-  title = {nanochat: The best ChatGPT that $100 can buy},
+  title = {nanochat: The best ChatGPT that \$100 can buy},
   year = {2025},
   publisher = {GitHub},
   url = {https://github.com/karpathy/nanochat}

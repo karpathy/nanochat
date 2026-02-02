@@ -2,7 +2,7 @@
 New and upgraded chat mode because a lot of the code has changed since the last one.
 
 Intended to be run single GPU only atm:
-python -m scripts.chat_cli -i mid
+python -m scripts.chat_cli
 """
 import argparse
 import torch

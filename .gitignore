@@ -9,6 +9,5 @@ eval_bundle/
 .env
 
 # Local setup
-.claude
 CLAUDE.md
 wandb/

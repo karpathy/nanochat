@@ -4,6 +4,233 @@ A running summary documenting some experiments and findings. Started ~Jan 7 2026
 
 ---
 
+## 2026-01-29: Hyperball/MuonH Experiments (Negative Result)
+
+Explored Hyperball optimization from [this post](https://psychedelic-sunstone-851.notion.site/Fantastic-Pretraining-Optimizers-and-Where-to-Find-Them-2-1-Hyperball-Optimization-2e924306e6f280e7a5ffee00eb40a0dd) (saved to `knowledge/muonh.md`). Constrains weights to sphere of radius R (initial norm): `W_{t+1} = R · Normalize(W_t - η·R · Normalize(u_t))`. Had to change a number of details in a branch, e.g. not use zero init for our projections (or the initial norm would be zero), keep track of the initial norm, adjust Muon -> MuonH for the update.
+
+Experiments on d12:
+
+| Experiment | Result |
+|------------|--------|
+| MuonH for matrix params | Worse than baseline |
+| MuonH + LR sweep (2.5e-3 to 1e-2) | Still worse |
+| Added learnable RMSNorm scales (paper says γ preserves expressivity) | Still worse |
+| Various RMSNorm init tweaks, e.g. 0 at init to residual | Still worse |
+| AdamH for lm_head (paper recommends this) | Broken - loss plateaus (see below) |
+| AdamH + learnable output scales | Still worse |
+
+Could not outperform the baseline implementation. The article doesn't go into too much detail on how AdamH is applied to `lm_head` exactly. The classifier layer has to be able to increase in magnitude to make more confident predictions over time. Tried a sensible version with added 0-D learnable scalar, and also with RMSNorms with per-channel learnable scalars both pre and post resnet blocks.
+
+**Result:** This was not an out-of-the-box win for nanochat even with a mild attempt over a few hours at a bit of tuning and debugging. The idea itself is intuitively appealing. Might come back around later to try harder later.
+
+---
+
+## 2026-01-28: Reverted Bigram Hash Embeddings
+
+Removed bigram embeddings (engram-lite) from the codebase. At larger scale (d25), the improvement was tiny and disappeared entirely when measured by wall clock time. It also bloated the VRAM used. The extra parameters and complexity aren't justified.
+
+---
+
+## 2026-01-27: Bigram Hash Embeddings (Engram-lite)
+
+Explored N-gram memory modules inspired by the [DeepSeek Engram paper](https://arxiv.org/abs/2601.07372) and [modded-nanogpt PR #201](https://github.com/KellerJordan/modded-nanogpt/pull/201).
+
+### Background
+
+The Engram paper introduces "conditional memory" as a complement to MoE - using O(1) hash lookups to retrieve static N-gram patterns instead of reconstructing them through computation. Key insight: transformers waste early layers "simulating retrieval through computation" for patterns like named entities and formulaic phrases that could be simple table lookups.
+
+### What We Tried
+
+**1. Full Engram module with context-aware gating (paper design)**
+```python
+# Hash bigrams to retrieve embeddings, then gate with hidden state
+e = embed(hash(prev_token, curr_token))
+q = RMSNorm(h)           # hidden state as query
+k = RMSNorm(W_k @ e)     # projected embedding as key
+v = W_v @ e
+α = sigmoid(q · k / √d)  # scalar gate per position
+output = α * v
+```
+- Injected after block 1 (paper found early injection optimal)
+- Slight improvement, but quite a bit of complexity added.
+
+**2. Early-layer only injection**
+- Only inject bigram signal in first 4 layers (where paper claims static pattern offloading helps most)
+- **Result:** Actually hurt performance. The model seems to need uniform injection across all layers.
+
+**3. Trigrams**
+- Extended to hash both 2-grams and 3-grams, concatenating embeddings
+- **Result:** No improvement over bigrams alone. Dilutes capacity from more frequent 2-gram patterns.
+
+**4. Bigram-only with x0-style injection (modded-nanogpt engram-lite approach)**
+- Simple hash: `(36313 * curr) XOR (27191 * prev) mod table_size`
+- Zero-init embedding table, learned per-layer lambdas
+- Add to residual at every layer: `x = resid_λ[i]*x + x0_λ[i]*x0 + bigram_λ[i]*x0_bigram`
+- **Result:** This simple approach works and provides a consistent improvement.
+
+TLDR The winning approach follows modded-nanogpt's "engram-lite", simply adding the following module and feeding its output into the residual branch (gated by a per-layer learnable \lambda) before every single block:
+
+```python
+class BigramEmbed(nn.Module):
+    def __init__(self, vocab_size, embed_dim, table_multiplier=5):
+        self.embed = nn.Embedding(vocab_size * table_multiplier, embed_dim)
+
+    def forward(self, idx):
+        h = (36313 * idx[:, 1:]) ^ (27191 * idx[:, :-1]) % (table_size - 1)
+        return self.embed(h)
+```
+
+As for optimal hyperparameters:
+
+- **Table size:** `vocab_size * 5` (~164K entries for 32K vocab). Swept a number of settings and 5 was optimal.
+- **Injection:** Every layer via learned `bigram_lambdas` (init 0.1 was better than 0.0).
+- **Normalization:** Also tried adding a `norm()` to the embeddings (mirroring the token embeddings), this was slightly worse.
+- **Init:** Zero-init embedding, so starts as identity (tried small noisy init, it's worse)
+- **Optimizer:** AdamW with same LR as token embeddings
+
+### Key Learnings
+
+1. **Gating didn't help at our scale.** The paper's context-aware gating mechanism (sigmoid dot-product gate) added parameters and complexity without improvement. modded-nanogpt found the same: "simple direct addition to the residual stream outperformed by a decent margin."
+
+2. **Uniform injection beats early-only.** Despite the paper's finding that early layers benefit most, restricting injection to early layers hurt. The x0-style "add everywhere with learned lambda" pattern works better for our architecture/scale.
+
+3. **Bigrams are sufficient.** Trigrams didn't help - the extra context doesn't pay for the diluted capacity.
+
+4. **Scale matters.** The Engram paper's results are at 27B params with MoE. At our ~100M-1B scale, the simpler approach wins. The elaborate gating mechanism may become useful at larger scales where collision handling matters more.
+
+### Parameters Added
+
+For d12 model with `table_multiplier=5`:
+- Bigram embedding: 32768 × 5 × 768 = ~126M params
+- Per-layer lambdas: 12 scalars (negligible)
+
+If you're keeping track, we now have *a lot* of parameters, a significant amount of them in embeddings (token embeddings, bigram embeddings, value embeddings). For example, for a d12 we now have:
+
+```
+Parameter counts:
+wte                     : 25,165,824
+bigram_embed            : 125,829,120
+value_embeds            : 150,994,944
+lm_head                 : 25,165,824
+transformer_matrices    : 84,935,808
+scalars                 : 36
+total                   : 412,091,556
+```
+
+In other words, only about a quarter of parameters are now weight projections and the vast majority is embedding tables.
+
+Still, on all axes (steps, wall clock time, flops), this somewhat parameter-bloated architecture beats the baseline and will now become the default.
+
+After adding the engram-lite, I re-ran the scaling laws to determine the new optimal tokens:params ratio. I swept FLOPs in the range 1e18..1e19, exponentially strided in 4 settings (1e18, 2e18, 5e18, 1e19). I looked at a number of ways of determining the effective parameter count for the purposes of the scaling laws. The results looked like this:
+
+```
+Kaplan-style (all projections including lm_head and no embeddings)
+
+Optimal configurations (from quadratic fits):
+FLOPs        Eff Params      Tokens          Ratio      Val BPB
+-----------------------------------------------------------------
+1e+18        110,678,115     1,241,505,403   11.2       0.8972
+2e+18        167,797,457     1,785,336,422   10.7       0.8616
+5e+18        250,650,865     2,642,234,152   10.8       0.8293
+1e+19        381,758,347     3,806,871,243   10.3       0.7999
+
+N \propto C^0.54, D \propto C^0.49
+
+Chinchilla-style (all parameters, period.)
+
+Optimal configurations (from quadratic fits):
+FLOPs        Eff Params      Tokens          Ratio      Val BPB
+-----------------------------------------------------------------
+1e+18        416,320,605     1,232,157,011   3.0        0.8974
+2e+18        560,239,841     1,763,669,281   3.2        0.8616
+5e+18        741,495,903     2,629,909,368   3.6        0.8291
+1e+19        988,644,331     3,884,841,895   4.0        0.7999
+
+N \propto C^0.37, D \propto C^0.50
+
+Transformer-only-style (only the projections inside the transformer)
+
+Optimal configurations (from quadratic fits):
+FLOPs        Eff Params      Tokens          Ratio      Val BPB
+-----------------------------------------------------------------
+1e+18        80,259,665      1,315,639,547   17.2       0.8966
+2e+18        131,488,566     1,864,134,141   14.5       0.8622
+5e+18        220,985,474     2,595,328,843   12.1       0.8302
+1e+19        401,213,504     3,328,704,512   8.5        0.7994
+
+N \propto C^0.70, D \propto C^0.41
+```
+
+Clearly, the Kaplan-style ratios are most consistent and produce stable ~0.5 exponents for both params and tokens, meaning we can have a single fixed ratio of tokens:params for compute optimal models. This turns out to be about ~10.5, which now becomes the new default.
+
+---
+
+## 2026-01-19 to 2026-01-22: Optimizer Hyperparameter Sweep
+
+Ran ~320 experiments across 6 rounds, scaling from d12→d16→d20 to find optimal optimizer hyperparameters. Added granular per-component control to `setup_optimizers()` — separate LRs and betas for embedding, unembedding, value_embeds, resid_lambdas, x0_lambdas, and Muon matrix params.
+
+### What We Swept
+- Learning rates for all 6 parameter groups
+- Beta1/beta2 for all 5 AdamW groups
+- Muon momentum (start/end), weight decay
+- Hundreds of combinations (2-way, 3-way, 4-way, etc.)
+
+### The Journey
+
+**At d12**, found two independent improvement routes:
+- **Route A:** emb_lr↑ (0.3→0.4), weight_decay↑ (0.1→0.15), matrix_lr↑ (0.02→0.025)
+- **Route B:** x0_lr↓ (0.5→0.2), x0_beta1↑ (0.8→0.9+)
+
+Both gave ~0.002 improvement, but combining them caused conflicts. Fine-tuning found wd=0.13, matrix_lr=0.027, emb_lr=0.38 helped slightly. Best d12 config: Route A + x0_beta1=0.95.
+
+**At d16**, Route B became competitive with Route A. The routes still conflicted when combined.
+
+**At d20** (target scale), everything changed:
+- Fine-tuned values from d12 **actively hurt** performance
+- Routes no longer conflicted
+- Just `x0_beta1=0.96` alone captured nearly all the gains
+
+### Final x0_beta1 Sweep at d20
+
+| x0_beta1 | val/bpb | Δ vs baseline |
+|----------|---------|---------------|
+| **0.96** | **0.7971** | **-0.0007** |
+| 0.94 | 0.7972 | -0.0006 |
+| 0.90 | 0.7972 | -0.0006 |
+| 0.97 | 0.7977 | -0.0001 |
+| 0.98 | 0.8011 | +0.0033 💀 |
+
+Flat plateau from 0.90-0.96, then sharp cliff at 0.97+.
+
+### Key Learnings
+
+1. **Hyperparameters are scale-dependent.** What works at d12 doesn't transfer to d20. The elaborate fine-tuning that won at d12 actively hurts at d20.
+
+2. **Improvement magnitude shrinks with scale.** ~0.002 at d12 → ~0.0007 at d20. The baseline is already better-tuned for larger models.
+
+3. **Sharp cliffs exist.** x0_beta1=0.98 is catastrophic while 0.96 is optimal.
+
+4. **Don't over-tune on small proxies.** Validate at target scale before shipping.
+
+### Final Recommendation
+
+For production d20 runs, add one flag:
+```
+--x0-lambdas-beta1=0.96
+```
+
+Skip everything else discovered at smaller scales.
+
+---
+
+## 2026-01-18: More various experiments
+
+- Tried Muon custom kernels for XXT and all the others. The improvement was there for targeted tests (~20%) but washed out completely to noise in an actual training run, especially because the Muon compute is split across all the workers. Abandoned due to complexity bloat.
+- Fuse Q,K,V,O nn.Linear layers into a single QKVO Linear layer. ~Zero impact
+- Tried the `sa_lambdas` that gate QKV and O. Slightly confused because of the use of rmsnorm, which erases the effect of any scalar multiplier. Helped a tiny bit (~1e-4 of loss), abandoned to control complexity.
+
+---
+
 ## 2026-01-17: Various experiments
 
 Modded-nanogpt uses [Value Embeddings](https://arxiv.org/abs/2410.17897) (VEs) in a funny U-shaped structure, 3 of them in total and with gates. I tried a large number of tweaks on this today:
