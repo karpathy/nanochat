@@ -68,32 +68,78 @@ echo "Will clone ${#REPOS[@]} repositories"
 echo "Output: $OUTPUT_DIR"
 echo ""
 
-# Clone each repo
+# Clone each repo with retry logic
 TOTAL_REPOS=${#REPOS[@]}
 CURRENT=0
+SUCCESS_COUNT=0
+FAIL_COUNT=0
+
+clone_with_retry() {
+    local repo="$1"
+    local clone_path="$2"
+    local max_retries=3
+    local retry_delay=2
+
+    for attempt in $(seq 1 $max_retries); do
+        # Capture both stdout and stderr, and the exit code
+        local output
+        output=$(git clone --depth 1 "https://github.com/$repo.git" "$clone_path" 2>&1)
+        local exit_code=$?
+
+        if [ $exit_code -eq 0 ]; then
+            return 0
+        fi
+
+        # Check if it's a rate limit or network error (worth retrying)
+        if echo "$output" | grep -qiE "(rate limit|429|timeout|connection|network|could not resolve)"; then
+            if [ $attempt -lt $max_retries ]; then
+                echo "  ⏳ Retry $attempt/$max_retries in ${retry_delay}s (network/rate limit issue)..."
+                sleep $retry_delay
+                retry_delay=$((retry_delay * 2))  # Exponential backoff
+                rm -rf "$clone_path" 2>/dev/null  # Clean up partial clone
+                continue
+            fi
+        fi
+
+        # Non-retryable error or max retries reached
+        echo "  Error: $output" | head -2
+        return 1
+    done
+
+    return 1
+}
 
 for repo in "${REPOS[@]}"; do
     CURRENT=$((CURRENT + 1))
     echo ""
     echo "[$CURRENT/$TOTAL_REPOS] Cloning $repo..."
-    
+
     REPO_NAME=$(basename "$repo")
     CLONE_PATH="$TEMP_DIR/$REPO_NAME"
-    
+
     # Skip if already cloned
     if [ -d "$CLONE_PATH" ]; then
         echo "  ✓ Already cloned, skipping..."
+        SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
         continue
     fi
-    
-    # Clone with depth=1 (shallow clone, much faster)
-    if git clone --depth 1 "https://github.com/$repo.git" "$CLONE_PATH" 2>&1 | grep -v "Cloning into"; then
+
+    # Clone with retry logic
+    if clone_with_retry "$repo" "$CLONE_PATH"; then
         echo "  ✓ Cloned successfully"
+        SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
     else
         echo "  ✗ Failed to clone, skipping..."
+        FAIL_COUNT=$((FAIL_COUNT + 1))
         continue
     fi
+
+    # Small delay between clones to avoid rate limiting
+    sleep 0.5
 done
+
+echo ""
+echo "Clone summary: $SUCCESS_COUNT succeeded, $FAIL_COUNT failed"
 
 echo ""
 echo "========================================="
