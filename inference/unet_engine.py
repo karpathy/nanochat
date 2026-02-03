@@ -17,7 +17,7 @@ from typing import List, Tuple, Optional
 
 
 # -----------------------------------------------------------------------------
-# UNet-specific KV Cache with Encoder Output Caching
+# UNet-specific KV Cache with Efficient Encoder/Decoder Output Caching
 # -----------------------------------------------------------------------------
 class UNetKVCache:
     """
@@ -32,7 +32,12 @@ class UNetKVCache:
     Key features:
     - Flat layer indexing matching fix_unet_layer_indices (encoder then decoder per stage)
     - Each layer's cache sized for its stage's sequence length
-    - Stores encoder outputs at each stage for skip connections during decode
+    - Efficient encoder/decoder output caching using ring buffers
+    
+    Memory optimization for encoder/decoder output caches:
+    - Encoder outputs: Ring buffer of size 2^(n_stages - 1 - stage) + 2 per stage
+      (only recent tokens needed for pooling and skip connections)
+    - Decoder outputs: Small ring buffer per stage (only recent outputs needed)
     
     Efficient decode strategy:
     - Stage 0 runs every token
@@ -82,22 +87,31 @@ class UNetKVCache:
         # Position tracking per stage
         self.stage_pos = [0] * self.n_stages
         
-        # Encoder output caches for skip connections
-        # Shape: (batch, stage_seq_len, n_embd)
-        self.encoder_output_cache = []
+        # Encoder output ring buffers for skip connections
+        # Window size: 2^(n_stages - 1 - stage_idx) + 2 (for skip connections + pooling margin)
+        # Shape: (batch, window_size, n_embd)
+        self.enc_window_sizes = []
+        self.enc_ring_buffers = []
         for stage_idx in range(self.n_stages):
             n_embd = config.n_embd[stage_idx]
-            stage_seq_len = max_seq_len // (2 ** stage_idx)
-            self.encoder_output_cache.append(torch.zeros(batch_size, stage_seq_len, n_embd, device=device, dtype=dtype))
+            # Max window needed: 2^(n_stages-1-stage) for skip, +2 for pooling safety margin
+            window_size = (2 ** max(0, self.n_stages - 1 - stage_idx)) + 2
+            self.enc_window_sizes.append(window_size)
+            self.enc_ring_buffers.append(torch.zeros(batch_size, window_size, n_embd, device=device, dtype=dtype))
         
-        # Decoder output caches for skip connections (needed for hierarchical decode)
-        # When stage S doesn't run but stage S-1 does, we need cached decoder_S output
-        # to compute the skip contribution. Shape: (batch, stage_seq_len, n_embd)
-        self.decoder_output_cache = []
+        # Decoder output ring buffers for skip connections
+        # We need a small history because skip connections access the position just BEFORE 
+        # the current decoder chunk, which was cached in a previous iteration.
+        # Window size: 4 covers all access patterns (current + previous chunks)
+        # Shape: (batch, window_size, n_embd)
+        self.dec_window_sizes = []
+        self.dec_ring_buffers = []
         for stage_idx in range(self.n_stages):
             n_embd = config.n_embd[stage_idx]
-            stage_seq_len = max_seq_len // (2 ** stage_idx)
-            self.decoder_output_cache.append(torch.zeros(batch_size, stage_seq_len, n_embd, device=device, dtype=dtype))
+            # Window of 4 covers all access patterns (current + previous chunks)
+            window_size = 4
+            self.dec_window_sizes.append(window_size)
+            self.dec_ring_buffers.append(torch.zeros(batch_size, window_size, n_embd, device=device, dtype=dtype))
 
     def get_layer_cache(self, layer_idx):
         """Get KV cache tensors for a specific layer (called by Block.attn)."""
@@ -129,40 +143,81 @@ class UNetKVCache:
         self.stage_pos[stage_idx] += num_tokens
     
     def set_encoder_output(self, stage_idx, output, start_pos=None):
-        """Store encoder output for skip connections."""
+        """Store encoder output in ring buffer for skip connections."""
         if start_pos is None:
             start_pos = self.stage_pos[stage_idx]
         T = output.size(1)
-        self.encoder_output_cache[stage_idx][:, start_pos:start_pos + T] = output
+        W = self.enc_window_sizes[stage_idx]
+        
+        # Store tokens into ring buffer using modular indexing
+        if T == 1:
+            # Fast path for single token (common during decode)
+            self.enc_ring_buffers[stage_idx][:, start_pos % W] = output[:, 0]
+        else:
+            # General case for prefill
+            for i in range(T):
+                self.enc_ring_buffers[stage_idx][:, (start_pos + i) % W] = output[:, i]
     
     def get_encoder_output(self, stage_idx, start_pos, length):
-        """Retrieve cached encoder output for skip connections."""
-        return self.encoder_output_cache[stage_idx][:, start_pos:start_pos + length]
+        """Retrieve cached encoder output from ring buffer for skip connections."""
+        W = self.enc_window_sizes[stage_idx]
+        
+        if length == 1:
+            # Fast path for single token
+            idx = start_pos % W
+            return self.enc_ring_buffers[stage_idx][:, idx:idx + 1]
+        else:
+            # General case: gather from ring buffer
+            indices = [(start_pos + i) % W for i in range(length)]
+            return self.enc_ring_buffers[stage_idx][:, indices]
     
     def set_decoder_output(self, stage_idx, output, start_pos=None):
-        """Store decoder output for skip connections (before unpool)."""
+        """Store decoder output in ring buffer for skip connections."""
         if start_pos is None:
             start_pos = self.stage_pos[stage_idx]
         T = output.size(1)
-        self.decoder_output_cache[stage_idx][:, start_pos:start_pos + T] = output
+        W = self.dec_window_sizes[stage_idx]
+        
+        # Store tokens into ring buffer using modular indexing
+        if T == 1:
+            # Fast path for single token (common during decode)
+            self.dec_ring_buffers[stage_idx][:, start_pos % W] = output[:, 0]
+        else:
+            # General case for multi-token chunks
+            for i in range(T):
+                self.dec_ring_buffers[stage_idx][:, (start_pos + i) % W] = output[:, i]
     
     def get_decoder_output(self, stage_idx, start_pos, length):
-        """Retrieve cached decoder output for skip connections."""
-        return self.decoder_output_cache[stage_idx][:, start_pos:start_pos + length]
+        """Retrieve cached decoder output from ring buffer for skip connections."""
+        W = self.dec_window_sizes[stage_idx]
+        
+        if length == 1:
+            # Fast path for single token (always the case for skip connections)
+            idx = start_pos % W
+            return self.dec_ring_buffers[stage_idx][:, idx:idx + 1]
+        else:
+            # General case: gather from ring buffer
+            indices = [(start_pos + i) % W for i in range(length)]
+            return self.dec_ring_buffers[stage_idx][:, indices]
     
     def prefill(self, other):
         """Copy cache from another UNetKVCache (for multi-sample generation)."""
+        # Copy KV caches
         for layer_idx in range(self.n_layers):
             stage_idx = self.layer_to_stage[layer_idx]
             pos = other.stage_pos[stage_idx]
             if pos > 0:
                 self.k_caches[layer_idx][:, :pos] = other.k_caches[layer_idx][:, :pos]
                 self.v_caches[layer_idx][:, :pos] = other.v_caches[layer_idx][:, :pos]
+        
+        # Copy encoder ring buffers (full copy since they're small)
         for stage_idx in range(self.n_stages):
-            pos = other.stage_pos[stage_idx]
-            if pos > 0:
-                self.encoder_output_cache[stage_idx][:, :pos] = other.encoder_output_cache[stage_idx][:, :pos]
-                self.decoder_output_cache[stage_idx][:, :pos] = other.decoder_output_cache[stage_idx][:, :pos]
+            self.enc_ring_buffers[stage_idx][:] = other.enc_ring_buffers[stage_idx]
+        
+        # Copy decoder ring buffers (full copy since they're small)
+        for stage_idx in range(self.n_stages):
+            self.dec_ring_buffers[stage_idx][:] = other.dec_ring_buffers[stage_idx]
+        
         self.stage_pos = other.stage_pos.copy()
 
 # -----------------------------------------------------------------------------
