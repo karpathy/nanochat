@@ -71,8 +71,13 @@ def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_
     if ddp:
         num_passed_tensor = torch.tensor([num_passed], dtype=torch.long, device=device)
         total_tensor = torch.tensor([total], dtype=torch.long, device=device)
-        dist.all_reduce(num_passed_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(total_tensor, op=dist.ReduceOp.SUM)
+        if dist.is_initialized():
+            dist.all_reduce(num_passed_tensor, op=dist.ReduceOp.SUM)
+            dist.all_reduce(total_tensor, op=dist.ReduceOp.SUM)
+        else:
+            import torch_xla.core.xla_model as xm
+            num_passed_tensor = xm.all_reduce(xm.REDUCE_SUM, num_passed_tensor)
+            total_tensor = xm.all_reduce(xm.REDUCE_SUM, total_tensor)
         num_passed = num_passed_tensor.item()
         total = total_tensor.item()
 
@@ -145,8 +150,13 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
     if ddp:
         num_passed_tensor = torch.tensor([num_passed], dtype=torch.long, device=device)
         total_tensor = torch.tensor([total], dtype=torch.long, device=device)
-        dist.all_reduce(num_passed_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(total_tensor, op=dist.ReduceOp.SUM)
+        if dist.is_initialized():
+            dist.all_reduce(num_passed_tensor, op=dist.ReduceOp.SUM)
+            dist.all_reduce(total_tensor, op=dist.ReduceOp.SUM)
+        else:
+            import torch_xla.core.xla_model as xm
+            num_passed_tensor = xm.all_reduce(xm.REDUCE_SUM, num_passed_tensor)
+            total_tensor = xm.all_reduce(xm.REDUCE_SUM, total_tensor)
         num_passed = num_passed_tensor.item()
         total = total_tensor.item()
 
@@ -194,13 +204,19 @@ if __name__ == "__main__":
     parser.add_argument('-g', '--model-tag', type=str, default=None, help='Model tag to load')
     parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
     parser.add_argument('-x', '--max-problems', type=int, default=None, help='Max problems to evaluate')
-    parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
+    parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps', 'xla'], help='Device type for evaluation: cuda|cpu|mps|xla. empty => autodetect')
     args = parser.parse_args()
 
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
     ptdtype = torch.float32 if args.dtype == 'float32' else torch.bfloat16
-    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
+    if device_type == "cuda":
+        autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+    elif device_type == "xla":
+        from torch_xla.amp import autocast as xla_autocast
+        autocast_ctx = xla_autocast(dtype=ptdtype)
+    else:
+        autocast_ctx = nullcontext()
 
     model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
     engine = Engine(model, tokenizer)

@@ -96,6 +96,12 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
 
 def print0(s="",**kwargs):
     ddp_rank = int(os.environ.get('RANK', 0))
+    if 'RANK' not in os.environ:
+        try:
+            import torch_xla.core.xla_model as xm
+            ddp_rank = int(xm.get_ordinal())
+        except Exception:
+            ddp_rank = 0
     if ddp_rank == 0:
         print(s, **kwargs)
 
@@ -136,8 +142,20 @@ def get_dist_info():
         ddp_local_rank = int(os.environ['LOCAL_RANK'])
         ddp_world_size = int(os.environ['WORLD_SIZE'])
         return True, ddp_rank, ddp_local_rank, ddp_world_size
-    else:
-        return False, 0, 0, 1
+
+    # TPU/XLA uses torch_xla multiprocessing rather than torchrun.
+    # If we're in an XLA runtime, expose rank/world size so dataloaders shard correctly.
+    try:
+        import torch_xla.core.xla_model as xm
+        ddp_world_size = int(xm.xrt_world_size())
+        if ddp_world_size > 1:
+            ddp_rank = int(xm.get_ordinal())
+            ddp_local_rank = int(xm.get_local_ordinal())
+            return True, ddp_rank, ddp_local_rank, ddp_world_size
+    except Exception:
+        pass
+
+    return False, 0, 0, 1
 
 def autodetect_device_type():
     # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
@@ -150,14 +168,19 @@ def autodetect_device_type():
     print0(f"Autodetected device type: {device_type}")
     return device_type
 
-def compute_init(device_type="cuda"): # cuda|cpu|mps
+def compute_init(device_type="cuda"): # cuda|cpu|mps|xla
     """Basic initialization that we keep doing over and over, so make common."""
 
-    assert device_type in ["cuda", "mps", "cpu"], "Invalid device type atm"
+    assert device_type in ["cuda", "mps", "cpu", "xla"], "Invalid device type atm"
     if device_type == "cuda":
         assert torch.cuda.is_available(), "Your PyTorch installation is not configured for CUDA but device_type is 'cuda'"
     if device_type == "mps":
         assert torch.backends.mps.is_available(), "Your PyTorch installation is not configured for MPS but device_type is 'mps'"
+    if device_type == "xla":
+        try:
+            import torch_xla.core.xla_model as xm
+        except Exception as e:
+            raise AssertionError("device_type is 'xla' but torch_xla is not available") from e
 
     # Reproducibility
     # Note that we set the global seeds here, but most of the code uses explicit rng objects.
@@ -179,6 +202,9 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
         torch.cuda.set_device(device)  # make "cuda" default to this device
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
+    elif device_type == "xla":
+        import torch_xla.core.xla_model as xm
+        device = xm.xla_device()
     else:
         device = torch.device(device_type) # mps|cpu
 

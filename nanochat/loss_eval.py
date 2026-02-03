@@ -4,6 +4,7 @@ A number of functions that help with evaluating a base model.
 import math
 import torch
 import torch.distributed as dist
+from nanochat.common import get_dist_info
 
 @torch.no_grad()
 def evaluate_bpb(model, batches, steps, token_bytes):
@@ -52,10 +53,16 @@ def evaluate_bpb(model, batches, steps, token_bytes):
             total_nats += (loss2d * (num_bytes2d > 0)).sum()
             total_bytes += num_bytes2d.sum()
     # sum reduce across all ranks
-    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    _, _, _, world_size = get_dist_info()
     if world_size > 1:
-        dist.all_reduce(total_nats, op=dist.ReduceOp.SUM)
-        dist.all_reduce(total_bytes, op=dist.ReduceOp.SUM)
+        if dist.is_initialized():
+            dist.all_reduce(total_nats, op=dist.ReduceOp.SUM)
+            dist.all_reduce(total_bytes, op=dist.ReduceOp.SUM)
+        else:
+            # TPU/XLA path (multi-process without torch.distributed process group)
+            import torch_xla.core.xla_model as xm
+            total_nats = xm.all_reduce(xm.REDUCE_SUM, total_nats)
+            total_bytes = xm.all_reduce(xm.REDUCE_SUM, total_bytes)
     # move both to cpu, calculate bpb and return
     total_nats = total_nats.item()
     total_bytes = total_bytes.item()
