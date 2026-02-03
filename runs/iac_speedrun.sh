@@ -124,16 +124,31 @@ else
     echo "Single device training on: $DEVICE_TYPE"
     echo "Note: For full training, use 8xH100 GPUs"
 
-    # Smaller batch size for single GPU/MPS
-    python -m scripts.base_train \
-        --depth=12 \
-        --device-type=$DEVICE_TYPE \
-        --num-iterations=1000 \
-        --device-batch-size=4 \
-        --run=$WANDB_RUN \
-        --model-tag=iac-gpt-small \
-        --eval-every=100 \
-        --sample-every=200
+    # Mac MPS has limited memory - use minimal settings
+    if [[ "$DEVICE_TYPE" == "mps" ]]; then
+        echo "Using reduced settings for Mac MPS (limited GPU memory)"
+        python -m scripts.base_train \
+            --depth=6 \
+            --device-type=$DEVICE_TYPE \
+            --num-iterations=500 \
+            --device-batch-size=1 \
+            --window-pattern=L \
+            --run=$WANDB_RUN \
+            --model-tag=iac-gpt-tiny \
+            --eval-every=50 \
+            --sample-every=100
+    else
+        # Single CUDA GPU or CPU
+        python -m scripts.base_train \
+            --depth=12 \
+            --device-type=$DEVICE_TYPE \
+            --num-iterations=1000 \
+            --device-batch-size=4 \
+            --run=$WANDB_RUN \
+            --model-tag=iac-gpt-small \
+            --eval-every=100 \
+            --sample-every=200
+    fi
 
     python -m scripts.base_eval --device-type=$DEVICE_TYPE
 fi
