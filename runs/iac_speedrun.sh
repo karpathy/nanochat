@@ -28,7 +28,14 @@ mkdir -p $NANOCHAT_BASE_DIR
 # Python venv setup with uv
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
-uv sync --extra gpu
+
+# On macOS, skip GPU extras (CUDA not available, use MPS instead)
+if [[ "$(uname)" == "Darwin" ]]; then
+    echo "Detected macOS - using standard PyTorch (MPS backend)"
+    uv sync
+else
+    uv sync --extra gpu
+fi
 source .venv/bin/activate
 
 # -----------------------------------------------------------------------------
