@@ -12,7 +12,7 @@ from nanochat.engine import Engine
 from nanochat.checkpoint_manager import load_model
 
 parser = argparse.ArgumentParser(description='Chat with the model')
-parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|mid|rl")
+parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|rl")
 parser.add_argument('-g', '--model-tag', type=str, default=None, help='Model tag to load')
 parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
 parser.add_argument('-p', '--prompt', type=str, default='', help='Prompt the model, get a single response back')

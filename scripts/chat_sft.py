@@ -48,7 +48,7 @@ parser.add_argument("--max-seq-len", type=int, default=2048, help="max context l
 parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size")
 parser.add_argument("--total-batch-size", type=int, default=524288, help="total batch size in tokens")
 # Optimization
-parser.add_argument("--embedding-lr", type=float, default=0.2, help="learning rate for embedding parameters (Adam)")
+parser.add_argument("--embedding-lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
 parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
 parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
 parser.add_argument("--weight-decay", type=float, default=0.0, help="weight decay for embedding/unembedding parameters (Adam)")
@@ -285,7 +285,7 @@ while True:
     # save checkpoint at the end of the run (only on master process)
     if master_process and last_step and not args.dry_run:
         output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
-        checkpoint_dir = os.path.join(base_dir, "sft_checkpoints", output_dirname)
+        checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -301,6 +301,7 @@ while True:
                     "n_head": model.config.n_head,
                     "n_kv_head": model.config.n_kv_head,
                     "n_embd": model.config.n_embd,
+                    "window_pattern": model.config.window_pattern,
                 },
                 "user_config": user_config, # inputs to the training script
             }

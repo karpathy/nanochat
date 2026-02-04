@@ -14,37 +14,15 @@ For questions about the repo, I recommend either using [DeepWiki](https://deepwi
 
 ## Leaderboard
 
-| # | Record time | Description | Date | Commit | Contributors |
-|---|-------------|-------------|------|--------|--------------|
-| 1 | 3.04 hours | d24 baseline, slightly overtrained | Jan 29 2026 | 348fbb3 | @karpathy |
+| # | time | val_bpb | CORE | Description | Date | Commit | Contributors |
+|---|-------------|---------|------|-------------|------|--------|--------------|
+| 0 | 168 hours | - | 0.2565 | Original OpenAI GPT-2 checkpoint | 2019 | - | OpenAI |
+| 1 | 3.04 | 0.74833 | 0.2585 | d24 baseline, slightly overtrained | Jan 29 2026 | 348fbb3 | @karpathy |
+| 2 | 2.91 | 0.74504 | 0.2578 | d26 slightly undertrained **+fp8** | Feb 2 2026 | 8309b83 | @karpathy |
 
-The primary metric we care about is "time to GPT-2" - the wall clock time needed to outperform the GPT-2 (1.6B) CORE metric on an 8XH100 GPU node. In 2019, the training of GPT-2 cost approximately $50,000 so it is incredible that due to many advances over 7 years across the stack, we can now do so in 3 hours or less, for ~$73 and below. Once your repo is set up (see the [runs/speedrun.sh](runs/speedrun.sh) script for reference), e.g. the way I kicked off the jan29 run is as follows:
+The primary metric we care about is "time to GPT-2" - the wall clock time needed to outperform the GPT-2 (1.6B) CORE metric on an 8XH100 GPU node. The GPT-2 CORE score is 0.256525. In 2019, the training of GPT-2 cost approximately $50,000 so it is incredible that due to many advances over 7 years across the stack, we can now do so much faster and for well below $100 (e.g. at the current ~$3/GPU/hr, an 8XH100 node is ~$24/hr, so 3 hours is ~$72).
 
-```
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
-    --depth=24 \
-    --run=d24-jan29 \
-    --model-tag=d24_jan29 \
-    --device-batch-size=16 \
-    --sample-every=-1 \
-    --save-every=-1 \
-    --core-metric-max-per-task=-1 \
-    --core-metric-every=3000 \
-    --target-param-data-ratio=12
-```
-
-After 3 hours we get output like this:
-
-```
-...
-wandb: Run summary:
-wandb:          core_metric 0.25851
-wandb:                 step 16704
-wandb: total_training_flops 4.330784131228946e+19
-wandb:  total_training_time 10949.46713
-```
-
-The GPT-2 CORE score (i.e. the target to beat) is 0.256525. So we see that this d24 CORE score is higher (0.25851). Then we look at the `total_training_time`, which is the time of the training iterations alone, excluding all the evaluations and logging, in seconds. We get: `10949/60/60 ~= 3.04` hours, the current record.
+See [dev/LEADERBOARD.md](dev/LEADERBOARD.md) for more docs on how to interpret and contribute to the leaderboard.
 
 ## Getting started
 
@@ -142,8 +120,7 @@ I've published a number of guides that might contain helpful information:
 │   ├── scaling_laws.sh             # Scaling laws experiments
 │   └── speedrun.sh                 # Train the ~$100 nanochat d20
 ├── scripts
-│   ├── base_eval.py                # Base model: calculate CORE score
-│   ├── base_loss.py                # Base model: calculate bits per byte, sample
+│   ├── base_eval.py                # Base model: CORE score, bits per byte, samples
 │   ├── base_train.py               # Base model: train
 │   ├── chat_cli.py                 # Chat model: talk to over CLI
 │   ├── chat_eval.py                # Chat model: eval tasks
