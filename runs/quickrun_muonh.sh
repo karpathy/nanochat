@@ -44,8 +44,8 @@ WANDB_PROJECT="nanochat"
 WANDB_RUN="${WANDB_RUN:-muonh_d${DEPTH}_ratio${TARGET_RATIO}}"
 MODEL_TAG="${MODEL_TAG:-d${DEPTH}_gamma_muonh}"
 
-# FP8
-FP8="1"
+# FP8 (default enabled)
+FP8="${FP8:-1}"
 FP8_ARGS=""
 if [ "${FP8:-0}" -eq 1 ]; then
     FP8_RECIPE="${FP8_RECIPE:-tensorwise}"
