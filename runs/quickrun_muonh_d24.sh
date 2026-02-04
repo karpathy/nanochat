@@ -39,7 +39,7 @@ EMBEDDING_LR="${EMBEDDING_LR:-0.3}"
 UNEMBEDDING_LR="${UNEMBEDDING_LR:-0.004}"
 
 # Wandb
-export WANDB_MODE=offline
+WANDB_PROJECT="nanochat"
 WANDB_RUN="${WANDB_RUN:-muonh_d${DEPTH}_ratio${TARGET_RATIO}}"
 MODEL_TAG="${MODEL_TAG:-d${DEPTH}_gamma_muonh}"
 
