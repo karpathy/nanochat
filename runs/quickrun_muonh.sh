@@ -1,14 +1,15 @@
 #!/bin/bash
 
-# Quickrun: GPT-Gamma + MuonH (Hyperball), depth=24
+# Quickrun: GPT-Gamma + MuonH (Hyperball)
 # - Parameterized RMSNorm (learnable gamma)
 # - Per-block projection scalars
 # - Hyperball or Muon for matrix params
 #
 # Examples:
-#   bash runs/quickrun_gamma_muonh_d24.sh
-#   WANDB_RUN=exp1 bash runs/quickrun_gamma_muonh_d24.sh
-#   FP8=1 FP8_RECIPE=tensorwise bash runs/quickrun_gamma_muonh_d24.sh
+#   bash runs/quickrun_muonh.sh
+#   WANDB_RUN=exp1 bash runs/quickrun_muonh.sh
+#   FP8=1 FP8_RECIPE=tensorwise bash runs/quickrun_muonh.sh
+#   DEPTH=16 bash runs/quickrun_muonh.sh
 
 set -e
 
@@ -16,7 +17,7 @@ set -e
 # Config
 
 DEPTH="${DEPTH:-24}"
-NUM_SHARDS="${NUM_SHARDS:-370}"      # ~10B tokens for d24 @ ratio~11
+NUM_SHARDS="${NUM_SHARDS:-370}"      # default for d24 @ ratio~11
 TARGET_RATIO="${TARGET_RATIO:-11}"
 WINDOW_PATTERN="${WINDOW_PATTERN:-SSSL}"
 DEVICE_BATCH_SIZE="${DEVICE_BATCH_SIZE:-16}"
@@ -71,7 +72,7 @@ mkdir -p "$NANOCHAT_BASE_DIR" "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR" "$T
 # Print summary
 
 echo "=============================================="
-echo "Quickrun (GPT-Gamma + MuonH D24)"
+echo "Quickrun (GPT-Gamma + MuonH)"
 echo "=============================================="
 echo "Project root:      $PROJECT_ROOT"
 echo "Cache dir:         $NANOCHAT_BASE_DIR"
