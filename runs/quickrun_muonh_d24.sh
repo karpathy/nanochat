@@ -30,8 +30,9 @@ fi
 # Optimizer
 MATRIX_OPTIMIZER="${MATRIX_OPTIMIZER:-hyperball}"
 SCALAR_LR="${SCALAR_LR:-0.5}"
-MATRIX_LR="$SCALAR_LR"  # share with scalar LR
-WARMDOWN_RATIO="${WARMDOWN_RATIO:-0.3}"
+MATRIX_LR="${MATRIX_LR:-0.02}"
+WARMDOWN_RATIO="${WARMDOWN_RATIO:-1.0}"
+MATRIX_WARMDOWN_RATIO="${MATRIX_WARMDOWN_RATIO:-1.0}"
 
 # AdamW
 EMBEDDING_LR="${EMBEDDING_LR:-0.3}"
@@ -82,9 +83,9 @@ echo "Num GPUs:          $NPROC_PER_NODE"
 echo "Device batch size: $DEVICE_BATCH_SIZE"
 echo "Total batch size:  $TOTAL_BATCH_SIZE"
 echo "Matrix optimizer:  $MATRIX_OPTIMIZER"
-echo "Matrix LR:         $MATRIX_LR (shared with scalar)"
+echo "Matrix LR:         $MATRIX_LR"
 echo "Adam LRs:          embedding=$EMBEDDING_LR, unembedding=$UNEMBEDDING_LR, scalar=$SCALAR_LR"
-echo "Warmdown ratio:    $WARMDOWN_RATIO"
+echo "Warmdown ratio:    adam=$WARMDOWN_RATIO, matrix=$MATRIX_WARMDOWN_RATIO"
 echo "Wandb run:         $WANDB_RUN"
 echo "Model tag:         $MODEL_TAG"
 if [ "${FP8:-0}" -eq 1 ]; then
@@ -133,6 +134,7 @@ TRAIN_ARGS=(
     --matrix-optimizer=$MATRIX_OPTIMIZER
     --matrix-lr=$MATRIX_LR
     --warmdown-ratio=$WARMDOWN_RATIO
+    --matrix-warmdown-ratio=$MATRIX_WARMDOWN_RATIO
     --embedding-lr=$EMBEDDING_LR
     --unembedding-lr=$UNEMBEDDING_LR
     --scalar-lr=$SCALAR_LR
