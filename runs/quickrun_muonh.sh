@@ -32,7 +32,7 @@ fi
 MATRIX_OPTIMIZER="${MATRIX_OPTIMIZER:-hyperball}"
 SCALAR_LR="${SCALAR_LR:-0.5}"
 MATRIX_LR="${MATRIX_LR:-0.02}"
-WARMDOWN_RATIO="${WARMDOWN_RATIO:-1.0}"
+WARMDOWN_RATIO="${WARMDOWN_RATIO:-0.3}"
 MATRIX_WARMDOWN_RATIO="${MATRIX_WARMDOWN_RATIO:-1.0}"
 
 # AdamW
@@ -45,16 +45,12 @@ WANDB_RUN="${WANDB_RUN:-muonh_d${DEPTH}_ratio${TARGET_RATIO}}"
 MODEL_TAG="${MODEL_TAG:-d${DEPTH}_gamma_muonh}"
 
 # FP8
+FP8="1"
 FP8_ARGS=""
 if [ "${FP8:-0}" -eq 1 ]; then
     FP8_RECIPE="${FP8_RECIPE:-tensorwise}"
     FP8_ARGS="--fp8 --fp8-recipe=${FP8_RECIPE}"
 fi
-
-# NCCL (single node)
-export NCCL_P2P_LEVEL=NVL
-export NCCL_NVLS_ENABLE=1
-export NCCL_IB_DISABLE=1
 
 # -----------------------------------------------------------------------------
 # Paths and cache
