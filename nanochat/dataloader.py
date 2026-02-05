@@ -109,14 +109,21 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
 
     # Pre-allocate buffers once: layout is [inputs (B*T) | targets (B*T)]
     # This gives us contiguous views and a single HtoD transfer
-    use_cuda = device == "cuda"
+    device_str = str(device)
+    use_cuda = device == "cuda" or device_str == "cuda"
+    use_xla = device_str.startswith("xla")
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long) # for building rows without creating Python lists
     cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda) # staging area (CPU)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device) # on-device buffer
     cpu_inputs = cpu_buffer[:B * T].view(B, T) # a few views into these buffers just for convenience
     cpu_targets = cpu_buffer[B * T:].view(B, T)
-    inputs = gpu_buffer[:B * T].view(B, T)
-    targets = gpu_buffer[B * T:].view(B, T)
+    if use_xla:
+        import torch_xla.core.xla_model as xm
+        inputs = None
+        targets = None
+    else:
+        gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device) # on-device buffer
+        inputs = gpu_buffer[:B * T].view(B, T)
+        targets = gpu_buffer[B * T:].view(B, T)
 
     while True:
         for row_idx in range(B):
@@ -156,8 +163,14 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
         state_dict = {"pq_idx": pq_idx, "rg_idx": rg_idx, "epoch": epoch}
 
         # Single HtoD copy into persistent GPU buffer and yield
-        gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
-        yield inputs, targets, state_dict
+        if use_xla:
+            gpu_buffer = xm.send_cpu_data_to_device(cpu_buffer, device)
+            inputs = gpu_buffer[:B * T].view(B, T)
+            targets = gpu_buffer[B * T:].view(B, T)
+            yield inputs, targets, state_dict
+        else:
+            gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
+            yield inputs, targets, state_dict
 
 def tokenizing_distributed_data_loader_bos_bestfit(*args, **kwargs):
     """Helper that omits state_dict from yields."""

@@ -13,7 +13,7 @@ import argparse
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
-import wandb
+import runpy
 import torch
 from contextlib import nullcontext
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type
@@ -30,13 +30,18 @@ from tasks.smoltalk import SmolTalk
 from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
 
+try:
+    import wandb
+except ModuleNotFoundError:
+    wandb = None
+
 # -----------------------------------------------------------------------------
 # CLI arguments
 parser = argparse.ArgumentParser(description="Supervised fine-tuning (SFT) the model")
 # Logging
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
 # Runtime
-parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps|xla (empty = autodetect)")
 parser.add_argument("--dtype", type=str, default="bfloat16", help="float32|bfloat16")
 # Model loading
 parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
@@ -58,22 +63,63 @@ parser.add_argument("--eval-every", type=int, default=150, help="evaluate val bp
 parser.add_argument("--eval-tokens", type=int, default=20*524288, help="number of tokens to evaluate val loss on")
 # Output
 parser.add_argument("--dry-run", action="store_true", help="log to wandb but skip checkpoints/report")
+parser.add_argument("--smoke-test", action="store_true", help="run a tiny fast configuration for debugging (overrides several training args)")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
 
 # Compute init
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+
+# TPU/XLA launcher: XLA uses multi-process execution via xmp.spawn rather than torchrun
+# When device_type is xla and we're not already in a spawned worker, spawn and re-run this module
+if device_type == "xla" and os.environ.get("NANOCHAT_XLA_SPAWNED", "0") != "1":
+    try:
+        import torch_xla.distributed.xla_multiprocessing as xmp
+        import torch_xla.core.xla_model as xm
+    except Exception as e:
+        raise RuntimeError("--device-type xla requested but torch_xla is not available") from e
+
+    def _xla_worker(_index, argv):
+        os.environ["NANOCHAT_XLA_SPAWNED"] = "1"
+        import sys
+        sys.argv = argv
+        runpy.run_module("scripts.chat_sft", run_name="__main__")
+
+    xmp.spawn(_xla_worker, args=(os.sys.argv,), nprocs=xm.xrt_world_size())
+    raise SystemExit(0)
+
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+
+if args.smoke_test:
+    args.run = "dummy"
+    args.dry_run = True
+    args.max_seq_len = 128
+    args.device_batch_size = 1
+    args.total_batch_size = args.device_batch_size * args.max_seq_len * ddp_world_size
+    args.num_iterations = 5
+    args.eval_every = -1
+    args.eval_tokens = args.total_batch_size
+    user_config = vars(args).copy()  # refresh for logging
+
 master_process = ddp_rank == 0
 ptdtype = torch.float32 if args.dtype == 'float32' else torch.bfloat16
-autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
-synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
+if device_type == "cuda":
+    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+elif device_type == "xla":
+    from torch_xla.amp import autocast as xla_autocast
+    autocast_ctx = xla_autocast(dtype=ptdtype)
+else:
+    autocast_ctx = nullcontext()
+synchronize = torch.cuda.synchronize if device_type == "cuda" else (lambda: None)
+if device_type == "xla":
+    import torch_xla.core.xla_model as xm
+    synchronize = xm.mark_step
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sft", name=args.run, config=user_config)
+wandb_run = DummyWandb() if (use_dummy_wandb or wandb is None) else wandb.init(project="nanochat-sft", name=args.run, config=user_config)
 
 # Load the model and tokenizer
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=args.model_tag, step=args.model_step)
@@ -81,7 +127,10 @@ pretrain_batch_size = meta.get("device_batch_size", None)
 if pretrain_batch_size is not None and args.device_batch_size > pretrain_batch_size:
     print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device-batch-size to this script?")
 orig_model = model
-model = torch.compile(model, dynamic=False)
+if device_type == "xla" and os.environ.get("NANOCHAT_XLA_TORCH_COMPILE", "0") != "1":
+    model = model
+else:
+    model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
@@ -261,8 +310,13 @@ while True:
     # Synchronize last_step across all ranks to avoid hangs in the distributed setting
     if ddp:
         last_step_tensor = torch.tensor(last_step, dtype=torch.int32, device=device)
-        dist.all_reduce(last_step_tensor, op=dist.ReduceOp.MAX)
-        last_step = bool(last_step_tensor.item())
+        if dist.is_initialized():
+            dist.all_reduce(last_step_tensor, op=dist.ReduceOp.MAX)
+            last_step = bool(last_step_tensor.item())
+        else:
+            import torch_xla.core.xla_model as xm
+            last_step_tensor = xm.all_reduce(xm.REDUCE_MAX, last_step_tensor)
+            last_step = bool(last_step_tensor.item())
 
     # once in a while: evaluate the val bpb (all ranks participate)
     if last_step or (args.eval_every > 0 and step % args.eval_every == 0):
@@ -286,6 +340,12 @@ while True:
     if master_process and last_step and not args.dry_run:
         output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
         checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
+        if ddp:
+            if dist.is_initialized():
+                dist.barrier()
+            elif device_type == "xla":
+                import torch_xla.core.xla_model as xm
+                xm.rendezvous("nanochat_chat_sft_checkpoint")
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -306,6 +366,12 @@ while True:
                 "user_config": user_config, # inputs to the training script
             }
         )
+        if ddp:
+            if dist.is_initialized():
+                dist.barrier()
+            elif device_type == "xla":
+                import torch_xla.core.xla_model as xm
+                xm.rendezvous("nanochat_chat_sft_checkpoint_done")
 
     if last_step:
         break

@@ -70,7 +70,7 @@ parser.add_argument('-g', '--model-tag', type=str, default=None, help='Model tag
 parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
 parser.add_argument('-p', '--port', type=int, default=8000, help='Port to run the server on')
 parser.add_argument('-d', '--dtype', type=str, default='bfloat16', choices=['float32', 'bfloat16'])
-parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
+parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps', 'xla'], help='Device type for evaluation: cuda|cpu|mps|xla. empty => autodetect')
 parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind the server to')
 args = parser.parse_args()
 
@@ -103,7 +103,7 @@ class WorkerPool:
             if device_type == "cuda":
                 num_gpus = torch.cuda.device_count()
             else:
-                num_gpus = 1 # e.g. cpu|mps
+                num_gpus = 1 # e.g. cpu|mps|xla
         self.num_gpus = num_gpus
         self.workers: List[Worker] = []
         self.available_workers: asyncio.Queue = asyncio.Queue()
@@ -119,13 +119,23 @@ class WorkerPool:
             if device_type == "cuda":
                 device = torch.device(f"cuda:{gpu_id}")
                 print(f"Loading model on GPU {gpu_id}...")
+            elif device_type == "xla":
+                import torch_xla.core.xla_model as xm
+                device = xm.xla_device()
+                print(f"Loading model on {device_type}...")
             else:
                 device = torch.device(device_type) # e.g. cpu|mps
                 print(f"Loading model on {device_type}...")
 
             model, tokenizer, _ = load_model(source, device, phase="eval", model_tag=model_tag, step=step)
             engine = Engine(model, tokenizer)
-            autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
+            if device_type == "cuda":
+                autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+            elif device_type == "xla":
+                from torch_xla.amp import autocast as xla_autocast
+                autocast_ctx = xla_autocast(dtype=ptdtype)
+            else:
+                autocast_ctx = nullcontext()
 
             worker = Worker(
                 gpu_id=gpu_id,

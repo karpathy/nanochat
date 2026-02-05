@@ -17,12 +17,15 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import argparse
 import time
 from contextlib import nullcontext, contextmanager
+import runpy
 
-import wandb
 import torch
+try:
+    import wandb
+except ModuleNotFoundError:
+    wandb = None
 
 from nanochat.gpt import GPT, GPTConfig
-from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
@@ -38,7 +41,7 @@ parser = argparse.ArgumentParser(description="Pretrain base model")
 # Logging
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
 # Runtime
-parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps|xla (empty = autodetect)")
 # FP8 training
 parser.add_argument("--fp8", action="store_true", help="enable FP8 training (requires H100+ GPU and torchao)")
 parser.add_argument("--fp8-recipe", type=str, default="tensorwise", choices=["rowwise", "tensorwise"], help="FP8 scaling recipe: tensorwise (faster, recommended) or rowwise (more accurate but slower)")
@@ -75,16 +78,66 @@ parser.add_argument("--sample-every", type=int, default=2000, help="sample from 
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
+parser.add_argument("--smoke-test", action="store_true", help="run a tiny fast configuration for debugging (overrides several training args)")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
 
 # Compute init
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+
+# TPU/XLA launcher: XLA uses multi-process execution via xmp.spawn rather than torchrun.
+# When device_type is xla and we're not already in a spawned worker, spawn and re-run this module.
+if device_type == "xla" and os.environ.get("NANOCHAT_XLA_SPAWNED", "0") != "1":
+    try:
+        import torch_xla.distributed.xla_multiprocessing as xmp
+        import torch_xla.core.xla_model as xm
+    except Exception as e:
+        raise RuntimeError("--device-type xla requested but torch_xla is not available") from e
+
+    def _xla_worker(_index, argv):
+        os.environ["NANOCHAT_XLA_SPAWNED"] = "1"
+        # Ensure child sees the same argv (xmp.spawn does not preserve it by default in all envs)
+        import sys
+        sys.argv = argv
+        runpy.run_module("scripts.base_train", run_name="__main__")
+
+    xmp.spawn(_xla_worker, args=(os.sys.argv,), nprocs=xm.xrt_world_size())
+    raise SystemExit(0)
+
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+
+if args.smoke_test:
+    args.run = "dummy"
+    args.depth = 2
+    args.aspect_ratio = 32
+    args.head_dim = 64
+    args.max_seq_len = 128
+    args.device_batch_size = 1
+    args.total_batch_size = args.device_batch_size * args.max_seq_len * ddp_world_size
+    args.num_iterations = 5
+    args.target_flops = -1.0
+    args.target_param_data_ratio = -1
+    args.eval_every = -1
+    args.core_metric_every = -1
+    args.sample_every = -1
+    args.save_every = -1
+    args.resume_from_step = -1
+    args.fp8 = False
+    user_config = vars(args).copy()  # refresh for logging
+
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
-autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
-synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
+if device_type == "cuda":
+    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16)
+elif device_type == "xla":
+    from torch_xla.amp import autocast as xla_autocast
+    autocast_ctx = xla_autocast(dtype=torch.bfloat16)
+else:
+    autocast_ctx = nullcontext()
+synchronize = torch.cuda.synchronize if device_type == "cuda" else (lambda: None)
+if device_type == "xla":
+    import torch_xla.core.xla_model as xm
+    synchronize = xm.mark_step
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 if device_type == "cuda":
     gpu_device_name = torch.cuda.get_device_name(0)
@@ -95,7 +148,7 @@ else:
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
+wandb_run = DummyWandb() if (use_dummy_wandb or wandb is None) else wandb.init(project="nanochat", name=args.run, config=user_config)
 
 # Flash Attention status
 if HAS_FA3:
@@ -110,10 +163,16 @@ else:
     print0("!" * 80)
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
-tokenizer = get_tokenizer()
-token_bytes = get_token_bytes(device=device)
-vocab_size = tokenizer.get_vocab_size()
-print0(f"Vocab size: {vocab_size:,}")
+if args.smoke_test:
+    tokenizer = None
+    vocab_size = 8192
+    token_bytes = torch.ones(vocab_size, dtype=torch.int64, device=device)
+    print0(f"Vocab size: {vocab_size:,}")
+else:
+    tokenizer = get_tokenizer()
+    token_bytes = get_token_bytes(device=device)
+    vocab_size = tokenizer.get_vocab_size()
+    print0(f"Vocab size: {vocab_size:,}")
 
 # Model kwargs are derived from the desired depth of the model
 # We nudge model_dim up to the nearest multiple of head_dim to ensure clean division
@@ -291,7 +350,12 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+if device_type == "xla" and os.environ.get("NANOCHAT_XLA_TORCH_COMPILE", "0") != "1":
+    model = model
+elif device_type == "mps" and os.environ.get("NANOCHAT_MPS_TORCH_COMPILE", "0") != "1":
+    model = model
+else:
+    model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
@@ -312,9 +376,23 @@ if resuming:
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
-build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
-x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
+if args.smoke_test:
+    # Synthetic data path for local debugging: avoids requiring pyarrow + dataset parquet files.
+    vocab_size_for_smoke = vocab_size
+    def _synthetic_loader():
+        while True:
+            x = torch.randint(0, vocab_size_for_smoke, (args.device_batch_size, args.max_seq_len), device=device, dtype=torch.long)
+            y = torch.randint(0, vocab_size_for_smoke, (args.device_batch_size, args.max_seq_len), device=device, dtype=torch.long)
+            state_dict = {"pq_idx": 0, "rg_idx": 0, "epoch": 1}
+            yield x, y, state_dict
+    train_loader = _synthetic_loader()
+    build_val_loader = lambda: iter(())
+    x, y, dataloader_state_dict = next(train_loader)
+else:
+    from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
+    train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
+    build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
+    x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
 # Set up hyperparameter schedulers
@@ -421,7 +499,13 @@ while True:
         model.train()
 
     # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step
-    if last_step or (step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0):
+    if (not args.smoke_test) and (last_step or (step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0)):
+        if ddp:
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                torch.distributed.barrier()
+            elif device_type == "xla":
+                import torch_xla.core.xla_model as xm
+                xm.rendezvous("nanochat_base_train_checkpoint")
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -443,6 +527,12 @@ while True:
             },
             rank=ddp_rank,
         )
+        if ddp:
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                torch.distributed.barrier()
+            elif device_type == "xla":
+                import torch_xla.core.xla_model as xm
+                xm.rendezvous("nanochat_base_train_checkpoint_done")
 
     # termination conditions (TODO: possibly also add loss explosions etc.)
     if last_step:
@@ -533,30 +623,31 @@ if val_bpb is not None:
     print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
 
 # Log to report
-from nanochat.report import get_report
-get_report().log(section="Base model training", data=[
-    user_config, # CLI args
-    { # stats about the training setup
-        "Number of parameters": num_params,
-        "Number of FLOPs per token": f"{num_flops_per_token:e}",
-        "Calculated number of iterations": num_iterations,
-        "Number of training tokens": total_tokens,
-        "Tokens : Scaling params ratio": args.total_batch_size * num_iterations / num_scaling_params,
-        "DDP world size": ddp_world_size,
-        "warmup_ratio": args.warmup_ratio,
-        "warmdown_ratio": args.warmdown_ratio,
-        "final_lr_frac": args.final_lr_frac,
-    },
-    { # stats about training outcomes
-        "Minimum validation bpb": min_val_bpb if val_bpb is not None else None,
-        "Final validation bpb": val_bpb,
-        "CORE metric estimate": results.get("core_metric", None),
-        "MFU %": f"{mfu:.2f}%",
-        "Total training flops": f"{flops_so_far:e}",
-        "Total training time": f"{total_training_time/60:.2f}m",
-        "Peak memory usage": f"{get_max_memory() / 1024 / 1024:.2f}MiB",
-    }
-])
+if not args.smoke_test:
+    from nanochat.report import get_report
+    get_report().log(section="Base model training", data=[
+        user_config, # CLI args
+        { # stats about the training setup
+            "Number of parameters": num_params,
+            "Number of FLOPs per token": f"{num_flops_per_token:e}",
+            "Calculated number of iterations": num_iterations,
+            "Number of training tokens": total_tokens,
+            "Tokens : Scaling params ratio": args.total_batch_size * num_iterations / num_scaling_params,
+            "DDP world size": ddp_world_size,
+            "warmup_ratio": args.warmup_ratio,
+            "warmdown_ratio": args.warmdown_ratio,
+            "final_lr_frac": args.final_lr_frac,
+        },
+        { # stats about training outcomes
+            "Minimum validation bpb": min_val_bpb if val_bpb is not None else None,
+            "Final validation bpb": val_bpb,
+            "CORE metric estimate": results.get("core_metric", None),
+            "MFU %": f"{mfu:.2f}%",
+            "Total training flops": f"{flops_so_far:e}",
+            "Total training time": f"{total_training_time/60:.2f}m",
+            "Peak memory usage": f"{get_max_memory() / 1024 / 1024:.2f}MiB",
+        }
+    ])
 
 # cleanup
 wandb_run.finish() # wandb run finish
