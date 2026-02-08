@@ -342,7 +342,8 @@ print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
-# Learning rate schedule (linear warmup, constant, linear warmdown)
+# Learning rate schedule (linear warmup, constant, 1-sqrt warmdown)
+# 1-sqrt cooldown shape from https://arxiv.org/abs/2405.18392
 def get_lr_multiplier(it):
     warmup_iters = round(args.warmup_ratio * num_iterations)
     warmdown_iters = round(args.warmdown_ratio * num_iterations)
@@ -351,8 +352,9 @@ def get_lr_multiplier(it):
     elif it <= num_iterations - warmdown_iters:
         return 1.0
     else:
-        progress = (num_iterations - it) / warmdown_iters
-        return progress * 1.0 + (1 - progress) * args.final_lr_frac
+        decay_frac = 1 - (num_iterations - it) / warmdown_iters  
+        lr_mult = 1 - decay_frac ** 0.5  
+        return lr_mult * (1 - args.final_lr_frac) + args.final_lr_frac
 
 # Momentum scheduler for Muon optimizer (warms up to 0.95 over the first 300 steps)
 def get_muon_momentum(it):
