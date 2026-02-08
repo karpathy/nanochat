@@ -62,7 +62,7 @@ MAX_MAX_TOKENS = 4096
 
 parser = argparse.ArgumentParser(description='NanoChat Web Server')
 parser.add_argument('-n', '--num-gpus', type=int, default=1, help='Number of GPUs to use (default: 1)')
-parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|mid|rl")
+parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|rl")
 parser.add_argument('-t', '--temperature', type=float, default=0.8, help='Default temperature for generation')
 parser.add_argument('-k', '--top-k', type=int, default=50, help='Default top-k sampling parameter')
 parser.add_argument('-m', '--max-tokens', type=int, default=512, help='Default max tokens for generation')

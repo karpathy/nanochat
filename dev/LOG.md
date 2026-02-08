@@ -4,6 +4,168 @@ A running summary documenting some experiments and findings. Started ~Jan 7 2026
 
 ---
 
+## 2026-02-05: Auto Batch Size Scaling
+
+### Background
+
+So far, the `--total-batch-size` was hardcoded to be `2**19 = 524,288` ~= 0.5M tokens. This was the optimal setting for d12, but when I tried to re-tune it for d26 (GPT-2), I noticed that the optimal was closer to `2**20 = 1,048,576` ~= 1M tokens. This is to be expected - larger models prefer a higher optimal total batch size. However, we have to make sure that all settings of `--depth` get their own optimal batch size calculated in some principled way. Here, I referenced the "Power Lines" paper from Cerebras ([arXiv:2505.13738](https://arxiv.org/abs/2505.13738)) for a lot of related experimentation. In particular, they found that **Bopt ∝ D^0.383** (where D is the number of training tokens, not the number of parameters!). So the idea is to tune the optimal batch size on d12, and then extrapolate it with this power law to bigger models. The 0.383 exponent means batch size grows slowly: 10× more tokens only justifies ~2.4× bigger batch. For nanochat's compute-optimal training (D ∝ N via `--target-param-data-ratio`), this means deeper models naturally want larger batches.
+
+### Implementation
+
+Added `--total-batch-size=-1` (now the default) to auto-compute optimal batch:
+
+```python
+get_scaling_params = lambda m: m.num_scaling_params()['transformer_matrices'] + m.num_scaling_params()['lm_head']
+if args.total_batch_size == -1:
+    D_REF = args.target_param_data_ratio * get_scaling_params(build_model_meta(12))
+    B_REF = 2**19
+    args.total_batch_size = 2 ** round(math.log2(B_REF * (target_tokens / D_REF) ** 0.383))
+```
+
+Reference point: d=12 model with B=2^19 (empirically validated). The reference is computed dynamically so that if the architecture changes (e.g., different `--aspect-ratio`), the math automatically adjusts. However, if the model actually does change too much, one would also want to re-tune the optimal batch size for d=12.
+
+### Results
+
+With this formula, we currently get:
+
+| Depth | Scaling Params | Target Tokens | Auto Batch |
+|-------|---------------|---------------|------------|
+| d=8   | 42M           | 0.44B         | 2^18 = 262K |
+| d=10-16 | 70M-235M    | 0.7B-2.5B     | 2^19 = 524K |
+| d=18-26 | 324M-918M   | 3.4B-9.6B     | 2^20 = 1.05M |
+| d=32-50 | 1.7B-6.2B   | 17.6B-65.6B   | 2^21 = 2.1M |
+
+In particular, this matches empirical observations that d26 prefers ~2^20 while d12 prefers ~2^19.
+
+### Code Cleanup
+
+Also refactored model initialization to use `build_model_meta(depth)` helper and `dataclasses.asdict()` for cleaner config handling.
+
+### Useful references
+
+- [Bergsma et al., Power Laws for Batch Size, Model Size, and Training Horizon](https://arxiv.org/abs/2505.13738)
+- [McCandlish et al., An Empirical Model of Large-Batch Training](https://arxiv.org/abs/1812.06162)
+- [Brown et al., Language Models are Few-Shot Learners](https://arxiv.org/abs/2005.14165)
+- [Merrill et al., The Batch Size–Critical Batch Size Myth](https://arxiv.org/abs/2505.23971)
+
+### One more thing (batch size ramp)
+
+Tried batch size ramping. The simplest implementation I could think of "tricks" the existing training loop by slicing each micro-batch into smaller pieces and calling optimizer.step() more frequently early in training (1/8 → 1/4 → 1/2 → full batch over the first x% of training, with sqrt LR scaling). Also required a torch.compile warmup phase to pre-compile all slice sizes and avoid recompilation spikes during training. While the idea is sound and small gains were observed, they weren't sufficient to justify the code complexity introduced (conditional slicing logic, warmup with state save/restore, etc.). Not merged for now.
+
+---
+
+## 2026-02-05: SwiGLU Activation (Negative Result)
+
+Replaced ReLU² MLP activation with SwiGLU (inspired by [twitter](https://x.com/_xjdr/status/2019141521690567058)). SwiGLU uses three projections instead of two, so to match parameters and FLOPs we scale hidden_dim from 4× to 8/3×:
+
+```python
+# Old ReLU²: 2 matrices, 4x expansion
+#   params: 2 × n × 4n = 8n²
+#   flops:  2 × 2n × 4n = 16n² per token
+self.c_fc   = Linear(n_embd, 4 * n_embd)
+self.c_proj = Linear(4 * n_embd, n_embd)
+x = c_proj(relu(c_fc(x)).square())
+
+# New SwiGLU: 3 matrices, 8/3x expansion
+#   params: 2 × n × (8n/3) + (8n/3) × n = 8n²  ✓ matches
+#   flops:  3 × 2n × (8n/3) = 16n² per token   ✓ matches
+hidden_dim = (8 * n_embd) // 3
+self.w1 = Linear(n_embd, hidden_dim)  # gate
+self.w2 = Linear(n_embd, hidden_dim)  # up
+self.w3 = Linear(hidden_dim, n_embd)  # down
+x = w3(silu(w1(x)) * w2(x))
+```
+
+Tested at both d12 and d24 (GPT-2 scale). Worse on all measures — step efficiency, wall clock time, and FLOPs. ReLU² remains superior for nanochat. **Not adopted.**
+
+---
+
+## 2026-02-03: Flip Muon MLP LR Multiplier (PR #492)
+
+Tested flipping the shape-based LR heuristic in Muon from boosting tall matrices (input projections like `c_fc`) to boosting wide matrices (output projections like `c_proj`). The original code applies `max(1, rows/cols)^0.5`, giving ~2x LR to `c_fc`. The flipped version gives ~2x LR to `c_proj` instead, which aligns with classical fan-in/fan-out scaling conventions. This was proposed in [PR #492](https://github.com/karpathy/nanochat/pull/492) and showed improvements in modded-nanogpt.
+
+**Result:** Quick d12 experiment: slightly worse **Not adopted.**
+
+---
+
+## 2026-02-03: Skip AdamW Every Other Step
+
+Inspired by modded-nanogpt, tried stepping AdamW only on odd iterations while Muon steps every iteration. The idea is that small AdamW params (embeddings, scalars, gates) don't need updates as frequently as the large weight matrices, and skipping saves both compute and communication.
+
+Added `skip_adamw` parameter to `MuonAdamW.step()` and `DistMuonAdamW.step()` plus a matching `zero_grad(skip_adamw=...)` to let AdamW gradients accumulate over 2 steps. Used `lr *= 2**-0.5` (sqrt scaling) to compensate for the 2x effective batch size on AdamW params.
+
+**Result:** for nanochat d12, we see ~2% faster tok/s, but each step is slightly worse in loss. On net, when plotting against wall clock time, it's slightly worse. **Not adopted.**
+
+---
+
+## 2026-02-02: FP8 Training with torchao
+
+Integrated FP8 training using `torchao.float8` to accelerate Linear layer matmuls on H100 GPUs.
+
+### Background
+
+FP8 (8-bit floating point) uses H100's FP8 tensor cores for ~2x theoretical matmul throughput. The tradeoff is quantization overhead: computing scales and casting tensors to/from FP8. Still, as an example torchtitan (Meta's distributed training framework) reports 25-28% speedups with FP8 for some of their experiments.
+
+**Previous attempt (Jan 2026):** FP8 on just `lm_head` following modded-nanogpt with custom ops → 1% speedup, +2GB memory. Failed due to fragile torch.compile interaction. But this experiment was also done on ~d12 scale back then instead of the bigger model that gets GPT-2 capability of approx d24.
+
+**This attempt:** Use torchao's `convert_to_float8_training()` on ALL Linear layers, increase model size to d24. The core snippet is:
+
+```python
+from torchao.float8 import Float8LinearConfig, convert_to_float8_training
+config = Float8LinearConfig.from_recipe_name("tensorwise")
+convert_to_float8_training(model, config=config)
+```
+
+But in practice it's more involved (see base_train.py).
+
+### Results
+
+**Microbenchmark (d26 MLP, 65536x1664 @ 1664x6656):**
+
+| Method | Forward | Fwd+Bwd | Speedup |
+|--------|---------|---------|---------|
+| BF16 + compile | 2.00ms | 4.79ms | 1.00x |
+| FP8 rowwise + compile | 1.84ms | 4.55ms | 1.08x |
+| FP8 tensorwise + compile | 1.45ms | 4.06ms | **1.38x** |
+| FP8 rowwise (no compile) | 2.89ms | 21.86ms | 0.23x ❌ |
+
+torch.compile is MANDATORY. Without it, FP8 is 4x slower due to unfused scaling ops.
+
+**Full training (d26):**
+
+| Config | tok/sec | vs baseline |
+|--------|---------|-------------|
+| BF16 baseline | 630K | 1.00x |
+| FP8 rowwise | 564K | 0.90x ❌ |
+| FP8 tensorwise | 740K | **1.17x** ✓ |
+
+Memory usage also decreases quite a bit, by ~9GB (activations stored as FP8 instead of BF16).
+
+Seeing 17% speedup is encouraging but we're still not done yet because each step is now in lower precision and less powerful individually, so to make up for the precision drop we have to train longer. Empirically, running some sweeps overnight on d24 scale, I saw that the actual speedup (when you match performance) is closer to 5%. It's possible that our LLMs at ~d24 scale are still too small to confidently enjoy the speedups that come from fp8 for bigger models.
+
+### Key Learnings
+
+For nanochat at approximate scale of interest (~GPT-2 capability, ~d24):
+
+1. **Tensorwise >> Rowwise** - Rowwise computes per-row scales, overhead exceeds benefit. Tensorwise uses one scale per tensor.
+2. **Filter small layers** - Layers with dims not divisible by 16 must be skipped (FP8 hardware requirement)
+3. **Larger models benefit more** - d12 was still slower with FP8; d26+ shows gains. Therefore, in some depths there is a benefit to fp8 and in some there isn't. Keeping it configurable for now, passed in via kwargs and default off.
+4. **The effective, capability-matched speedup is lower still** - because each step is of slightly lower precision/quality.
+
+### Integration
+
+Added `--fp8` flag to `base_train.py`, default recipe is "tensorwise", example of turning on:
+
+```bash
+torchrun --nproc_per_node=8 -m scripts.base_train --depth=24 --fp8
+```
+
+Uses tensorwise by default. Requires `torchao==0.15.0` (compatible with torch 2.9.1), which was added to dependencies.
+
+**TLDR**: turning on fp8 for GPT-2 capability nanochat model gives approx +5% capability-matched speedup.
+
+---
+
 ## 2026-01-29: Hyperball/MuonH Experiments (Negative Result)
 
 Explored Hyperball optimization from [this post](https://psychedelic-sunstone-851.notion.site/Fantastic-Pretraining-Optimizers-and-Where-to-Find-Them-2-1-Hyperball-Optimization-2e924306e6f280e7a5ffee00eb40a0dd) (saved to `knowledge/muonh.md`). Constrains weights to sphere of radius R (initial norm): `W_{t+1} = R · Normalize(W_t - η·R · Normalize(u_t))`. Had to change a number of details in a branch, e.g. not use zero init for our projections (or the initial norm would be zero), keep track of the initial norm, adjust Muon -> MuonH for the update.
@@ -647,8 +809,8 @@ Cherry-picked improvements from NorMuon (modded-nanogpt) into our simpler Muon i
 - Both methods kept in code for easy comparison (`zeropower_via_polar_express` vs `zeropower_via_newtonschulz5`)
 - **Result:** No dramatic/noticeable difference in training, but keeping the new Polar Express as default.
 
-**2. Variance Reduction (NorMuon-style)**
-- Added low-rank variance estimator similar to Adafactor ([arxiv.org/pdf/2510.05491](https://arxiv.org/pdf/2510.05491))
+**2. NorMuon Variance Reduction**
+- Added per-neuron/column adaptive learning rate from NorMuon ([arxiv.org/pdf/2510.05491](https://arxiv.org/pdf/2510.05491))
 - Maintains `second_momentum_buffer` with shape `[rows, 1]` or `[1, cols]` (whichever is smaller)
 - Normalizes updates based on running per-row/col variance estimate (beta2=0.95)
 - Memory overhead: ~1/max(rows, cols) per param, negligible
@@ -690,7 +852,7 @@ Example: If d12 optimal is 0.22, then d20 optimal ≈ 0.22 × (12/20)² ≈ 0.08
 
 ### Summary
 
-Muon was changed to use Polar Express, added Adafactor-style variance reduction, and cautious weight decay with schedule that ramps linearly to zero. All of these changes follow modded-nanogpt repo, but all of them were also validated piece by piece to yield improvements in nanochat with the exception of the Polar Express change which was in the noise. This is default on and configurable with `--weight_decay`, using simply 0.2 and ∝ 1/width² scaling. The kwarg `--weight_decay` is therefore changing as of this change. It used to configure AdamW via standard weight decay and now it becomes exclusively used in Muon (AdamW is hardcoded to 0.0), and it is scaled based on depth.
+Muon was changed to use Polar Express, added NorMuon variance reduction, and cautious weight decay with schedule that ramps linearly to zero. All of these changes follow modded-nanogpt repo, but all of them were also validated piece by piece to yield improvements in nanochat with the exception of the Polar Express change which was in the noise. This is default on and configurable with `--weight_decay`, using simply 0.2 and ∝ 1/width² scaling. The kwarg `--weight_decay` is therefore changing as of this change. It used to configure AdamW via standard weight decay and now it becomes exclusively used in Muon (AdamW is hardcoded to 0.0), and it is scaled based on depth.
 
 ---
 
