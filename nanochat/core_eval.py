@@ -11,6 +11,8 @@ from jinja2 import Template
 import torch
 import torch.distributed as dist
 
+from nanochat import eval_config
+
 # -----------------------------------------------------------------------------
 # Prompt rendering utilities
 
@@ -267,10 +269,11 @@ def evaluate_task(model, tokenizer, data, device, task_meta):
         is_correct = evaluate_example(idx, model, tokenizer, data, device, task_meta)
         correct[idx] = float(is_correct)
 
-        # MEMORY FIX: Periodic cache cleanup every 100 examples
+        # MEMORY FIX: Periodic cache cleanup
         # This releases cached GPU memory and triggers Python GC
         # Prevents progressive slowdown from memory fragmentation
-        if idx % 100 == 0 and idx > 0:
+        # Interval configurable via eval_config.CACHE_CLEANUP_INTERVAL (default: 256)
+        if eval_config.ENABLE_PERIODIC_CLEANUP and idx % eval_config.CACHE_CLEANUP_INTERVAL == 0 and idx > 0:
             # Release PyTorch cached memory back to GPU
             if torch.cuda.is_available() and device.type == 'cuda':
                 torch.cuda.empty_cache()
@@ -287,7 +290,8 @@ def evaluate_task(model, tokenizer, data, device, task_meta):
 
     # MEMORY FIX: Final cleanup after task completes
     del correct
-    if torch.cuda.is_available() and device.type == 'cuda':
-        torch.cuda.empty_cache()
+    if eval_config.ENABLE_FINAL_CLEANUP:
+        if torch.cuda.is_available() and device.type == 'cuda':
+            torch.cuda.empty_cache()
 
     return mean_correct
