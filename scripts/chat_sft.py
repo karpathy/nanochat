@@ -16,7 +16,7 @@ import time
 import wandb
 import torch
 from contextlib import nullcontext
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, should_use_torch_compile
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -81,7 +81,11 @@ pretrain_batch_size = meta.get("device_batch_size", None)
 if pretrain_batch_size is not None and args.device_batch_size > pretrain_batch_size:
     print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device-batch-size to this script?")
 orig_model = model
-model = torch.compile(model, dynamic=False)
+if should_use_torch_compile(device):
+    model = torch.compile(model, dynamic=False)
+else:
+    # Skip compilation on MPS (hangs indefinitely)
+    pass
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank

@@ -4,6 +4,8 @@ Common utilities for nanochat.
 
 import os
 import re
+import sys
+import platform
 import logging
 import urllib.request
 import torch
@@ -149,6 +151,39 @@ def autodetect_device_type():
         device_type = "cpu"
     print0(f"Autodetected device type: {device_type}")
     return device_type
+
+def is_mps_device(device):
+    """Check if device is MPS (Apple Metal Performance Shaders)."""
+    if isinstance(device, str):
+        return device == "mps"
+    return hasattr(device, 'type') and device.type == "mps"
+
+def should_use_torch_compile(device):
+    """
+    Determine if torch.compile should be used based on device type and platform.
+    torch.compile hangs indefinitely on MPS devices (macOS).
+    Reference: https://github.com/karpathy/nanochat/pull/319
+    """
+    # Check if running on macOS with MPS device
+    is_macos = platform.system() == "Darwin"
+    is_mps = is_mps_device(device)
+
+    if is_macos and is_mps:
+        logger.warning("=" * 80)
+        logger.warning("WARNING: torch.compile is disabled on macOS with MPS (Apple Metal)")
+        logger.warning("Platform: macOS (Darwin)")
+        logger.warning("Device: MPS (Metal Performance Shaders)")
+        logger.warning("Reason: torch.compile hangs indefinitely on MPS devices")
+        logger.warning("Reference: https://github.com/karpathy/nanochat/pull/319")
+        logger.warning("Using eager mode instead (no performance impact on evaluation)")
+        logger.warning("=" * 80)
+        return False
+    elif is_mps and not is_macos:
+        # MPS on non-macOS platform (shouldn't happen, but be defensive)
+        logger.warning("WARNING: MPS device detected on non-macOS platform - disabling torch.compile")
+        return False
+
+    return True
 
 def compute_init(device_type="cuda"): # cuda|cpu|mps
     """Basic initialization that we keep doing over and over, so make common."""
