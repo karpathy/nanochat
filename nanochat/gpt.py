@@ -12,7 +12,6 @@ Notable features:
 - Flash Attention 3 integration
 """
 
-from functools import partial
 from dataclasses import dataclass
 
 import torch
@@ -22,7 +21,6 @@ import torch.nn.functional as F
 from nanochat.common import get_dist_info, print0
 from nanochat.optim import MuonAdamW, DistMuonAdamW
 
-from typing import Optional
 
 # Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
 from nanochat.flash_attention import flash_attn
