@@ -236,10 +236,13 @@ train_loader = sft_data_generator_bos_bestfit("train")
 build_val_loader = lambda: sft_data_generator_bos_bestfit("val")
 progress = 0 # will go from 0 to 1 over the course of the epoch
 
-# Learning rate scheduler
+# Learning rate scheduler (1-sqrt warmdown, https://arxiv.org/abs/2405.18392)
 def get_lr_multiplier(progress):
-    # first 80% of training: no decay, then linearly ramp down to 0.
-    return 1 if progress < 0.8 else 1 - (progress - 0.8) / 0.2
+    # first 80% of training: no decay, then 1-sqrt ramp down to 0.
+    if progress < 0.8:
+        return 1.0
+    decay_frac = (progress - 0.8) / 0.2  
+    return 1 - decay_frac ** 0.5
 
 # Momentum scheduler for Muon optimizer
 def get_muon_momentum(it):
