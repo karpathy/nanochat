@@ -147,3 +147,41 @@ Minimum validation bpb: 0.74645
 ```
 
 The big change here is that the batch size was doubled from 0.5M to 1M, which works better for a d26 model and allowed me to decrease the number of optimization steps a bit via `--target-param-data-ratio` from 8.5 to 8.25. The TLDR is that the original batch size of 0.5M was tuned for d12, but bigger models (e.g. d26) prefer larger total batch size. I determined in experiments that d26 prefers 1M. Then I implemented and merged a principled way to calculate the optimal batch size given depth so that all nanochat models of all depths benefit. See [dev/LOG.md](dev/LOG.md) entry "2026-02-05: Auto Batch Size Scaling" for more detail.
+
+## Run 4
+
+Achieved Feb 8 2026. Launch command:
+
+```
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+    --depth=26 \
+    --run="d26_r725_05M" \
+    --model-tag="d26_r725_05M" \
+    --device-batch-size=16 \
+    --total-batch-size=524288 \
+    --sample-every=-1 \
+    --save-every=-1 \
+    --core-metric-max-per-task=-1 \
+    --core-metric-every=999999 \
+    --target-param-data-ratio=7.25 \
+    --fp8
+```
+
+Result:
+
+```
+core_metric 0.2626
+step 12700
+total_training_time 8967
+Minimum validation bpb: 0.750008
+```
+
+Reproduced twice: Run 1 CORE 0.2729 (8985s), Run 2 CORE 0.2626 (8967s). Both comfortably clear the 0.256525 threshold.
+
+The key change is reverting the total batch size for d26 from 1M back to 0.5M (524,288 tokens) and lowering the param-data ratio from 8.25 to 7.25. While Run 3 showed that the auto-computed 1M batch is optimal for *compute-optimal* training of d26, "compute-optimal" and "speedrun-optimal" are different objectives. In the speedrun's undertraining regime, the model benefits more from additional optimization steps at smaller batch size (12,700 steps at 0.5M) than from seeing more data at larger batch size (7,226 steps at 1M). Direct evidence: at ratio 7.5, the 1M batch fails CORE (0.2534) while 0.5M passes (0.2577), despite training on the same total tokens.
+
+We swept ratios extensively at 0.5M batch. CORE scores exhibit run-to-run variance of ±0.01-0.02 (e.g. r7.125 produced 0.2571, 0.2472, and 0.2406 across three identical runs). Ratio 7.25 was chosen for its reproducibility — both runs clear the threshold with comfortable margin.
+
+Previous record was 2.76 hours, so 2.49 hours is `(2.76 - 2.49)/2.76*100` ~= 9.8% speed improvement.
+
+AI disclosure: experimental design and hyperparameter search were conducted using Claude Code.
