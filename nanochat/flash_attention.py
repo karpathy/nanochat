@@ -168,6 +168,9 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
 
     return y_sdpa.transpose(1, 2)  # back to (B, T, H, D)
 
+def default_window_pattern():
+    # FA3 has native support for window pattern otherwise there is none and it's slow -> fallback to just L
+    return "SSSL" if _use_fa3() else "L"
 
 # =============================================================================
 # Export: flash_attn module interface (drop-in replacement for FA3)
