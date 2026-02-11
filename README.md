@@ -77,6 +77,57 @@ See an example [here](https://github.com/karpathy/nanochat/pull/498#issuecomment
 
 The important thing to note is that nanochat is written and configured around one single dial of complexity - the depth of the transformer. This single integer automatically determines all other hyperparameters (the width of the transformer, number of heads, learning rate adjustments, training horizons, weight decays, ...) so that the trained model comes out compute optimal. The idea is that the user doesn't have to think about or set any of this, they are simply asking for a smaller or bigger model using `--depth`, and everything "just works". By sweeping out the depth, you achieve the nanochat miniseries of compute optimal models at various sizes. GPT-2 capability model (which is of most interest at the moment) happens to be somewhere around d24-d26 range with the current code. But any candidate changes to the repo have to be principled enough that they work for all settings of depth.
 
+## Deployment
+
+Once you've trained a model with nanochat, you'll want to deploy it.
+
+### 🌐 Desktop / Server Deployment
+
+For production deployment, you have several options:
+
+**Option 1: Built-in Chat UI**
+```bash
+python -m scripts.chat_web
+```
+
+**Option 2: Ollama (Recommended)**
+```bash
+# Create and serve model
+ollama create nanochat-model -f Modelfile
+ollama run nanochat-model
+```
+
+**Option 3: vLLM (High Performance)**
+```bash
+python -m vllm.entrypoints.api_server --model ./checkpoint.pth
+```
+
+### 🔌 Edge Deployment (Microcontrollers)
+
+For deploying to ESP32, STM32, or Raspberry Pi Pico, use **[Q-Lite](https://github.com/RalphBigBear/q-lite)**:
+
+- **<1MB RAM** - Runs on ESP32, Raspberry Pi Zero
+- **69KB binary** - Ultra-lightweight gateway
+- **Ollama-compatible** - Drop-in replacement
+
+**Architecture**:
+```
+Edge Device (Q-Lite, <1MB RAM)
+    ↓ HTTP
+Desktop (Ollama, 128GB RAM)
+    ↓
+Response
+```
+
+**Workflow**:
+1. Train model with nanochat (on desktop/HPC)
+2. Serve with Ollama (on desktop/server)
+3. Deploy with Q-Lite (to edge devices)
+
+**See**: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed guide.
+
+---
+
 ## Running on CPU / MPS
 
 The script [runs/runcpu.sh](runs/runcpu.sh) shows a very simple example of running on CPU or Apple Silicon. It dramatically shrinks the LLM that is being trained to make things fit into a reasonable time interval of a few ten minutes of training. You will not get strong results in this way.
