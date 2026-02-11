@@ -11,12 +11,11 @@ echo ""
 echo "=== Storage Check ==="
 USAGE=$(du -sm ~ 2>/dev/null | cut -f1)
 echo "Current home usage: ~${USAGE}MB"
-echo "This setup will use ~500MB for venv + packages"
+echo "This setup will use ~1-2GB for venv + packages"
 echo ""
 
 if [ "$USAGE" -gt 900000 ]; then
     echo "WARNING: You're using >900GB. Consider cleaning up before proceeding."
-    echo "Run: du -sh ~/.cache/* ~/.*/ | sort -h"
     read -p "Continue anyway? (y/N) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -39,17 +38,27 @@ fi
 source .venv/bin/activate
 pip install --upgrade pip
 
-# Install dependencies directly (not editable mode)
+# Install PyTorch with CUDA support
+echo "Installing PyTorch..."
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# Install nanochat dependencies including rustbpe
+echo "Installing nanochat dependencies..."
 pip install tiktoken numpy tqdm requests transformers datasets wandb
+pip install regex zstandard tabulate scipy psutil
+pip install rustbpe  # Required for tokenizer!
+pip install fastapi uvicorn  # For web UI
 
 # Add nanochat to Python path
-echo "export PYTHONPATH=\"\$PYTHONPATH:$(pwd)\"" >> .venv/bin/activate
+if ! grep -q "PYTHONPATH.*nanochat" .venv/bin/activate; then
+    echo "export PYTHONPATH=\"\$PYTHONPATH:$(pwd)\"" >> .venv/bin/activate
+fi
 
 echo ""
 echo "=== Setup complete! ==="
 echo "Current storage usage:"
 du -sh ~/.cache/nanochat 2>/dev/null || echo "  ~/.cache/nanochat: not created yet"
-du -sh ~/nanochat/.venv 2>/dev/null || echo "  ~/nanochat/.venv: not found"
+du -sh ~/nanochat/.venv 2>/dev/null || echo "  venv size: checking..."
 echo ""
 echo "To activate: source .venv/bin/activate"
+echo "To run test: sbatch runs/uppmax/train_test.sh"
