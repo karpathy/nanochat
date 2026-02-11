@@ -37,6 +37,16 @@ export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 export PYTHONPATH="$PYTHONPATH:$(pwd)"
 mkdir -p $NANOCHAT_BASE_DIR
 
+# Load wandb API key if available
+if [ -f "$HOME/.wandb_key" ]; then
+    export WANDB_API_KEY=$(cat $HOME/.wandb_key)
+    echo "wandb API key loaded"
+    WANDB_RUN="nanochat-d8-$SLURM_JOB_ID"
+else
+    WANDB_RUN="dummy"
+    echo "No wandb key found, logging disabled"
+fi
+
 # Activate virtual environment
 source .venv/bin/activate
 
@@ -50,7 +60,7 @@ python -m scripts.tok_train
 
 # Run a quick training test with depth=8 (tiny model, ~5-10 min)
 echo "=== Training model (depth=8) ==="
-python -m scripts.base_train --depth=8 --device-batch-size=8
+python -m scripts.base_train --depth=8 --device-batch-size=8 --run=$WANDB_RUN
 
 echo ""
 echo "=== Storage Check (after) ==="
