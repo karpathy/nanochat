@@ -21,8 +21,12 @@ fi
 source .venv/bin/activate
 pip install --upgrade pip
 
-# Install nanochat in editable mode
-pip install -e ".[gpu]"
+# Install dependencies directly (not editable mode)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install tiktoken numpy tqdm requests transformers datasets wandb
+
+# Add nanochat to Python path
+echo "export PYTHONPATH=\"\$PYTHONPATH:$(pwd)\"" >> .venv/bin/activate
 
 echo "=== Setup complete! ==="
 echo "To activate: source .venv/bin/activate"

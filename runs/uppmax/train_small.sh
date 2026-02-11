@@ -26,6 +26,7 @@ module load cuDNN/9.5.0.50-CUDA-12.6.0
 # Set up environment
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
+export PYTHONPATH="$PYTHONPATH:$(pwd)"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # Activate virtual environment
