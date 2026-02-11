@@ -11,6 +11,8 @@ from jinja2 import Template
 import torch
 import torch.distributed as dist
 
+from nanochat import eval_config
+
 # -----------------------------------------------------------------------------
 # Prompt rendering utilities
 
@@ -146,6 +148,8 @@ def forward_model(model, input_ids):
     """
     Take BxT tensor of token ids, return BxT tensor of losses and argmax predictions.
     The last column of losses is set to nan because we don't have autoregressive targets there.
+
+    MEMORY FIX: Explicitly cleanup intermediate tensors to prevent GPU memory accumulation.
     """
     batch_size, seq_len = input_ids.size()
     outputs = model(input_ids)
@@ -161,6 +165,9 @@ def forward_model(model, input_ids):
     losses[:, -1] = float('nan')
     # Get the argmax predictions at each position
     predictions = outputs.argmax(dim=-1)
+    # MEMORY FIX: Explicitly free large intermediate tensors
+    del outputs  # outputs is largest tensor (B×T×V, ~GB for large models)
+    del target_ids  # target_ids is B×T
     return losses, predictions
 
 
@@ -238,6 +245,9 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
     else:
         raise ValueError(f"Unsupported task type: {task_type}")
 
+    # MEMORY FIX: Explicitly free tensors after extracting scalar result
+    del losses, predictions, input_ids
+
     return is_correct
 
 
@@ -245,18 +255,43 @@ def evaluate_task(model, tokenizer, data, device, task_meta):
     """
     This function is responsible for evaluating one task across many examples.
     It also handles dispatch to all processes if the script is run with torchrun.
+
+    MEMORY FIX: Added periodic cache cleanup to prevent memory accumulation.
     """
+    import gc  # For explicit garbage collection
+
     rank = dist.get_rank() if dist.is_initialized() else 0
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     correct = torch.zeros(len(data), dtype=torch.float32, device=device)
+
     # stride the examples to each rank
     for idx in range(rank, len(data), world_size):
         is_correct = evaluate_example(idx, model, tokenizer, data, device, task_meta)
         correct[idx] = float(is_correct)
+
+        # MEMORY FIX: Periodic cache cleanup
+        # This releases cached GPU memory and triggers Python GC
+        # Prevents progressive slowdown from memory fragmentation
+        # Interval configurable via eval_config.CACHE_CLEANUP_INTERVAL (default: 256)
+        if eval_config.ENABLE_PERIODIC_CLEANUP and idx % eval_config.CACHE_CLEANUP_INTERVAL == 0 and idx > 0:
+            # Release PyTorch cached memory back to GPU
+            if torch.cuda.is_available() and device.type == 'cuda':
+                torch.cuda.empty_cache()
+            # Force Python garbage collection
+            gc.collect()
+
     # sync results across all the processes if running distributed
     if world_size > 1:
         dist.barrier()
         dist.all_reduce(correct, op=dist.ReduceOp.SUM)
+
     # compute the mean
     mean_correct = correct.mean().item()
+
+    # MEMORY FIX: Final cleanup after task completes
+    del correct
+    if eval_config.ENABLE_FINAL_CLEANUP:
+        if torch.cuda.is_available() and device.type == 'cuda':
+            torch.cuda.empty_cache()
+
     return mean_correct
