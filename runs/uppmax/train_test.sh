@@ -9,6 +9,7 @@
 
 # nanochat test run on UPPMAX Pelle (single L40s GPU)
 # This is a "hello world" test - depth=8 is very small (~5-10 min)
+# Expected storage: ~500MB
 
 set -e
 
@@ -17,6 +18,13 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"
 echo "GPU: $CUDA_VISIBLE_DEVICES"
 date
+
+# Storage check
+echo ""
+echo "=== Storage Check (before) ==="
+du -sh ~ 2>/dev/null | awk '{print "Home total: " $1}'
+du -sh ~/.cache/nanochat 2>/dev/null | awk '{print "nanochat cache: " $1}' || echo "nanochat cache: 0"
+echo ""
 
 # Load modules
 module load Python/3.12.3-GCCcore-13.3.0
@@ -32,8 +40,8 @@ mkdir -p $NANOCHAT_BASE_DIR
 # Activate virtual environment
 source .venv/bin/activate
 
-# Download minimal dataset (2 shards for quick test)
-echo "=== Downloading dataset ==="
+# Download minimal dataset (2 shards for quick test, ~200MB)
+echo "=== Downloading dataset (2 shards, ~200MB) ==="
 python -m nanochat.dataset -n 2
 
 # Train tokenizer on small data
@@ -41,9 +49,15 @@ echo "=== Training tokenizer ==="
 python -m scripts.tok_train
 
 # Run a quick training test with depth=8 (tiny model, ~5-10 min)
-# For a more serious run, increase depth (12, 16, 20, etc.)
 echo "=== Training model (depth=8) ==="
 python -m scripts.base_train --depth=8 --device-batch-size=8
+
+echo ""
+echo "=== Storage Check (after) ==="
+du -sh ~ 2>/dev/null | awk '{print "Home total: " $1}'
+du -sh ~/.cache/nanochat 2>/dev/null | awk '{print "nanochat cache: " $1}'
+du -sh ~/.cache/nanochat/*/ 2>/dev/null || true
+echo ""
 
 echo "=== Training complete! ==="
 date
