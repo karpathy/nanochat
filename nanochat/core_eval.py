@@ -134,14 +134,21 @@ def batch_sequences_lm(tokenizer, prompts):
     # In LM tasks, we have two prompts: without and with continuation
     tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
     tokens_without, tokens_with = tokens
-    start_idx, end_idx = len(tokens_without), len(tokens_with)
-    assert start_idx < end_idx, "prompt without is supposed to be a prefix of prompt with"
-    assert tokens_without == tokens_with[:start_idx], "prompt without is supposed to be a prefix of prompt with"
+    end_idx = len(tokens_with)
+    # Find longest common prefix — greedy trie tokenizers are not always
+    # prefix-stable, so we can't assume an exact prefix match.
+    start_idx = 0
+    for i in range(min(len(tokens_without), len(tokens_with))):
+        if tokens_without[i] != tokens_with[i]:
+            break
+        start_idx = i + 1
+    assert start_idx < end_idx, "continuation must produce additional tokens"
     # we only need the with continuation prompt in the LM task, i.e. batch size of 1
     return [tokens_with], [start_idx], [end_idx]
 
 
 @torch.no_grad()
+@torch.compiler.disable
 def forward_model(model, input_ids):
     """
     Take BxT tensor of token ids, return BxT tensor of losses and argmax predictions.
@@ -164,9 +171,8 @@ def forward_model(model, input_ids):
     return losses, predictions
 
 
-@torch.no_grad()
-def evaluate_example(idx, model, tokenizer, data, device, task_meta):
-    """Evaluate a single example, return True if correct, False otherwise"""
+def prepare_example(idx, tokenizer, data, task_meta, max_seq_len=None):
+    """CPU-only: render prompts, tokenize, stack into tensors. Returns a dict."""
     item = data[idx]
     task_type = task_meta['task_type']
     num_fewshot = task_meta['num_fewshot']
@@ -193,70 +199,165 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
     else:
         raise ValueError(f"Unsupported task type: {task_type}")
 
-    # Some models can't forward sequences beyond a certain length (e.g. GPT-2)
-    # In these cases, we have to truncate sequences to max length and adjust the indices
-    if hasattr(model, 'max_seq_len') and model.max_seq_len is not None:
-        max_tokens = model.max_seq_len
+    # Truncate sequences for models with a max length (e.g. GPT-2)
+    if max_seq_len is not None:
         new_tokens, new_start_idxs, new_end_idxs = [], [], []
         for t, s, e in zip(tokens, start_idxs, end_idxs):
-            if len(t) > max_tokens:
-                num_to_crop = len(t) - max_tokens
-                new_tokens.append(t[-max_tokens:]) # take the last max_tokens tokens
-                new_start_idxs.append(s - num_to_crop) # shift the indices down
+            if len(t) > max_seq_len:
+                num_to_crop = len(t) - max_seq_len
+                new_tokens.append(t[-max_seq_len:])
+                new_start_idxs.append(s - num_to_crop)
                 new_end_idxs.append(e - num_to_crop)
-                assert s - num_to_crop >= 0, "this should never happen right?"
-                assert e - num_to_crop >= 0, "this should never happen right?"
             else:
-                new_tokens.append(t) # keep unchanged
+                new_tokens.append(t)
                 new_start_idxs.append(s)
                 new_end_idxs.append(e)
         tokens, start_idxs, end_idxs = new_tokens, new_start_idxs, new_end_idxs
 
-    # Stack up all the sequences into a batch
-    pad_token_id = tokenizer.get_bos_token_id() # use BOS as pad token is ok
-    input_ids = stack_sequences(tokens, pad_token_id)
-    input_ids = input_ids.to(device)
+    pad_token_id = tokenizer.get_bos_token_id()
+    input_ids = stack_sequences(tokens, pad_token_id)  # (num_options, seq_len)
 
-    # Forward the model, get the autoregressive loss and argmax prediction at each token
-    losses, predictions = forward_model(model, input_ids)
+    return {
+        'input_ids': input_ids,
+        'start_idxs': start_idxs,
+        'end_idxs': end_idxs,
+        'gold': item.get('gold', None),
+        'task_type': task_type,
+        'num_options': input_ids.size(0),
+        'seq_len': input_ids.size(1),
+        'pad_token_id': pad_token_id,
+    }
 
-    # See if the losses/predictions come out correctly
+
+def check_result(losses, predictions, input_ids, start_idxs, end_idxs, gold, task_type):
+    """Analyze forward pass outputs for one example, return True if correct."""
     if task_type == 'language_modeling':
-        # language modeling task is currently always batch size 1
-        si = start_idxs[0]
-        ei = end_idxs[0]
-        # predictions[i] predict input_ids[i+1] autoregressively
+        si, ei = start_idxs[0], end_idxs[0]
         predicted_tokens = predictions[0, si-1:ei-1]
         actual_tokens = input_ids[0, si:ei]
-        is_correct = torch.all(predicted_tokens == actual_tokens).item()
+        return torch.all(predicted_tokens == actual_tokens).item()
     elif task_type in ['multiple_choice', 'schema']:
-        # For MC/schema: find the option with lowest average loss
         mean_losses = [losses[i, si-1:ei-1].mean().item()
-                        for i, (si, ei) in enumerate(zip(start_idxs, end_idxs))]
-        pred_idx = mean_losses.index(min(mean_losses))
-        is_correct = pred_idx == item['gold']
+                       for i, (si, ei) in enumerate(zip(start_idxs, end_idxs))]
+        return mean_losses.index(min(mean_losses)) == gold
     else:
         raise ValueError(f"Unsupported task type: {task_type}")
 
-    return is_correct
+
+def _collate_batches(prepared, batch_size, queue):
+    """Background thread: collate batches on CPU and push to queue."""
+    for batch_start in range(0, len(prepared), batch_size):
+        batch = prepared[batch_start:batch_start + batch_size]
+        batch_preps = [p for _, p in batch]
+        max_len = max(p['seq_len'] for p in batch_preps)
+        total_rows = sum(p['num_options'] for p in batch_preps)
+        pad_id = batch_preps[0]['pad_token_id']
+
+        combined_ids = torch.full((total_rows, max_len), pad_id, dtype=torch.long)
+
+        batch_meta = []
+        offset = 0
+        for idx, p in batch:
+            n, sl = p['num_options'], p['seq_len']
+            combined_ids[offset:offset+n, :sl] = p['input_ids']
+            batch_meta.append((idx, n, p['start_idxs'], p['end_idxs'], p['gold'], p['task_type']))
+            offset += n
+
+        queue.put((combined_ids, batch_meta))
+    queue.put(None)  # sentinel
 
 
-def evaluate_task(model, tokenizer, data, device, task_meta):
+def prepare_task_data(tokenizer, data, task_meta, max_seq_len=None):
+    """CPU-only: prepare and sort all examples for a task. Can run on a background thread."""
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    indices = list(range(rank, len(data), world_size))
+    prepared = [(idx, prepare_example(idx, tokenizer, data, task_meta, max_seq_len)) for idx in indices]
+    prepared.sort(key=lambda x: x[1]['seq_len'])
+    return prepared
+
+
+def _forward_batches(model, collated, data, device):
+    """Run GPU forward passes on pre-collated batches, return per-example correctness tensor."""
+    correct = torch.zeros(len(data), dtype=torch.float32, device=device)
+    for combined_ids, batch_meta in collated:
+        combined_ids = combined_ids.to(device)
+
+        losses, predictions = forward_model(model, combined_ids)
+
+        offset = 0
+        for idx, n, start_idxs, end_idxs, gold, task_type in batch_meta:
+            is_correct = check_result(
+                losses[offset:offset+n], predictions[offset:offset+n],
+                combined_ids[offset:offset+n],
+                start_idxs, end_idxs, gold, task_type,
+            )
+            correct[idx] = float(is_correct)
+            offset += n
+    return correct
+
+
+def evaluate_task(model, data, device, batch_size=4, queue_size=2, prepared=None,
+                  collated=None, tokenizer=None, task_meta=None):
     """
-    This function is responsible for evaluating one task across many examples.
-    It also handles dispatch to all processes if the script is run with torchrun.
+    Evaluate one task across many examples with batched GPU forward passes.
+    Examples are sorted by sequence length so similar-length sequences are batched
+    together, minimizing padding waste and increasing GPU utilization.
+
+    Three modes (checked in order):
+    - collated: skip prepare + collation, go straight to GPU forward passes.
+    - prepared: skip prepare, collation runs on a background thread pipelined with GPU.
+    - neither: full pipeline (prepare + collate + forward).
+
+    Returns (accuracy, collated_batches) so the caller can cache collated batches.
     """
     rank = dist.get_rank() if dist.is_initialized() else 0
     world_size = dist.get_world_size() if dist.is_initialized() else 1
-    correct = torch.zeros(len(data), dtype=torch.float32, device=device)
-    # stride the examples to each rank
-    for idx in range(rank, len(data), world_size):
-        is_correct = evaluate_example(idx, model, tokenizer, data, device, task_meta)
-        correct[idx] = float(is_correct)
+
+    if collated is not None:
+        # Fast path: just GPU forward passes, no threads
+        correct = _forward_batches(model, collated, data, device)
+    else:
+        from queue import Queue
+        from threading import Thread
+
+        if prepared is None:
+            max_seq_len = getattr(model, 'max_seq_len', None)
+            prepared = prepare_task_data(tokenizer, data, task_meta, max_seq_len)
+
+        # Collation thread pipelined with GPU forward passes
+        queue = Queue(maxsize=queue_size)
+        collator = Thread(target=_collate_batches, args=(prepared, batch_size, queue), daemon=True)
+        collator.start()
+
+        collated = []
+        correct = torch.zeros(len(data), dtype=torch.float32, device=device)
+        while True:
+            item = queue.get()
+            if item is None:
+                break
+            collated.append(item)
+            combined_ids, batch_meta = item
+
+            combined_ids = combined_ids.to(device)
+
+            losses, predictions = forward_model(model, combined_ids)
+
+            offset = 0
+            for idx, n, start_idxs, end_idxs, gold, task_type in batch_meta:
+                is_correct = check_result(
+                    losses[offset:offset+n], predictions[offset:offset+n],
+                    combined_ids[offset:offset+n],
+                    start_idxs, end_idxs, gold, task_type,
+                )
+                correct[idx] = float(is_correct)
+                offset += n
+
+        collator.join()
+        del prepared
+
     # sync results across all the processes if running distributed
     if world_size > 1:
         dist.barrier()
         dist.all_reduce(correct, op=dist.ReduceOp.SUM)
-    # compute the mean
-    mean_correct = correct.mean().item()
-    return mean_correct
+    return correct.mean().item(), collated
