@@ -26,6 +26,7 @@ import json
 import yaml
 import shutil
 import random
+import hashlib
 import zipfile
 import tempfile
 import argparse
@@ -113,6 +114,22 @@ _prev_centered = {}      # {label: centered_result} — previous run for delta d
 _prev_core = None        # previous core_metric
 
 
+def _get_disk_cache_dir(max_per_task):
+    """Get disk cache dir for base-4 collated batches, keyed by tokenizer file hash.
+    Returns None if no local tokenizer file is found (e.g. HuggingFace models)."""
+    base_dir = get_base_dir()
+    for fname in ("tokenizer.pkl", "tokenizer.json"):
+        path = os.path.join(base_dir, "tokenizer", fname)
+        if os.path.exists(path):
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    h.update(chunk)
+            tok_hash = h.hexdigest()[:16]
+            return os.path.join(base_dir, "core_token_cache", f"{tok_hash}_n{max_per_task}")
+    return None
+
+
 def evaluate_model(model, tokenizer, device, max_per_task=-1):
     """
     Evaluate a base model on the CORE benchmark.
@@ -180,6 +197,22 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     results = {}
     centered_results = {}
     cached_run = all(label in _batch_cache for label, _, _ in task_inputs)
+    disk_cache_dir = _get_disk_cache_dir(max_per_task)
+
+    # Try loading from disk cache if in-memory cache is empty
+    if not cached_run and disk_cache_dir is not None:
+        all_on_disk = os.path.isdir(disk_cache_dir) and all(
+            os.path.exists(os.path.join(disk_cache_dir, f"{label}.pt"))
+            for label, _, _ in task_inputs
+        )
+        if all_on_disk:
+            for label, _, _ in task_inputs:
+                d = torch.load(os.path.join(disk_cache_dir, f"{label}.pt"), weights_only=False)
+                _batch_cache[label] = d['collated']
+            cached_run = True
+            print0("  (loaded collated batches from disk cache)")
+
+    first_run = not cached_run  # track whether we did prepare+collate (for disk save)
 
     if not cached_run:
         executor = ThreadPoolExecutor(max_workers=1)
@@ -220,6 +253,16 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
 
     if not cached_run:
         executor.shutdown(wait=False)
+
+    # Save collated batches to disk after first run (so bench/future runs skip prepare+collate)
+    if first_run and disk_cache_dir is not None:
+        pad_id = tokenizer.get_bos_token_id()
+        os.makedirs(disk_cache_dir, exist_ok=True)
+        for label, _, _ in task_inputs:
+            if label in _batch_cache:
+                torch.save({'collated': _batch_cache[label], 'pad_token_id': pad_id},
+                           os.path.join(disk_cache_dir, f"{label}.pt"))
+        print0(f"  (saved collated batches to {disk_cache_dir})")
 
     core_metric = sum(centered_results.values()) / len(centered_results)
     if _prev_core is not None:

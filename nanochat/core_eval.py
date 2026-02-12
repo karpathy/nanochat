@@ -277,11 +277,37 @@ def prepare_task_data(tokenizer, data, task_meta, max_seq_len=None):
     return prepared
 
 
-def _forward_batches(model, collated, data, device):
-    """Run GPU forward passes on pre-collated batches, return per-example correctness tensor."""
+def _prefetch_to_device(tensor, device):
+    """Pin and async-transfer a CPU tensor to GPU, overlapping with current GPU work."""
+    return tensor.pin_memory().to(device, non_blocking=True)
+
+
+def _forward_batches(model, collated, data, device, pbar=None):
+    """Run GPU forward passes on pre-collated batches, return per-example correctness tensor.
+
+    Uses double-buffered prefetching on CUDA: while the GPU processes batch N,
+    batch N+1 is pinned and DMA-transferred asynchronously, keeping the GPU fed.
+    """
     correct = torch.zeros(len(data), dtype=torch.float32, device=device)
-    for combined_ids, batch_meta in collated:
-        combined_ids = combined_ids.to(device)
+    if not collated:
+        return correct
+
+    use_prefetch = torch.cuda.is_available() and 'cuda' in str(device)
+
+    # Prefetch first batch
+    if use_prefetch:
+        next_ids = _prefetch_to_device(collated[0][0], device)
+    else:
+        next_ids = collated[0][0].to(device)
+
+    for i, (_, batch_meta) in enumerate(collated):
+        combined_ids = next_ids
+        # Start async transfer of next batch while GPU computes on current
+        if i + 1 < len(collated):
+            if use_prefetch:
+                next_ids = _prefetch_to_device(collated[i + 1][0], device)
+            else:
+                next_ids = collated[i + 1][0].to(device)
 
         losses, predictions = forward_model(model, combined_ids)
 
@@ -294,11 +320,63 @@ def _forward_batches(model, collated, data, device):
             )
             correct[idx] = float(is_correct)
             offset += n
+        if pbar is not None:
+            pbar.update(len(batch_meta))
     return correct
 
 
+def compose_collated(base_collated, target_batch_size, base_batch_size=4, pad_token_id=0):
+    """Compose base-sized collated batches into target-sized batches.
+
+    Supports both merging (target > base) by concatenating consecutive groups,
+    and splitting (target < base) by slicing along example boundaries.
+    Examples are sorted by seq_len within each base batch, so splitting can
+    trim trailing padding columns for efficiency.
+    """
+    if target_batch_size == base_batch_size:
+        return base_collated
+    elif target_batch_size > base_batch_size:
+        # Merge consecutive base batches
+        n_merge = target_batch_size // base_batch_size
+        composed = []
+        for i in range(0, len(base_collated), n_merge):
+            group = base_collated[i:i + n_merge]
+            if len(group) == 1:
+                composed.append(group[0])
+                continue
+            max_len = max(ids.shape[1] for ids, _ in group)
+            parts = []
+            merged_meta = []
+            for ids, meta in group:
+                if ids.shape[1] < max_len:
+                    pad = torch.full((ids.shape[0], max_len - ids.shape[1]), pad_token_id, dtype=ids.dtype)
+                    ids = torch.cat([ids, pad], dim=1)
+                parts.append(ids)
+                merged_meta.extend(meta)
+            composed.append((torch.cat(parts, dim=0), merged_meta))
+        return composed
+    else:
+        # Split base batches into smaller chunks
+        composed = []
+        for combined_ids, batch_meta in base_collated:
+            for chunk_start in range(0, len(batch_meta), target_batch_size):
+                chunk_meta = batch_meta[chunk_start:chunk_start + target_batch_size]
+                row_start = sum(m[1] for m in batch_meta[:chunk_start])
+                row_end = row_start + sum(m[1] for m in chunk_meta)
+                chunk_ids = combined_ids[row_start:row_end]
+                # Trim trailing padding (examples sorted by seq_len, so chunks
+                # near the start of a base batch may need fewer columns)
+                non_pad = (chunk_ids != pad_token_id)
+                if non_pad.any():
+                    last_col = non_pad.any(dim=0).nonzero()[-1].item() + 1
+                    if last_col < chunk_ids.shape[1]:
+                        chunk_ids = chunk_ids[:, :last_col].contiguous()
+                composed.append((chunk_ids, chunk_meta))
+        return composed
+
+
 def evaluate_task(model, data, device, batch_size=4, queue_size=2, prepared=None,
-                  collated=None, tokenizer=None, task_meta=None):
+                  collated=None, tokenizer=None, task_meta=None, pbar=None):
     """
     Evaluate one task across many examples with batched GPU forward passes.
     Examples are sorted by sequence length so similar-length sequences are batched
@@ -316,7 +394,7 @@ def evaluate_task(model, data, device, batch_size=4, queue_size=2, prepared=None
 
     if collated is not None:
         # Fast path: just GPU forward passes, no threads
-        correct = _forward_batches(model, collated, data, device)
+        correct = _forward_batches(model, collated, data, device, pbar=pbar)
     else:
         from queue import Queue
         from threading import Thread
@@ -325,21 +403,34 @@ def evaluate_task(model, data, device, batch_size=4, queue_size=2, prepared=None
             max_seq_len = getattr(model, 'max_seq_len', None)
             prepared = prepare_task_data(tokenizer, data, task_meta, max_seq_len)
 
-        # Collation thread pipelined with GPU forward passes
+        # Collation thread pipelined with GPU forward passes.
+        # Double-buffered: while GPU processes batch N, batch N+1 is
+        # pin_memory()'d and DMA-transferred asynchronously.
         queue = Queue(maxsize=queue_size)
         collator = Thread(target=_collate_batches, args=(prepared, batch_size, queue), daemon=True)
         collator.start()
 
+        use_prefetch = torch.cuda.is_available() and 'cuda' in str(device)
+        def transfer(tensor):
+            return _prefetch_to_device(tensor, device) if use_prefetch else tensor.to(device)
+
         collated = []
         correct = torch.zeros(len(data), dtype=torch.float32, device=device)
-        while True:
-            item = queue.get()
-            if item is None:
-                break
-            collated.append(item)
-            combined_ids, batch_meta = item
 
-            combined_ids = combined_ids.to(device)
+        # Prime: get first batch and start its transfer
+        item = queue.get()
+        if item is not None:
+            next_ids = transfer(item[0])
+
+        while item is not None:
+            collated.append(item)
+            combined_ids = next_ids
+            _, batch_meta = item
+
+            # Start async transfer of next batch (overlaps with forward pass below)
+            item = queue.get()
+            if item is not None:
+                next_ids = transfer(item[0])
 
             losses, predictions = forward_model(model, combined_ids)
 
@@ -352,6 +443,8 @@ def evaluate_task(model, data, device, batch_size=4, queue_size=2, prepared=None
                 )
                 correct[idx] = float(is_correct)
                 offset += n
+            if pbar is not None:
+                pbar.update(len(batch_meta))
 
         collator.join()
         del prepared
