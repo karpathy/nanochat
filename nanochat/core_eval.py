@@ -326,24 +326,29 @@ def _forward_batches(model, collated, data, device, pbar=None):
 
 
 def _forward_all_cached(model, task_collated, device, pbar=None, task_labels=None,
-                        on_task_done=None, merge=1, split=1, pad_token_id=0):
+                        on_task_done=None, batched=False, merge=1, split=1, pad_token_id=0):
     """Run all tasks' cached batches through the model in one pass.
 
     All batch tensors are moved to device upfront (~144MB for full CORE eval).
     If tensors are already on device (caller preloaded), .to() is a no-op.
-    Composition (merge/split) happens entirely on device:
+
+    Default mode (batched=False): forwards each example individually, trimming
+    collation padding to recover the exact per-example tensor shape. This
+    guarantees identical results to sequential per-example evaluation.
+
+    Batched mode (batched=True): forwards collated batches with optional GPU
+    composition. Faster but may produce tiny FP differences vs sequential eval
+    due to different cuBLAS kernel paths for different matrix dimensions.
     - merge > 1: pad+cat consecutive base batches on GPU before forwarding.
-    - split > 1: slice each group into chunks by example boundaries,
-      forward each chunk separately.
+    - split > 1: slice each group into chunks by example boundaries.
 
     Args:
         task_collated: list of (collated_batches, data) per task
-        pbar: optional progress bar, updated per forward pass (by number of examples)
+        pbar: optional progress bar, updated per example (or per batch chunk)
         task_labels: optional list of task names for pbar description updates
         on_task_done: optional callback(task_idx, correct_tensor) fired when a task completes
-        merge: number of consecutive base batches to compose per group (>= 1)
-        split: number of forward passes to split each group into (>= 1)
-        pad_token_id: token id used for padding when merging batches of different lengths
+        batched: if True, forward whole batches (faster, approximate). Default False (exact).
+        merge/split/pad_token_id: only used when batched=True
     Returns:
         list of correct tensors (one per task, on device)
     """
@@ -362,76 +367,103 @@ def _forward_all_cached(model, task_collated, device, pbar=None, task_labels=Non
 
     task_batches_remaining = list(task_batch_counts)
     current_task = -1
-    buffer_ids = []
-    buffer_info = []
 
-    for i, (combined_ids, batch_meta, task_idx) in enumerate(flat_stream):
-        # Update pbar description on task transition
-        if task_idx != current_task:
-            current_task = task_idx
-            if pbar is not None and task_labels is not None:
-                pbar.set_description(task_labels[task_idx])
-        buffer_ids.append(combined_ids)
-        buffer_info.append((batch_meta, task_idx))
-
-        # Accumulate until we have `merge` batches (or hit the end)
-        if len(buffer_ids) < merge and i < len(flat_stream) - 1:
-            continue
-
-        # GPU compose: pad+cat if multiple batches, otherwise use as-is
-        if len(buffer_ids) == 1:
-            mega_ids = buffer_ids[0]
-        else:
-            max_len = max(t.shape[1] for t in buffer_ids)
-            parts = []
-            for t in buffer_ids:
-                if t.shape[1] < max_len:
-                    pad = torch.full((t.shape[0], max_len - t.shape[1]), pad_token_id,
-                                     dtype=t.dtype, device=t.device)
-                    t = torch.cat([t, pad], dim=1)
-                parts.append(t)
-            mega_ids = torch.cat(parts, dim=0)
-
-        # Flatten examples with row boundaries (for splitting)
-        examples = []
-        row_bounds = [0]
-        for bm, tidx in buffer_info:
-            for idx, n, start_idxs, end_idxs, gold, task_type in bm:
-                examples.append((idx, n, start_idxs, end_idxs, gold, task_type, tidx))
-                row_bounds.append(row_bounds[-1] + n)
-
-        # Forward + score (with optional GPU split)
-        n_ex = len(examples)
-        chunk_size = -(-n_ex // split)  # ceiling division
-
-        for cs in range(0, n_ex, chunk_size):
-            ce = min(cs + chunk_size, n_ex)
-            chunk = examples[cs:ce]
-            chunk_ids = mega_ids[row_bounds[cs]:row_bounds[ce]]
-
-            losses, predictions = forward_model(model, chunk_ids)
+    if not batched:
+        # Per-example forwarding: identical results to sequential evaluation.
+        # Each example's rows are trimmed to their original seq_len (= max(end_idxs)),
+        # removing collation padding so forward_model sees the same tensor shape as
+        # the sequential path.
+        for combined_ids, batch_meta, task_idx in flat_stream:
+            if task_idx != current_task:
+                current_task = task_idx
+                if pbar is not None and task_labels is not None:
+                    pbar.set_description(task_labels[task_idx])
 
             offset = 0
-            for idx, n, start_idxs, end_idxs, gold, task_type, tidx in chunk:
+            for idx, n, start_idxs, end_idxs, gold, task_type in batch_meta:
+                seq_len = max(end_idxs)
+                example_ids = combined_ids[offset:offset+n, :seq_len]
+                losses, predictions = forward_model(model, example_ids)
                 is_correct = check_result(
-                    losses[offset:offset+n], predictions[offset:offset+n],
-                    chunk_ids[offset:offset+n],
+                    losses, predictions, example_ids,
                     start_idxs, end_idxs, gold, task_type,
                 )
-                correct[tidx][idx] = float(is_correct)
+                correct[task_idx][idx] = float(is_correct)
                 offset += n
+
             if pbar is not None:
-                pbar.update(len(chunk))
+                pbar.update(len(batch_meta))
+            if on_task_done is not None:
+                task_batches_remaining[task_idx] -= 1
+                if task_batches_remaining[task_idx] == 0:
+                    on_task_done(task_idx, correct[task_idx])
+    else:
+        # Batched forwarding with optional merge/split composition.
+        buffer_ids = []
+        buffer_info = []
 
-        # Fire callback for any tasks that just completed all their batches
-        if on_task_done is not None:
+        for i, (combined_ids, batch_meta, task_idx) in enumerate(flat_stream):
+            if task_idx != current_task:
+                current_task = task_idx
+                if pbar is not None and task_labels is not None:
+                    pbar.set_description(task_labels[task_idx])
+            buffer_ids.append(combined_ids)
+            buffer_info.append((batch_meta, task_idx))
+
+            if len(buffer_ids) < merge and i < len(flat_stream) - 1:
+                continue
+
+            # GPU compose: pad+cat if multiple batches, otherwise use as-is
+            if len(buffer_ids) == 1:
+                mega_ids = buffer_ids[0]
+            else:
+                max_len = max(t.shape[1] for t in buffer_ids)
+                parts = []
+                for t in buffer_ids:
+                    if t.shape[1] < max_len:
+                        pad = torch.full((t.shape[0], max_len - t.shape[1]), pad_token_id,
+                                         dtype=t.dtype, device=t.device)
+                        t = torch.cat([t, pad], dim=1)
+                    parts.append(t)
+                mega_ids = torch.cat(parts, dim=0)
+
+            examples = []
+            row_bounds = [0]
             for bm, tidx in buffer_info:
-                task_batches_remaining[tidx] -= 1
-                if task_batches_remaining[tidx] == 0:
-                    on_task_done(tidx, correct[tidx])
+                for idx, n, start_idxs, end_idxs, gold, task_type in bm:
+                    examples.append((idx, n, start_idxs, end_idxs, gold, task_type, tidx))
+                    row_bounds.append(row_bounds[-1] + n)
 
-        buffer_ids.clear()
-        buffer_info.clear()
+            n_ex = len(examples)
+            chunk_size = -(-n_ex // split)
+
+            for cs in range(0, n_ex, chunk_size):
+                ce = min(cs + chunk_size, n_ex)
+                chunk = examples[cs:ce]
+                chunk_ids = mega_ids[row_bounds[cs]:row_bounds[ce]]
+
+                losses, predictions = forward_model(model, chunk_ids)
+
+                offset = 0
+                for idx, n, start_idxs, end_idxs, gold, task_type, tidx in chunk:
+                    is_correct = check_result(
+                        losses[offset:offset+n], predictions[offset:offset+n],
+                        chunk_ids[offset:offset+n],
+                        start_idxs, end_idxs, gold, task_type,
+                    )
+                    correct[tidx][idx] = float(is_correct)
+                    offset += n
+                if pbar is not None:
+                    pbar.update(len(chunk))
+
+            if on_task_done is not None:
+                for bm, tidx in buffer_info:
+                    task_batches_remaining[tidx] -= 1
+                    if task_batches_remaining[tidx] == 0:
+                        on_task_done(tidx, correct[tidx])
+
+            buffer_ids.clear()
+            buffer_info.clear()
 
     return correct
 

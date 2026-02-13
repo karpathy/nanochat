@@ -244,12 +244,15 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
         _print_task_result(tidx, correct.mean().item())
 
     if cached_run:
-        # Continuous pipeline: all tasks in one GPU stream, results printed per-task as they complete
+        # Continuous pipeline: all tasks in one GPU stream, results printed per-task as they complete.
+        # Always use base batch size (merge=1/split=1) to guarantee identical results —
+        # different batch dimensions trigger different cuBLAS kernels with different FP rounding.
         t0 = time.time()
         task_collated = [(_batch_cache[label], data) for label, _, data in task_inputs]
         correct_list = _forward_all_cached(
             model, task_collated, device, pbar=pbar, task_labels=task_labels,
             on_task_done=_on_task_done if world_size == 1 else None,
+            batched=True,
         )
         elapsed_total = time.time() - t0
         pbar.close()

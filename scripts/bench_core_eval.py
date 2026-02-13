@@ -271,17 +271,19 @@ def bench_new_first(model, tokenizer, task_inputs, device, batch_size, queue_siz
 
 
 def bench_new_cached(model, task_inputs, device, collated_cache, pbar=None,
-                     merge=1, split=1, pad_token_id=0):
+                     batched=False, merge=1, split=1, pad_token_id=0):
     """Benchmark new batched evaluation (cached run, forward only).
     Uses continuous pipeline across all tasks to eliminate inter-task stalls.
-    merge/split control GPU-side composition: merge > 1 cats batches, split > 1 slices them."""
+    batched=False (default): per-example forwarding, identical to sequential.
+    batched=True: GPU composition with merge/split for speed experiments."""
     import torch.distributed as dist
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     sync_cuda()
     t0 = time.time()
     task_collated = [(collated_cache[label], data) for label, _, data in task_inputs]
     correct_list = _forward_all_cached(model, task_collated, device, pbar=pbar,
-                                       merge=merge, split=split, pad_token_id=pad_token_id)
+                                       batched=batched, merge=merge, split=split,
+                                       pad_token_id=pad_token_id)
     sync_cuda()
     elapsed = time.time() - t0
     results = {}
@@ -477,8 +479,8 @@ def main():
 
         with autocast_ctx:
             t, cached_results = bench_new_cached(model, task_inputs, device, gpu_collated,
-                                                 pbar=inner_pbar, merge=merge, split=split,
-                                                 pad_token_id=pad_id)
+                                                 pbar=inner_pbar, batched=True,
+                                                 merge=merge, split=split, pad_token_id=pad_id)
 
         outer_pbar.write(f"  batch_size={bs:>3}:  {t:.2f}s  ({total_examples / t:.1f} examples/s)")
         outer_pbar.update(1)
@@ -493,8 +495,14 @@ def main():
     print0("")
     print0(f"  Best: batch_size={best_cached_params} -> {best_cached_time:.2f}s  ({total_examples / best_cached_time:.1f} examples/s)")
 
-    if old_results is not None:
-        verify_results(old_results, best_cached_results, label="new-cached")
+    # Verify with per-example forwarding (identical to sequential — must match old)
+    inner_pbar = tqdm(total=total_examples, desc="Verifying", leave=False)
+    with autocast_ctx:
+        _, exact_results = bench_new_cached(model, task_inputs, device, gpu_collated, pbar=inner_pbar)
+    inner_pbar.close()
+    ref_results = old_results or (best_first_results if best_time is not None else None)
+    if ref_results is not None:
+        verify_results(ref_results, exact_results, label="new-cached(per-example)")
     print0("")
 
     # ---- Summary ----
