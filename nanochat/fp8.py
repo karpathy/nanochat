@@ -271,6 +271,7 @@ class _Float8MatmulND(torch.autograd.Function):
         return grad_input, grad_weight
 
 
+
 class Float8Linear(nn.Linear):
     """Drop-in nn.Linear replacement that does FP8 compute.
 
