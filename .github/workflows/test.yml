@@ -32,7 +32,6 @@ jobs:
     - name: Install dependencies with uv
       run: |
         uv sync --extra cpu 
-        uv pip install transformers>=4.0.0
 
     - name: Add nanochat to PYTHONPATH (Unix)
       run: |
