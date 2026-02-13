@@ -2,7 +2,7 @@
 Unified Flash Attention interface with automatic FA3/SDPA switching.
 
 Exports `flash_attn` module that matches the FA3 API exactly, but falls back
-to PyTorch SDPA on non-Hopper GPUs, MPS, and CPU.
+to PyTorch SDPA on non-Hopper GPUs (including Blackwell), MPS, and CPU.
 
 Usage (drop-in replacement for FA3):
     from nanochat.flash_attention import flash_attn
@@ -21,12 +21,14 @@ import torch.nn.functional as F
 # Detection: Try to load FA3 on Hopper+ GPUs
 # =============================================================================
 def _load_flash_attention_3():
-    """Try to load Flash Attention 3 (requires Hopper+ GPU)."""
+    """Try to load Flash Attention 3 (requires Hopper GPU, sm90)."""
     if not torch.cuda.is_available():
         return None
     try:
         major, _ = torch.cuda.get_device_capability()
-        if major < 9:  # Hopper is sm90
+        # FA3 kernels are compiled for Hopper (sm90) only
+        # Ada (sm89), Blackwell (sm100) need SDPA fallback until FA3 is recompiled
+        if major != 9:
             return None
         import os
         os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
@@ -71,26 +73,25 @@ def _sdpa_attention(q, k, v, window_size, enable_gqa):
 
     # Single token generation
     if Tq == 1:
+        if window >= 0 and window < Tk:
+            # window is "left" tokens we need to include (window + 1) keys total
+            start = max(0, Tk - (window + 1))
+            k = k[:, :, start:, :]
+            v = v[:, :, start:, :]
         return F.scaled_dot_product_attention(q, k, v, is_causal=False, enable_gqa=enable_gqa)
 
-    # Need explicit mask
+    # Need explicit mask for sliding window/chunk inference
     device = q.device
-    if Tq == Tk:
-        # Causal + sliding window
-        mask = torch.tril(torch.ones(Tq, Tk, device=device, dtype=torch.bool))
-        if window > 0 and window < Tq:
-            row_idx = torch.arange(Tq, device=device).unsqueeze(1)
-            col_idx = torch.arange(Tk, device=device).unsqueeze(0)
-            mask = mask & ((row_idx - col_idx) <= window)
-    else:
-        # Chunk inference: attend to prefix + causal within chunk
-        prefix_len = Tk - Tq
-        mask = torch.zeros(Tq, Tk, device=device, dtype=torch.bool)
-        mask[:, :prefix_len] = True
-        mask[:, prefix_len:] = torch.tril(torch.ones(Tq, Tq, device=device, dtype=torch.bool))
+    # For chunk inference (Tq != Tk), is_causal is not aligned to cache position => build an explicit bool mask
+    row_idx = (Tk - Tq) + torch.arange(Tq, device=device).unsqueeze(1)
+    col_idx = torch.arange(Tk, device=device).unsqueeze(0)
+    mask = col_idx <= row_idx
 
+    # sliding window (left)
+    if window >= 0 and window < Tk:
+        mask = mask & ((row_idx - col_idx) <= window)
+    
     return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, enable_gqa=enable_gqa)
-
 
 # =============================================================================
 # Public API: Same interface as FA3
