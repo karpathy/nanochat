@@ -6,7 +6,7 @@ simpler and more similar to just REINFORCE:
 
 1) Delete trust region, so there is no KL regularization to a reference model
 2) We are on policy, so there's no need for PPO ratio+clip.
-3) We use GAPO style normalization that is token-level, not sequence-level.
+3) We use DAPO style normalization that is token-level, not sequence-level.
 4) Instead of z-score normalization (r - mu)/sigma, only use (r - mu) as the advantage.
 
 1 GPU:
@@ -19,7 +19,6 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
 import argparse
 import os
 import itertools
-import re
 import wandb
 import torch
 import torch.distributed as dist
@@ -36,32 +35,31 @@ parser = argparse.ArgumentParser(description="Reinforcement learning on GSM8K")
 # Logging
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
 # Runtime
-parser.add_argument("--device_type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 parser.add_argument("--dtype", type=str, default="bfloat16", help="float32|bfloat16")
 # Model loading
-parser.add_argument("--source", type=str, default="sft", help="mid|sft - which checkpoint to load from")
-parser.add_argument("--model_tag", type=str, default=None, help="model tag to load from")
-parser.add_argument("--model_step", type=int, default=None, help="model step to load from")
+parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
+parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
 # Training horizon
-parser.add_argument("--num_epochs", type=int, default=1, help="number of epochs over GSM8K")
+parser.add_argument("--num-epochs", type=int, default=1, help="number of epochs over GSM8K")
 # Batch sizes / sampling
-parser.add_argument("--device_batch_size", type=int, default=8, help="max batch size per forward pass")
-parser.add_argument("--examples_per_step", type=int, default=16, help="total examples per optimization step across all ranks")
-parser.add_argument("--num_samples", type=int, default=16, help="number of samples per example/question")
+parser.add_argument("--device-batch-size", type=int, default=8, help="max batch size per forward pass")
+parser.add_argument("--examples-per-step", type=int, default=16, help="total examples per optimization step across all ranks")
+parser.add_argument("--num-samples", type=int, default=16, help="number of samples per example/question")
 # Generation
-parser.add_argument("--max_new_tokens", type=int, default=256, help="max tokens to generate per sample")
+parser.add_argument("--max-new-tokens", type=int, default=256, help="max tokens to generate per sample")
 parser.add_argument("--temperature", type=float, default=1.0, help="sampling temperature")
-parser.add_argument("--top_k", type=int, default=50, help="top-k sampling (0 = disabled)")
+parser.add_argument("--top-k", type=int, default=50, help="top-k sampling (0 = disabled)")
 # Optimization
-parser.add_argument("--embedding_lr", type=float, default=0.2, help="learning rate for embedding parameters (Adam)")
-parser.add_argument("--unembedding_lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
-parser.add_argument("--matrix_lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
-parser.add_argument("--weight_decay", type=float, default=0.0, help="weight decay for embedding/unembedding parameters (Adam)")
-parser.add_argument("--init_lr_frac", type=float, default=0.05, help="initial LR as fraction of base LR")
+parser.add_argument("--embedding-lr", type=float, default=0.2, help="learning rate for embedding parameters (Adam)")
+parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
+parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
+parser.add_argument("--weight-decay", type=float, default=0.0, help="weight decay for embedding/unembedding parameters (Adam)")
+parser.add_argument("--init-lr-frac", type=float, default=0.05, help="initial LR as fraction of base LR")
 # Evaluation / checkpointing
-parser.add_argument("--eval_every", type=int, default=60, help="evaluate pass@k every N steps")
-parser.add_argument("--eval_examples", type=int, default=400, help="number of examples for pass@k evaluation")
-parser.add_argument("--save_every", type=int, default=60, help="save checkpoint every N steps")
+parser.add_argument("--eval-every", type=int, default=60, help="evaluate pass@k every N steps")
+parser.add_argument("--eval-examples", type=int, default=400, help="number of examples for pass@k evaluation")
+parser.add_argument("--save-every", type=int, default=60, help="save checkpoint every N steps")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
@@ -78,7 +76,7 @@ use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl", name=args.run, config=user_config)
 
 # Init model and tokenizer
-model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.model_step)
+model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
 engine = Engine(model, tokenizer) # for sampling rollouts
 
 # -----------------------------------------------------------------------------
@@ -174,7 +172,7 @@ def run_gsm8k_eval(task, tokenizer, engine,
         tokens = tokenizer.render_for_completion(conversation)
         prefix_length = len(tokens)
         # Generate k samples using batched generation inside the Engine
-        assert num_samples <= device_batch_size # usually this is true. we can add a loop if not...
+        assert num_samples <= args.device_batch_size # usually this is true. we can add a loop if not...
         generated_token_sequences, masks = engine.generate_batch(
             tokens,
             num_samples=num_samples,
@@ -202,7 +200,7 @@ def run_gsm8k_eval(task, tokenizer, engine,
 # Training loop
 
 # Init the optimizer
-optimizers = model.setup_optimizers(
+optimizer = model.setup_optimizer(
     unembedding_lr=args.unembedding_lr,
     embedding_lr=args.embedding_lr,
     matrix_lr=args.matrix_lr,
@@ -210,10 +208,9 @@ optimizers = model.setup_optimizers(
 )
 
 # Set the initial learning rate as a fraction of the base learning rate
-for opt in optimizers:
-    for group in opt.param_groups:
-        group["lr"] = group["lr"] * args.init_lr_frac
-        group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
+for group in optimizer.param_groups:
+    group["lr"] = group["lr"] * args.init_lr_frac
+    group["initial_lr"] = group["lr"]
 
 # Learning rate scheduler: simple rampdown to zero over num_steps
 def get_lr_multiplier(it):
@@ -306,11 +303,9 @@ for step in range(num_steps):
 
     # Update the model parameters
     lrm = get_lr_multiplier(step)
-    for opt in optimizers: # first set the learning rate
-        for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * lrm
-    for opt in optimizers: # then step the optimizers
-        opt.step()
+    for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
+    optimizer.step()
     model.zero_grad(set_to_none=True)
     wandb_run.log({
         "step": step,

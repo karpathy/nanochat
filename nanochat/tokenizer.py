@@ -26,7 +26,7 @@ SPECIAL_TOKENS = [
 
 # NOTE: this split pattern deviates from GPT-4 in that we use \p{N}{1,2} instead of \p{N}{1,3}
 # I did this because I didn't want to "waste" too many tokens on numbers for smaller vocab sizes.
-# I haven't validated that this is actually a good idea, TODO.
+# I verified that 2 is the sweet spot for vocab size of 32K. 1 is a bit worse, 3 was worse still.
 SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
 
 # -----------------------------------------------------------------------------
@@ -103,9 +103,10 @@ class HuggingFaceTokenizer:
     def id_to_token(self, id):
         return self.tokenizer.id_to_token(id)
 
-    def _encode_one(self, text, prepend=None, append=None):
+    def _encode_one(self, text, prepend=None, append=None, num_threads=None):
         # encode a single string
         # prepend/append can be either a string of a special token or a token id directly.
+        # num_threads is ignored (only used by the nanochat Tokenizer for parallel encoding)
         assert isinstance(text, str)
         ids = []
         if prepend is not None:

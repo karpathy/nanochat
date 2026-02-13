@@ -39,13 +39,9 @@ class MockModel:
     def forward(self, ids, kv_cache=None):
         """Return uniform logits so sampling is spread across vocab."""
         B, T = ids.shape
-        # Simulate what a real transformer does: insert k,v into the cache for each layer
+        # With FA3, flash_attn_with_kvcache updates cache in-place and we advance position
         if kv_cache is not None:
-            head_dim = self.config.n_embd // self.config.n_head
-            for layer_idx in range(self.config.n_layer):
-                k = torch.zeros(B, self.config.n_kv_head, T, head_dim)
-                v = torch.zeros(B, self.config.n_kv_head, T, head_dim)
-                kv_cache.insert_kv(layer_idx, k, v)
+            kv_cache.advance(T)
         # Uniform logits -> equal probability for all tokens
         logits = torch.zeros(B, T, self.vocab_size)
         return logits
@@ -85,16 +81,11 @@ class ByteTokenizer:
         byte_tokens = [t for t in tokens if t < 256]
         return bytes(byte_tokens).decode("utf-8", errors="replace")
 
-def test_kv_cache_resize():
-    """
-    The KV cache was not resized correctly, more information here:
-    https://github.com/karpathy/nanochat/pull/186
-    This test reproduces the issue and will be merged alongside the fix.
-    """
-
+def test_kv_cache_basic():
+    """Test basic KVCache functionality for FA3."""
     batch_size = 2
     num_heads = 3
-    seq_len = 4
+    seq_len = 64
     head_dim = 5
     num_layers = 6
 
@@ -103,45 +94,65 @@ def test_kv_cache_resize():
         num_heads=num_heads,
         seq_len=seq_len,
         head_dim=head_dim,
-        num_layers=num_layers
+        num_layers=num_layers,
+        device="cpu",
+        dtype=torch.float32,
     )
 
-    # Insert a single token with a distinct fill value to all layers
-    def insert_token(token_idx):
-        for layer_idx in range(num_layers):
-            k = torch.full((batch_size, num_heads, 1, head_dim), fill_value=float(token_idx), dtype=torch.float32)
-            v = torch.full((batch_size, num_heads, 1, head_dim), fill_value=float(token_idx * 100), dtype=torch.float32)
-            kv_cache.insert_kv(layer_idx, k, v)
+    # Check initial state
+    assert kv_cache.get_pos() == 0
+    assert kv_cache.k_cache.shape == (num_layers, batch_size, seq_len, num_heads, head_dim)
+    assert kv_cache.v_cache.shape == (num_layers, batch_size, seq_len, num_heads, head_dim)
 
-    # Insert 4 tokens (fills the initial seq_len=4)
-    for i in range(4):
-        insert_token(i)
+    # Test advance
+    kv_cache.advance(10)
+    assert kv_cache.get_pos() == 10
 
-    # Record the original state of the cache
-    original_cache = kv_cache.kv_cache.clone()
-    original_seq_len = original_cache.shape[4]
+    kv_cache.advance(5)
+    assert kv_cache.get_pos() == 15
 
-    # Insert the 5th token, which will trigger a resize
-    insert_token(4)
-    # Verify that the cache actually resized
-    new_seq_len = kv_cache.kv_cache.shape[4]
-    assert new_seq_len > original_seq_len, f"Cache did not resize: original seq_len={original_seq_len}, new seq_len={new_seq_len}"
+    # Test reset
+    kv_cache.reset()
+    assert kv_cache.get_pos() == 0
 
-    # Verify that the original 4 tokens are still intact after resize
-    for layer_idx in range(num_layers):
-        for token_idx in range(4):
-            # Check that resized cache matches expected values
-            expected_k = float(token_idx)
-            expected_v = float(token_idx * 100)
-            actual_k = kv_cache.kv_cache[layer_idx, 0, :, :, token_idx, :]
-            actual_v = kv_cache.kv_cache[layer_idx, 1, :, :, token_idx, :]
-            assert (actual_k == expected_k).all(), f"Layer {layer_idx}, token {token_idx}: key corrupted, expected {expected_k}"
-            assert (actual_v == expected_v).all(), f"Layer {layer_idx}, token {token_idx}: value corrupted, expected {expected_v}"
-            # And that the original cache matches resized cache
-            original_k = original_cache[layer_idx, 0, :, :, token_idx, :]
-            original_v = original_cache[layer_idx, 1, :, :, token_idx, :]
-            assert (actual_k == original_k).all(), f"Layer {layer_idx}, token {token_idx}: key doesn't match original"
-            assert (actual_v == original_v).all(), f"Layer {layer_idx}, token {token_idx}: value doesn't match original"
+    # Test get_layer_cache returns correct views
+    k_layer0, v_layer0 = kv_cache.get_layer_cache(0)
+    assert k_layer0.shape == (batch_size, seq_len, num_heads, head_dim)
+    assert v_layer0.shape == (batch_size, seq_len, num_heads, head_dim)
+
+
+def test_kv_cache_prefill():
+    """Test KVCache.prefill() copies data correctly."""
+    batch_size = 1
+    num_heads = 4
+    head_dim = 8
+    num_layers = 2
+
+    # Create source cache and advance it
+    src_cache = KVCache(
+        batch_size=batch_size, num_heads=num_heads, seq_len=32,
+        head_dim=head_dim, num_layers=num_layers, device="cpu", dtype=torch.float32,
+    )
+    # Write some data to source cache
+    src_cache.k_cache[0, 0, :16, :, :] = 1.0
+    src_cache.v_cache[0, 0, :16, :, :] = 2.0
+    src_cache.advance(16)
+
+    # Create destination cache with larger seq_len
+    dst_cache = KVCache(
+        batch_size=batch_size, num_heads=num_heads, seq_len=64,
+        head_dim=head_dim, num_layers=num_layers, device="cpu", dtype=torch.float32,
+    )
+
+    # Prefill
+    dst_cache.prefill(src_cache)
+
+    # Check position was copied
+    assert dst_cache.get_pos() == 16
+
+    # Check data was copied
+    assert (dst_cache.k_cache[0, 0, :16, :, :] == 1.0).all()
+    assert (dst_cache.v_cache[0, 0, :16, :, :] == 2.0).all()
 
 
 def test_multi_sample_first_token_diversity():
@@ -185,3 +196,72 @@ def test_multi_sample_first_token_diversity():
         f"With uniform logits, this is statistically impossible (~10^-36 probability) "
         f"unless tokens are being broadcast instead of independently sampled."
     )
+
+
+def test_seed_reproducibility():
+    """Same seed must produce identical output."""
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+    prompt = [261, 72, 101, 108, 108, 111]  # <bos> + "Hello"
+
+    for seed in [1, 42, 123, 999]:
+        r1, _ = engine.generate_batch(prompt, max_tokens=5, seed=seed)
+        r2, _ = engine.generate_batch(prompt, max_tokens=5, seed=seed)
+        r3, _ = engine.generate_batch(prompt, max_tokens=5, seed=seed)
+        assert r1 == r2 == r3, "Same seed must produce identical output for the same prompt."
+
+
+def test_temperature_zero_determinism():
+    """Temperature=0 is deterministic regardless of seed."""
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+    prompt = [261, 72, 101, 108, 108, 111]
+
+    r1, _ = engine.generate_batch(prompt, temperature=0.0, max_tokens=5, seed=1)
+    r2, _ = engine.generate_batch(prompt, temperature=0.0, max_tokens=5, seed=42)
+    r3, _ = engine.generate_batch(prompt, temperature=0.0, max_tokens=5, seed=123)
+    assert r1 == r2 == r3, "Temperature=0 must result in the same output for the same prompt regardless of seed."
+
+
+def test_max_tokens_respected():
+    """Generation stops at max_tokens limit."""
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+    prompt = [261, 72, 101, 108, 108, 111]
+
+    for max_tokens in [1, 4, 16, 64]:
+        results, _ = engine.generate_batch(prompt, max_tokens=max_tokens)
+        num_generated_tokens = len(results[0]) - len(prompt)
+        assert num_generated_tokens <= max_tokens, f"Generated {num_generated_tokens} tokens, expected max_tokens={max_tokens} or less."
+
+
+def test_num_samples_count():
+    """num_samples=N produces exactly N sequences."""
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+    prompt = [261, 72, 101, 108, 108, 111]
+
+    for num_samples in [1, 4, 16, 64]:
+        results, _ = engine.generate_batch(prompt, num_samples=num_samples, max_tokens=3)
+        assert len(results) == num_samples, f"Expected {num_samples} sequences from {num_samples} samples, got {len(results)}"
+
+
+def test_different_seeds_introduce_variation_when_temperature_nonzero():
+    """With temperature > 0, different seeds should introduce sampling variation."""
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+    prompt = [261, 72, 101, 108, 108, 111]  # <bos> + "Hello"
+
+    outputs = set()
+
+    for seed in [1, 42, 123, 999, 1000, 1001, 1002, 1003, 1004, 1005]:
+        results, _ = engine.generate_batch(
+            prompt,
+            temperature=1.0,
+            max_tokens=5,
+            seed=seed,
+        )
+        outputs.add(tuple(results[0]))
+
+    # Sanity check: sampling actually introduces variation
+    assert len(outputs) > 1, "All seeds produced the same output which is statistically highly improbable."
