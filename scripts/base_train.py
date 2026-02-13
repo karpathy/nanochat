@@ -165,7 +165,9 @@ if args.fp8:
     if device_type != "cuda":
         print0("Warning: FP8 training requires CUDA, ignoring --fp8 flag")
     else:
-        from torchao.float8 import Float8LinearConfig, convert_to_float8_training
+        # our custom fp8 is simpler than torchao, written for exact API compatibility
+        from nanochat.fp8 import Float8LinearConfig, convert_to_float8_training
+        # from torchao.float8 import Float8LinearConfig, convert_to_float8_training
         import torch.nn as nn
 
         # Filter: only convert layers with dimensions divisible by 16 (FP8 hardware requirement)
@@ -529,7 +531,7 @@ while True:
     else:
         eta_str = ""
     epoch = dataloader_state_dict["epoch"]
-    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
     if step % 100 == 0:
         log_data = {
             "step": step,
