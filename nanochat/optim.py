@@ -67,6 +67,10 @@ Polar Express Sign Method for orthogonalization.
 https://arxiv.org/pdf/2505.16932
 by Noah Amsel, David Persson, Christopher Musco, Robert M. Gower.
 
+NorMuon variance reduction: per-neuron/column adaptive learning rate that normalizes
+update scales after orthogonalization (Muon's output has non-uniform scales across neurons).
+https://arxiv.org/pdf/2510.05491
+
 Some of the changes in nanochat implementation:
 - Uses a simpler, more general approach to parameter grouping and stacking
 - Uses a single fused kernel for the momentum -> polar_express -> variance_reduction -> update step
@@ -517,6 +521,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
                 param_infos[p] = dict(future=future, grad_slice=grad, is_small=True)
             else:
                 # Large params: reduce_scatter
+                assert grad.shape[0] % world_size == 0, f"AdamW reduce_scatter requires shape[0] ({grad.shape[0]}) divisible by world_size ({world_size})"
                 rank_size = grad.shape[0] // world_size
                 grad_slice = torch.empty_like(grad[:rank_size])
                 future = dist.reduce_scatter_tensor(grad_slice, grad, op=dist.ReduceOp.AVG, async_op=True).get_future()

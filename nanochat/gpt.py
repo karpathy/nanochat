@@ -27,6 +27,12 @@ from nanochat.optim import MuonAdamW, DistMuonAdamW
 # Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
 from nanochat.flash_attention import flash_attn
 
+# FP8 imports (optional) — needed by reparam_linear for FP8 path
+try:
+    from torchao.float8.float8_linear import matmul_with_hp_or_float8_args
+except ImportError:
+    pass
+
 @dataclass
 class GPTConfig:
     sequence_len: int = 2048
@@ -44,6 +50,26 @@ class GPTConfig:
 def norm(x):
     # Purely functional RMSNorm with no learnable params
     return F.rms_norm(x, (x.size(-1),))
+
+
+def reparam_linear(module, x, gamma=None, scalar=None):
+    """Linear with gamma/scalar folded into weight. Works with both nn.Linear and Float8Linear.
+
+    gamma: RMSNorm learnable weight, folded into input dim of W  (w = w * gamma[None, :])
+    scalar: projection scalar, folded into output dim of W       (w = scalar[:, None] * w)
+
+    For FP8, dispatches through Float8Linear's internal matmul to preserve FP8 tensor cores.
+    """
+    w = module.weight
+    if gamma is not None:
+        w = w * gamma[None, :]
+    if scalar is not None:
+        w = scalar[:, None] * w
+    # FP8 path: use Float8Linear's internal matmul to preserve FP8 tensor cores
+    if hasattr(module, 'linear_mm_config'):
+        return matmul_with_hp_or_float8_args.apply(x, w.t(), module.linear_mm_config, module.config)
+    # BF16 path
+    return F.linear(x, w)
 
 
 def has_ve(layer_idx, n_layer):
@@ -74,21 +100,22 @@ class CausalSelfAttention(nn.Module):
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
         self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        self.v_proj_scalar = nn.Parameter(torch.zeros(self.n_kv_head)) if has_ve(layer_idx, config.n_layer) else None
         self.c_proj_scalar = nn.Parameter(torch.zeros(config.n_embd))
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         B, T, C = x.size()
 
-        # Project the input to get queries, keys, and values
+        # Project the input to get queries, keys, and values (gamma folded into weights)
         # Shape: (B, T, H, D) - FA3's native layout, no transpose needed!
-        q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
-        k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
-        v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
+        q = reparam_linear(self.c_q, x).view(B, T, self.n_head, self.head_dim)
+        k = reparam_linear(self.c_k, x).view(B, T, self.n_kv_head, self.head_dim)
+        v = reparam_linear(self.c_v, x).view(B, T, self.n_kv_head, self.head_dim)
 
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
             ve = ve.view(B, T, self.n_kv_head, self.head_dim)
-            gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))  # (B, T, n_kv_head), range (0, 2)
+            gate = 2 * torch.sigmoid(reparam_linear(self.ve_gate, x[..., :self.ve_gate_channels], scalar=self.v_proj_scalar))  # (B, T, n_kv_head), range (0, 2)
             v = v + gate.unsqueeze(-1) * ve
 
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
@@ -115,10 +142,9 @@ class CausalSelfAttention(nn.Module):
             if self.layer_idx == kv_cache.n_layers - 1:
                 kv_cache.advance(T)
 
-        # Re-assemble the heads and project back to residual stream
+        # Re-assemble the heads and project back to residual stream (scalar folded into weight)
         y = y.contiguous().view(B, T, -1)
-        y = self.c_proj(y)
-        y = y * self.c_proj_scalar
+        y = reparam_linear(self.c_proj, y, scalar=self.c_proj_scalar)
         return y
 
 
@@ -130,24 +156,21 @@ class MLP(nn.Module):
         self.c_proj_scalar = nn.Parameter(torch.zeros(config.n_embd))
 
     def forward(self, x):
-        x = self.c_fc(x)
+        x = reparam_linear(self.c_fc, x)
         x = F.relu(x).square()
-        x = self.c_proj(x)
-        x = x * self.c_proj_scalar
+        x = reparam_linear(self.c_proj, x, scalar=self.c_proj_scalar)
         return x
 
 
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
-        self.attn_norm = nn.RMSNorm(config.n_embd)
         self.attn = CausalSelfAttention(config, layer_idx)
-        self.mlp_norm = nn.RMSNorm(config.n_embd)
         self.mlp = MLP(config)
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
-        x = x + self.attn(self.attn_norm(x), ve, cos_sin, window_size, kv_cache)
-        x = x + self.mlp(self.mlp_norm(x))
+        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
+        x = x + self.mlp(norm(x))
         return x
 
 
@@ -207,17 +230,11 @@ class GPT(nn.Module):
             attn.c_proj:     uniform, std=1/sqrt(n_embd)
             mlp.c_fc:        uniform, std=1/sqrt(n_embd)
             mlp.c_proj:      uniform, std=1/sqrt(n_embd)
-        nn.RMSNorm weight:   ones (via explicit init below)
         """
 
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
         torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
-
-        # nn.RMSNorm weight parameters: init to ones (must be explicit due to meta device)
-        for module in self.modules():
-            if isinstance(module, nn.RMSNorm):
-                module.weight.fill_(1.0)
 
         # Transformer blocks: uniform init with bound = sqrt(3) * std (same standard deviation as normal)
         n_embd = self.config.n_embd
@@ -238,26 +255,23 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             block.attn.c_proj_scalar.fill_(0.0)
             block.mlp.c_proj_scalar.fill_(0.0)
+            if block.attn.v_proj_scalar is not None:
+                block.attn.v_proj_scalar.fill_(0.0)
             if self.transformer.wte.weight.device.type == "cuda":
                 block.attn.c_proj_scalar.data = block.attn.c_proj_scalar.data.to(torch.bfloat16)
                 block.mlp.c_proj_scalar.data = block.mlp.c_proj_scalar.data.to(torch.bfloat16)
-
-        # Block RMSNorm weights (cast to bf16 for fused kernel)
-        for block in self.transformer.h:
-            block.attn_norm.weight.fill_(1.0)
-            block.mlp_norm.weight.fill_(1.0)
-            if self.transformer.wte.weight.device.type == "cuda":
-                block.attn_norm.to(dtype=torch.bfloat16)
-                block.mlp_norm.to(dtype=torch.bfloat16)
+                if block.attn.v_proj_scalar is not None:
+                    block.attn.v_proj_scalar.data = block.attn.v_proj_scalar.data.to(torch.bfloat16)
 
         # Value embeddings (init like c_v: uniform with same std)
         for ve in self.value_embeds.values():
             torch.nn.init.uniform_(ve.weight, -s, s)
 
-        # Gate weights init to uniform (avoid zero-norm params under Hyperball)
+        # Gate weights init to uniform (avoid zero-norm params under Hyperball, following mup)
+        s_ve_gate = 3 ** 0.5 * 32**-0.5
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
-                torch.nn.init.uniform_(block.attn.ve_gate.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.ve_gate.weight, -s_ve_gate, s_ve_gate)
 
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
@@ -378,7 +392,7 @@ class GPT(nn.Module):
             'total': total,
         }
 
-    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5, matrix_optimizer="muon"):
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5, norm_lr=0.1, matrix_optimizer="muon"):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
 
@@ -406,7 +420,7 @@ class GPT(nn.Module):
             dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
-            dict(kind='adamw', params=block_1d_params, lr=scalar_lr, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=block_1d_params, lr=norm_lr, betas=adam_betas, eps=1e-10, weight_decay=0.0),
         ]
         # Matrix params (Muon or Hyperball), grouped by shape for stacking
         if matrix_optimizer not in {"muon", "hyperball"}:
