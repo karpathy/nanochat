@@ -31,13 +31,14 @@ import zipfile
 import tempfile
 import argparse
 from contextlib import nullcontext
+from tqdm import tqdm
 
 import torch
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
 from nanochat.tokenizer import HuggingFaceTokenizer, get_token_bytes
 from nanochat.checkpoint_manager import load_model
-from nanochat.core_eval import evaluate_task, prepare_task_data
+from nanochat.core_eval import evaluate_task, prepare_task_data, _forward_all_cached
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
@@ -214,55 +215,91 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
 
     first_run = not cached_run  # track whether we did prepare+collate (for disk save)
 
-    if not cached_run:
-        executor = ThreadPoolExecutor(max_workers=1)
-        first_uncached = next(i for i, (l, _, _) in enumerate(task_inputs) if l not in _batch_cache)
-        _, first_meta, first_data = task_inputs[first_uncached]
-        next_future = executor.submit(prepare_task_data, tokenizer, first_data, first_meta, max_seq_len)
+    import torch.distributed as dist
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    total_examples = sum(len(data) for _, _, data in task_inputs)
+    task_labels = [label for label, _, _ in task_inputs]
+    pbar = tqdm(total=total_examples, leave=False, disable=(rank != 0))
 
-    for i, (label, task_meta, data) in enumerate(task_inputs):
-        shot_str = f"{task_meta['num_fewshot']}-shot"
-        prefix = f"  {label:<{w_label}}  {shot_str:<{w_shot}}  {task_meta['task_type']:<{w_type}}"
-        print0(f"{prefix}  ...", end="", flush=True)
-        t0 = time.time()
-
-        if label in _batch_cache:
-            accuracy, collated = evaluate_task(model, data, device, collated=_batch_cache[label])
-        else:
-            prepared = next_future.result()
-            # Kick off prepare for the next uncached task
-            for j in range(i + 1, len(task_inputs)):
-                next_label, next_meta, next_data = task_inputs[j]
-                if next_label not in _batch_cache:
-                    next_future = executor.submit(prepare_task_data, tokenizer, next_data, next_meta, max_seq_len)
-                    break
-            accuracy, collated = evaluate_task(model, data, device, prepared=prepared)
-            _batch_cache[label] = collated
-
-        elapsed = time.time() - t0
+    def _print_task_result(tidx, accuracy):
+        """Print one task's result. Updates results/centered_results dicts."""
+        label, task_meta, _ = task_inputs[tidx]
         random_baseline = random_baselines[label]
         centered_result = (accuracy - 0.01 * random_baseline) / (1.0 - 0.01 * random_baseline)
         results[label] = accuracy
         centered_results[label] = centered_result
+        shot_str = f"{task_meta['num_fewshot']}-shot"
+        prefix = f"  {label:<{w_label}}  {shot_str:<{w_shot}}  {task_meta['task_type']:<{w_type}}"
         delta_str = ""
         if label in _prev_centered:
             d = centered_result - _prev_centered[label]
             arrow = "\u2191" if d > 0 else "\u2193" if d < 0 else "="
             delta_str = f"  {arrow}{d:+.4f}"
-        print0(f"\r{prefix}  acc: {accuracy:.4f}  centered: {centered_result:>7.4f}{delta_str}  time: {elapsed:.2f}s")
+        if rank == 0:
+            pbar.write(f"{prefix}  acc: {accuracy:.4f}  centered: {centered_result:>7.4f}{delta_str}")
 
-    if not cached_run:
-        executor.shutdown(wait=False)
+    def _on_task_done(tidx, correct):
+        """Callback for _forward_all_cached: convert tensor to accuracy and print."""
+        _print_task_result(tidx, correct.mean().item())
 
-    # Save collated batches to disk after first run (so bench/future runs skip prepare+collate)
-    if first_run and disk_cache_dir is not None:
-        pad_id = tokenizer.get_bos_token_id()
-        os.makedirs(disk_cache_dir, exist_ok=True)
-        for label, _, _ in task_inputs:
+    if cached_run:
+        # Continuous pipeline: all tasks in one GPU stream, results printed per-task as they complete
+        t0 = time.time()
+        task_collated = [(_batch_cache[label], data) for label, _, data in task_inputs]
+        correct_list = _forward_all_cached(
+            model, task_collated, device, pbar=pbar, task_labels=task_labels,
+            on_task_done=_on_task_done if world_size == 1 else None,
+        )
+        elapsed_total = time.time() - t0
+        pbar.close()
+
+        # DDP: all_reduce + print (single-GPU already handled by on_task_done above)
+        if world_size > 1:
+            for tidx, ((label, task_meta, data), correct) in enumerate(zip(task_inputs, correct_list)):
+                dist.barrier()
+                dist.all_reduce(correct, op=dist.ReduceOp.SUM)
+                _print_task_result(tidx, correct.mean().item())
+        print0(f"  (all tasks: {elapsed_total:.2f}s)")
+    else:
+        t0 = time.time()
+        executor = ThreadPoolExecutor(max_workers=1)
+        first_uncached = next(i for i, (l, _, _) in enumerate(task_inputs) if l not in _batch_cache)
+        _, first_meta, first_data = task_inputs[first_uncached]
+        next_future = executor.submit(prepare_task_data, tokenizer, first_data, first_meta, max_seq_len)
+
+        for i, (label, task_meta, data) in enumerate(task_inputs):
+            pbar.set_description(f"{label:<{w_label}}")
+
             if label in _batch_cache:
-                torch.save({'collated': _batch_cache[label], 'pad_token_id': pad_id},
-                           os.path.join(disk_cache_dir, f"{label}.pt"))
-        print0(f"  (saved collated batches to {disk_cache_dir})")
+                accuracy, collated = evaluate_task(model, data, device, collated=_batch_cache[label], pbar=pbar)
+            else:
+                prepared = next_future.result()
+                # Kick off prepare for the next uncached task
+                for j in range(i + 1, len(task_inputs)):
+                    next_label, next_meta, next_data = task_inputs[j]
+                    if next_label not in _batch_cache:
+                        next_future = executor.submit(prepare_task_data, tokenizer, next_data, next_meta, max_seq_len)
+                        break
+                accuracy, collated = evaluate_task(model, data, device, prepared=prepared, pbar=pbar)
+                _batch_cache[label] = collated
+
+            _print_task_result(i, accuracy)
+
+        elapsed_total = time.time() - t0
+        pbar.close()
+        executor.shutdown(wait=False)
+        print0(f"  (all tasks: {elapsed_total:.2f}s)")
+
+        # Save collated batches to disk after first run (so bench/future runs skip prepare+collate)
+        if first_run and disk_cache_dir is not None:
+            pad_id = tokenizer.get_bos_token_id()
+            os.makedirs(disk_cache_dir, exist_ok=True)
+            for label, _, _ in task_inputs:
+                if label in _batch_cache:
+                    torch.save({'collated': _batch_cache[label], 'pad_token_id': pad_id},
+                               os.path.join(disk_cache_dir, f"{label}.pt"))
+            print0(f"  (saved collated batches to {disk_cache_dir})")
 
     core_metric = sum(centered_results.values()) / len(centered_results)
     if _prev_core is not None:

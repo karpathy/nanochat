@@ -35,8 +35,8 @@ from nanochat.tokenizer import HuggingFaceTokenizer
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import (
     forward_model, prepare_example, check_result, stack_sequences,
-    prepare_task_data, _collate_batches, _forward_batches, evaluate_task,
-    compose_collated,
+    prepare_task_data, _collate_batches, _forward_all_cached,
+    evaluate_task,
     render_prompts_mc, render_prompts_schema, render_prompts_lm,
     batch_sequences_mc, batch_sequences_schema, batch_sequences_lm,
 )
@@ -270,19 +270,27 @@ def bench_new_first(model, tokenizer, task_inputs, device, batch_size, queue_siz
     return time.time() - t0, results, collated_cache
 
 
-def bench_new_cached(model, task_inputs, device, collated_cache, pbar=None):
-    """Benchmark new batched evaluation (cached run, forward only)."""
+def bench_new_cached(model, task_inputs, device, collated_cache, pbar=None,
+                     merge=1, split=1, pad_token_id=0):
+    """Benchmark new batched evaluation (cached run, forward only).
+    Uses continuous pipeline across all tasks to eliminate inter-task stalls.
+    merge/split control GPU-side composition: merge > 1 cats batches, split > 1 slices them."""
+    import torch.distributed as dist
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
     sync_cuda()
     t0 = time.time()
-    results = {}
-    max_label_len = max(len(label) for label, _, _ in task_inputs)
-    for label, task_meta, data in task_inputs:
-        if pbar is not None:
-            pbar.set_description(f"{label:<{max_label_len}}")
-        acc, _ = evaluate_task(model, data, device, collated=collated_cache[label], pbar=pbar)
-        results[label] = acc
+    task_collated = [(collated_cache[label], data) for label, _, data in task_inputs]
+    correct_list = _forward_all_cached(model, task_collated, device, pbar=pbar,
+                                       merge=merge, split=split, pad_token_id=pad_token_id)
     sync_cuda()
-    return time.time() - t0, results
+    elapsed = time.time() - t0
+    results = {}
+    for (label, _, data), correct in zip(task_inputs, correct_list):
+        if world_size > 1:
+            dist.barrier()
+            dist.all_reduce(correct, op=dist.ReduceOp.SUM)
+        results[label] = correct.mean().item()
+    return elapsed, results
 
 
 def verify_results(old_results, new_results, label="new"):
@@ -448,19 +456,29 @@ def main():
 
     best_cached_time = float('inf')
     best_cached_params = None
+    pad_id = next(iter(base_cache.values()))[1]
+    # Preload ALL base-4 batches to GPU once (~144MB for full CORE eval).
+    # All batch-size sweeps compose from these GPU-resident tensors — zero CPU→GPU transfers.
+    gpu_collated = {}
+    for label, (collated, _) in base_cache.items():
+        gpu_collated[label] = [(ids.to(device), meta) for ids, meta in collated]
     outer_pbar = tqdm(total=len(batch_sizes), desc="Cached sweep", leave=False, position=0)
     inner_pbar = tqdm(total=total_examples, desc="", leave=False, position=1)
 
     for bs in batch_sizes:
         outer_pbar.set_description(f"Cached: bs={bs}")
         inner_pbar.reset()
-        # Compose from base-4 to target batch_size (merge or split)
-        composed_cache = {}
-        for label, (collated, pad_id) in base_cache.items():
-            composed_cache[label] = compose_collated(collated, bs, BASE_BATCH_SIZE, pad_id)
+
+        # All composition happens on GPU: merge for bs >= base, split for bs < base
+        if bs >= BASE_BATCH_SIZE:
+            merge, split = bs // BASE_BATCH_SIZE, 1
+        else:
+            merge, split = 1, BASE_BATCH_SIZE // bs
 
         with autocast_ctx:
-            t, cached_results = bench_new_cached(model, task_inputs, device, composed_cache, pbar=inner_pbar)
+            t, cached_results = bench_new_cached(model, task_inputs, device, gpu_collated,
+                                                 pbar=inner_pbar, merge=merge, split=split,
+                                                 pad_token_id=pad_id)
 
         outer_pbar.write(f"  batch_size={bs:>3}:  {t:.2f}s  ({total_examples / t:.1f} examples/s)")
         outer_pbar.update(1)
