@@ -90,7 +90,7 @@ class KVCache:
     - Position tracked per batch element via cache_seqlens tensor
     """
 
-    def __init__(self, batch_size, num_heads, seq_len, head_dim, num_layers, device, dtype=torch.bfloat16):
+    def __init__(self, batch_size, num_heads, seq_len, head_dim, num_layers, device, dtype):
         self.batch_size = batch_size
         self.max_seq_len = seq_len
         self.n_layers = num_layers
@@ -172,6 +172,13 @@ class Engine:
         """Same as generate, but does single prefill and then clones the KV cache."""
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
         device = self.model.get_device()
+        # NOTE: setting the dtype here and in this way is an ugly hack.
+        # Currently the repo assumes that cuda -> bfloat16 and everything else -> float32.
+        # We need to know the dtype here to call __init__ on KVCache and pre-allocate its tensors.
+        # As a quick hack, we're making generate() function inherit and know about this repo-wise assumption.
+        # I think there has to be a bigger refactor to deal with device/dtype tracking across the codebase.
+        # In particular, the KVCache should allocate its tensors lazily
+        dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
         rng = torch.Generator(device=device)
         rng.manual_seed(seed)
 
@@ -191,6 +198,7 @@ class Engine:
             batch_size=1,
             seq_len=len(tokens),
             device=device,
+            dtype=dtype,
             **kv_model_kwargs,
         )
         ids = torch.tensor([tokens], dtype=torch.long, device=device)
@@ -203,6 +211,7 @@ class Engine:
             batch_size=num_samples,
             seq_len=kv_length_hint,
             device=device,
+            dtype=dtype,
             **kv_model_kwargs,
         )
         kv_cache_decode.prefill(kv_cache_prefill)
@@ -297,8 +306,8 @@ if __name__ == "__main__":
     """
     import time
     # init compute
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
     device_type = autodetect_device_type()
+    ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
     autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 
     # load the model and tokenizer

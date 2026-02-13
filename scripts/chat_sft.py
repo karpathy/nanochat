@@ -1,65 +1,63 @@
 """
-Finetune a base model to be a chat model.
-Run on one GPU e.g. for debugging:
+Supervised fine-tuning (SFT) the model.
+Run as:
 
 python -m scripts.chat_sft
 
 Or torchrun for training:
 
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft
+torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --device-batch-size=16
 """
 
 import argparse
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
-
+import time
 import wandb
 import torch
-import torch.distributed as dist
 from contextlib import nullcontext
-
-from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb, autodetect_device_type
-from nanochat.checkpoint_manager import load_model
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type
+from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
-from nanochat.engine import Engine
-from scripts.chat_eval import run_chat_eval
+from nanochat.loss_eval import evaluate_bpb
+from nanochat.checkpoint_manager import load_model
+import torch.distributed as dist
 
 from tasks.common import TaskMixture
-from tasks.arc import ARC
 from tasks.gsm8k import GSM8K
+from tasks.mmlu import MMLU
 from tasks.smoltalk import SmolTalk
 from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
 
 # -----------------------------------------------------------------------------
 # CLI arguments
-parser = argparse.ArgumentParser(description="Supervised finetuning for chat")
+parser = argparse.ArgumentParser(description="Supervised fine-tuning (SFT) the model")
 # Logging
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 parser.add_argument("--dtype", type=str, default="bfloat16", help="float32|bfloat16")
 # Model loading
-parser.add_argument("--source", type=str, default="mid", help="base|mid - which checkpoint to load from")
 parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
 parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
 # Training horizon
-parser.add_argument("--num-epochs", type=int, default=1, help="number of epochs")
-parser.add_argument("--num-iterations", type=int, default=-1, help="override number of iterations (-1 = use num_epochs)")
+parser.add_argument("--num-iterations", type=int, default=-1, help="number of optimization steps (-1 = full epoch)")
 # Batch sizes
-parser.add_argument("--device-batch-size", type=int, default=4, help="per-device batch size")
-parser.add_argument("--target-examples-per-step", type=int, default=32, help="target examples per optimization step")
+parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
+parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size")
+parser.add_argument("--total-batch-size", type=int, default=524288, help="total batch size in tokens")
 # Optimization
-parser.add_argument("--embedding-lr", type=float, default=0.2, help="learning rate for embedding parameters (Adam)")
+parser.add_argument("--embedding-lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
 parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
 parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
 parser.add_argument("--weight-decay", type=float, default=0.0, help="weight decay for embedding/unembedding parameters (Adam)")
-parser.add_argument("--init-lr-frac", type=float, default=0.02, help="initial LR as fraction of base LR")
+parser.add_argument("--init-lr-frac", type=float, default=1.0, help="initial LR as fraction of base LR")
 # Evaluation
-parser.add_argument("--eval-every", type=int, default=100, help="evaluate val loss every N steps")
-parser.add_argument("--eval-steps", type=int, default=100, help="number of batches for val loss evaluation")
-parser.add_argument("--eval-metrics-every", type=int, default=200, help="evaluate accuracy metrics every N steps")
-parser.add_argument("--eval-metrics-max-problems", type=int, default=1024, help="max problems per metric evaluation")
+parser.add_argument("--eval-every", type=int, default=150, help="evaluate val bpb every N steps (-1 = disable)")
+parser.add_argument("--eval-tokens", type=int, default=20*524288, help="number of tokens to evaluate val loss on")
+# Output
+parser.add_argument("--dry-run", action="store_true", help="log to wandb but skip checkpoints/report")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
@@ -70,220 +68,321 @@ ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type
 master_process = ddp_rank == 0
 ptdtype = torch.float32 if args.dtype == 'float32' else torch.bfloat16
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
+synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
+get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sft", name=args.run, config=user_config, save_code=True)
+wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sft", name=args.run, config=user_config)
 
 # Load the model and tokenizer
-model, tokenizer, meta = load_model(args.source, device, phase="train", model_tag=args.model_tag, step=args.model_step)
-orig_model = model # original, uncompiled model
-# model = torch.compile(model, dynamic=True) # doesn't work super well because of variable lengths of inputs
-engine = Engine(model, tokenizer) # will be used for inline model evaluation only
+model, tokenizer, meta = load_model("base", device, phase="train", model_tag=args.model_tag, step=args.model_step)
+pretrain_batch_size = meta.get("device_batch_size", None)
+if pretrain_batch_size is not None and args.device_batch_size > pretrain_batch_size:
+    print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device-batch-size to this script?")
+orig_model = model
+model = torch.compile(model, dynamic=False)
+depth = model.config.n_layer
+num_flops_per_token = model.estimate_flops()
+tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
+world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
+assert args.total_batch_size % world_tokens_per_fwdbwd == 0
+grad_accum_steps = args.total_batch_size // world_tokens_per_fwdbwd
+print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
+print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
+print0(f"Total batch size {args.total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
+token_bytes = get_token_bytes(device=device)
 
-# -----------------------------------------------------------------------------
-# Task data mixture we'll train on
-identity_conversations_filepath = os.path.join(get_base_dir(), "identity_conversations.jsonl")
-train_ds = TaskMixture([
-    ARC(subset="ARC-Easy", split="train"), # 2.3K rows
-    ARC(subset="ARC-Challenge", split="train"), # 1.1K rows
-    GSM8K(subset="main", split="train"), # 8K rows
-    SmolTalk(split="train", stop=10_000), # 10K rows of smoltalk
-    CustomJSON(filepath=identity_conversations_filepath), # 1K rows of synthetic identity conversations
-    SimpleSpelling(size=300, split="train"), # 300 rows of Simple Spelling (e.g. spell the word 'apple')
-    SpellingBee(size=300, split="train"), # 300 rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
-]) # 2.3K + 1.1K + 8K + 10K + 1K + 0.3K + 0.3K = 23K rows
-val_ds = SmolTalk(split="test") # general conversations, 24K rows (though we don't actually use all of it)
+# Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
+optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_lr=args.embedding_lr, matrix_lr=args.matrix_lr, weight_decay=args.weight_decay)
+# Override the initial learning rate as a fraction of the base learning rate
+for group in optimizer.param_groups:
+    group["lr"] = group["lr"] * args.init_lr_frac
+    group["initial_lr"] = group["lr"]
 
-# -----------------------------------------------------------------------------
-# DataLoader
+# SFT data mixture and DataLoader
+base_dir = get_base_dir()
+identity_conversations_filepath = os.path.join(base_dir, "identity_conversations.jsonl")
+train_dataset = TaskMixture([
+    SmolTalk(split="train"), # 460K rows of general conversations
+    MMLU(subset="auxiliary_train", split="train"), # 100K rows of multiple choice problems drawn from ARC, MC_TEST, OBQA, RACE
+    GSM8K(subset="main", split="train"), # 8K rows teaching simple math and (calculator) tool use
+    GSM8K(subset="main", split="train"), # 2 epochs of GSM8K
+    CustomJSON(filepath=identity_conversations_filepath), # 1000 rows of synthetic identity conversations
+    CustomJSON(filepath=identity_conversations_filepath), # let's do 2 epochs of these
+    SimpleSpelling(size=200000, split="train"), # 200K rows of Simple Spelling (e.g. spell the word 'apple')
+    SpellingBee(size=80000, split="train"), # 80K rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
+]) # total: 460K + 100K + 16K + 200K + 80K = 856K rows
+val_dataset = TaskMixture([
+    SmolTalk(split="test"), # 24K rows in test set
+    MMLU(subset="all", split="test", stop=5200), # 14K rows in test set, use only 5.2K to match the train ratios
+    GSM8K(subset="main", split="test", stop=420), # 1.32K rows in test set, use only 420 to match the train ratios
+]) # total: 24K + 14K + 1.32K ~= 39K rows
+# DataLoader is defined here, it emits inputs, targets : 2D tensors of shape (device_batch_size, max_seq_len)
+# A big problem is that we don't know the final num_iterations in advance. So we create
+# these two global variables and update them from within the data generator.
+last_step = False # we will toggle this to True when we reach the end of the training dataset
+approx_progress = 0.0 # will go from 0 to 1 over the course of the epoch
+current_epoch = 1 # track epoch for logging
+def sft_data_generator_bos_bestfit(split, buffer_size=100):
+    """
+    BOS-aligned dataloader for SFT with bestfit-pad packing.
 
-def sft_data_generator(dataset, batch_size):
-    pad_token_id = tokenizer.encode_special("<|assistant_end|>") # use <|assistant_end|> as the pad token is ok, these positions are masked in the loss
-    # prepares a list of tokenized conversations into a batch and yields
-    def collate_and_yield(batch):
-        nrows = len(batch)
-        ncols = max(len(ids) for ids, mask in batch) - 1 # seq of n creates inputs/targets of n-1
-        inputs = torch.full((nrows, ncols), pad_token_id, dtype=torch.long)
-        targets = torch.full((nrows, ncols), -1, dtype=torch.long) # -1 is ignore index
-        for i, (ids, mask) in enumerate(batch):
-            n = len(ids)
-            ids_tensor = torch.tensor(ids, dtype=torch.long)
-            inputs[i, :n-1] = ids_tensor[:-1]
-            # recall -1 is the ignore index, so mask out targets where mask is 0
-            row_targets = ids_tensor[1:]
-            # mask[1:] omits the mask for the BOS token, which is never a target atm so it's ok
-            mask_tensor = torch.tensor(mask[1:], dtype=torch.long)
-            row_targets[mask_tensor == 0] = -1 # mask out targets where mask is 0
-            targets[i, :n-1] = row_targets
-        inputs = inputs.to(device) # move to device
-        targets = targets.to(device)
-        return inputs, targets
-    # iterates over the dataset in epochs, tokenizes
-    batch = []
+    Each row in the batch starts with BOS (beginning of a conversation).
+    Conversations are packed using best-fit algorithm. When no conversation fits,
+    the row is padded (instead of cropping) to ensure no tokens are ever discarded.
+    Padding positions have targets masked with -1 (ignore_index for cross-entropy).
+    """
+    global last_step, approx_progress, current_epoch
+    assert split in {"train", "val"}, "split must be 'train' or 'val'"
+    dataset = train_dataset if split == "train" else val_dataset
+    dataset_size = len(dataset)
+    assert dataset_size > 0
+    row_capacity = args.max_seq_len + 1  # +1 for target at last position
+    bos_token = tokenizer.get_bos_token_id()
+
+    # Conversation buffer: list of token lists
+    conv_buffer = []
+    cursor = ddp_rank  # Each rank processes different conversations (for fetching)
+    consumed = ddp_rank  # Track actual consumption separately from buffering
+    epoch = 1
+    it = 0  # iteration counter
+
+    def refill_buffer():
+        nonlocal cursor, epoch
+        while len(conv_buffer) < buffer_size:
+            conversation = dataset[cursor]
+            ids, _ = tokenizer.render_conversation(conversation)
+            conv_buffer.append(ids)
+            cursor += ddp_world_size
+            if cursor >= dataset_size:
+                cursor = cursor % dataset_size
+                epoch += 1
+                # Note: last_step is now triggered based on consumption, not fetching
+
     while True:
-        for i in range(ddp_rank, len(dataset), ddp_world_size):
-            doc = dataset[i]
-            ids, mask = tokenizer.render_conversation(doc)
-            batch.append((ids, mask))
-            if len(batch) == batch_size:
-                yield collate_and_yield(batch)
-                batch = []
+        rows = []
+        row_lengths = []  # Track actual content length (excluding padding) for each row
+        for _ in range(args.device_batch_size):
+            row = []
+            padded = False
+            while len(row) < row_capacity:
+                # Ensure buffer has conversations
+                while len(conv_buffer) < buffer_size:
+                    refill_buffer()
 
-examples_per_step = args.device_batch_size * ddp_world_size
-print0(f"Target examples per step: {args.target_examples_per_step}")
-print0(f"Device batch size: {args.device_batch_size}")
-print0(f"Examples per step is device_batch_size * ddp_world_size: {examples_per_step}")
-assert args.target_examples_per_step % examples_per_step == 0, "Target examples per step must be divisible by examples per step"
-grad_accum_steps = args.target_examples_per_step // examples_per_step
-print0(f"=> Setting grad accum steps: {grad_accum_steps}")
+                remaining = row_capacity - len(row)
 
-if args.num_iterations == -1:
-    # derive num_iterations from num_epochs and the size of the dataset
-    assert args.num_epochs > 0, "num_epochs must be positive if num_iterations is -1"
-    num_iterations = (len(train_ds) // args.target_examples_per_step) * args.num_epochs
-else:
-    num_iterations = args.num_iterations
-train_loader = sft_data_generator(train_ds, batch_size=args.device_batch_size)
-build_val_loader = lambda: sft_data_generator(val_ds, batch_size=args.device_batch_size)
+                # Find largest conversation that fits entirely
+                best_idx = -1
+                best_len = 0
+                for i, conv in enumerate(conv_buffer):
+                    conv_len = len(conv)
+                    if conv_len <= remaining and conv_len > best_len:
+                        best_idx = i
+                        best_len = conv_len
 
-# -----------------------------------------------------------------------------
-# Initialize the Optimizer
+                if best_idx >= 0:
+                    # Found a conversation that fits - use it entirely
+                    conv = conv_buffer.pop(best_idx)
+                    row.extend(conv)
+                    consumed += ddp_world_size  # Track actual consumption
+                else:
+                    # No conversation fits - pad the remainder instead of cropping
+                    # This ensures we never discard any tokens
+                    content_len = len(row)
+                    row.extend([bos_token] * remaining)  # Pad with BOS tokens
+                    padded = True
+                    break  # Row is now full (with padding)
 
-optimizers = model.setup_optimizers(
-    unembedding_lr=args.unembedding_lr,
-    embedding_lr=args.embedding_lr,
-    matrix_lr=args.matrix_lr,
-    weight_decay=args.weight_decay,
-)
-# Set the initial learning rate as a fraction of the base learning rate
-for opt in optimizers:
-    for group in opt.param_groups:
-        group["lr"] = group["lr"] * args.init_lr_frac
-        group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
+            # Track content length: full row if no padding, otherwise the length before padding
+            if padded:
+                row_lengths.append(content_len)
+            else:
+                row_lengths.append(row_capacity)
+            rows.append(row[:row_capacity])
+
+        # Stopping condition to respect num_iterations, if given
+        it += 1
+        if 0 < args.num_iterations <= it and split == "train":
+            last_step = True
+
+        # Update progress tracking (based on consumed, not cursor, to account for buffering)
+        if split == "train":
+            current_epoch = epoch
+            if args.num_iterations > 0:
+                approx_progress = it / args.num_iterations
+            else:
+                approx_progress = consumed / dataset_size
+            # Trigger last_step when we've consumed enough (instead of when cursor wraps)
+            if consumed >= dataset_size:
+                last_step = True
+
+        # Build tensors
+        use_cuda = device_type == "cuda"
+        batch_tensor = torch.tensor(rows, dtype=torch.long, pin_memory=use_cuda)
+        inputs = batch_tensor[:, :-1].to(device=device, dtype=torch.int32, non_blocking=use_cuda)
+        targets = batch_tensor[:, 1:].to(device=device, dtype=torch.int64, non_blocking=use_cuda)
+
+        # Mask out padding positions in targets (set to -1 = ignore_index)
+        # For each row, positions >= (content_length - 1) in targets should be masked
+        for i, content_len in enumerate(row_lengths):
+            if content_len < row_capacity:
+                targets[i, content_len-1:] = -1
+
+        yield inputs, targets
+
+train_loader = sft_data_generator_bos_bestfit("train")
+build_val_loader = lambda: sft_data_generator_bos_bestfit("val")
+progress = 0 # will go from 0 to 1 over the course of the epoch
+
+# Learning rate scheduler
+def get_lr_multiplier(progress):
+    # first 80% of training: no decay, then linearly ramp down to 0.
+    return 1 if progress < 0.8 else 1 - (progress - 0.8) / 0.2
+
+# Momentum scheduler for Muon optimizer
+def get_muon_momentum(it):
+    frac = min(it / 300, 1)
+    momentum = (1 - frac) * 0.85 + frac * 0.95
+    return momentum
 
 # -----------------------------------------------------------------------------
 # Training loop
-
-# Learning rate scheduler
-def get_lr_multiplier(it):
-    lrm = 1.0 - it / num_iterations
-    return lrm
-
-# Go!
+x, y = next(train_loader) # prefetch the very first batch of data
+min_val_bpb = float("inf")
+smooth_train_loss = 0 # EMA of training loss
+ema_beta = 0.9 # EMA decay factor
+total_training_time = 0 # total wall-clock time of training
 step = 0
-for step in range(num_iterations):
-    last_step = step == num_iterations - 1
+while True:
+    flops_so_far = num_flops_per_token * args.total_batch_size * step
 
-    # evaluate the validation loss
-    if last_step or step % args.eval_every == 0:
+    # Synchronize last_step across all ranks to avoid hangs in the distributed setting
+    if ddp:
+        last_step_tensor = torch.tensor(last_step, dtype=torch.int32, device=device)
+        dist.all_reduce(last_step_tensor, op=dist.ReduceOp.MAX)
+        last_step = bool(last_step_tensor.item())
+
+    # once in a while: evaluate the val bpb (all ranks participate)
+    if last_step or (args.eval_every > 0 and step % args.eval_every == 0):
         model.eval()
         val_loader = build_val_loader()
-        losses = []
-        for _ in range(args.eval_steps):
-            val_inputs, val_targets = next(val_loader)
-            with torch.no_grad(), autocast_ctx:
-                loss = model(val_inputs, val_targets)
-            losses.append(loss)
-        val_loss = torch.stack(losses).mean() # average over eval_steps
-        if ddp:
-            dist.all_reduce(val_loss, op=dist.ReduceOp.AVG) # average over ranks
-        val_loss = val_loss.item()
-        print0(f"Step {step:05d} | Validation loss: {val_loss:.6f}")
+        eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
+        with autocast_ctx:
+            val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
+        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
+        if val_bpb < min_val_bpb:
+            min_val_bpb = val_bpb
         wandb_run.log({
             "step": step,
-            "val_loss": val_loss,
+            "total_training_flops": flops_so_far,
+            "total_training_time": total_training_time,
+            "val/bpb": val_bpb,
         })
         model.train()
 
-    # evaluate accuracy of the multiple choice tasks (which are quick to run)
-    if last_step or (step > 0 and step % args.eval_metrics_every == 0):
-        model.eval()
-        metrics = {}
-        with torch.no_grad(), autocast_ctx:
-            # note that because these are inside no_grad, we can usually afford to at least ~2X the batch size
-            metrics["mmlu_acc"] = run_chat_eval("MMLU", model, tokenizer, engine, batch_size=args.device_batch_size*2, max_problems=args.eval_metrics_max_problems)
-            metrics["arc_easy_acc"] = run_chat_eval("ARC-Easy", model, tokenizer, engine, batch_size=args.device_batch_size*2, max_problems=args.eval_metrics_max_problems)
-        metrics_str = ', '.join(f'{k}: {v:.6f}' for k, v in metrics.items())
-        print0(f"Step {step:05d} | {metrics_str}")
-        wandb_run.log({
-            "step": step,
-            **metrics,
-        })
-        model.train()
+    # save checkpoint at the end of the run (only on master process)
+    if master_process and last_step and not args.dry_run:
+        output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
+        checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
+        save_checkpoint(
+            checkpoint_dir,
+            step,
+            orig_model.state_dict(),
+            optimizer.state_dict(),
+            {
+                "step": step,
+                "val_bpb": val_bpb, # loss at last step
+                "model_config": {
+                    "sequence_len": args.max_seq_len,
+                    "vocab_size": tokenizer.get_vocab_size(),
+                    "n_layer": depth,
+                    "n_head": model.config.n_head,
+                    "n_kv_head": model.config.n_kv_head,
+                    "n_embd": model.config.n_embd,
+                    "window_pattern": model.config.window_pattern,
+                },
+                "user_config": user_config, # inputs to the training script
+            }
+        )
 
     if last_step:
         break
 
+    # -------------------------------------------------------------------------
+    # single training step
     # evaluate the gradient
-    num_tokens = torch.tensor(0, device=device) # the number of "active" tokens of supervision seen
+    synchronize()
+    t0 = time.time()
     for micro_step in range(grad_accum_steps):
-        train_inputs, train_targets = next(train_loader)
         with autocast_ctx:
-            loss = model(train_inputs, train_targets)
+            loss = model(x, y)
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
-        loss.backward() # accumulate the gradient
-        num_tokens += (train_targets >= 0).sum()
-    if ddp:
-        dist.all_reduce(num_tokens, op=dist.ReduceOp.SUM) # sum over ranks
-
-    # learning rate scheduler
-    lrm = get_lr_multiplier(step)
-    for opt in optimizers:
-        for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * lrm
-
-    # step the optimizers
-    for opt in optimizers:
-        opt.step()
+        loss.backward()
+        x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+        progress = max(progress, approx_progress) # only increase progress monotonically
+    # step the optimizer
+    lrm = get_lr_multiplier(progress)
+    muon_momentum = get_muon_momentum(step)
+    for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
+        if group['kind'] == 'muon':
+            group["momentum"] = muon_momentum
+    optimizer.step()
     model.zero_grad(set_to_none=True)
+    synchronize()
+    t1 = time.time()
+    dt = t1 - t0
+    # -------------------------------------------------------------------------
 
-    # logging
-    train_loss_item = train_loss.item()
-    num_tokens_item = num_tokens.item()
-    print0(f"Step {step:05d}/{num_iterations:05d} | Training loss: {train_loss_item:.6f}| lrm: {lrm:.6f}| num_tokens: {num_tokens_item:,}")
-    wandb_run.log({
-        "step": step,
-        "lrm": lrm,
-        "train_loss": train_loss_item,
-        "num_tokens": num_tokens_item,
-    })
+    # State
     step += 1
 
-# Save the model at the end of the run
-if master_process:
-    base_dir = get_base_dir()
-    depth = model.config.n_layer
-    output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
-    checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
-    model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
-    save_checkpoint(
-        checkpoint_dir,
-        step,
-        model.state_dict(),
-        None, # note: we don't bother to save the optimizer state
-        {
+    # logging
+    smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss.item() # EMA the training loss
+    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1)) # debias the EMA
+    pct_done = 100 * progress
+    tok_per_sec = int(args.total_batch_size / dt)
+    flops_per_sec = num_flops_per_token * args.total_batch_size / dt
+    promised_flops_per_sec_h100 = 989e12 * ddp_world_size # bfloat16 H100 SXM and without 2:4 sparsity
+    mfu = 100 * flops_per_sec / promised_flops_per_sec_h100 # in %
+    if step > 10:
+        total_training_time += dt # only count the time after the first 10 steps
+    print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {total_training_time/60:.2f}m")
+    if step % 10 == 0:
+        wandb_run.log({
             "step": step,
-            "val_loss": val_loss,
-            **metrics,
-            "model_config": model_config_kwargs,
-        }
-    )
-    print(f"✅ Saved model checkpoint to {checkpoint_dir}")
+            "total_training_flops": flops_so_far,
+            "total_training_time": total_training_time,
+            "train/loss": debiased_smooth_loss,
+            "train/lrm": lrm,
+            "train/dt": dt,
+            "train/tok_per_sec": tok_per_sec,
+            "train/mfu": mfu,
+            "train/epoch": current_epoch,
+        })
+
+# print a few more stats
+print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
+print0(f"Total training time: {total_training_time/60:.2f}m")
+print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
 # Log to report
-from nanochat.report import get_report
-get_report().log(section="Chat SFT", data=[
-    user_config, # CLI args
-    {
-        "Training rows": len(train_ds),
-        "Number of iterations": num_iterations,
-        "Training loss": train_loss_item,
-        "Validation loss": val_loss,
-    },
-])
+if not args.dry_run:
+    from nanochat.report import get_report
+    get_report().log(section="SFT", data=[
+        user_config, # CLI args
+        { # stats about the training setup
+            "Number of iterations": step,
+            "DDP world size": ddp_world_size,
+        },
+        { # stats about training outcomes
+            "Minimum validation bpb": min_val_bpb,
+        }
+    ])
 
-# Cleanup
-wandb_run.finish()
+# cleanup
+wandb_run.finish() # wandb run finish
 compute_cleanup()

@@ -14,7 +14,7 @@ from nanochat.dataset import parquets_iter_batched
 # Parse command line arguments
 
 parser = argparse.ArgumentParser(description='Train a BPE tokenizer')
-parser.add_argument('--max-chars', type=int, default=10_000_000_000, help='Maximum characters to train on (default: 10B)')
+parser.add_argument('--max-chars', type=int, default=2_000_000_000, help='Maximum characters to train on (default: 10B)')
 parser.add_argument('--doc-cap', type=int, default=10_000, help='Maximum characters per document (default: 10,000)')
 parser.add_argument('--vocab-size', type=int, default=32768, help='Vocabulary size (default: 32768 = 2^15)')
 args = parser.parse_args()

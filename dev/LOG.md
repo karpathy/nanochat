@@ -4,6 +4,428 @@ A running summary documenting some experiments and findings. Started ~Jan 7 2026
 
 ---
 
+## 2026-02-05: Auto Batch Size Scaling
+
+### Background
+
+So far, the `--total-batch-size` was hardcoded to be `2**19 = 524,288` ~= 0.5M tokens. This was the optimal setting for d12, but when I tried to re-tune it for d26 (GPT-2), I noticed that the optimal was closer to `2**20 = 1,048,576` ~= 1M tokens. This is to be expected - larger models prefer a higher optimal total batch size. However, we have to make sure that all settings of `--depth` get their own optimal batch size calculated in some principled way. Here, I referenced the "Power Lines" paper from Cerebras ([arXiv:2505.13738](https://arxiv.org/abs/2505.13738)) for a lot of related experimentation. In particular, they found that **Bopt ∝ D^0.383** (where D is the number of training tokens, not the number of parameters!). So the idea is to tune the optimal batch size on d12, and then extrapolate it with this power law to bigger models. The 0.383 exponent means batch size grows slowly: 10× more tokens only justifies ~2.4× bigger batch. For nanochat's compute-optimal training (D ∝ N via `--target-param-data-ratio`), this means deeper models naturally want larger batches.
+
+### Implementation
+
+Added `--total-batch-size=-1` (now the default) to auto-compute optimal batch:
+
+```python
+get_scaling_params = lambda m: m.num_scaling_params()['transformer_matrices'] + m.num_scaling_params()['lm_head']
+if args.total_batch_size == -1:
+    D_REF = args.target_param_data_ratio * get_scaling_params(build_model_meta(12))
+    B_REF = 2**19
+    args.total_batch_size = 2 ** round(math.log2(B_REF * (target_tokens / D_REF) ** 0.383))
+```
+
+Reference point: d=12 model with B=2^19 (empirically validated). The reference is computed dynamically so that if the architecture changes (e.g., different `--aspect-ratio`), the math automatically adjusts. However, if the model actually does change too much, one would also want to re-tune the optimal batch size for d=12.
+
+### Results
+
+With this formula, we currently get:
+
+| Depth | Scaling Params | Target Tokens | Auto Batch |
+|-------|---------------|---------------|------------|
+| d=8   | 42M           | 0.44B         | 2^18 = 262K |
+| d=10-16 | 70M-235M    | 0.7B-2.5B     | 2^19 = 524K |
+| d=18-26 | 324M-918M   | 3.4B-9.6B     | 2^20 = 1.05M |
+| d=32-50 | 1.7B-6.2B   | 17.6B-65.6B   | 2^21 = 2.1M |
+
+In particular, this matches empirical observations that d26 prefers ~2^20 while d12 prefers ~2^19.
+
+### Code Cleanup
+
+Also refactored model initialization to use `build_model_meta(depth)` helper and `dataclasses.asdict()` for cleaner config handling.
+
+### Useful references
+
+- [Bergsma et al., Power Laws for Batch Size, Model Size, and Training Horizon](https://arxiv.org/abs/2505.13738)
+- [McCandlish et al., An Empirical Model of Large-Batch Training](https://arxiv.org/abs/1812.06162)
+- [Brown et al., Language Models are Few-Shot Learners](https://arxiv.org/abs/2005.14165)
+- [Merrill et al., The Batch Size–Critical Batch Size Myth](https://arxiv.org/abs/2505.23971)
+
+### One more thing (batch size ramp)
+
+Tried batch size ramping. The simplest implementation I could think of "tricks" the existing training loop by slicing each micro-batch into smaller pieces and calling optimizer.step() more frequently early in training (1/8 → 1/4 → 1/2 → full batch over the first x% of training, with sqrt LR scaling). Also required a torch.compile warmup phase to pre-compile all slice sizes and avoid recompilation spikes during training. While the idea is sound and small gains were observed, they weren't sufficient to justify the code complexity introduced (conditional slicing logic, warmup with state save/restore, etc.). Not merged for now.
+
+---
+
+## 2026-02-05: SwiGLU Activation (Negative Result)
+
+Replaced ReLU² MLP activation with SwiGLU (inspired by [twitter](https://x.com/_xjdr/status/2019141521690567058)). SwiGLU uses three projections instead of two, so to match parameters and FLOPs we scale hidden_dim from 4× to 8/3×:
+
+```python
+# Old ReLU²: 2 matrices, 4x expansion
+#   params: 2 × n × 4n = 8n²
+#   flops:  2 × 2n × 4n = 16n² per token
+self.c_fc   = Linear(n_embd, 4 * n_embd)
+self.c_proj = Linear(4 * n_embd, n_embd)
+x = c_proj(relu(c_fc(x)).square())
+
+# New SwiGLU: 3 matrices, 8/3x expansion
+#   params: 2 × n × (8n/3) + (8n/3) × n = 8n²  ✓ matches
+#   flops:  3 × 2n × (8n/3) = 16n² per token   ✓ matches
+hidden_dim = (8 * n_embd) // 3
+self.w1 = Linear(n_embd, hidden_dim)  # gate
+self.w2 = Linear(n_embd, hidden_dim)  # up
+self.w3 = Linear(hidden_dim, n_embd)  # down
+x = w3(silu(w1(x)) * w2(x))
+```
+
+Tested at both d12 and d24 (GPT-2 scale). Worse on all measures — step efficiency, wall clock time, and FLOPs. ReLU² remains superior for nanochat. **Not adopted.**
+
+---
+
+## 2026-02-03: Flip Muon MLP LR Multiplier (PR #492)
+
+Tested flipping the shape-based LR heuristic in Muon from boosting tall matrices (input projections like `c_fc`) to boosting wide matrices (output projections like `c_proj`). The original code applies `max(1, rows/cols)^0.5`, giving ~2x LR to `c_fc`. The flipped version gives ~2x LR to `c_proj` instead, which aligns with classical fan-in/fan-out scaling conventions. This was proposed in [PR #492](https://github.com/karpathy/nanochat/pull/492) and showed improvements in modded-nanogpt.
+
+**Result:** Quick d12 experiment: slightly worse **Not adopted.**
+
+---
+
+## 2026-02-03: Skip AdamW Every Other Step
+
+Inspired by modded-nanogpt, tried stepping AdamW only on odd iterations while Muon steps every iteration. The idea is that small AdamW params (embeddings, scalars, gates) don't need updates as frequently as the large weight matrices, and skipping saves both compute and communication.
+
+Added `skip_adamw` parameter to `MuonAdamW.step()` and `DistMuonAdamW.step()` plus a matching `zero_grad(skip_adamw=...)` to let AdamW gradients accumulate over 2 steps. Used `lr *= 2**-0.5` (sqrt scaling) to compensate for the 2x effective batch size on AdamW params.
+
+**Result:** for nanochat d12, we see ~2% faster tok/s, but each step is slightly worse in loss. On net, when plotting against wall clock time, it's slightly worse. **Not adopted.**
+
+---
+
+## 2026-02-02: FP8 Training with torchao
+
+Integrated FP8 training using `torchao.float8` to accelerate Linear layer matmuls on H100 GPUs.
+
+### Background
+
+FP8 (8-bit floating point) uses H100's FP8 tensor cores for ~2x theoretical matmul throughput. The tradeoff is quantization overhead: computing scales and casting tensors to/from FP8. Still, as an example torchtitan (Meta's distributed training framework) reports 25-28% speedups with FP8 for some of their experiments.
+
+**Previous attempt (Jan 2026):** FP8 on just `lm_head` following modded-nanogpt with custom ops → 1% speedup, +2GB memory. Failed due to fragile torch.compile interaction. But this experiment was also done on ~d12 scale back then instead of the bigger model that gets GPT-2 capability of approx d24.
+
+**This attempt:** Use torchao's `convert_to_float8_training()` on ALL Linear layers, increase model size to d24. The core snippet is:
+
+```python
+from torchao.float8 import Float8LinearConfig, convert_to_float8_training
+config = Float8LinearConfig.from_recipe_name("tensorwise")
+convert_to_float8_training(model, config=config)
+```
+
+But in practice it's more involved (see base_train.py).
+
+### Results
+
+**Microbenchmark (d26 MLP, 65536x1664 @ 1664x6656):**
+
+| Method | Forward | Fwd+Bwd | Speedup |
+|--------|---------|---------|---------|
+| BF16 + compile | 2.00ms | 4.79ms | 1.00x |
+| FP8 rowwise + compile | 1.84ms | 4.55ms | 1.08x |
+| FP8 tensorwise + compile | 1.45ms | 4.06ms | **1.38x** |
+| FP8 rowwise (no compile) | 2.89ms | 21.86ms | 0.23x ❌ |
+
+torch.compile is MANDATORY. Without it, FP8 is 4x slower due to unfused scaling ops.
+
+**Full training (d26):**
+
+| Config | tok/sec | vs baseline |
+|--------|---------|-------------|
+| BF16 baseline | 630K | 1.00x |
+| FP8 rowwise | 564K | 0.90x ❌ |
+| FP8 tensorwise | 740K | **1.17x** ✓ |
+
+Memory usage also decreases quite a bit, by ~9GB (activations stored as FP8 instead of BF16).
+
+Seeing 17% speedup is encouraging but we're still not done yet because each step is now in lower precision and less powerful individually, so to make up for the precision drop we have to train longer. Empirically, running some sweeps overnight on d24 scale, I saw that the actual speedup (when you match performance) is closer to 5%. It's possible that our LLMs at ~d24 scale are still too small to confidently enjoy the speedups that come from fp8 for bigger models.
+
+### Key Learnings
+
+For nanochat at approximate scale of interest (~GPT-2 capability, ~d24):
+
+1. **Tensorwise >> Rowwise** - Rowwise computes per-row scales, overhead exceeds benefit. Tensorwise uses one scale per tensor.
+2. **Filter small layers** - Layers with dims not divisible by 16 must be skipped (FP8 hardware requirement)
+3. **Larger models benefit more** - d12 was still slower with FP8; d26+ shows gains. Therefore, in some depths there is a benefit to fp8 and in some there isn't. Keeping it configurable for now, passed in via kwargs and default off.
+4. **The effective, capability-matched speedup is lower still** - because each step is of slightly lower precision/quality.
+
+### Integration
+
+Added `--fp8` flag to `base_train.py`, default recipe is "tensorwise", example of turning on:
+
+```bash
+torchrun --nproc_per_node=8 -m scripts.base_train --depth=24 --fp8
+```
+
+Uses tensorwise by default. Requires `torchao==0.15.0` (compatible with torch 2.9.1), which was added to dependencies.
+
+**TLDR**: turning on fp8 for GPT-2 capability nanochat model gives approx +5% capability-matched speedup.
+
+---
+
+## 2026-01-29: Hyperball/MuonH Experiments (Negative Result)
+
+Explored Hyperball optimization from [this post](https://psychedelic-sunstone-851.notion.site/Fantastic-Pretraining-Optimizers-and-Where-to-Find-Them-2-1-Hyperball-Optimization-2e924306e6f280e7a5ffee00eb40a0dd) (saved to `knowledge/muonh.md`). Constrains weights to sphere of radius R (initial norm): `W_{t+1} = R · Normalize(W_t - η·R · Normalize(u_t))`. Had to change a number of details in a branch, e.g. not use zero init for our projections (or the initial norm would be zero), keep track of the initial norm, adjust Muon -> MuonH for the update.
+
+Experiments on d12:
+
+| Experiment | Result |
+|------------|--------|
+| MuonH for matrix params | Worse than baseline |
+| MuonH + LR sweep (2.5e-3 to 1e-2) | Still worse |
+| Added learnable RMSNorm scales (paper says γ preserves expressivity) | Still worse |
+| Various RMSNorm init tweaks, e.g. 0 at init to residual | Still worse |
+| AdamH for lm_head (paper recommends this) | Broken - loss plateaus (see below) |
+| AdamH + learnable output scales | Still worse |
+
+Could not outperform the baseline implementation. The article doesn't go into too much detail on how AdamH is applied to `lm_head` exactly. The classifier layer has to be able to increase in magnitude to make more confident predictions over time. Tried a sensible version with added 0-D learnable scalar, and also with RMSNorms with per-channel learnable scalars both pre and post resnet blocks.
+
+**Result:** This was not an out-of-the-box win for nanochat even with a mild attempt over a few hours at a bit of tuning and debugging. The idea itself is intuitively appealing. Might come back around later to try harder later.
+
+---
+
+## 2026-01-28: Reverted Bigram Hash Embeddings
+
+Removed bigram embeddings (engram-lite) from the codebase. At larger scale (d25), the improvement was tiny and disappeared entirely when measured by wall clock time. It also bloated the VRAM used. The extra parameters and complexity aren't justified.
+
+---
+
+## 2026-01-27: Bigram Hash Embeddings (Engram-lite)
+
+Explored N-gram memory modules inspired by the [DeepSeek Engram paper](https://arxiv.org/abs/2601.07372) and [modded-nanogpt PR #201](https://github.com/KellerJordan/modded-nanogpt/pull/201).
+
+### Background
+
+The Engram paper introduces "conditional memory" as a complement to MoE - using O(1) hash lookups to retrieve static N-gram patterns instead of reconstructing them through computation. Key insight: transformers waste early layers "simulating retrieval through computation" for patterns like named entities and formulaic phrases that could be simple table lookups.
+
+### What We Tried
+
+**1. Full Engram module with context-aware gating (paper design)**
+```python
+# Hash bigrams to retrieve embeddings, then gate with hidden state
+e = embed(hash(prev_token, curr_token))
+q = RMSNorm(h)           # hidden state as query
+k = RMSNorm(W_k @ e)     # projected embedding as key
+v = W_v @ e
+α = sigmoid(q · k / √d)  # scalar gate per position
+output = α * v
+```
+- Injected after block 1 (paper found early injection optimal)
+- Slight improvement, but quite a bit of complexity added.
+
+**2. Early-layer only injection**
+- Only inject bigram signal in first 4 layers (where paper claims static pattern offloading helps most)
+- **Result:** Actually hurt performance. The model seems to need uniform injection across all layers.
+
+**3. Trigrams**
+- Extended to hash both 2-grams and 3-grams, concatenating embeddings
+- **Result:** No improvement over bigrams alone. Dilutes capacity from more frequent 2-gram patterns.
+
+**4. Bigram-only with x0-style injection (modded-nanogpt engram-lite approach)**
+- Simple hash: `(36313 * curr) XOR (27191 * prev) mod table_size`
+- Zero-init embedding table, learned per-layer lambdas
+- Add to residual at every layer: `x = resid_λ[i]*x + x0_λ[i]*x0 + bigram_λ[i]*x0_bigram`
+- **Result:** This simple approach works and provides a consistent improvement.
+
+TLDR The winning approach follows modded-nanogpt's "engram-lite", simply adding the following module and feeding its output into the residual branch (gated by a per-layer learnable \lambda) before every single block:
+
+```python
+class BigramEmbed(nn.Module):
+    def __init__(self, vocab_size, embed_dim, table_multiplier=5):
+        self.embed = nn.Embedding(vocab_size * table_multiplier, embed_dim)
+
+    def forward(self, idx):
+        h = (36313 * idx[:, 1:]) ^ (27191 * idx[:, :-1]) % (table_size - 1)
+        return self.embed(h)
+```
+
+As for optimal hyperparameters:
+
+- **Table size:** `vocab_size * 5` (~164K entries for 32K vocab). Swept a number of settings and 5 was optimal.
+- **Injection:** Every layer via learned `bigram_lambdas` (init 0.1 was better than 0.0).
+- **Normalization:** Also tried adding a `norm()` to the embeddings (mirroring the token embeddings), this was slightly worse.
+- **Init:** Zero-init embedding, so starts as identity (tried small noisy init, it's worse)
+- **Optimizer:** AdamW with same LR as token embeddings
+
+### Key Learnings
+
+1. **Gating didn't help at our scale.** The paper's context-aware gating mechanism (sigmoid dot-product gate) added parameters and complexity without improvement. modded-nanogpt found the same: "simple direct addition to the residual stream outperformed by a decent margin."
+
+2. **Uniform injection beats early-only.** Despite the paper's finding that early layers benefit most, restricting injection to early layers hurt. The x0-style "add everywhere with learned lambda" pattern works better for our architecture/scale.
+
+3. **Bigrams are sufficient.** Trigrams didn't help - the extra context doesn't pay for the diluted capacity.
+
+4. **Scale matters.** The Engram paper's results are at 27B params with MoE. At our ~100M-1B scale, the simpler approach wins. The elaborate gating mechanism may become useful at larger scales where collision handling matters more.
+
+### Parameters Added
+
+For d12 model with `table_multiplier=5`:
+- Bigram embedding: 32768 × 5 × 768 = ~126M params
+- Per-layer lambdas: 12 scalars (negligible)
+
+If you're keeping track, we now have *a lot* of parameters, a significant amount of them in embeddings (token embeddings, bigram embeddings, value embeddings). For example, for a d12 we now have:
+
+```
+Parameter counts:
+wte                     : 25,165,824
+bigram_embed            : 125,829,120
+value_embeds            : 150,994,944
+lm_head                 : 25,165,824
+transformer_matrices    : 84,935,808
+scalars                 : 36
+total                   : 412,091,556
+```
+
+In other words, only about a quarter of parameters are now weight projections and the vast majority is embedding tables.
+
+Still, on all axes (steps, wall clock time, flops), this somewhat parameter-bloated architecture beats the baseline and will now become the default.
+
+After adding the engram-lite, I re-ran the scaling laws to determine the new optimal tokens:params ratio. I swept FLOPs in the range 1e18..1e19, exponentially strided in 4 settings (1e18, 2e18, 5e18, 1e19). I looked at a number of ways of determining the effective parameter count for the purposes of the scaling laws. The results looked like this:
+
+```
+Kaplan-style (all projections including lm_head and no embeddings)
+
+Optimal configurations (from quadratic fits):
+FLOPs        Eff Params      Tokens          Ratio      Val BPB
+-----------------------------------------------------------------
+1e+18        110,678,115     1,241,505,403   11.2       0.8972
+2e+18        167,797,457     1,785,336,422   10.7       0.8616
+5e+18        250,650,865     2,642,234,152   10.8       0.8293
+1e+19        381,758,347     3,806,871,243   10.3       0.7999
+
+N \propto C^0.54, D \propto C^0.49
+
+Chinchilla-style (all parameters, period.)
+
+Optimal configurations (from quadratic fits):
+FLOPs        Eff Params      Tokens          Ratio      Val BPB
+-----------------------------------------------------------------
+1e+18        416,320,605     1,232,157,011   3.0        0.8974
+2e+18        560,239,841     1,763,669,281   3.2        0.8616
+5e+18        741,495,903     2,629,909,368   3.6        0.8291
+1e+19        988,644,331     3,884,841,895   4.0        0.7999
+
+N \propto C^0.37, D \propto C^0.50
+
+Transformer-only-style (only the projections inside the transformer)
+
+Optimal configurations (from quadratic fits):
+FLOPs        Eff Params      Tokens          Ratio      Val BPB
+-----------------------------------------------------------------
+1e+18        80,259,665      1,315,639,547   17.2       0.8966
+2e+18        131,488,566     1,864,134,141   14.5       0.8622
+5e+18        220,985,474     2,595,328,843   12.1       0.8302
+1e+19        401,213,504     3,328,704,512   8.5        0.7994
+
+N \propto C^0.70, D \propto C^0.41
+```
+
+Clearly, the Kaplan-style ratios are most consistent and produce stable ~0.5 exponents for both params and tokens, meaning we can have a single fixed ratio of tokens:params for compute optimal models. This turns out to be about ~10.5, which now becomes the new default.
+
+---
+
+## 2026-01-19 to 2026-01-22: Optimizer Hyperparameter Sweep
+
+Ran ~320 experiments across 6 rounds, scaling from d12→d16→d20 to find optimal optimizer hyperparameters. Added granular per-component control to `setup_optimizers()` — separate LRs and betas for embedding, unembedding, value_embeds, resid_lambdas, x0_lambdas, and Muon matrix params.
+
+### What We Swept
+- Learning rates for all 6 parameter groups
+- Beta1/beta2 for all 5 AdamW groups
+- Muon momentum (start/end), weight decay
+- Hundreds of combinations (2-way, 3-way, 4-way, etc.)
+
+### The Journey
+
+**At d12**, found two independent improvement routes:
+- **Route A:** emb_lr↑ (0.3→0.4), weight_decay↑ (0.1→0.15), matrix_lr↑ (0.02→0.025)
+- **Route B:** x0_lr↓ (0.5→0.2), x0_beta1↑ (0.8→0.9+)
+
+Both gave ~0.002 improvement, but combining them caused conflicts. Fine-tuning found wd=0.13, matrix_lr=0.027, emb_lr=0.38 helped slightly. Best d12 config: Route A + x0_beta1=0.95.
+
+**At d16**, Route B became competitive with Route A. The routes still conflicted when combined.
+
+**At d20** (target scale), everything changed:
+- Fine-tuned values from d12 **actively hurt** performance
+- Routes no longer conflicted
+- Just `x0_beta1=0.96` alone captured nearly all the gains
+
+### Final x0_beta1 Sweep at d20
+
+| x0_beta1 | val/bpb | Δ vs baseline |
+|----------|---------|---------------|
+| **0.96** | **0.7971** | **-0.0007** |
+| 0.94 | 0.7972 | -0.0006 |
+| 0.90 | 0.7972 | -0.0006 |
+| 0.97 | 0.7977 | -0.0001 |
+| 0.98 | 0.8011 | +0.0033 💀 |
+
+Flat plateau from 0.90-0.96, then sharp cliff at 0.97+.
+
+### Key Learnings
+
+1. **Hyperparameters are scale-dependent.** What works at d12 doesn't transfer to d20. The elaborate fine-tuning that won at d12 actively hurts at d20.
+
+2. **Improvement magnitude shrinks with scale.** ~0.002 at d12 → ~0.0007 at d20. The baseline is already better-tuned for larger models.
+
+3. **Sharp cliffs exist.** x0_beta1=0.98 is catastrophic while 0.96 is optimal.
+
+4. **Don't over-tune on small proxies.** Validate at target scale before shipping.
+
+### Final Recommendation
+
+For production d20 runs, add one flag:
+```
+--x0-lambdas-beta1=0.96
+```
+
+Skip everything else discovered at smaller scales.
+
+---
+
+## 2026-01-18: More various experiments
+
+- Tried Muon custom kernels for XXT and all the others. The improvement was there for targeted tests (~20%) but washed out completely to noise in an actual training run, especially because the Muon compute is split across all the workers. Abandoned due to complexity bloat.
+- Fuse Q,K,V,O nn.Linear layers into a single QKVO Linear layer. ~Zero impact
+- Tried the `sa_lambdas` that gate QKV and O. Slightly confused because of the use of rmsnorm, which erases the effect of any scalar multiplier. Helped a tiny bit (~1e-4 of loss), abandoned to control complexity.
+
+---
+
+## 2026-01-17: Various experiments
+
+Modded-nanogpt uses [Value Embeddings](https://arxiv.org/abs/2410.17897) (VEs) in a funny U-shaped structure, 3 of them in total and with gates. I tried a large number of tweaks on this today:
+
+- VEs at every layer, at alternating layers, U shaped, front and back. Alternating layers worked best, i.e. we end up with *a lot* more VEs than modded-nanogpt, at every other layer. It works better.
+- Many parameters sharing ideas to reduce new parameter count, nothing here worked. All failed.
+- Many ideas to reduce parameter count, the LLM hates all of them: low rank decompositions, projections. All failed.
+- Gated yes or no and how much. Gate helps.
+
+Long story short is that the models *love* Value Embeddings. It is a way to add a huge amount of capacity (parameters) to the model at almost zero cost of FLOPs, because these embeddings are simply added to the Values tensor. Any attempt to reduce the capacity of value embeddings (param sharing, low rank, projections) fail. The model wants many of them, and with all the capacity, and doing so wins across all x axes of steps, flops and wall clock. I re-ran the scaling laws and, because the models are now very parameter bloated, the optimal ratio has halved from 8 to 4! Way down lower than Chinchilla's 20 at this point.
+
+Other experiments, looking at val/bpb as a function of all of steps, flops and wall clock time:
+
+- Aspect ratio of 128 is worse than 64, I tried a sweep fixing FLOPs == 1e18 and 64 outperforms. The LLM prefers to be slightly thinner and longer.
+- Head dim definitely prefers to be 128 instead of 64, i.e. fewer bigger heads
+- Bunch of other random stuff like that.
+
+Keeping all of this work on a private branch for now but hope to push shortly.
+
+---
+
+## 2026-01-17: Modded-nanogpt Ideas Sweep (Continued)
+
+Continued testing ideas from modded-nanogpt.
+
+| Idea | Result | Notes |
+|------|--------|-------|
+| Attention gates | No improvement | Per-head learnable gates on attention output. +1GB memory, decreased efficiency. |
+| Batch size schedule | Abandoned | 8→16→24 with LR scaling. Made training script too bloated/complex, not worth cognitive overhead. |
+| Value embeddings | Helps a lot | Experiments still ongoing, more on this later. |
+
+---
+
 ## 2026-01-16: Flash Attention 3 Fallback to SDPA
 
 Added automatic fallback from Flash Attention 3 to PyTorch's `scaled_dot_product_attention` (SDPA) for users without Hopper GPUs. This enables nanochat to run on older CUDA GPUs, CPU, and MPS (Apple Silicon).
@@ -387,8 +809,8 @@ Cherry-picked improvements from NorMuon (modded-nanogpt) into our simpler Muon i
 - Both methods kept in code for easy comparison (`zeropower_via_polar_express` vs `zeropower_via_newtonschulz5`)
 - **Result:** No dramatic/noticeable difference in training, but keeping the new Polar Express as default.
 
-**2. Variance Reduction (NorMuon-style)**
-- Added low-rank variance estimator similar to Adafactor ([arxiv.org/pdf/2510.05491](https://arxiv.org/pdf/2510.05491))
+**2. NorMuon Variance Reduction**
+- Added per-neuron/column adaptive learning rate from NorMuon ([arxiv.org/pdf/2510.05491](https://arxiv.org/pdf/2510.05491))
 - Maintains `second_momentum_buffer` with shape `[rows, 1]` or `[1, cols]` (whichever is smaller)
 - Normalizes updates based on running per-row/col variance estimate (beta2=0.95)
 - Memory overhead: ~1/max(rows, cols) per param, negligible
@@ -430,7 +852,7 @@ Example: If d12 optimal is 0.22, then d20 optimal ≈ 0.22 × (12/20)² ≈ 0.08
 
 ### Summary
 
-Muon was changed to use Polar Express, added Adafactor-style variance reduction, and cautious weight decay with schedule that ramps linearly to zero. All of these changes follow modded-nanogpt repo, but all of them were also validated piece by piece to yield improvements in nanochat with the exception of the Polar Express change which was in the noise. This is default on and configurable with `--weight_decay`, using simply 0.2 and ∝ 1/width² scaling. The kwarg `--weight_decay` is therefore changing as of this change. It used to configure AdamW via standard weight decay and now it becomes exclusively used in Muon (AdamW is hardcoded to 0.0), and it is scaled based on depth.
+Muon was changed to use Polar Express, added NorMuon variance reduction, and cautious weight decay with schedule that ramps linearly to zero. All of these changes follow modded-nanogpt repo, but all of them were also validated piece by piece to yield improvements in nanochat with the exception of the Polar Express change which was in the noise. This is default on and configurable with `--weight_decay`, using simply 0.2 and ∝ 1/width² scaling. The kwarg `--weight_decay` is therefore changing as of this change. It used to configure AdamW via standard weight decay and now it becomes exclusively used in Muon (AdamW is hardcoded to 0.0), and it is scaled based on depth.
 
 ---
 
