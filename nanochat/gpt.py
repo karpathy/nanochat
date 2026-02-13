@@ -29,9 +29,10 @@ from nanochat.flash_attention import flash_attn
 
 # FP8 imports (optional) — needed by reparam_linear for FP8 path
 try:
-    from torchao.float8.float8_linear import matmul_with_hp_or_float8_args
+    from nanochat.fp8 import Float8Linear, _Float8Matmul
 except ImportError:
-    pass
+    Float8Linear = None
+    _Float8Matmul = None
 
 @dataclass
 class GPTConfig:
@@ -66,8 +67,18 @@ def reparam_linear(module, x, gamma=None, scalar=None):
     if scalar is not None:
         w = scalar[:, None] * w
     # FP8 path: use Float8Linear's internal matmul to preserve FP8 tensor cores
-    if hasattr(module, 'linear_mm_config'):
-        return matmul_with_hp_or_float8_args.apply(x, w.t(), module.linear_mm_config, module.config)
+    if Float8Linear is not None and isinstance(module, Float8Linear):
+        # Handle autocast similar to Float8Linear.forward
+        if torch.is_autocast_enabled():
+            x = x.to(torch.get_autocast_gpu_dtype())
+        # Flatten batch dimensions for _Float8Matmul
+        orig_shape = x.shape
+        input_2d = x.reshape(-1, orig_shape[-1])
+        output = _Float8Matmul.apply(input_2d, w)
+        output = output.reshape(*orig_shape[:-1], output.shape[-1])
+        if module.bias is not None:
+            output = output + module.bias.to(output.dtype)
+        return output
     # BF16 path
     return F.linear(x, w)
 
