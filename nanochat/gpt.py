@@ -27,18 +27,12 @@ from nanochat.optim import MuonAdamW, DistMuonAdamW
 # Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
 from nanochat.flash_attention import flash_attn
 
-# FP8 imports (optional)
-# torchao: used in reparam_linear for efficient N-D tensor handling
-# custom fp8: used for regular Float8Linear layers (simpler, same performance)
+# FP8 imports (optional) - minimal custom implementation
 try:
-    from torchao.float8.float8_linear import matmul_with_hp_or_float8_args
-except ImportError:
-    matmul_with_hp_or_float8_args = None
-
-try:
-    from nanochat.fp8 import Float8Linear
+    from nanochat.fp8 import Float8Linear, _Float8MatmulND
 except ImportError:
     Float8Linear = None
+    _Float8MatmulND = None
 
 @dataclass
 class GPTConfig:
@@ -65,17 +59,23 @@ def reparam_linear(module, x, gamma=None, scalar=None):
     gamma: RMSNorm learnable weight, folded into input dim of W  (w = w * gamma[None, :])
     scalar: projection scalar, folded into output dim of W       (w = scalar[:, None] * w)
 
-    For FP8, uses torchao's matmul which handles N-D tensors efficiently without reshaping.
+    For FP8, uses minimal custom _Float8MatmulND which handles N-D tensors internally.
     """
     w = module.weight
     if gamma is not None:
         w = w * gamma[None, :]
     if scalar is not None:
         w = scalar[:, None] * w
-    # FP8 path: use torchao's matmul for efficient N-D tensor handling
-    # (torchao handles arbitrary shapes without external reshaping overhead)
-    if hasattr(module, 'linear_mm_config') and matmul_with_hp_or_float8_args is not None:
-        return matmul_with_hp_or_float8_args.apply(x, w.t(), module.linear_mm_config, module.config)
+    # FP8 path: use custom _Float8MatmulND for efficient N-D tensor handling
+    # (reshaping is done internally, so torch.compile sees it as one opaque operation)
+    if Float8Linear is not None and isinstance(module, Float8Linear):
+        # Handle autocast (Float8Linear expects this)
+        if torch.is_autocast_enabled():
+            x = x.to(torch.get_autocast_gpu_dtype())
+        output = _Float8MatmulND.apply(x, w)
+        if module.bias is not None:
+            output = output + module.bias.to(output.dtype)
+        return output
     # BF16 path
     return F.linear(x, w)
 
