@@ -38,7 +38,6 @@ parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('d
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 parser.add_argument("--dtype", type=str, default="bfloat16", help="float32|bfloat16")
 # Model loading
-parser.add_argument("--source", type=str, default="sft", help="mid|sft - which checkpoint to load from")
 parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
 parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
 # Training horizon
@@ -77,7 +76,7 @@ use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl", name=args.run, config=user_config)
 
 # Init model and tokenizer
-model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.model_step)
+model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
 engine = Engine(model, tokenizer) # for sampling rollouts
 
 # -----------------------------------------------------------------------------
@@ -201,7 +200,7 @@ def run_gsm8k_eval(task, tokenizer, engine,
 # Training loop
 
 # Init the optimizer
-optimizers = model.setup_optimizers(
+optimizer = model.setup_optimizer(
     unembedding_lr=args.unembedding_lr,
     embedding_lr=args.embedding_lr,
     matrix_lr=args.matrix_lr,
@@ -209,10 +208,9 @@ optimizers = model.setup_optimizers(
 )
 
 # Set the initial learning rate as a fraction of the base learning rate
-for opt in optimizers:
-    for group in opt.param_groups:
-        group["lr"] = group["lr"] * args.init_lr_frac
-        group["initial_lr"] = group["lr"] # save the initial learning so we can decay easily later
+for group in optimizer.param_groups:
+    group["lr"] = group["lr"] * args.init_lr_frac
+    group["initial_lr"] = group["lr"]
 
 # Learning rate scheduler: simple rampdown to zero over num_steps
 def get_lr_multiplier(it):
@@ -305,11 +303,9 @@ for step in range(num_steps):
 
     # Update the model parameters
     lrm = get_lr_multiplier(step)
-    for opt in optimizers: # first set the learning rate
-        for group in opt.param_groups:
-            group["lr"] = group["initial_lr"] * lrm
-    for opt in optimizers: # then step the optimizers
-        opt.step()
+    for group in optimizer.param_groups:
+        group["lr"] = group["initial_lr"] * lrm
+    optimizer.step()
     model.zero_grad(set_to_none=True)
     wandb_run.log({
         "step": step,
