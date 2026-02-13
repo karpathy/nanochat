@@ -146,27 +146,54 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
 
     # SDPA fallback: manually manage KV cache
     B, T_new, H, D = q.shape
-    pos = cache_seqlens[0].item()  # assume uniform position across batch
+    assert cache_seqlens is not None, "cache_seqlens is required for KV-cache SDPA fallback"
 
-    # Insert new k, v into cache (in-place, matching FA3 behavior)
+    #all rows decode in lockstep
+    #(this is how Engine.generate() currently uses the cache)
+    if torch.all(cache_seqlens == cache_seqlens[0]).item():
+        pos = int(cache_seqlens[0].item())
+        # Insert new k, v into cache (in-place, matching FA3 behavior)
+        if k is not None and v is not None:
+            k_cache[:, pos:pos+T_new, :, :] = k
+            v_cache[:, pos:pos+T_new, :, :] = v
+
+        end_pos = pos + T_new
+        k_full = k_cache[:, :end_pos, :, :]
+        v_full = v_cache[:, :end_pos, :, :]
+
+        q_sdpa = q.transpose(1, 2)
+        k_sdpa = k_full.transpose(1, 2)
+        v_sdpa = v_full.transpose(1, 2)
+
+        enable_gqa = q_sdpa.size(1) != k_sdpa.size(1)
+        y_sdpa = _sdpa_attention(q_sdpa, k_sdpa, v_sdpa, window_size, enable_gqa)
+        return y_sdpa.transpose(1, 2)
+
+    #per-row cache positions
+    #FA3's KV cache API supports per-row cache_seqlens, SDPA does not,
+    #so we do a small per-row loop here (https://github.com/Dao-AILab/flash-attention)
     if k is not None and v is not None:
-        k_cache[:, pos:pos+T_new, :, :] = k
-        v_cache[:, pos:pos+T_new, :, :] = v
+        for b in range(B):
+            pos_b = int(cache_seqlens[b].item())
 
-    # Get full cache up to current position + new tokens
-    end_pos = pos + T_new
-    k_full = k_cache[:, :end_pos, :, :]
-    v_full = v_cache[:, :end_pos, :, :]
+            k_cache[b,pos_b:pos_b+T_new,:,:]=k[b]
+            v_cache[b,pos_b:pos_b+T_new,:,:]=v[b]
 
-    # Transpose to SDPA layout: (B, T, H, D) -> (B, H, T, D)
-    q_sdpa = q.transpose(1, 2)
-    k_sdpa = k_full.transpose(1, 2)
-    v_sdpa = v_full.transpose(1, 2)
+    y_out=torch.empty_like(q)
+    for b in range(B):
+        end_pos_b=int(cache_seqlens[b].item()) + T_new
 
-    enable_gqa = q_sdpa.size(1) != k_sdpa.size(1)
-    y_sdpa = _sdpa_attention(q_sdpa, k_sdpa, v_sdpa, window_size, enable_gqa)
+        k_full=k_cache[b:b+1,:end_pos_b,:,:]
+        v_full=v_cache[b:b+1,:end_pos_b,:,:]
 
-    return y_sdpa.transpose(1, 2)  # back to (B, T, H, D)
+        q_sdpa= q[b:b+1].transpose(1, 2)
+        k_sdpa=k_full.transpose(1, 2)
+        v_sdpa=v_full.transpose(1, 2)
+        
+        enable_gqa = q_sdpa.size(1)!=k_sdpa.size(1)
+        y_b=_sdpa_attention(q_sdpa, k_sdpa, v_sdpa, window_size, enable_gqa)
+        y_out[b:b+1] = y_b.transpose(1, 2)
+    return y_out
 
 
 # =============================================================================

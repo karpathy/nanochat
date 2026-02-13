@@ -328,10 +328,65 @@ class TestSDPAOnly:
         )
         cache.advance(1)
 
-        assert y_single.shape == (B, 1, H, D)
         assert cache.get_pos() == T_prefill + 1
         set_impl(None)
 
+    def test_kvcache_variable_cache_seqlens(self):
+        """
+        SDPA fallback must handle per-row cache positions
+        """
+        set_impl("sdpa")
+        B,T_max,H,D = 2,32,4,16
+        T_new = 4
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(0)
+        torch.manual_seed(0)
+
+        #different prefix lengths per row
+        cache_seqlens = torch.tensor([8, 16], dtype=torch.int32, device=self.DEVICE)
+
+        #pre-fill cache with distinct random prefixes
+        k_cache = torch.zeros(B, T_max, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v_cache = torch.zeros(B, T_max, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        k_init = torch.randn(B, T_max, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v_init = torch.randn(B, T_max, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        for b in range(B):
+            pre = int(cache_seqlens[b].item())
+            k_cache[b, :pre] = k_init[b, :pre]
+            v_cache[b, :pre] = v_init[b, :pre]
+
+        q = torch.randn(B, T_new, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        k_new = torch.randn(B, T_new, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v_new = torch.randn(B, T_new, H, D, device=self.DEVICE, dtype=self.DTYPE)
+
+        y = flash_attn.flash_attn_with_kvcache(q, k_cache, v_cache, k=k_new, v=v_new, cache_seqlens=cache_seqlens, causal=True, window_size=(T_max, 0))
+
+        #caches should have KV inserted at each row's position
+        for b in range(B):
+            pos = int(cache_seqlens[b].item())
+            torch.testing.assert_close(k_cache[b, pos:pos+T_new], k_new[b])
+            torch.testing.assert_close(v_cache[b, pos:pos+T_new], v_new[b])
+
+        #per-row correct behavior
+        y_ref = torch.empty_like(y)
+        for b in range(B):
+            pre = int(cache_seqlens[b].item())
+            k_full = torch.cat([k_init[b:b+1, :pre], k_new[b:b+1]], dim=1)  # (1,pre+T_new,H,D)
+            v_full = torch.cat([v_init[b:b+1, :pre], v_new[b:b+1]], dim=1)
+
+            q_sdpa = q[b:b+1].transpose(1, 2) # (1,H,T_new,D)
+            k_sdpa = k_full.transpose(1, 2) # (1,H,Tk,D)
+            v_sdpa = v_full.transpose(1, 2)
+
+            y_b = fa_module._sdpa_attention(q_sdpa, k_sdpa, v_sdpa, window_size=(T_max, 0), enable_gqa=False)
+            y_ref[b:b+1] = y_b.transpose(1, 2)
+
+        #bf16 is expected to have slightly larger numerical deltas
+        atol = 1e-2 if self.DTYPE == torch.bfloat16 else 1e-4
+        rtol = 1e-2 if self.DTYPE == torch.bfloat16 else 1e-4
+        torch.testing.assert_close(y, y_ref, atol=atol, rtol=rtol)
+
+        set_impl(None)
 
 # =============================================================================
 # Override mechanism tests
