@@ -193,7 +193,7 @@ def validate_chat_request(request: ChatRequest):
         if message.role not in ["user", "assistant"]:
             raise HTTPException(
                 status_code=400,
-                detail=f"Message {i} has invalid role. Must be 'user', 'assistant', or 'system'"
+                detail=f"Message {i} has invalid role. Must be 'user' or 'assistant'."
             )
 
     # Validate temperature
