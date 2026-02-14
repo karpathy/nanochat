@@ -37,9 +37,11 @@ def adamw_step_fused(
     """
     # Weight decay (decoupled, applied before the update)
     p.mul_(1 - lr_t * wd_t)
-    # Update running averages (lerp_ is cleaner and fuses well)
-    exp_avg.lerp_(grad, 1 - beta1_t)
-    exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
+    # Update running averages (lerp_ is cleaner and fuses well).
+    # Keep interpolation weights in target dtype to satisfy torch.compile checks
+    # with mixed BF16/FP32 parameter groups.
+    exp_avg.lerp_(grad, (1 - beta1_t).to(dtype=exp_avg.dtype))
+    exp_avg_sq.lerp_(grad.square(), (1 - beta2_t).to(dtype=exp_avg_sq.dtype))
     # Bias corrections
     bias1 = 1 - beta1_t ** step_t
     bias2 = 1 - beta2_t ** step_t
@@ -127,12 +129,15 @@ def muon_step_fused(
     g = X
 
     # Variance reduction
-    beta2 = beta2_t.to(g.dtype)
+    beta2 = beta2_t.to(second_momentum_buffer.dtype)
     v_mean = g.float().square().mean(dim=red_dim, keepdim=True)
     red_dim_size = g.size(red_dim)
     v_norm_sq = v_mean.sum(dim=(-2, -1), keepdim=True) * red_dim_size
     v_norm = v_norm_sq.sqrt()
-    second_momentum_buffer.lerp_(v_mean.to(dtype=second_momentum_buffer.dtype), 1 - beta2)
+    second_momentum_buffer.lerp_(
+        v_mean.to(dtype=second_momentum_buffer.dtype),
+        (1 - beta2).to(dtype=second_momentum_buffer.dtype),
+    )
     step_size = second_momentum_buffer.clamp_min(1e-10).rsqrt()
     scaled_sq_sum = (v_mean * red_dim_size) * step_size.float().square()
     v_norm_new = scaled_sq_sum.sum(dim=(-2, -1), keepdim=True).sqrt()
