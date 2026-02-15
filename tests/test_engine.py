@@ -32,6 +32,7 @@ class MockModel:
         self.vocab_size = vocab_size
         self.config = MockConfig()
         self._device = "cpu"
+        self._device = torch.device("cpu")
 
     def get_device(self):
         return self._device
