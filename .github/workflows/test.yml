@@ -24,10 +24,17 @@ jobs:
 
     - name: Set up uv
       uses: astral-sh/setup-uv@v7
-
-    - name: Install dependencies with uv
+    # Linux: Request 'cpu' extra to force the pytorch-cpu index (prevents libcublas crash)
+    - name: Install dependencies (Linux)
+      if: runner.os == 'Linux'
       run: |
-        uv sync --extra cpu 
+        uv sync --extra cpu
+        uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+    # macOS: Standard sync 
+    - name: Install dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: uv sync
 
     - name: Add nanochat to PYTHONPATH (Unix)
       run: |
