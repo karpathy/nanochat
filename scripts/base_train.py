@@ -427,6 +427,17 @@ for step in range(num_iterations + 1):
                 log_dict["train/compute_loss"] = combined_aux_loss[
                     "compute_loss"
                 ].item()
+            if "router_logits_abs_max" in combined_aux_loss:
+                log_dict["train/router_logits_abs_max"] = combined_aux_loss["router_logits_abs_max"].item()
+                log_dict["train/router_logits_abs_mean"] = combined_aux_loss["router_logits_abs_mean"].item()
+            if "expert_bias_abs_max" in combined_aux_loss:
+                log_dict["train/expert_bias_abs_max"] = combined_aux_loss["expert_bias_abs_max"].item()
+                log_dict["train/expert_bias_abs_mean"] = combined_aux_loss["expert_bias_abs_mean"].item()
+            if step % 1000 == 0 and "expert_bias_per_layer" in combined_aux_loss:
+                for i, bias_vec in enumerate(combined_aux_loss["expert_bias_per_layer"]):
+                    log_dict[f"train/expert_bias_layer_{i}"] = wandb.Histogram(
+                        bias_vec.float().cpu().numpy()
+                    )
         wandb_run.log(log_dict)
 
 # print a few more stats

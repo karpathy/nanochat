@@ -29,6 +29,10 @@ from nanochat.common import get_dist_info, print0
 from nanochat.muon import DistMuon, Muon
 from nanochat.topology_var import topology_var
 
+# Keys in aux_loss that should be aggregated with max across layers, not mean
+_MAX_AGGREGATE_KEYS = frozenset({"router_logits_abs_max", "expert_bias_abs_max"})
+
+
 @dataclass
 class GPTConfig:
     sequence_len: int = 1024
@@ -38,16 +42,17 @@ class GPTConfig:
     n_kv_head: int = 6  # number of key/value heads (MQA)
     n_embd: int = 768
     use_moe: bool = True
-    use_triton_moe: bool = True  # Use Triton kernels instead of stk (requires triton-variable-moe)
     expert_sizes: list = field(
         default_factory=lambda: [(64, 256)]
     )  # 64 fine-grained experts
     num_active_experts: int = 8
     norm_topk_prob: bool = True
-    block_size: int = 128  # Triton kernel tile size for MoE
+    block_size: int = 128  # Token padding granularity for MoE
     load_balance_loss_weight: float = 0.08
     router_z_loss_weight: float = 0.001
     compute_loss_weight: float = 0.004
+    use_bias_balancing: bool = False
+    bias_update_speed: float = 0.001
 
 
 def norm(x):
@@ -182,6 +187,11 @@ class MoEMLP(nn.Module):
                 self.expert_offsets.append(self.expert_offsets[-1] + size)
         self.total_expert_width = self.expert_offsets[-1]
 
+        self.use_bias_balancing = config.use_bias_balancing
+        self.bias_update_speed = config.bias_update_speed
+        if self.use_bias_balancing:
+            self.register_buffer("expert_bias", torch.zeros(self.num_experts))
+
         # compute normalized expert widths for aux losses
         mean_expert_width = sum(self.expert_widths) / self.num_experts
         self.register_buffer(
@@ -259,16 +269,13 @@ class MoEMLP(nn.Module):
                 persistent=False,
             )
         else:
+            self.register_buffer("group_membership", torch.empty(0), persistent=False)
+            self.register_buffer("group_sizes", torch.tensor([1.0]), persistent=False)
             self.register_buffer(
-                "group_membership", torch.empty(0), persistent=False
+                "valid_expert_indices",
+                torch.empty(0, dtype=torch.long),
+                persistent=False,
             )
-            self.register_buffer(
-                "group_sizes", torch.tensor([1.0]), persistent=False
-            )
-            self.register_buffer(
-                "valid_expert_indices", torch.empty(0, dtype=torch.long), persistent=False
-            )
-
 
     # Disable torch.compile tracing for MoE - triton kernels (stk.ops.row_indices etc)
     # can't handle FakeTensors used during compile tracing
@@ -289,10 +296,17 @@ class MoEMLP(nn.Module):
             router_logits.to(torch.float32)
         )  # seeing if we really need to cast to float32, guessing probably
 
-        top_k_weights, selected_experts = torch.topk(
-            router_probs, self.num_active_experts, dim=-1
-        )
+        if self.use_bias_balancing:
+            selection_scores = router_probs + self.expert_bias.unsqueeze(0)
+            _, selected_experts = torch.topk(
+                selection_scores, self.num_active_experts, dim=-1
+            )
+            top_k_weights = router_probs.gather(-1, selected_experts)
 
+        else:
+            top_k_weights, selected_experts = torch.topk(
+                router_probs, self.num_active_experts, dim=-1
+            )
         top_k_weights = top_k_weights / (
             top_k_weights.sum(dim=-1, keepdim=True) + 1e-20
         )  # epsilon so we don't divide by 0
@@ -305,6 +319,14 @@ class MoEMLP(nn.Module):
         bin_ids, indices, tokens_per_expert = self._sort_tokens_by_expert(
             selected_experts_flat
         )
+
+        if self.use_bias_balancing and self.training:
+            with torch.no_grad():
+                avg_tokens = tokens_per_expert.float().mean()
+                self.expert_bias -= self.bias_update_speed * (
+                    (tokens_per_expert.float() > avg_tokens).float()
+                    - (tokens_per_expert.float() < avg_tokens).float()
+                )
 
         # Compute bins for gather/scatter
         bins = ops.inclusive_cumsum(tokens_per_expert, 0).contiguous()
@@ -338,9 +360,7 @@ class MoEMLP(nn.Module):
 
         # Reuse histogram from routing instead of slow scatter_add_
         f_i = (tokens_per_expert.float() / tokens_per_expert.sum()).to(x.dtype)
-        load_balance_loss = self._compute_load_balance_loss(
-            router_probs, selected_experts_flat, f_i
-        )
+        load_balance_loss = self._compute_load_balance_loss(router_probs, f_i)
         router_probs_flat = rearrange(
             router_probs,
             "(batch_size seq_len) n_embd -> (batch_size seq_len) n_embd",
@@ -356,7 +376,13 @@ class MoEMLP(nn.Module):
             "router_z_loss": router_z_loss,
             "load_balance_loss": load_balance_loss,
             "compute_loss": compute_loss,
+            "router_logits_abs_max": router_logits.abs().max().detach(),
+            "router_logits_abs_mean": router_logits.abs().mean().detach(),
         }
+        if self.use_bias_balancing:
+            aux_loss["expert_bias_abs_max"] = self.expert_bias.abs().max()
+            aux_loss["expert_bias_abs_mean"] = self.expert_bias.abs().mean()
+            aux_loss["expert_bias_vector"] = self.expert_bias.detach().clone()
 
         return output, aux_loss, f_i
 
@@ -417,7 +443,7 @@ class MoEMLP(nn.Module):
         row_indices = row_indices.to(torch.int32)
 
         column_indices_t, offsets_t, block_offsets_t = self._sparse_transpose(
-            shape, row_indices, column_indices
+            row_indices, column_indices
         )
         column_indices_t = column_indices_t.to(torch.int32)
         offsets_t = offsets_t.to(torch.int32)
@@ -436,7 +462,7 @@ class MoEMLP(nn.Module):
 
         return padded_bins, topology
 
-    def _sparse_transpose(self, size, row_indices, column_indices):
+    def _sparse_transpose(self, row_indices, column_indices):
         # Use total_expert_width instead of d_ffn * num_experts
         block_columns = self.total_expert_width // self.block_size
 
@@ -480,7 +506,7 @@ class MoEMLP(nn.Module):
             x, indices, bin_ids, weights, bins, padded_bins, self.num_active_experts
         )
 
-    def _compute_load_balance_loss(self, router_probs, experts_flat, f_i):
+    def _compute_load_balance_loss(self, router_probs, f_i):
         """Compute load balance loss within expert groups (vectorized)."""
         p_i = router_probs.mean(dim=0)
 
@@ -510,19 +536,7 @@ class Block(nn.Module):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         if config.use_moe:
-            if config.use_triton_moe:
-                from triton_moe import TritonMoEMLP, TritonMoEConfig
-
-                tri_config = TritonMoEConfig(
-                    n_embd=config.n_embd,
-                    expert_sizes=config.expert_sizes,
-                    num_active_experts=config.num_active_experts,
-                    norm_topk_prob=config.norm_topk_prob,
-                    block_size=config.block_size,
-                )
-                self.mlp = TritonMoEMLP(tri_config)
-            else:
-                self.mlp = MoEMLP(config)
+            self.mlp = MoEMLP(config)
         else:
             self.mlp = MLP(config)
 
@@ -708,6 +722,7 @@ class GPT(nn.Module):
         expert_usage_sum = None
         expert_usage_count = 0
         expert_usage_per_layer = []
+        expert_bias_per_layer = []
         for block in self.transformer.h:
             x, aux_loss, f_i = block(x, cos_sin, kv_cache)
 
@@ -720,16 +735,28 @@ class GPT(nn.Module):
                 expert_usage_per_layer.append(f_i.clone())
 
             if aux_loss is not None:
+                # expert_bias_vector is a raw tensor (not a loss) - collect per-layer, don't average
+                if "expert_bias_vector" in aux_loss:
+                    expert_bias_per_layer.append(aux_loss["expert_bias_vector"])
+                scalar_aux = {
+                    k: v for k, v in aux_loss.items() if k != "expert_bias_vector"
+                }
                 if combined_aux_loss is None:
-                    combined_aux_loss = {k: v.clone() for k, v in aux_loss.items()}
+                    combined_aux_loss = {k: v.clone() for k, v in scalar_aux.items()}
                 else:
-                    for key in aux_loss:
-                        combined_aux_loss[key] += aux_loss[key]
+                    for key in scalar_aux:
+                        if key in _MAX_AGGREGATE_KEYS:
+                            combined_aux_loss[key] = torch.maximum(
+                                combined_aux_loss[key], scalar_aux[key]
+                            )
+                        else:
+                            combined_aux_loss[key] += scalar_aux[key]
                 aux_loss_count += 1
 
         if combined_aux_loss is not None and aux_loss_count > 0:
             for key in combined_aux_loss:
-                combined_aux_loss[key] /= aux_loss_count
+                if key not in _MAX_AGGREGATE_KEYS:
+                    combined_aux_loss[key] /= aux_loss_count
 
         if expert_usage_sum is not None and expert_usage_count > 0:
             avg_expert_usage = expert_usage_sum / expert_usage_count
@@ -737,6 +764,11 @@ class GPT(nn.Module):
                 combined_aux_loss = {}
             combined_aux_loss["expert_usage"] = avg_expert_usage
             combined_aux_loss["expert_usage_per_layer"] = expert_usage_per_layer
+
+        if expert_bias_per_layer:
+            if combined_aux_loss is None:
+                combined_aux_loss = {}
+            combined_aux_loss["expert_bias_per_layer"] = expert_bias_per_layer
 
         x = norm(x)
 
@@ -756,13 +788,14 @@ class GPT(nn.Module):
             )
             loss = ce_loss
             if combined_aux_loss is not None:
-                loss = (
-                    loss
-                    + self.config.load_balance_loss_weight
-                    * combined_aux_loss["load_balance_loss"]
-                    + self.config.router_z_loss_weight
-                    * combined_aux_loss["router_z_loss"]
-                )
+                if not self.config.use_bias_balancing:
+                    loss = (
+                        loss
+                        + self.config.load_balance_loss_weight
+                        * combined_aux_loss["load_balance_loss"]
+                        + self.config.router_z_loss_weight
+                        * combined_aux_loss["router_z_loss"]
+                    )
                 if (
                     self.config.compute_loss_weight > 0
                     and "compute_loss" in combined_aux_loss

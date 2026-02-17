@@ -35,6 +35,7 @@ python -m scripts.tok_train --max_chars=500000000
 # Training: 2.5B tokens on 3 GPUs
 # batch: 10 * 1024 * 3 * 18 (grad_accum) = 552,960 tokens/step
 # iterations: 2.5B / 552,960 = 4,521
+# batch size 9 is cursed but there are good reasons
 torchrun --standalone --nproc_per_node=3 -m scripts.base_train -- \
     --run=synth-moe-12L-768d-2.5B \
     --depth=12 \
