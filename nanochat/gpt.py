@@ -34,8 +34,9 @@ class GPTConfig:
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
-    num_experts: int = 8  # MoE: number of expert MLPs
-    top_k: int = 2  # MoE: number of active experts per token
+    num_experts: int = 8  # MoE: number of routed expert MLPs
+    top_k: int = 2  # MoE: number of active routed experts per token
+    num_shared_experts: int = 1  # MoE: number of shared (always-active) experts
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
     # Characters: L=long (full context), S=short (half context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
@@ -188,8 +189,10 @@ class GPT(nn.Module):
             attn.c_v:        uniform, std=1/sqrt(n_embd)
             attn.c_proj:     zeros
             moe.router.gate:     uniform, std=1/sqrt(n_embd)
-            moe.experts.w_ups:   uniform, std=1/sqrt(n_embd)
-            moe.experts.w_downs: zeros
+            moe.experts.w_up:           uniform, std=1/sqrt(n_embd)
+            moe.experts.w_down:          zeros
+            moe.shared_expert.w_up:      uniform, std=1/sqrt(n_embd)
+            moe.shared_expert.w_down:    zeros
         """
 
         # Embedding and unembedding
@@ -206,10 +209,11 @@ class GPT(nn.Module):
             torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
             # MoE: router gate and expert up-projections get uniform, down-projections get zero
             torch.nn.init.uniform_(block.moe.router.gate.weight, -s, s)
-            for w_up in block.moe.experts.w_ups:
-                torch.nn.init.uniform_(w_up, -s, s)
-            for w_down in block.moe.experts.w_downs:
-                torch.nn.init.zeros_(w_down)
+            torch.nn.init.uniform_(block.moe.experts.w_up, -s, s)
+            torch.nn.init.zeros_(block.moe.experts.w_down)
+            if block.moe.shared_expert is not None:
+                torch.nn.init.uniform_(block.moe.shared_expert.w_up.weight, -s, s)
+                torch.nn.init.zeros_(block.moe.shared_expert.w_down.weight)
             # MoE load balancing buffers (zero after to_empty from meta device)
             block.moe.router.expert_bias.zero_()
             block.moe.router.tokens_per_expert_counter.zero_()
@@ -304,10 +308,11 @@ class GPT(nn.Module):
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
         nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
                           self.resid_lambdas.numel() + self.x0_lambdas.numel())
-        # MoE: only top_k/num_experts fraction of expert params active per token
-        expert_hidden = 4 * self.config.n_embd // self.config.top_k
-        expert_params_per_layer = self.config.num_experts * 2 * self.config.n_embd * expert_hidden
-        inactive_per_layer = expert_params_per_layer * (self.config.num_experts - self.config.top_k) // self.config.num_experts
+        # MoE: only top_k/num_experts fraction of routed expert params active per token
+        # Shared expert is always active so its params stay in the active count
+        expert_hidden = self.transformer.h[0].moe.expert_hidden_dim
+        routed_params_per_layer = self.config.num_experts * 2 * self.config.n_embd * expert_hidden
+        inactive_per_layer = routed_params_per_layer * (self.config.num_experts - self.config.top_k) // self.config.num_experts
         nparams_exclude += inactive_per_layer * self.config.n_layer
         h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window
