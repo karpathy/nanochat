@@ -335,6 +335,10 @@ class GPT(nn.Module):
 
         Returns a dict with counts for each parameter group, so downstream analysis
         can experiment with which combination gives the cleanest scaling laws.
+
+        For MoE, 'active_*' fields count only the parameters active per token
+        (top_k out of num_experts routed experts, plus shared experts).
+        Following DeepSeek convention of reporting both total and active params.
         """
         # Count each group separately (mirrors the grouping in setup_optimizers)
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
@@ -344,13 +348,24 @@ class GPT(nn.Module):
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
         total = wte + value_embeds + lm_head + transformer_matrices + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
+        # MoE: only top_k/num_experts fraction of routed expert params active per token
+        # Shared expert is always active so its params stay in the active count
+        expert_hidden = self.transformer.h[0].moe.expert_hidden_dim
+        routed_params_per_layer = self.config.num_experts * 2 * self.config.n_embd * expert_hidden
+        inactive_per_layer = routed_params_per_layer * (self.config.num_experts - self.config.top_k) // self.config.num_experts
+        moe_inactive = inactive_per_layer * self.config.n_layer
+        active_transformer_matrices = transformer_matrices - moe_inactive
+        active_total = total - moe_inactive
         return {
             'wte': wte,
             'value_embeds': value_embeds,
             'lm_head': lm_head,
             'transformer_matrices': transformer_matrices,
+            'active_transformer_matrices': active_transformer_matrices,
             'scalars': scalars,
+            'moe_inactive': moe_inactive,
             'total': total,
+            'active_total': active_total,
         }
 
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
