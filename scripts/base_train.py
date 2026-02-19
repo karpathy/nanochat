@@ -237,6 +237,10 @@ def disable_fp8(model):
 # -----------------------------------------------------------------------------
 # Compile the model
 
+# MoE uses torch._grouped_mm with cumulative offsets — dynamo needs this to
+# trace through scalar tensor operations that arise from cumsum/histc in routing
+torch._dynamo.config.capture_scalar_outputs = True
+
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
 model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
 
@@ -506,6 +510,8 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+    moe_stats = orig_model.get_moe_stats() if step % 100 == 0 else {}
+    model.update_moe_balancing()
     optimizer.step()
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
@@ -547,6 +553,7 @@ while True:
             "train/mfu": mfu,
             "train/epoch": epoch,
         }
+        log_data.update(moe_stats)
         wandb_run.log(log_data)
 
     # state update

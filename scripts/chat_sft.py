@@ -118,6 +118,8 @@ for name, fallback, source in [
         print0(f"Using {name}={arg_val}")
 
 orig_model = model
+# MoE uses torch._grouped_mm — dynamo needs this for scalar tensor tracing
+torch._dynamo.config.capture_scalar_outputs = True
 model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
@@ -430,6 +432,7 @@ while True:
         group["lr"] = group["initial_lr"] * lrm
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
+    model.update_moe_balancing()
     optimizer.step()
     model.zero_grad(set_to_none=True)
     synchronize()

@@ -305,6 +305,7 @@ for step in range(num_steps):
     lrm = get_lr_multiplier(step)
     for group in optimizer.param_groups:
         group["lr"] = group["initial_lr"] * lrm
+    model.update_moe_balancing()
     optimizer.step()
     model.zero_grad(set_to_none=True)
     wandb_run.log({
