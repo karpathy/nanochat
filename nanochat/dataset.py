@@ -65,7 +65,7 @@ def get_parquet_paths(split, data_dir=None):
             )
         return [val_path]
     else:
-        #train split: list files while excluding val (don't add then remove).
+        # train split: list files while excluding val
         return list_parquet_files(data_dir, exclude_filenames=(VAL_SHARD_FILENAME,))
 
 def parquets_iter_batched(split, start=0, step=1):
