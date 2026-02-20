@@ -190,6 +190,82 @@ class _Float8Matmul(torch.autograd.Function):
         return grad_input, grad_weight
 
 
+@torch._dynamo.allow_in_graph
+class _Float8MatmulND(torch.autograd.Function):
+    """FP8 matmul that handles N-D input tensors.
+
+    Same as _Float8Matmul but accepts inputs of any shape (not just 2D).
+    Reshaping is done internally so torch.compile sees this as one opaque node,
+    preventing the reshaping overhead that occurs when reshapes are external.
+
+    This is specifically for reparam_linear where N-D tensors are common.
+    """
+
+    @staticmethod
+    def forward(ctx, input, weight):
+        # Save original shape and flatten batch dimensions
+        orig_shape = input.shape
+        ctx.orig_shape = orig_shape
+        input_2d = input.reshape(-1, orig_shape[-1])
+        ctx.save_for_backward(input_2d, weight)
+
+        # Quantize and matmul (same as _Float8Matmul.forward)
+        input_fp8, input_inv = _to_fp8(input_2d, torch.float8_e4m3fn)
+        weight_fp8, weight_inv = _to_fp8(weight, torch.float8_e4m3fn)
+        output = torch._scaled_mm(
+            input_fp8,
+            weight_fp8.t(),
+            scale_a=input_inv,
+            scale_b=weight_inv,
+            out_dtype=input.dtype,
+            use_fast_accum=True,
+        )
+
+        # Reshape back to original batch dims
+        output = output.reshape(*orig_shape[:-1], output.shape[-1])
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input_2d, weight = ctx.saved_tensors
+        orig_shape = ctx.orig_shape
+
+        # Flatten grad_output to match input_2d
+        grad_output_flat = grad_output.reshape(-1, grad_output.shape[-1])
+
+        # === GEMM 1: grad_input = grad_output @ weight ===
+        go_fp8, go_inv = _to_fp8(grad_output_flat, torch.float8_e5m2)
+        w_fp8, w_inv = _to_fp8(weight, torch.float8_e4m3fn)
+        w_col = _to_col_major(w_fp8)
+        grad_input_flat = torch._scaled_mm(
+            go_fp8,
+            w_col,
+            scale_a=go_inv,
+            scale_b=w_inv,
+            out_dtype=grad_output.dtype,
+            use_fast_accum=False,
+        )
+        # Reshape back to original input shape
+        grad_input = grad_input_flat.reshape(orig_shape)
+
+        # === GEMM 2: grad_weight = grad_output.T @ input ===
+        go_fp8_2, go_inv_2 = _to_fp8(grad_output_flat, torch.float8_e5m2)
+        in_fp8, in_inv = _to_fp8(input_2d, torch.float8_e4m3fn)
+        go_T = go_fp8_2.t().contiguous()
+        in_col = _to_col_major(in_fp8)
+        grad_weight = torch._scaled_mm(
+            go_T,
+            in_col,
+            scale_a=go_inv_2,
+            scale_b=in_inv,
+            out_dtype=grad_output.dtype,
+            use_fast_accum=False,
+        )
+
+        return grad_input, grad_weight
+
+
+
 class Float8Linear(nn.Linear):
     """Drop-in nn.Linear replacement that does FP8 compute.
 
