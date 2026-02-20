@@ -24,6 +24,7 @@ from nanochat.optim import MuonAdamW, DistMuonAdamW
 
 # Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
 from nanochat.flash_attention import flash_attn
+from nanochat.moe import MoE
 
 @dataclass
 class GPTConfig:
@@ -33,6 +34,9 @@ class GPTConfig:
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
+    num_experts: int = 8  # MoE: number of routed expert MLPs
+    top_k: int = 2  # MoE: number of active routed experts per token
+    num_shared_experts: int = 1  # MoE: number of shared (always-active) experts
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
     # Characters: L=long (full context), S=short (half context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
@@ -118,28 +122,15 @@ class CausalSelfAttention(nn.Module):
         return y
 
 
-class MLP(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
-
-    def forward(self, x):
-        x = self.c_fc(x)
-        x = F.relu(x).square()
-        x = self.c_proj(x)
-        return x
-
-
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
-        self.mlp = MLP(config)
+        self.moe = MoE(config)
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
-        x = x + self.mlp(norm(x))
+        x = x + self.moe(norm(x))
         return x
 
 
@@ -197,8 +188,11 @@ class GPT(nn.Module):
             attn.c_k:        uniform, std=1/sqrt(n_embd)
             attn.c_v:        uniform, std=1/sqrt(n_embd)
             attn.c_proj:     zeros
-            mlp.c_fc:        uniform, std=1/sqrt(n_embd)
-            mlp.c_proj:      zeros
+            moe.router.gate:     uniform, std=1/sqrt(n_embd)
+            moe.experts.w_up:           uniform, std=1/sqrt(n_embd)
+            moe.experts.w_down:          zeros
+            moe.shared_expert.w_up:      uniform, std=1/sqrt(n_embd)
+            moe.shared_expert.w_down:    zeros
         """
 
         # Embedding and unembedding
@@ -213,8 +207,16 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
-            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            # MoE: router gate and expert up-projections get uniform, down-projections get zero
+            torch.nn.init.uniform_(block.moe.router.gate.weight, -s, s)
+            torch.nn.init.uniform_(block.moe.experts.w_up, -s, s)
+            torch.nn.init.zeros_(block.moe.experts.w_down)
+            if block.moe.shared_expert is not None:
+                torch.nn.init.uniform_(block.moe.shared_expert.w_up.weight, -s, s)
+                torch.nn.init.zeros_(block.moe.shared_expert.w_down.weight)
+            # MoE load balancing buffers (zero after to_empty from meta device)
+            block.moe.router.expert_bias.zero_()
+            block.moe.router.tokens_per_expert_counter.zero_()
 
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)   # 1.0 => typical residual connections at init
@@ -306,6 +308,12 @@ class GPT(nn.Module):
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
         nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
                           self.resid_lambdas.numel() + self.x0_lambdas.numel())
+        # MoE: only top_k/num_experts fraction of routed expert params active per token
+        # Shared expert is always active so its params stay in the active count
+        expert_hidden = self.transformer.h[0].moe.expert_hidden_dim
+        routed_params_per_layer = self.config.num_experts * 2 * self.config.n_embd * expert_hidden
+        inactive_per_layer = routed_params_per_layer * (self.config.num_experts - self.config.top_k) // self.config.num_experts
+        nparams_exclude += inactive_per_layer * self.config.n_layer
         h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window
         attn_flops = 0
@@ -327,6 +335,10 @@ class GPT(nn.Module):
 
         Returns a dict with counts for each parameter group, so downstream analysis
         can experiment with which combination gives the cleanest scaling laws.
+
+        For MoE, 'active_*' fields count only the parameters active per token
+        (top_k out of num_experts routed experts, plus shared experts).
+        Following DeepSeek convention of reporting both total and active params.
         """
         # Count each group separately (mirrors the grouping in setup_optimizers)
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
@@ -336,13 +348,24 @@ class GPT(nn.Module):
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
         total = wte + value_embeds + lm_head + transformer_matrices + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
+        # MoE: only top_k/num_experts fraction of routed expert params active per token
+        # Shared expert is always active so its params stay in the active count
+        expert_hidden = self.transformer.h[0].moe.expert_hidden_dim
+        routed_params_per_layer = self.config.num_experts * 2 * self.config.n_embd * expert_hidden
+        inactive_per_layer = routed_params_per_layer * (self.config.num_experts - self.config.top_k) // self.config.num_experts
+        moe_inactive = inactive_per_layer * self.config.n_layer
+        active_transformer_matrices = transformer_matrices - moe_inactive
+        active_total = total - moe_inactive
         return {
             'wte': wte,
             'value_embeds': value_embeds,
             'lm_head': lm_head,
             'transformer_matrices': transformer_matrices,
+            'active_transformer_matrices': active_transformer_matrices,
             'scalars': scalars,
+            'moe_inactive': moe_inactive,
             'total': total,
+            'active_total': active_total,
         }
 
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5):
@@ -384,6 +407,31 @@ class GPT(nn.Module):
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
         return optimizer
+
+    def update_moe_balancing(self, coeff=1e-3):
+        """Update expert routing bias for load balancing. Call before optimizer.step()."""
+        for block in self.transformer.h:
+            block.moe.router.update_expert_bias(coeff)
+
+    def get_moe_stats(self):
+        """Collect MoE routing statistics for logging. Call BEFORE update_moe_balancing (which resets counters)."""
+        all_counts = []
+        all_biases = []
+        for block in self.transformer.h:
+            router = block.moe.router
+            all_counts.append(router.tokens_per_expert_counter)
+            all_biases.append(router.expert_bias)
+        counts = torch.stack(all_counts).float()    # (n_layer, num_experts)
+        biases = torch.stack(all_biases).float()    # (n_layer, num_experts)
+        # Load imbalance: coefficient of variation (std/mean) per layer, averaged
+        counts_mean = counts.mean(dim=-1).clamp(min=1)
+        counts_std = counts.std(dim=-1)
+        load_imbalance = (counts_std / counts_mean).mean().item()
+        return {
+            "moe/load_imbalance": load_imbalance,
+            "moe/expert_bias_std": biases.std().item(),
+            "moe/expert_bias_max": biases.abs().max().item(),
+        }
 
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
         B, T = idx.size()
