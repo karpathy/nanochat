@@ -1,10 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>NanoChat</title>
     <link rel="icon" type="image/svg+xml" href="/logo.svg">
+    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.5/dist/purify.min.js"></script>
     <style>
         :root {
             color-scheme: light;
@@ -104,9 +107,12 @@
         }
 
         .message-content {
-            white-space: pre-wrap;
             line-height: 1.6;
             max-width: 100%;
+        }
+
+        .message.user .message-content {
+            white-space: pre-wrap;
         }
 
         .message.assistant .message-content {
@@ -224,8 +230,16 @@
         }
 
         @keyframes typing {
-            0%, 60%, 100% { opacity: 0.2; }
-            30% { opacity: 1; }
+
+            0%,
+            60%,
+            100% {
+                opacity: 0.2;
+            }
+
+            30% {
+                opacity: 1;
+            }
         }
 
         .error-message {
@@ -236,13 +250,109 @@
             border-radius: 0.75rem;
             margin-top: 0.5rem;
         }
+
+        /* Markdown styling */
+        .message-content table {
+            border-collapse: collapse;
+            margin: 0.25rem 0;
+            width: 100%;
+        }
+
+        .message-content th,
+        .message-content td {
+            border: 1px solid #e5e7eb;
+            padding: 0.5rem;
+            text-align: left;
+        }
+
+        .message-content th {
+            background-color: #f9fafb;
+            font-weight: 600;
+        }
+
+        .message-content code {
+            background-color: #f3f4f6;
+            padding: 0.125rem 0.25rem;
+            border-radius: 0.25rem;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'Courier New', monospace;
+            font-size: 0.875em;
+        }
+
+        .message-content pre {
+            background-color: #f3f4f6;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            margin: 0.25rem 0;
+            position: relative;
+        }
+
+        .message-content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .code-language-label {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background-color: #e5e7eb;
+            color: #6b7280;
+            padding: 0.125rem 0.375rem;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            font-family: ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+            text-transform: lowercase;
+            font-weight: 500;
+        }
+
+        .message-content h1,
+        .message-content h2,
+        .message-content h3,
+        .message-content h4,
+        .message-content h5,
+        .message-content h6 {
+            margin: 0.75rem 0 0.25rem 0;
+            font-weight: 600;
+        }
+
+        .message-content h1 {
+            font-size: 1.5em;
+        }
+
+        .message-content h2 {
+            font-size: 1.3em;
+        }
+
+        .message-content h3 {
+            font-size: 1.1em;
+        }
+
+        .message-content ul,
+        .message-content ol {
+            margin: 0.25rem 0;
+            padding-left: 1.5rem;
+        }
+
+        .message-content li {
+            margin: 0.1rem 0;
+        }
+
+        .message-content blockquote {
+            border-left: 4px solid #e5e7eb;
+            padding-left: 1rem;
+            margin: 0.5rem 0;
+            color: #6b7280;
+        }
     </style>
 </head>
+
 <body>
     <div class="header">
         <div class="header-left">
             <button class="new-conversation-btn" onclick="newConversation()" title="New Conversation (Ctrl+Shift+N)">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
                     <path d="M12 5v14"></path>
                     <path d="M5 12h14"></path>
                 </svg>
@@ -259,15 +369,11 @@
 
     <div class="input-container">
         <div class="input-wrapper">
-            <textarea
-                id="chatInput"
-                class="chat-input"
-                placeholder="Ask anything"
-                rows="1"
-                onkeydown="handleKeyDown(event)"
-            ></textarea>
+            <textarea id="chatInput" class="chat-input" placeholder="Ask anything" rows="1"
+                onkeydown="handleKeyDown(event)"></textarea>
             <button id="sendButton" class="send-button" onclick="sendMessage()" disabled>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
                     <path d="M22 2L11 13"></path>
                     <path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
                 </svg>
@@ -287,7 +393,65 @@
         let currentTemperature = 0.8;
         let currentTopK = 50;
 
-        chatInput.addEventListener('input', function() {
+        // Configure marked.js for better rendering
+        if (typeof marked !== 'undefined') {
+            marked.setOptions({
+                breaks: true,        // Convert line breaks to <br>
+                gfm: true,          // GitHub Flavored Markdown
+                sanitize: false,    // We'll use DOMPurify instead
+                smartypants: false  // Disable smart quotes for simplicity
+            });
+        }
+
+        // Markdown rendering function
+        function renderMarkdown(content) {
+            try {
+                if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+                    const rawHtml = marked.parse(content);
+                    const sanitizedHtml = DOMPurify.sanitize(rawHtml);
+                    return addLanguageLabels(sanitizedHtml);
+                } else {
+                    console.warn('Markdown libraries not loaded, falling back to plain text');
+                    return escapeHtml(content);
+                }
+            } catch (error) {
+                console.error('Markdown rendering failed:', error);
+                return escapeHtml(content);
+            }
+        }
+
+        // Add language labels to code blocks
+        function addLanguageLabels(html) {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = html;
+            
+            const codeBlocks = tempDiv.querySelectorAll('pre code');
+            codeBlocks.forEach(codeBlock => {
+                const pre = codeBlock.parentElement;
+                const className = codeBlock.className;
+                
+                // Extract language from class (e.g., "language-javascript" -> "javascript")
+                const languageMatch = className.match(/language-(\w+)/);
+                if (languageMatch) {
+                    const language = languageMatch[1];
+                    const label = document.createElement('span');
+                    label.className = 'code-language-label';
+                    label.textContent = language;
+                    pre.appendChild(label);
+                }
+            });
+            
+            return tempDiv.innerHTML;
+        }
+
+        // HTML escape fallback function
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        chatInput.addEventListener('input', function () {
             this.style.height = 'auto';
             this.style.height = Math.min(this.scrollHeight, 200) + 'px';
             sendButton.disabled = !this.value.trim() || isGenerating;
@@ -300,7 +464,7 @@
             }
         }
 
-        document.addEventListener('keydown', function(event) {
+        document.addEventListener('keydown', function (event) {
             // Ctrl+Shift+N for new conversation
             if (event.ctrlKey && event.shiftKey && event.key === 'N') {
                 event.preventDefault();
@@ -326,13 +490,19 @@
 
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
-            contentDiv.textContent = content;
+
+            // Render markdown for assistant messages, plain text for others
+            if (role === 'assistant' && content) {
+                contentDiv.innerHTML = renderMarkdown(content);
+            } else {
+                contentDiv.textContent = content;
+            }
 
             // Add click handler for user messages to enable editing
             if (role === 'user' && messageIndex !== null) {
                 contentDiv.setAttribute('data-message-index', messageIndex);
                 contentDiv.setAttribute('title', 'Click to edit and restart from here');
-                contentDiv.addEventListener('click', function() {
+                contentDiv.addEventListener('click', function () {
                     if (!isGenerating) {
                         editMessage(messageIndex);
                     }
@@ -343,7 +513,7 @@
             if (role === 'assistant' && messageIndex !== null) {
                 contentDiv.setAttribute('data-message-index', messageIndex);
                 contentDiv.setAttribute('title', 'Click to regenerate this response');
-                contentDiv.addEventListener('click', function() {
+                contentDiv.addEventListener('click', function () {
                     if (!isGenerating) {
                         regenerateMessage(messageIndex);
                     }
@@ -426,7 +596,8 @@
                                 const data = JSON.parse(line.slice(6));
                                 if (data.token) {
                                     fullResponse += data.token;
-                                    assistantContent.textContent = fullResponse;
+                                    // Render markdown in real-time as tokens arrive
+                                    assistantContent.innerHTML = renderMarkdown(fullResponse);
                                     chatContainer.scrollTop = chatContainer.scrollHeight;
                                 }
                             } catch (e) {
@@ -441,7 +612,7 @@
                 // Add click handler to regenerate this assistant message
                 assistantContent.setAttribute('data-message-index', assistantMessageIndex);
                 assistantContent.setAttribute('title', 'Click to regenerate this response');
-                assistantContent.addEventListener('click', function() {
+                assistantContent.addEventListener('click', function () {
                     if (!isGenerating) {
                         regenerateMessage(assistantMessageIndex);
                     }
@@ -563,4 +734,5 @@
             });
     </script>
 </body>
+
 </html>
