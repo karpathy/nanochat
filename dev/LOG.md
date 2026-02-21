@@ -4,6 +4,95 @@ A running summary documenting some experiments and findings. Started ~Jan 7 2026
 
 ---
 
+## 2026-02-19: Mixture of Experts (negative)
+
+Implemented a DeepSeekV3-style Mixture of Experts layer as a drop-in replacement for the dense MLP. The MoE branch works and improves per-step validation loss, but is not a net improvement on wall clock time due to MoE overhead (at least for our scale of interest of approx GPT-2 capability).
+
+### Implementation
+
+Follows DeepSeekV3 and using torchtitan as reference:
+
+- **8 routed experts, top-2 routing** with sigmoid gating (not softmax)
+- **1 shared expert** (dense MLP processing all tokens, following DeepSeekV3)
+- **Auxiliary-loss-free load balancing** (DeepSeekV3's expert bias nudging)
+- **Iso-FLOP sizing**: `expert_hidden_dim = round(4 * dim / (top_k + num_shared) / 128) * 128`, so active FLOPs per token match the dense MLP
+- **`torch._grouped_mm`** for dispatching tokens to experts in a single kernel (instead of a Python for-loop)
+- **3D expert weight tensors** `(num_experts, hidden, dim)` — Muon's Polar Express operates on the last two dims, so each expert is independently orthogonalized
+- **Active parameter counting** for scaling laws (only `top_k + shared` experts, not all 8)
+
+### What was easy
+
+- The core MoE forward pass: router, sort tokens by expert, grouped matmul, scatter back. Conceptually clean.
+- Shared expert: just an `nn.Linear` MLP that runs on all tokens alongside the routed path.
+- 3D expert params + Muon: only required fixing `second_momentum_buffer` shape to preserve leading dims.
+- Load balancing: DeepSeekV3's bias nudging is simple and effective (~10 lines).
+
+### What was hard / ugly
+
+- **`torch._grouped_mm` quirks**: requires bf16 (not fp32), column-major right operand, int32 cumulative offsets. The API is undocumented and only discoverable by trial and error.
+- **Token count padding**: torchtitan pads each expert's token count to alignment multiples (8 for bf16) for better grouped_mm throughput. We implemented this with both a pure PyTorch approach and a copy of torchtitan's Triton kernel. Both compiled cleanly (0 graph breaks), but with ~65K tokens across 8 experts, each expert already gets ~8K tokens which is well-aligned. The padding overhead (gather/scatter) actually regressed MFU from 35% to 33%. Reverted.
+- **FP8 + MoE**: `torch._grouped_mm` does NOT support FP8. There's a separate `torch._scaled_grouped_mm` API that requires per-row scaling (not per-tensor like our `Float8Linear`). The backward pass for weight gradients needs per-group column-wise scaling, which torchao implements with custom Triton kernels. We investigated thoroughly (see `dev/moe_fp8.md`) but did not implement — would require either depending on `torchao.prototype` (unstable) or writing ~200 lines of custom autograd + quantization code. Partial FP8 support exists: the shared expert's `nn.Linear` layers do get converted, but the routed experts (3D `nn.Parameter`) stay in bf16.
+
+### Results
+
+- d18: MFU dropped from ~46% to ~35% (the grouped_mm dispatch + token sorting overhead is significant)
+- Per-step improvement in validation loss does not compensate for the throughput hit
+- Net negative on wall clock time
+
+### What remains (if revisited)
+
+- **FP8 for routed experts**: Use `torch._scaled_grouped_mm` with a custom `_Float8GroupedMatmul` autograd function, with bf16 fallback for weight gradient (avoiding the per-group column-wise Triton kernels).
+
+What's really needed is a fused "FlashMoE" kernel that handles routing + expert dispatch + matmul in one shot (like FlashAttention did for attention), with all the needed features. This doesn't exist yet. Rawdogging MoE with current PyTorch primitives is painful — lots of sorting, gathering, scattering, and layout wrangling around the actual compute.
+
+### Verdict
+
+MoE is not worth the trouble for nanochat right now. The code bloat is substantial (moe.py, router, shared expert, load balancing, optimizer fixes, FP8 gaps, active param counting) and the performance is worse wall-clock at our scale of interest. The fundamental issue is that the grouped_mm dispatch overhead eats the FLOP savings from sparsity, at least at our model scales and sequence lengths.
+
+---
+
+## 2026-02-17: Pretraining Data: FineWeb (negative)
+
+Tried vanilla fineweb instead of fineweb-edu dataset. Significantly, shockingly worse results:
+
+- d26 (GPT-2): CORE 0.2602 → 0.2241
+
+This is the fifth failed attempt to beat pure FineWeb-EDU on CORE score.
+
+---
+
+## 2026-02-17: Pretraining Data Mixture Experiment (negative)
+
+Tried [hynky/finepdfs_50BT-dclm_30BT-fineweb_edu_20BT](https://huggingface.co/datasets/hynky/finepdfs_50BT-dclm_30BT-fineweb_edu_20BT), a mixture of FinePDFs, DCLM, and FineWeb-EDU. Slightly worse on both model sizes tested:
+
+- d26 (GPT-2): CORE 0.2602 → 0.2549
+- d18: CORE 0.199 → 0.192
+
+This is the fourth failed attempt to beat pure FineWeb-EDU on CORE score.
+
+---
+
+## 2026-02-16: SFT Script Upgrades
+
+Brought `chat_sft.py` up to parity with `base_train.py` and tuned settings based on SFT sweeps.
+
+Tuning:
+
+- **Optimizer warm-start** (`--load-optimizer=1`, default on): loads pretrained momentum buffers via new `load_optimizer_state()` in `checkpoint_manager.py`. LRs are reset to fresh SFT values after load. Loading the optimizer works slightly better but not by too much.
+- **LR schedule**: replaced "constant 80%, linear to 0" with warmup/constant/warmdown matching `base_train.py` (`--warmup-ratio`, `--warmdown-ratio`, `--init-lr-frac`, `--final-lr-frac`). Similar to pretraining, warmdown ratio of 0.5 worked the best. `--init-lr-frac` changed from 1.0 slightly lower to 0.8.
+- **LR tuning**: attempted to tune all the individual LRs (e.g. does SFT prefer lower LR for embeddings? etc.) but all of this produced negative results.
+- **Data mixture**: MMLU epochs 1→3, GSM8K epochs 2→4 (confirmed best from sweeps). Epoch counts now configurable via `--mmlu-epochs` / `--gsm8k-epochs`. Might remove these in the future though.
+
+Quality of life, footguns, minor fixes:
+
+- **Hyperparameter inheritance**: SFT now inherits batch sizes and LRs from the pretrained checkpoint metadata by default (CLI overrides still work). Also saved `total_batch_size` to `base_train.py` checkpoint metadata.
+- **GC management**: disabled Python GC after step 1 to avoid ~500ms pauses (manual collect every 5000 steps), same as base pretraining.
+- **ChatCORE eval**: periodic eval during SFT (`--chatcore-every=200`) across all 6 tasks, logged to wandb.
+- **MFU**: uses `get_peak_flops()` for actual GPU instead of hardcoded H100 value.
+- Removed `--dry-run` and `--dtype` flags. All ranks now participate in checkpoint save.
+
+---
+
 ## 2026-02-05: Auto Batch Size Scaling
 
 ### Background
@@ -660,7 +749,7 @@ See the branch `fp8_attempt_fail` for:
 ### Open Questions
 
 - Why does the custom op approach use more memory than vanilla BF16?
-- Why is the bump in tok_per_sec so low? We should see ~1.6X speedup in both the forward pass and also (twice) in backward pass for the gradients. Granted, Ahmdal's law is part of the solution because our vocab_size is only 32K so the final layer isn't a huge part of the profile but the expected speedup is still not fully realized.
+- Why is the bump in tok_per_sec so low? We should see ~1.6X speedup in both the forward pass and also (twice) in backward pass for the gradients. Granted, Amdahl's law is part of the solution because our vocab_size is only 32K so the final layer isn't a huge part of the profile but the expected speedup is still not fully realized.
 
 **Conclusion:** Negative result for now. The implementation works correctly but provides marginal speedup with *increased* memory usage. I'm not understanding the torch.compile interaction here. The complexity of FP8 custom ops isn't justified for lm_head alone. TODO to study in more detail the way this is implemented in other libraries, e.g. torchao.
 
@@ -824,7 +913,7 @@ Cherry-picked improvements from NorMuon (modded-nanogpt) into our simpler Muon i
 - Now defaults to ON for Muon via the `weight_decay` param. AdamW still has no weight decay and is hardcoded to 0 weight decay, might try to re-tune this later.
 
 **4. Weight decay schedule**
-- Added a linear schedule to weight decay that is default on from 1.0 to 0.0 (i.e. start with max weight decay in the beginning of training, them ramp to 0 by the end). Worked better than a static setting in experiments. (modded-nanogpt has the same schedule but it is imlpemented in a more confusing way by multiplying twice by the learning rate, which is already wired up to a decay schedule).
+- Added a linear schedule to weight decay that is default on from 1.0 to 0.0 (i.e. start with max weight decay in the beginning of training, then ramp to 0 by the end). Worked better than a static setting in experiments. (modded-nanogpt has the same schedule but it is implemented in a more confusing way by multiplying twice by the learning rate, which is already wired up to a decay schedule).
 
 ### Weight Decay Scaling Experiments
 
@@ -868,6 +957,6 @@ Muon was changed to use Polar Express, added NorMuon variance reduction, and cau
 
 **Bug Found:** Original implementation clipped local gradients before sync. Since this codebase doesn't use DDP (gradient sync is in the optimizers), each rank was clipping based on its own local norm. Fixed on the branch with proper distributed all-reduce.
 
-**Observartion:** modded-nanogpt does not appear to clip either right now.
+**Observation:** modded-nanogpt does not appear to clip either right now.
 
 **Summary:** Deleted all grad-clip code paths. The code naturally produces well-behaved gradients. This improves a bit of MFU because we don't have to calculate and sync grad norms.
