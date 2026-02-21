@@ -204,6 +204,7 @@ class Engine:
         ids = torch.tensor([tokens], dtype=torch.long, device=device)
         logits = self.model.forward(ids, kv_cache=kv_cache_prefill)
         logits = logits[:, -1, :].expand(num_samples, -1)  # (num_samples, vocab_size)
+        logits[:, bos] = -torch.inf  # never sample BOS during reply (would stop after one token)
 
         # 2) Replicate the KV cache for each sample/row
         kv_length_hint = (len(tokens) + max_tokens) if max_tokens is not None else self.model.config.sequence_len
@@ -230,6 +231,8 @@ class Engine:
             if all(state.completed for state in row_states):
                 break
 
+            # Never sample BOS during reply (model may otherwise output only BOS and stop)
+            logits[:, bos] = -torch.inf
             # Sample the next token for each row
             next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
             sampled_tokens = next_ids[:, 0].tolist()
