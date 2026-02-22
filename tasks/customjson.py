@@ -25,14 +25,14 @@ class CustomJSON(Task):
             print("-" * 80)
             print(f"Warning: File {filepath} does not exist")
             print("HINT (Oct 21 2025)")
-            print("If you recently did a git pull and suddely see this, it might be due to the new addition of identity conversations")
+            print("If you recently did a git pull and suddenly see this, it might be due to the new addition of identity conversations")
             print("See this discussion for more details: https://github.com/karpathy/nanochat/discussions/139")
             print("Quick fix: simply run the following command to download the file and you're done:")
             print(f"curl -L -o {filepath} https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl")
             print("-" * 80)
 
         else:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if not line:  # skip empty lines

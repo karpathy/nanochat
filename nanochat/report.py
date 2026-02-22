@@ -16,8 +16,11 @@ def run_command(cmd):
     """Run a shell command and return output, or None if it fails."""
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
+        # Return stdout if we got output (even if some files in xargs failed)
+        if result.stdout.strip():
             return result.stdout.strip()
+        if result.returncode == 0:
+            return ""
         return None
     except:
         return None
@@ -160,17 +163,28 @@ Generated: {timestamp}
 
 """
 
-    # bloat metrics: package all of the source code and assess its weight
-    packaged = run_command('files-to-prompt . -e py -e md -e rs -e html -e toml -e sh --ignore "*target*" --cxml')
-    num_chars = len(packaged)
-    num_lines = len(packaged.split('\n'))
-    num_files = len([x for x in packaged.split('\n') if x.startswith('<source>')])
-    num_tokens = num_chars // 4 # assume approximately 4 chars per token
+    # bloat metrics: count lines/chars in git-tracked source files only
+    extensions = ['py', 'md', 'rs', 'html', 'toml', 'sh']
+    git_patterns = ' '.join(f"'*.{ext}'" for ext in extensions)
+    files_output = run_command(f"git ls-files -- {git_patterns}")
+    file_list = [f for f in (files_output or '').split('\n') if f]
+    num_files = len(file_list)
+    num_lines = 0
+    num_chars = 0
+    if num_files > 0:
+        wc_output = run_command(f"git ls-files -- {git_patterns} | xargs wc -lc 2>/dev/null")
+        if wc_output:
+            total_line = wc_output.strip().split('\n')[-1]
+            parts = total_line.split()
+            if len(parts) >= 2:
+                num_lines = int(parts[0])
+                num_chars = int(parts[1])
+    num_tokens = num_chars // 4  # assume approximately 4 chars per token
 
     # count dependencies via uv.lock
     uv_lock_lines = 0
     if os.path.exists('uv.lock'):
-        with open('uv.lock', 'r') as f:
+        with open('uv.lock', 'r', encoding='utf-8') as f:
             uv_lock_lines = len(f.readlines())
 
     header += f"""
@@ -197,8 +211,6 @@ EXPECTED_FILES = [
     "base-model-training.md",
     "base-model-loss.md",
     "base-model-evaluation.md",
-    "midtraining.md",
-    "chat-evaluation-mid.md",
     "chat-sft.md",
     "chat-evaluation-sft.md",
     "chat-rl.md",
@@ -241,7 +253,7 @@ class Report:
         slug = slugify(section)
         file_name = f"{slug}.md"
         file_path = os.path.join(self.report_dir, file_name)
-        with open(file_path, "w") as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write(f"## {section}\n")
             f.write(f"timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             for item in data:
@@ -272,11 +284,11 @@ class Report:
         final_metrics = {} # the most important final metrics we'll add as table at the end
         start_time = None
         end_time = None
-        with open(report_file, "w") as out_file:
+        with open(report_file, "w", encoding="utf-8") as out_file:
             # write the header first
             header_file = os.path.join(report_dir, "header.md")
             if os.path.exists(header_file):
-                with open(header_file, "r") as f:
+                with open(header_file, "r", encoding="utf-8") as f:
                     header_content = f.read()
                     out_file.write(header_content)
                     start_time = extract_timestamp(header_content, "Run started:")
@@ -293,7 +305,7 @@ class Report:
                 if not os.path.exists(section_file):
                     print(f"Warning: {section_file} does not exist, skipping")
                     continue
-                with open(section_file, "r") as in_file:
+                with open(section_file, "r", encoding="utf-8") as in_file:
                     section = in_file.read()
                 # Extract timestamp from this section (the last section's timestamp will "stick" as end_time)
                 if "rl" not in file_name:
@@ -302,8 +314,6 @@ class Report:
                 # extract the most important metrics from the sections
                 if file_name == "base-model-evaluation.md":
                     final_metrics["base"] = extract(section, "CORE")
-                if file_name == "chat-evaluation-mid.md":
-                    final_metrics["mid"] = extract(section, chat_metrics)
                 if file_name == "chat-evaluation-sft.md":
                     final_metrics["sft"] = extract(section, chat_metrics)
                 if file_name == "chat-evaluation-rl.md":
@@ -323,7 +333,7 @@ class Report:
             # Custom ordering: CORE first, ChatCORE last, rest in middle
             all_metrics = sorted(all_metrics, key=lambda x: (x != "CORE", x == "ChatCORE", x))
             # Fixed column widths
-            stages = ["base", "mid", "sft", "rl"]
+            stages = ["base", "sft", "rl"]
             metric_width = 15
             value_width = 8
             # Write table header
@@ -373,7 +383,7 @@ class Report:
         header_file = os.path.join(self.report_dir, "header.md")
         header = generate_header()
         start_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(header_file, "w") as f:
+        with open(header_file, "w", encoding="utf-8") as f:
             f.write(header)
             f.write(f"Run started: {start_time}\n\n---\n\n")
         print(f"Reset report and wrote header to {header_file}")

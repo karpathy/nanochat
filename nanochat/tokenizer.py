@@ -26,7 +26,7 @@ SPECIAL_TOKENS = [
 
 # NOTE: this split pattern deviates from GPT-4 in that we use \p{N}{1,2} instead of \p{N}{1,3}
 # I did this because I didn't want to "waste" too many tokens on numbers for smaller vocab sizes.
-# I haven't validated that this is actually a good idea, TODO.
+# I verified that 2 is the sweet spot for vocab size of 32K. 1 is a bit worse, 3 was worse still.
 SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
 
 # -----------------------------------------------------------------------------
@@ -103,9 +103,10 @@ class HuggingFaceTokenizer:
     def id_to_token(self, id):
         return self.tokenizer.id_to_token(id)
 
-    def _encode_one(self, text, prepend=None, append=None):
+    def _encode_one(self, text, prepend=None, append=None, num_threads=None):
         # encode a single string
         # prepend/append can be either a string of a special token or a token id directly.
+        # num_threads is ignored (only used by the nanochat Tokenizer for parallel encoding)
         assert isinstance(text, str)
         ids = []
         if prepend is not None:
@@ -122,7 +123,14 @@ class HuggingFaceTokenizer:
         return self.tokenizer.token_to_id(text)
 
     def get_bos_token_id(self):
+        # Different HuggingFace models use different BOS tokens and there is little consistency
+        # 1) attempt to find a <|bos|> token
         bos = self.encode_special("<|bos|>")
+        # 2) if that fails, attempt to find a <|endoftext|> token (e.g. GPT-2 models)
+        if bos is None:
+            bos = self.encode_special("<|endoftext|>")
+        # 3) if these fail, it's better to crash than to silently return None
+        assert bos is not None, "Failed to find BOS token in tokenizer"
         return bos
 
     def encode(self, text, *args, **kwargs):
@@ -341,16 +349,19 @@ class RustBPETokenizer:
         mask = mask[:max_tokens]
         return ids, mask
 
-    def visualize_tokenization(self, ids, mask):
+    def visualize_tokenization(self, ids, mask, with_token_id=False):
         """Small helper function useful in debugging: visualize the tokenization of render_conversation"""
         RED = '\033[91m'
         GREEN = '\033[92m'
         RESET = '\033[0m'
+        GRAY = '\033[90m'
         tokens = []
         for i, (token_id, mask_val) in enumerate(zip(ids, mask)):
             token_str = self.decode([token_id])
             color = GREEN if mask_val == 1 else RED
             tokens.append(f"{color}{token_str}{RESET}")
+            if with_token_id:
+                tokens.append(f"{GRAY}({token_id}){RESET}")
         return '|'.join(tokens)
 
     def render_for_completion(self, conversation):
