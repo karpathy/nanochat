@@ -38,6 +38,7 @@ class GPTConfig:
     dense_layers_before_moe: int = 0
     moe_granularity_target: float = 12.0
     moe_activation_denominator: int = 32
+    tie_embeddings: bool = False
 
 
 def norm(x):
@@ -361,6 +362,9 @@ class GPT(nn.Module):
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        if config.tie_embeddings:
+            # share weights instead of keeping a duplicate parameter
+            self.lm_head.weight = self.transformer.wte.weight
         # To support meta device initialization, we init the rotary embeddings here, but it's fake
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them, but assert fail if we ever reach that amount.
@@ -373,8 +377,9 @@ class GPT(nn.Module):
 
     def init_weights(self):
         self.apply(self._init_weights)
-        # zero out classifier weights
-        torch.nn.init.zeros_(self.lm_head.weight)
+        # zero out classifier weights when untied
+        if not self.config.tie_embeddings:
+            torch.nn.init.zeros_(self.lm_head.weight)
         # zero out c_proj weights in all blocks
         for block in self.transformer.h:
             if isinstance(block.mlp, MoEFeedForward):
@@ -488,17 +493,25 @@ class GPT(nn.Module):
         # Separate out all parameters into 3 groups (matrix, embedding, lm_head)
         matrix_params = list(self.transformer.h.parameters())
         embedding_params = list(self.transformer.wte.parameters())
-        lm_head_params = list(self.lm_head.parameters())
-        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params)
+        # When tied, lm_head shares the embedding weight, so keep its param out of optimizer groups to avoid duplicates.
+        lm_head_params = [] if self.config.tie_embeddings else list(self.lm_head.parameters())
+        # Sanity check: all parameters should be covered by the optimizer groups (ignoring intentional sharing).
+        if not self.config.tie_embeddings:
+            param_ids = {id(p) for p in self.parameters()}
+            assert param_ids == {id(p) for p in matrix_params + embedding_params + lm_head_params}
         # Create the AdamW optimizer for the embedding and lm_head
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (having tuned the LRs for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         if rank == 0:
             print(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
+        # Use the embedding LR for embeddings (even when tied); head params use unembedding LR when present.
+        embedding_lr_effective = embedding_lr
         adam_groups = [
             dict(params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale),
-            dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
+            dict(params=embedding_params, lr=embedding_lr_effective * dmodel_lr_scale),
         ]
+        # drop empty groups to avoid optimizer complaints when embeddings are tied
+        adam_groups = [g for g in adam_groups if g["params"]]
         adamw_kwargs = dict(betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay)
         AdamWFactory = DistAdamW if ddp else partial(torch.optim.AdamW, fused=True)
         adamw_optimizer = AdamWFactory(adam_groups, **adamw_kwargs)
@@ -533,10 +546,13 @@ class GPT(nn.Module):
 
         # Forward the lm_head (compute logits)
         softcap = 15
+        logit_scale = (self.config.n_embd ** -0.5) if self.config.tie_embeddings else 1.0
         if targets is not None:
             # training mode: compute and return the loss
             # TODO: experiment with Liger Kernels / chunked cross-entropy etc.
             logits = self.lm_head(x)
+            if logit_scale != 1.0:
+                logits = logits * logit_scale
             logits = softcap * torch.tanh(logits / softcap) # logits softcap
             logits = logits.float() # use tf32/fp32 for logits
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
@@ -544,6 +560,8 @@ class GPT(nn.Module):
         else:
             # inference mode: compute and return the logits
             logits = self.lm_head(x)
+            if logit_scale != 1.0:
+                logits = logits * logit_scale
             logits = softcap * torch.tanh(logits / softcap) # logits softcap
             return logits
 

@@ -25,8 +25,16 @@ def print0(s="",**kwargs):
 
 for arg in sys.argv[1:]:
     if '=' not in arg:
+        if arg.startswith('--'):
+            # boolean flag form: --flag sets True if default exists and is bool
+            key = arg[2:]
+            if key in globals() and isinstance(globals()[key], bool):
+                print0(f"Overriding: {key} = True")
+                globals()[key] = True
+            else:
+                raise ValueError(f"Unknown or non-bool config key for flag: {key}")
+            continue
         # assume it's the name of a config file
-        assert not arg.startswith('--')
         config_file = arg
         print0(f"Overriding config with {config_file}:")
         with open(config_file) as f:
@@ -50,6 +58,8 @@ for arg in sys.argv[1:]:
                 default_type = type(globals()[key])
                 if default_type is float and attempt_type in (int, float):
                     attempt = float(attempt)
+                elif default_type is bool and attempt_type in (int, bool):
+                    attempt = bool(attempt)
                 else:
                     assert attempt_type == default_type, f"Type mismatch: {attempt_type} != {default_type}"
             # cross fingers

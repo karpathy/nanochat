@@ -276,6 +276,9 @@ python -m scripts.tok_eval
             MOE_FLAGS+=("--moe_activation_denominator=$MOE_ACTIVATION_DEN")
         fi
     fi
+    if [ "${TIE_EMBEDDINGS:-0}" -ne 0 ]; then
+        MOE_FLAGS+=("--tie_embeddings=1")
+    fi
 
     MOE_DEBUG_INTERVAL=$MOE_DEBUG_INTERVAL python -m scripts.base_train \
         --depth=$BASE_DEPTH \
@@ -298,8 +301,8 @@ python -m scripts.tok_eval
     fi
 
     if [ "$RUN_STAGE_EVALS" = "1" ]; then
-        python -m scripts.base_loss --device_batch_size=$DEVICE_BATCH --split_tokens=$EVAL_TOKENS $BASE_MODEL_TAG_FLAG
-        python -m scripts.base_eval --max-per-task=16 $BASE_MODEL_TAG_FLAG_HYPHEN
+    python -m scripts.base_loss --device_batch_size=$DEVICE_BATCH --split_tokens=$EVAL_TOKENS $BASE_MODEL_TAG_FLAG
+    python -m scripts.base_eval --max-per-task=16 "$BASE_MODEL_TAG_FLAG_HYPHEN"
     fi
 fi
 

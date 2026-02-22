@@ -11,6 +11,7 @@ If you are only on CPU/Macbook, you'll want to train a much much smaller LLM. Ex
 python -m scripts.base_train --depth=4 --max_seq_len=512 --device_batch_size=1 --eval_tokens=512 --core_metric_every=-1 --total_batch_size=512 --num_iterations=20
 """
 
+import math
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import time
@@ -45,6 +46,7 @@ moe_expert_ffn_mult = -1.0 # -1 => derive from granularity target (defaults to 1
 dense_layers_before_moe = -1 # -1 => derive (≈10% of layers, min 1) before switching to MoE
 moe_granularity_target = 12.0 # Ling guidance: target granularity per layer (2*d_model/d_expert)
 moe_activation_denominator = 32 # derive top-k as num_experts / denominator (~3% activation)
+tie_embeddings = False # tie output head to token embeddings (saves params)
 # Training horizon. Only one of these 3 will be used, in this order of precedence.
 num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
 target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
@@ -61,11 +63,12 @@ warmup_ratio = 0.0 # ratio of iterations for LR warmup
 warmdown_ratio = 0.2 # ratio of iterations for LR warmdown
 final_lr_frac = 0.0 # final LR is this fraction of the initial LR
 # Evaluation
-eval_every = 250 # every how many steps to evaluate the model for val bpb
+eval_every = 0 # <=0 => auto (~1% of total training steps) evaluation cadence
 eval_tokens = 20*524288 # number of tokens to evaluate val loss on
 core_metric_every = 2000 # every how many steps to evaluate the core metric (-1 = disable)
 core_metric_max_per_task = 500 # examples per task in estimating the core metric
 sample_every = 2000 # every how many steps to sample from the model
+log_every = 0 # <=0 => auto (~1% of total training steps) logging cadence for train/MoE metrics
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
 checkpoint_every_steps = 0 # save intermediate checkpoints every N optimization steps (0 = disable)
@@ -192,23 +195,46 @@ model_config_kwargs = dict(
     dense_layers_before_moe=dense_layers_before_moe,
     moe_granularity_target=granularity_target,
     moe_activation_denominator=activation_denom,
+    tie_embeddings=tie_embeddings,
 )
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
     model = GPT(model_config)
 model.to_empty(device=device)
 model.init_weights()
+# Re-assert tying at runtime (belt-and-suspenders) and emit a sanity check.
+if tie_embeddings:
+    model.lm_head.weight = model.transformer.wte.weight
+    assert model.lm_head.weight is model.transformer.wte.weight, "tie_embeddings requested but weights not shared"
 orig_model = model # original, uncompiled model, for saving raw model state_dict
 dense_like_flops = model.estimate_flops()
 active_flops_per_token, dense_ref_flops = model.estimate_moe_active_flops()
 num_flops_per_token = active_flops_per_token
 model = torch.compile(model, dynamic=False) # TODO: dynamic True/False think through
-num_params = sum(p.numel() for p in model.parameters())
+
+def _count_unique_params(m):
+    seen = set()
+    total = 0
+    for p in m.parameters():
+        pid = id(p)
+        if pid in seen:
+            continue
+        seen.add(pid)
+        total += p.numel()
+    return total
+
+num_params = _count_unique_params(model)
 print0(f"Number of parameters: {num_params:,}")
 print0(f"Estimated FLOPs per token (dense-like): {dense_like_flops:e}")
 if active_flops_per_token != dense_like_flops:
     print0(f"Estimated FLOPs per token (MoE active): {active_flops_per_token:e}")
     print0(f"Estimated FLOPs per token (dense reference): {dense_ref_flops:e}")
+
+# If embeddings are tied, keep the data:parameter ratio comparable to untied models by
+# counting the would-be lm_head parameters toward the ratio calculation.
+num_params_for_ratio = _count_unique_params(model)
+if tie_embeddings:
+    num_params_for_ratio += vocab_size * model_dim
 
 user_config.update({
     "moe_num_experts": moe_num_experts,
@@ -246,18 +272,27 @@ elif target_flops > 0:
     print0(f"Calculated number of iterations from target FLOPs: {num_iterations:,}")
 elif target_param_data_ratio > 0:
     # calculate the number of iterations from the target param data ratio
-    target_tokens = target_param_data_ratio * num_params
+    target_tokens = target_param_data_ratio * num_params_for_ratio
     num_iterations = target_tokens // total_batch_size
     print0(f"Calculated number of iterations from target data:param ratio: {num_iterations:,}")
 else:
     raise ValueError("No training horizon specified")
 total_tokens = total_batch_size * num_iterations
 print0(f"Total number of training tokens: {total_tokens:,}")
-print0(f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params:.2f}") # Chinchilla is ~20
+print0(f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params_for_ratio:.2f}") # Chinchilla is ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
-if eval_every <= 0:
-    eval_every = max(1, num_iterations // 100)
-    print0(f"Auto-setting eval_every to {eval_every} (~1% of training)")
+def _resolve_progress_interval(name, configured_value, total_steps, default_frac):
+    if configured_value > 0:
+        return max(1, int(configured_value))
+    interval = max(1, math.ceil(total_steps * default_frac))
+    print0(f"Auto-setting {name} to {interval} (~{default_frac * 100:.2f}% of training)")
+    return interval
+
+eval_every = _resolve_progress_interval("eval_every", eval_every, num_iterations, 0.01)
+user_config["eval_every"] = eval_every
+
+log_every_steps = _resolve_progress_interval("log_every", log_every, num_iterations, 0.01)
+user_config["log_every"] = log_every_steps
 
 sequences_per_step = max(1, total_batch_size // max_seq_len)
 checkpoint_every_steps = int(checkpoint_every_steps)
@@ -477,7 +512,7 @@ for step in range(num_iterations + 1):
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
     print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec (micro): {tok_per_sec:,} | tok/sec (global): {global_tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
-    if step % 100 == 0:
+    if step % log_every_steps == 0:
         log_payload = {
             "step": step,
             "total_training_flops": flops_so_far,
