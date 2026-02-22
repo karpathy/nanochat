@@ -11,13 +11,22 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 
+# Fused kernels via torch.compile give large speedups on CUDA.
+# On MPS / CPU, torch.compile either doesn't support fullgraph=True or adds overhead,
+# so we fall back to eager execution instead.
+def _cuda_compile(fn):
+    """Apply torch.compile only when CUDA is available; otherwise return fn unchanged."""
+    if torch.cuda.is_available():
+        return torch.compile(fn, dynamic=False, fullgraph=True)
+    return fn
+
 # -----------------------------------------------------------------------------
 """
 Good old AdamW optimizer, fused kernel.
 https://arxiv.org/abs/1711.05101
 """
 
-@torch.compile(dynamic=False, fullgraph=True)
+@_cuda_compile
 def adamw_step_fused(
     p: Tensor,              # (32768, 768) - parameter tensor
     grad: Tensor,           # (32768, 768) - gradient, same shape as p
@@ -33,8 +42,14 @@ def adamw_step_fused(
     """
     Fused AdamW step: weight_decay -> momentum_update -> bias_correction -> param_update
     All in one compiled graph to eliminate Python overhead between ops.
-    The 0-D CPU tensors avoid recompilation when hyperparameter values change.
+    The 0-D CPU tensors avoid recompilation when hyperparameter values change (CUDA).
+    On MPS/CPU they are moved to the parameter device so eager ops stay on one device.
     """
+    if p.device.type != "cuda":
+        device = p.device
+        step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t = [
+            t.to(device) for t in (step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t)
+        ]
     # Weight decay (decoupled, applied before the update)
     p.mul_(1 - lr_t * wd_t)
     # Update running averages (lerp_ is cleaner and fuses well)
@@ -87,7 +102,7 @@ polar_express_coeffs = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 ]
 
-@torch.compile(dynamic=False, fullgraph=True)
+@_cuda_compile
 def muon_step_fused(
     stacked_grads: Tensor,          # (12, 768, 3072) - stacked gradients
     stacked_params: Tensor,         # (12, 768, 3072) - stacked parameters
@@ -103,16 +118,22 @@ def muon_step_fused(
     """
     Fused Muon step: momentum -> polar_express -> variance_reduction -> cautious_update
     All in one compiled graph to eliminate Python overhead between ops.
-    Some of the constants are 0-D CPU tensors to avoid recompilation when values change.
+    Some of the constants are 0-D CPU tensors to avoid recompilation when values change (CUDA).
+    On MPS/CPU they are moved to the parameter device so eager ops stay on one device.
     """
+    if stacked_grads.device.type != "cuda":
+        device = stacked_grads.device
+        momentum_t, lr_t, wd_t, beta2_t = [
+            t.to(device) for t in (momentum_t, lr_t, wd_t, beta2_t)
+        ]
 
     # Nesterov momentum
     momentum = momentum_t.to(stacked_grads.dtype)
     momentum_buffer.lerp_(stacked_grads, 1 - momentum)
     g = stacked_grads.lerp_(momentum_buffer, momentum)
 
-    # Polar express
-    X = g.bfloat16()
+    # Polar express — bfloat16 cuts memory bandwidth on CUDA; fall back to float32 on MPS/CPU
+    X = g.bfloat16() if g.device.type == "cuda" else g.float()
     X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
     if g.size(-2) > g.size(-1): # Tall matrix
         for a, b, c in polar_express_coeffs[:ns_steps]:
@@ -277,8 +298,14 @@ class MuonAdamW(torch.optim.Optimizer):
             red_dim,
         )
 
-        # Copy back to original params
-        torch._foreach_copy_(params, list(stacked_params.unbind(0)))
+        # Copy back to original params.
+        # torch._foreach_copy_ is fast but not implemented on MPS in torch<2.4; fall back to a loop.
+        unstacked = list(stacked_params.unbind(0))
+        if hasattr(torch, '_foreach_copy_') and params[0].device.type == "cuda":
+            torch._foreach_copy_(params, unstacked)
+        else:
+            for p, s in zip(params, unstacked):
+                p.copy_(s)
 
     @torch.no_grad()
     def step(self):

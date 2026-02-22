@@ -13,9 +13,8 @@ The whole thing is made as efficient as possible.
 
 import torch
 import torch.nn.functional as F
-import signal
 import warnings
-from contextlib import contextmanager
+import concurrent.futures
 from collections import deque
 from nanochat.common import compute_init, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
@@ -23,25 +22,27 @@ from contextlib import nullcontext
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
-@contextmanager
-def timeout(duration, formula):
-    def timeout_handler(signum, frame):
-        raise Exception(f"'{formula}': timed out after {duration} seconds")
 
-    signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(duration)
-    yield
-    signal.alarm(0)
+# Single shared executor — avoids spawning a thread per call.
+# signal.SIGALRM is not usable here: it only works on Unix *main thread*,
+# but chat_web.py serves requests from FastAPI worker threads. A thread-based
+# timeout via concurrent.futures works on any thread on any OS/device.
+_calc_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="calc")
 
 def eval_with_timeout(formula, max_time=3):
+    """Evaluate an expression with a timeout. Thread-safe; works on MPS, CPU, and CUDA."""
+    def _eval():
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            return eval(formula, {"__builtins__": {}}, {})
     try:
-        with timeout(max_time, formula):
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                return eval(formula, {"__builtins__": {}}, {})
-    except Exception as e:
-        signal.alarm(0)
-        # print(f"Warning: Failed to eval {formula}, exception: {e}") # it's ok ignore wrong calculator usage
+        future = _calc_executor.submit(_eval)
+        return future.result(timeout=max_time)
+    except concurrent.futures.TimeoutError:
+        future.cancel()
+        return None
+    except Exception:
+        # print(f"Warning: Failed to eval {formula}, exception: {e}") # it's ok, ignore wrong calculator usage
         return None
 
 def use_calculator(expr):
@@ -309,6 +310,7 @@ if __name__ == "__main__":
     device_type = autodetect_device_type()
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
     autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+    synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 
     # load the model and tokenizer
     model, tokenizer, meta = load_model("base", device, phase="eval")
@@ -319,7 +321,7 @@ if __name__ == "__main__":
     prompt_tokens = tokenizer.encode("The chemical formula of water is", prepend=bos_token_id)
     # generate the reference sequence using the model.generate() function
     generated_tokens = []
-    torch.cuda.synchronize()
+    synchronize()
     t0 = time.time()
     stream = model.generate(prompt_tokens, **kwargs)
     with autocast_ctx:
@@ -328,7 +330,7 @@ if __name__ == "__main__":
             chunk = tokenizer.decode([token])
             print(chunk, end="", flush=True)
     print()
-    torch.cuda.synchronize()
+    synchronize()
     t1 = time.time()
     print(f"Reference time: {t1 - t0:.2f}s")
     reference_ids = generated_tokens
@@ -336,7 +338,7 @@ if __name__ == "__main__":
     generated_tokens = []
     engine = Engine(model, tokenizer)
     stream = engine.generate(prompt_tokens, num_samples=1, **kwargs) # note: runs in fp32
-    torch.cuda.synchronize()
+    synchronize()
     t0 = time.time()
     with autocast_ctx:
         for token_column, token_masks in stream:
@@ -345,7 +347,7 @@ if __name__ == "__main__":
             chunk = tokenizer.decode([token])
             print(chunk, end="", flush=True)
     print()
-    torch.cuda.synchronize()
+    synchronize()
     t1 = time.time()
     print(f"Engine time: {t1 - t0:.2f}s")
     # compare the two sequences

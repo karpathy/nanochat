@@ -238,7 +238,9 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+# torch.compile speeds up CUDA significantly but is unsupported on MPS and pointless on CPU
+if device_type == "cuda":
+    model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
@@ -521,7 +523,13 @@ while True:
     pct_done = 100 * step / num_iterations
     tok_per_sec = int(total_batch_size / dt)
     flops_per_sec = num_flops_per_token * total_batch_size / dt
-    mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)
+    # MFU is only meaningful on CUDA with a known GPU spec; float('inf') sentinel means non-CUDA
+    if device_type == "cuda":
+        mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)
+        mfu_str = f"bf16_mfu: {mfu:.2f}% | "
+    else:
+        mfu = None
+        mfu_str = ""
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
     # Calculate ETA based on average time per step (excluding first 10 steps)
@@ -534,7 +542,7 @@ while True:
     else:
         eta_str = ""
     epoch = dataloader_state_dict["epoch"]
-    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | {mfu_str}epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -544,9 +552,10 @@ while True:
             "train/lrm": lrm,
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,
-            "train/mfu": mfu,
             "train/epoch": epoch,
         }
+        if mfu is not None:
+            log_data["train/mfu"] = mfu
         wandb_run.log(log_data)
 
     # state update
@@ -588,7 +597,7 @@ get_report().log(section="Base model training", data=[
         "Minimum validation bpb": min_val_bpb if val_bpb is not None else None,
         "Final validation bpb": val_bpb,
         "CORE metric estimate": results.get("core_metric", None),
-        "MFU %": f"{mfu:.2f}%",
+        "MFU %": f"{mfu:.2f}%" if mfu is not None else "N/A (non-CUDA device)",
         "Total training flops": f"{flops_so_far:e}",
         "Total training time": f"{total_training_time/60:.2f}m",
         "Peak memory usage": f"{get_max_memory() / 1024 / 1024:.2f}MiB",

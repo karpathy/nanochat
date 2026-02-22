@@ -100,8 +100,10 @@ def build_model(checkpoint_dir, step, device, phase):
     with torch.device("meta"):
         model = GPT(model_config)
     # Load the model state
+    # Only init the rotary embedding buffers (persistent=False, absent from checkpoint),
+    # not the full weights — everything else comes from load_state_dict.
     model.to_empty(device=device)
-    model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
+    model.init_rotary_embeddings()
     model.load_state_dict(model_data, strict=True, assign=True)
     # Put the model in the right training phase / mode
     if phase == "eval":
