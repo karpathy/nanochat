@@ -20,7 +20,7 @@ import torch
 import pyarrow.parquet as pq
 
 from nanochat.common import get_dist_info
-from nanochat.dataset import list_parquet_files
+from nanochat.dataset import get_parquet_paths
 
 def _document_batches(split, resume_state_dict, tokenizer_batch_size):
     """
@@ -32,9 +32,8 @@ def _document_batches(split, resume_state_dict, tokenizer_batch_size):
     """
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
 
-    parquet_paths = list_parquet_files()
+    parquet_paths = get_parquet_paths(split)
     assert len(parquet_paths) != 0, "No dataset parquet files found, did you run dataset.py?"
-    parquet_paths = parquet_paths[:-1] if split == "train" else parquet_paths[-1:]
 
     resume_pq_idx = resume_state_dict["pq_idx"] if resume_state_dict is not None else 0
     resume_rg_idx = resume_state_dict["rg_idx"] if resume_state_dict is not None else None
