@@ -1,9 +1,14 @@
 .venv/
 __pycache__/
 *.pyc
-rustbpe/target/
 dev-ignore/
 report.md
 eval_bundle/
 wandb/
 .runmps_wandb_ids
+
+# Secrets
+.env
+
+# Local setup
+CLAUDE.md

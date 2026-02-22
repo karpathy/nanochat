@@ -7,31 +7,27 @@ requires-python = ">=3.10"
 dependencies = [
     "datasets>=4.0.0",
     "fastapi>=0.117.1",
-    "files-to-prompt>=0.6",
-    "numpy==1.26.4",
+    "ipykernel>=7.1.0",
+    "kernels>=0.11.7",
+    "matplotlib>=3.10.8",
     "psutil>=7.1.0",
+    "python-dotenv>=1.2.1",
     "regex>=2025.9.1",
+    "rustbpe>=0.1.0",
+    "scipy>=1.15.3",
     "setuptools>=80.9.0",
+    "tabulate>=0.9.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
-    "torch>=2.8.0",
+    "torch==2.9.1",
+    "transformers>=4.57.3",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
+    "zstandard>=0.25.0",
 ]
-
-[build-system]
-requires = ["maturin>=1.7,<2.0"]
-build-backend = "maturin"
-
-[tool.maturin]
-module-name = "rustbpe"
-bindings = "pyo3"
-python-source = "."
-manifest-path = "rustbpe/Cargo.toml"
 
 [dependency-groups]
 dev = [
-    "maturin>=1.9.4",
     "pytest>=8.0.0",
 ]
 
@@ -46,33 +42,33 @@ python_functions = ["test_*"]
 
 # target torch to cuda 12.8 or CPU
 [tool.uv.sources]
-torch = [  
-    { index = "pytorch-cpu", extra = "cpu" },  
-    { index = "pytorch-cu128", extra = "gpu" },  
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu128", extra = "gpu" },
 ]
 
-[[tool.uv.index]]  
-name = "pytorch-cpu"  
-url = "https://download.pytorch.org/whl/cpu"  
-explicit = true  
-  
-[[tool.uv.index]]  
-name = "pytorch-cu128"  
-url = "https://download.pytorch.org/whl/cu128"  
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
-[project.optional-dependencies]  
-cpu = [  
-    "torch>=2.8.0",  
-]  
-gpu = [  
-    "torch>=2.8.0",  
-]  
-  
-[tool.uv]  
-conflicts = [  
-    [  
-        { extra = "cpu" },  
-        { extra = "gpu" },  
-    ],  
-]  
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[project.optional-dependencies]
+cpu = [
+    "torch==2.9.1",
+]
+gpu = [
+    "torch==2.9.1",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "gpu" },
+    ],
+]

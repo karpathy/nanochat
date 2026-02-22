@@ -20,7 +20,7 @@ LLM because it has to learn how every token (a little semantic chunk/atom)
 maps to the sequence of individual characters that make it up. Larger models
 learn this eventually on their own, but if we want this capability to exist
 in smaller models, we have to actively encourage it by over-representing it
-in the training data. Midtraining is a good place to do this.
+in the training data. SFT is a good place to do this.
 
 To preview a few example conversations, run:
 python -m tasks.spellingbee
@@ -35,6 +35,8 @@ from nanochat.common import download_file_with_lock
 LETTERS = "abcdefghijklmnopqrstuvwxyz"
 # A list of 370K English words of large variety
 WORD_LIST_URL = "https://raw.githubusercontent.com/dwyl/english-words/refs/heads/master/words_alpha.txt"
+# A number bigger than 370K to separate train and test random seeds
+TEST_RANDOM_SEED_OFFSET = 10_000_000
 
 # Identical to gsm8k's answer extraction
 ANSWER_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
@@ -119,7 +121,7 @@ class SpellingBee(Task):
         self.split = split
         filename = WORD_LIST_URL.split("/")[-1]
         word_list_path = download_file_with_lock(WORD_LIST_URL, filename)
-        with open(word_list_path) as f:
+        with open(word_list_path, 'r', encoding='utf-8') as f:
             words = [line.strip() for line in f]
         self.words = words
 
@@ -131,7 +133,7 @@ class SpellingBee(Task):
         return self.size
 
     def get_example(self, index):
-        seed = index if self.split == "train" else -(index + 1) # avoid collision at 0
+        seed = index if self.split == 'train' else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
 
         # pick a random word
@@ -238,7 +240,7 @@ class SimpleSpelling(Task):
         self.split = split
         filename = WORD_LIST_URL.split("/")[-1]
         word_list_path = download_file_with_lock(WORD_LIST_URL, filename)
-        with open(word_list_path) as f:
+        with open(word_list_path, 'r', encoding='utf-8') as f:
             words = [line.strip() for line in f]
         rng = random.Random(42)
         rng.shuffle(words) # use a different word order than the SpellingBee task
@@ -252,7 +254,7 @@ class SimpleSpelling(Task):
         return self.size
 
     def get_example(self, index):
-        seed = index if self.split == "train" else -(index + 1) # avoid collision at 0
+        seed = index if self.split == 'train' else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
         # pick a random word
         word = rng.choice(self.words)
