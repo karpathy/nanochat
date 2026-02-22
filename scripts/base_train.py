@@ -51,6 +51,11 @@ parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = de
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+# L3 (Large Lookup Layers)
+parser.add_argument("--l3-after-layers", type=str, default="", help="comma-separated layer indices for L3 (empty = disabled)")
+parser.add_argument("--l3-n-emb", type=int, default=0, help="total L3 embeddings (0 = auto-derive from model size)")
+parser.add_argument("--l3-d-up", type=int, default=0, help="L3 up-projection dim (0 = 4*n_embd)")
+parser.add_argument("--l3-k-max", type=int, default=512, help="max embeddings per token for L3")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -122,7 +127,7 @@ print0(f"Vocab size: {vocab_size:,}")
 # -----------------------------------------------------------------------------
 # Initialize the Model
 
-def build_model_meta(depth):
+def build_model_meta(depth, l3_after_layers="", l3_n_emb=0):
     """Build a model on meta device for a given depth (shapes/dtypes only, no data)."""
     # Model dim is nudged up to nearest multiple of head_dim for clean division
     # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == args.head_dim exactly)
@@ -133,18 +138,52 @@ def build_model_meta(depth):
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        l3_after_layers=l3_after_layers,
+        l3_n_emb=l3_n_emb,
+        l3_d_up=args.l3_d_up,
+        l3_k_max=args.l3_k_max,
     )
     with torch.device("meta"):
         model_meta = GPT(config)
     return model_meta
 
+# L3 precomputation: compute LZW allocation from training data sample
+l3_n_emb = args.l3_n_emb
+l3_bounds = None
+if args.l3_after_layers:
+    from nanochat.l3 import compute_lzw_allocation, allocation_to_bounds
+    # Auto-derive n_emb if not specified: scale proportional to model size
+    if l3_n_emb == 0:
+        # Build a temporary model to get param count for auto-derivation
+        tmp_model = build_model_meta(args.depth, l3_after_layers=args.l3_after_layers, l3_n_emb=vocab_size)
+        tmp_params = sum(p.numel() for p in tmp_model.parameters())
+        l3_n_emb = max(vocab_size, tmp_params // 1000)
+        del tmp_model
+        print0(f"Auto-derived L3 n_emb: {l3_n_emb:,}")
+    # Read a sample of training data for LZW allocation
+    sample_loader = tokenizing_distributed_data_loader_bos_bestfit(tokenizer, 1, args.max_seq_len, split="train", device=device)
+    sample_sequences = []
+    for _ in range(100):  # 100 batches should be enough
+        x_sample, _ = next(sample_loader)
+        sample_sequences.append(x_sample[0].tolist())
+    del sample_loader
+    l3_alloc = compute_lzw_allocation(sample_sequences, vocab_size, l3_n_emb, args.l3_k_max)
+    l3_bounds = allocation_to_bounds(l3_alloc).to(device)
+    print0(f"L3 allocation: {l3_n_emb:,} total embeddings, k_max={args.l3_k_max}, avg={l3_n_emb/vocab_size:.1f}/token")
+
 # Build the model, move to device, init the weights
-model = build_model_meta(args.depth) # 1) Build on meta device (only shapes/dtypes, no data)
+model = build_model_meta(args.depth, l3_after_layers=args.l3_after_layers, l3_n_emb=l3_n_emb) # 1) Build on meta device (only shapes/dtypes, no data)
 model_config = model.config
 model_config_kwargs = asdict(model_config)
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 model.to_empty(device=device) # 2) All tensors get storage on target device but with uninitialized (garbage) data
 model.init_weights() # 3) All tensors get initialized
+
+# Set L3 bounds after model creation
+if l3_bounds is not None:
+    for l3_layer in model.l3_layers.values():
+        l3_layer.set_bounds(l3_bounds)
+    print0(f"L3 bounds set for {len(model.l3_layers)} layer(s)")
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 base_dir = get_base_dir()

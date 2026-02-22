@@ -24,6 +24,7 @@ from nanochat.optim import MuonAdamW, DistMuonAdamW
 
 # Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
 from nanochat.flash_attention import flash_attn
+from nanochat.l3 import L3Layer
 
 @dataclass
 class GPTConfig:
@@ -37,6 +38,12 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (half context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    # L3 (Large Lookup Layers) config
+    l3_after_layers: str = ""   # comma-separated layer indices (empty = disabled)
+    l3_n_emb: int = 0           # total embeddings (0 = disabled)
+    l3_d_up: int = 0            # up-projection dim (0 = auto: 4 * n_embd)
+    l3_k_max: int = 512         # max embeddings per token
+    l3_tie_kv: bool = True      # tie key and value weights
 
 
 def norm(x):
@@ -175,6 +182,13 @@ class GPT(nn.Module):
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
         self.value_embeds = nn.ModuleDict({str(i): nn.Embedding(padded_vocab_size, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
+        # L3 layers (placed between decoder blocks)
+        self.l3_layer_indices = set(int(x) for x in config.l3_after_layers.split(",") if x.strip()) if config.l3_after_layers else set()
+        l3_d_up = config.l3_d_up if config.l3_d_up > 0 else 4 * config.n_embd
+        self.l3_layers = nn.ModuleDict({
+            str(i): L3Layer(config.n_embd, config.l3_n_emb, l3_d_up, config.l3_tie_kv)
+            for i in self.l3_layer_indices
+        }) if self.l3_layer_indices and config.l3_n_emb > 0 else nn.ModuleDict()
         # To support meta device initialization, we init the rotary embeddings here, but it's just "fake" meta tensors only.
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
@@ -229,6 +243,16 @@ class GPT(nn.Module):
             if block.attn.ve_gate is not None:
                 torch.nn.init.zeros_(block.attn.ve_gate.weight)
 
+        # L3 layers
+        for l3_layer in self.l3_layers.values():
+            if l3_layer.tie_kv:
+                torch.nn.init.normal_(l3_layer.kv_weight, mean=0.0, std=1.0)
+            else:
+                torch.nn.init.normal_(l3_layer.k_weight, mean=0.0, std=1.0)
+                torch.nn.init.normal_(l3_layer.v_weight, mean=0.0, std=1.0)
+            torch.nn.init.uniform_(l3_layer.w_up.weight, -s, s)
+            torch.nn.init.zeros_(l3_layer.w_mix.weight)  # L3 starts as no-op
+
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -239,6 +263,12 @@ class GPT(nn.Module):
             self.transformer.wte.to(dtype=torch.bfloat16)
             for ve in self.value_embeds.values():
                 ve.to(dtype=torch.bfloat16)
+            for l3_layer in self.l3_layers.values():
+                if l3_layer.tie_kv:
+                    l3_layer.kv_weight.data = l3_layer.kv_weight.data.to(dtype=torch.bfloat16)
+                else:
+                    l3_layer.k_weight.data = l3_layer.k_weight.data.to(dtype=torch.bfloat16)
+                    l3_layer.v_weight.data = l3_layer.v_weight.data.to(dtype=torch.bfloat16)
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
         # TODO: bump base theta more? e.g. 100K is more common more recently
@@ -304,7 +334,14 @@ class GPT(nn.Module):
         nparams = sum(p.numel() for p in self.parameters())
         # Exclude non-matmul params: embeddings and per-layer scalars
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
-        nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
+        # L3 kv/k/v weights are embeddings (lookup tables), not matmul weights
+        l3_embed_numel = 0
+        for l3_layer in self.l3_layers.values():
+            if l3_layer.tie_kv:
+                l3_embed_numel += l3_layer.kv_weight.numel()
+            else:
+                l3_embed_numel += l3_layer.k_weight.numel() + l3_layer.v_weight.numel()
+        nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel + l3_embed_numel +
                           self.resid_lambdas.numel() + self.x0_lambdas.numel())
         h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window
@@ -313,7 +350,15 @@ class GPT(nn.Module):
             window = window_size[0]  # (left, right) tuple, we use left
             effective_seq = t if window < 0 else min(window, t)
             attn_flops += 12 * h * q * effective_seq
-        num_flops_per_token = 6 * (nparams - nparams_exclude) + attn_flops
+        # L3 FLOPs: per layer, approx 2*avg_k*n_embd (attention) + 2*n_embd*d_up (up) + 2*(d_up+n_embd)*n_embd (mix)
+        l3_flops = 0
+        if self.l3_layers:
+            n_embd = self.config.n_embd
+            l3_d_up = self.config.l3_d_up if self.config.l3_d_up > 0 else 4 * n_embd
+            avg_k = self.config.l3_n_emb / self.config.vocab_size if self.config.vocab_size > 0 else 1
+            per_l3 = 2 * avg_k * n_embd + 2 * n_embd * l3_d_up + 2 * (l3_d_up + n_embd) * n_embd
+            l3_flops = int(per_l3 * len(self.l3_layers))
+        num_flops_per_token = 6 * (nparams - nparams_exclude) + attn_flops + l3_flops
         return num_flops_per_token
 
     def num_scaling_params(self):
@@ -334,13 +379,24 @@ class GPT(nn.Module):
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
-        total = wte + value_embeds + lm_head + transformer_matrices + scalars
+        # L3: separate embedding-like params from matrix params
+        l3_embeds = 0
+        l3_matrices = 0
+        for l3_layer in self.l3_layers.values():
+            if l3_layer.tie_kv:
+                l3_embeds += l3_layer.kv_weight.numel()
+            else:
+                l3_embeds += l3_layer.k_weight.numel() + l3_layer.v_weight.numel()
+            l3_matrices += l3_layer.w_up.weight.numel() + l3_layer.w_mix.weight.numel()
+        total = wte + value_embeds + lm_head + transformer_matrices + scalars + l3_embeds + l3_matrices
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
             'wte': wte,
             'value_embeds': value_embeds,
             'lm_head': lm_head,
             'transformer_matrices': transformer_matrices,
+            'l3_embeds': l3_embeds,
+            'l3_matrices': l3_matrices,
             'scalars': scalars,
             'total': total,
         }
@@ -356,7 +412,18 @@ class GPT(nn.Module):
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params)
+        # L3 params: embedding-like (kv/k/v weights) and matrix (w_up, w_mix)
+        l3_embed_params = []
+        l3_matrix_params = []
+        for l3_layer in self.l3_layers.values():
+            if l3_layer.tie_kv:
+                l3_embed_params.append(l3_layer.kv_weight)
+            else:
+                l3_embed_params.append(l3_layer.k_weight)
+                l3_embed_params.append(l3_layer.v_weight)
+            l3_matrix_params.append(l3_layer.w_up.weight)
+            l3_matrix_params.append(l3_layer.w_mix.weight)
+        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(l3_embed_params) + len(l3_matrix_params)
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
@@ -371,9 +438,13 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
         ]
+        # L3 param groups: embeddings use AdamW (like token embeddings), matrices use Muon
+        if l3_embed_params:
+            param_groups.append(dict(kind='adamw', params=l3_embed_params, lr=embedding_lr * dmodel_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0))
         # Muon groups (matrix params, grouped by shape for stacking)
-        for shape in sorted({p.shape for p in matrix_params}):
-            group_params = [p for p in matrix_params if p.shape == shape]
+        all_matrix_params = matrix_params + l3_matrix_params
+        for shape in sorted({p.shape for p in all_matrix_params}):
+            group_params = [p for p in all_matrix_params if p.shape == shape]
             param_groups.append(dict(
                 kind='muon', params=group_params, lr=matrix_lr,
                 momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
@@ -404,6 +475,9 @@ class GPT(nn.Module):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+            # L3 layer after this block (if configured)
+            if str(i) in self.l3_layers:
+                x = x + self.l3_layers[str(i)](x, idx)
         x = norm(x)
 
         # Forward the lm_head (compute logits)
