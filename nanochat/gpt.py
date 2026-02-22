@@ -40,8 +40,12 @@ class GPTConfig:
 
 
 def norm(x):
-    # Purely functional rmsnorm with no learnable params
-    return F.rms_norm(x, (x.size(-1),))
+    # Purely functional rmsnorm with no learnable params.
+    # F.rms_norm was added in PyTorch 2.4; fall back to manual implementation on older builds.
+    if hasattr(F, 'rms_norm'):
+        return F.rms_norm(x, (x.size(-1),))
+    variance = x.pow(2).mean(-1, keepdim=True)
+    return x * torch.rsqrt(variance + 1e-6)
 
 
 def has_ve(layer_idx, n_layer):
@@ -230,15 +234,22 @@ class GPT(nn.Module):
                 torch.nn.init.zeros_(block.attn.ve_gate.weight)
 
         # Rotary embeddings
-        head_dim = self.config.n_embd // self.config.n_head
-        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
-        self.cos, self.sin = cos, sin
+        self.init_rotary_embeddings()
 
         # Cast embeddings to bf16: optimizer can tolerate it and it saves memory
         if self.transformer.wte.weight.device.type == "cuda":
             self.transformer.wte.to(dtype=torch.bfloat16)
             for ve in self.value_embeds.values():
                 ve.to(dtype=torch.bfloat16)
+
+    def init_rotary_embeddings(self):
+        """Initialize (or re-initialize) only the non-persistent rotary embedding buffers.
+        Call this instead of the full init_weights() when loading a checkpoint, since these
+        buffers have persistent=False and are therefore absent from the saved state_dict.
+        """
+        head_dim = self.config.n_embd // self.config.n_head
+        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
+        self.cos, self.sin = cos, sin
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
         # TODO: bump base theta more? e.g. 100K is more common more recently
@@ -253,7 +264,9 @@ class GPT(nn.Module):
         # calculate the rotation frequencies at each (time, channel) pair
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16() # keep them in bfloat16
+        # bfloat16 saves memory on CUDA; MPS only supports it in torch>=2.4 so use float32 there
+        if device.type == "cuda":
+            cos, sin = cos.bfloat16(), sin.bfloat16()
         cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
         return cos, sin
 
@@ -391,7 +404,9 @@ class GPT(nn.Module):
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
-        assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
+        expected_rot_dtype = torch.bfloat16 if self.cos.device.type == "cuda" else torch.float32
+        assert self.cos.dtype == expected_rot_dtype, \
+            f"Rotary embeddings dtype mismatch: expected {expected_rot_dtype}, got {self.cos.dtype}"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
