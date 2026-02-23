@@ -172,6 +172,10 @@ class Engine:
         """Same as generate, but does single prefill and then clones the KV cache."""
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
         device = self.model.get_device()
+        # The name of the device is either a string ("cpu") or a torch.device
+        # so we need to normalize it to a torch.device 
+        if isinstance(device, str):
+            device = torch.device(device)
         # NOTE: setting the dtype here and in this way is an ugly hack.
         # Currently the repo assumes that cuda -> bfloat16 and everything else -> float32.
         # We need to know the dtype here to call __init__ on KVCache and pre-allocate its tensors.
