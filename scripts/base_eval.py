@@ -26,17 +26,19 @@ import json
 import yaml
 import shutil
 import random
+import hashlib
 import zipfile
 import tempfile
 import argparse
 from contextlib import nullcontext
+from tqdm import tqdm
 
 import torch
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
 from nanochat.tokenizer import HuggingFaceTokenizer, get_token_bytes
 from nanochat.checkpoint_manager import load_model
-from nanochat.core_eval import evaluate_task
+from nanochat.core_eval import evaluate_task, prepare_task_data, _forward_all_cached
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
@@ -106,67 +108,211 @@ def place_eval_bundle(file_path):
     print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
 
-def evaluate_core(model, tokenizer, device, max_per_task=-1):
+_eval_data_cache = None  # (task_inputs, random_baselines, w_label, w_shot, w_type)
+_batch_cache = {}        # {label: collated_batches} — cached after first run
+_batch_cache_key = None  # (max_per_task, max_seq_len) — invalidate if these change
+_prev_centered = {}      # {label: centered_result} — previous run for delta display
+_prev_core = None        # previous core_metric
+
+
+def _get_disk_cache_dir(max_per_task):
+    """Get disk cache dir for base-4 collated batches, keyed by tokenizer file hash.
+    Returns None if no local tokenizer file is found (e.g. HuggingFace models)."""
+    base_dir = get_base_dir()
+    for fname in ("tokenizer.pkl", "tokenizer.json"):
+        path = os.path.join(base_dir, "tokenizer", fname)
+        if os.path.exists(path):
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    h.update(chunk)
+            tok_hash = h.hexdigest()[:16]
+            return os.path.join(base_dir, "core_token_cache", f"{tok_hash}_n{max_per_task}")
+    return None
+
+
+def evaluate_model(model, tokenizer, device, max_per_task=-1):
     """
     Evaluate a base model on the CORE benchmark.
-    Returns dict with results, centered_results, and core_metric.
+    - max_per_task: crop the data to this many examples per task for testing (-1 = disable)
+    Collated batches are cached across calls since the tokenizer is fixed.
+    Second+ runs skip prepare and collation entirely — just GPU forward passes.
     """
-    base_dir = get_base_dir()
-    eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
-    # Download the eval bundle if needed
-    if not os.path.exists(eval_bundle_dir):
-        download_file_with_lock(EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=place_eval_bundle)
+    global _eval_data_cache, _batch_cache, _batch_cache_key, _prev_centered, _prev_core
+    from concurrent.futures import ThreadPoolExecutor
 
-    config_path = os.path.join(eval_bundle_dir, "core.yaml")
-    data_base_path = os.path.join(eval_bundle_dir, "eval_data")
-    eval_meta_data = os.path.join(eval_bundle_dir, "eval_meta_data.csv")
+    max_seq_len = getattr(model, 'max_seq_len', None)
+    cache_key = (max_per_task, max_seq_len)
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f)
-    tasks = config['icl_tasks']
+    # Invalidate batch cache if parameters changed
+    if cache_key != _batch_cache_key:
+        _batch_cache.clear()
+        _batch_cache_key = cache_key
 
-    # Load random baseline values
-    random_baselines = {}
-    with open(eval_meta_data, 'r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            task_name = row['Eval Task']
-            random_baseline = row['Random baseline']
-            random_baselines[task_name] = float(random_baseline)
+    # Load and cache task data + baselines (only read from disk once)
+    if _eval_data_cache is None:
+        base_dir = get_base_dir()
+        eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
+        if not os.path.exists(eval_bundle_dir):
+            download_file_with_lock(EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=place_eval_bundle)
+        config_path = os.path.join(eval_bundle_dir, "core.yaml")
+        data_base_path = os.path.join(eval_bundle_dir, "eval_data")
+        eval_meta_data = os.path.join(eval_bundle_dir, "eval_meta_data.csv")
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        tasks = config['icl_tasks']
 
-    # Evaluate each task
+        random_baselines = {}
+        with open(eval_meta_data, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                random_baselines[row['Eval Task']] = float(row['Random baseline'])
+
+        task_inputs = []
+        for task in tasks:
+            label = task['label']
+            task_meta = {
+                'task_type': task['icl_task_type'],
+                'dataset_uri': task['dataset_uri'],
+                'num_fewshot': task['num_fewshot'][0],
+                'continuation_delimiter': task.get('continuation_delimiter', ' ')
+            }
+            data_path = os.path.join(data_base_path, task_meta['dataset_uri'])
+            with open(data_path, 'r', encoding='utf-8') as f:
+                data = [json.loads(line.strip()) for line in f]
+            shuffle_rng = random.Random(1337)
+            shuffle_rng.shuffle(data)
+            if max_per_task > 0:
+                data = data[:max_per_task]
+            task_inputs.append((label, task_meta, data))
+
+        w_label = max(len(t[0]) for t in task_inputs)
+        w_shot = max(len(f"{t[1]['num_fewshot']}-shot") for t in task_inputs)
+        w_type = max(len(t[1]['task_type']) for t in task_inputs)
+        _eval_data_cache = (task_inputs, random_baselines, w_label, w_shot, w_type)
+
+    task_inputs, random_baselines, w_label, w_shot, w_type = _eval_data_cache
+
+    # First run: eagerly prepare next task while evaluating current, cache collated batches.
+    # Cached runs: pass collated batches directly — no threads, no prepare, no collation.
     results = {}
     centered_results = {}
-    for task in tasks:
-        start_time = time.time()
-        label = task['label']
-        task_meta = {
-            'task_type': task['icl_task_type'],
-            'dataset_uri': task['dataset_uri'],
-            'num_fewshot': task['num_fewshot'][0],
-            'continuation_delimiter': task.get('continuation_delimiter', ' ')
-        }
-        print0(f"Evaluating: {label} ({task_meta['num_fewshot']}-shot, type: {task_meta['task_type']})... ", end='')
+    cached_run = all(label in _batch_cache for label, _, _ in task_inputs)
+    disk_cache_dir = _get_disk_cache_dir(max_per_task)
 
-        data_path = os.path.join(data_base_path, task_meta['dataset_uri'])
-        with open(data_path, 'r', encoding='utf-8') as f:
-            data = [json.loads(line.strip()) for line in f]
+    # Try loading from disk cache if in-memory cache is empty
+    if not cached_run and disk_cache_dir is not None:
+        all_on_disk = os.path.isdir(disk_cache_dir) and all(
+            os.path.exists(os.path.join(disk_cache_dir, f"{label}.pt"))
+            for label, _, _ in task_inputs
+        )
+        if all_on_disk:
+            for label, _, _ in task_inputs:
+                d = torch.load(os.path.join(disk_cache_dir, f"{label}.pt"), weights_only=False)
+                _batch_cache[label] = d['collated']
+            cached_run = True
+            print0("  (loaded collated batches from disk cache)")
 
-        # Shuffle for consistent subsampling when using max_per_task
-        shuffle_rng = random.Random(1337)
-        shuffle_rng.shuffle(data)
-        if max_per_task > 0:
-            data = data[:max_per_task]
+    first_run = not cached_run  # track whether we did prepare+collate (for disk save)
 
-        accuracy = evaluate_task(model, tokenizer, data, device, task_meta)
-        results[label] = accuracy
+    import torch.distributed as dist
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    total_examples = sum(len(data) for _, _, data in task_inputs)
+    task_labels = [label for label, _, _ in task_inputs]
+    pbar = tqdm(total=total_examples, leave=False, disable=(rank != 0))
+
+    def _print_task_result(tidx, accuracy):
+        """Print one task's result. Updates results/centered_results dicts."""
+        label, task_meta, _ = task_inputs[tidx]
         random_baseline = random_baselines[label]
         centered_result = (accuracy - 0.01 * random_baseline) / (1.0 - 0.01 * random_baseline)
+        results[label] = accuracy
         centered_results[label] = centered_result
-        elapsed = time.time() - start_time
-        print0(f"accuracy: {accuracy:.4f} | centered: {centered_result:.4f} | time: {elapsed:.2f}s")
+        shot_str = f"{task_meta['num_fewshot']}-shot"
+        prefix = f"  {label:<{w_label}}  {shot_str:<{w_shot}}  {task_meta['task_type']:<{w_type}}"
+        delta_str = ""
+        if label in _prev_centered:
+            d = centered_result - _prev_centered[label]
+            arrow = "\u2191" if d > 0 else "\u2193" if d < 0 else "="
+            delta_str = f"  {arrow}{d:+.4f}"
+        if rank == 0:
+            pbar.write(f"{prefix}  acc: {accuracy:.4f}  centered: {centered_result:>7.4f}{delta_str}")
+
+    def _on_task_done(tidx, correct):
+        """Callback for _forward_all_cached: convert tensor to accuracy and print."""
+        _print_task_result(tidx, correct.mean().item())
+
+    if cached_run:
+        # Continuous pipeline: all tasks in one GPU stream, results printed per-task as they complete.
+        # Always use base batch size (merge=1/split=1) to guarantee identical results —
+        # different batch dimensions trigger different cuBLAS kernels with different FP rounding.
+        t0 = time.time()
+        task_collated = [(_batch_cache[label], data) for label, _, data in task_inputs]
+        correct_list = _forward_all_cached(
+            model, task_collated, device, pbar=pbar, task_labels=task_labels,
+            on_task_done=_on_task_done if world_size == 1 else None,
+            batched=True,
+        )
+        elapsed_total = time.time() - t0
+        pbar.close()
+
+        # DDP: all_reduce + print (single-GPU already handled by on_task_done above)
+        if world_size > 1:
+            for tidx, ((label, task_meta, data), correct) in enumerate(zip(task_inputs, correct_list)):
+                dist.barrier()
+                dist.all_reduce(correct, op=dist.ReduceOp.SUM)
+                _print_task_result(tidx, correct.mean().item())
+        print0(f"  (all tasks: {elapsed_total:.2f}s)")
+    else:
+        t0 = time.time()
+        executor = ThreadPoolExecutor(max_workers=1)
+        first_uncached = next(i for i, (l, _, _) in enumerate(task_inputs) if l not in _batch_cache)
+        _, first_meta, first_data = task_inputs[first_uncached]
+        next_future = executor.submit(prepare_task_data, tokenizer, first_data, first_meta, max_seq_len)
+
+        for i, (label, task_meta, data) in enumerate(task_inputs):
+            pbar.set_description(f"{label:<{w_label}}")
+
+            if label in _batch_cache:
+                accuracy, collated = evaluate_task(model, data, device, collated=_batch_cache[label], pbar=pbar)
+            else:
+                prepared = next_future.result()
+                # Kick off prepare for the next uncached task
+                for j in range(i + 1, len(task_inputs)):
+                    next_label, next_meta, next_data = task_inputs[j]
+                    if next_label not in _batch_cache:
+                        next_future = executor.submit(prepare_task_data, tokenizer, next_data, next_meta, max_seq_len)
+                        break
+                accuracy, collated = evaluate_task(model, data, device, prepared=prepared, pbar=pbar)
+                _batch_cache[label] = collated
+
+            _print_task_result(i, accuracy)
+
+        elapsed_total = time.time() - t0
+        pbar.close()
+        executor.shutdown(wait=False)
+        print0(f"  (all tasks: {elapsed_total:.2f}s)")
+
+        # Save collated batches to disk after first run (so bench/future runs skip prepare+collate)
+        if first_run and disk_cache_dir is not None:
+            pad_id = tokenizer.get_bos_token_id()
+            os.makedirs(disk_cache_dir, exist_ok=True)
+            for label, _, _ in task_inputs:
+                if label in _batch_cache:
+                    torch.save({'collated': _batch_cache[label], 'pad_token_id': pad_id},
+                               os.path.join(disk_cache_dir, f"{label}.pt"))
+            print0(f"  (saved collated batches to {disk_cache_dir})")
 
     core_metric = sum(centered_results.values()) / len(centered_results)
+    if _prev_core is not None:
+        d = core_metric - _prev_core
+        arrow = "\u2191" if d > 0 else "\u2193" if d < 0 else "="
+        print0(f"CORE: {core_metric:.4f}  {arrow}{d:+.4f}")
+    else:
+        print0(f"CORE: {core_metric:.4f}")
+    _prev_centered = dict(centered_results)
+    _prev_core = core_metric
     out = {
         "results": results,
         "centered_results": centered_results,
@@ -288,7 +434,7 @@ def main():
         print0("CORE Evaluation")
         print0("="*80)
         with autocast_ctx:
-            core_results = evaluate_core(model, tokenizer, device, max_per_task=args.max_per_task)
+            core_results = evaluate_model(model, tokenizer, device, max_per_task=args.max_per_task)
 
         # Write CSV output
         if ddp_rank == 0:
