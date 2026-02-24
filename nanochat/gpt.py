@@ -176,10 +176,9 @@ class GPT(nn.Module):
         kv_dim = config.n_kv_head * head_dim
         self.value_embeds = nn.ModuleDict({str(i): nn.Embedding(padded_vocab_size, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
         # To support meta device initialization, we init the rotary embeddings here, but it's just "fake" meta tensors only.
-        # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
-        # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
-        # In the future we can dynamically grow the cache, for now it's fine.
-        self.rotary_seq_len = config.sequence_len * 10 # 10X over-compute should be enough, TODO make nicer?
+        # Precompute a reasonably large RoPE cache up front (cheap relative to model weights).
+        # The cache is also allowed to grow dynamically in forward() if generation exceeds this length.
+        self.rotary_seq_len = config.sequence_len * 10
         head_dim = config.n_embd // config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
@@ -188,43 +187,28 @@ class GPT(nn.Module):
     def _ensure_rope_cache(self, needed_seq_len: int, device: torch.device):
         """
         Ensure rotary embedding cache (cos/sin) is long enough for absolute positions [0, needed_seq_len).
-
+    
         We grow lazily to avoid crashes for long prompts / long KV-cache generation.
         Growth is amortized by rounding up to the next power of two.
-
-        NOTE: We avoid register_buffer() here; we simply overwrite the existing buffers.
         """
         cur_len = self.cos.size(1)
         if needed_seq_len <= cur_len:
             return
-
-        # Safety: mutating buffers during torch.compile tracing is unsafe.
-        try:
-            import torch._dynamo
-            if torch._dynamo.is_compiling():
-                raise RuntimeError(
-                    f"RoPE cache too small during torch.compile (need {needed_seq_len}, have {cur_len}). "
-                    f"Increase initial rotary_seq_len or disable compile for generation."
-                )
-        except Exception:
-            # torch._dynamo may not exist in older torch; ignore.
-            pass
-
+    
         # Next power-of-two >= needed_seq_len
         new_len = 1 << (needed_seq_len - 1).bit_length()
-
+    
         head_dim = self.config.n_embd // self.config.n_head
-        cos, sin = self._precompute_rotary_embeddings(
-            seq_len=new_len, head_dim=head_dim, device=device)
-
-        # Preserve dtype/device invariants (precompute returns bf16 already)
+        cos, sin = self._precompute_rotary_embeddings(seq_len=new_len, head_dim=head_dim, device=device)
+    
+        # Preserve dtype/device invariants (precompute already returns bf16, but keep explicit)
         cos = cos.to(dtype=self.cos.dtype, device=device)
         sin = sin.to(dtype=self.sin.dtype, device=device)
-
-        # Overwrite existing registered buffers (no re-register)
+    
+        # Overwrite existing registered buffers (keep same names, persistent=False property remains)
         self.cos = cos
         self.sin = sin
-        self.rotary_seq_len = new_len  # keep metadata consistent
+        self.rotary_seq_len = new_len
 
     @torch.no_grad()
     def init_weights(self):
@@ -429,14 +413,14 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
         B, T = idx.size()
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
-
+    
         # Ensure RoPE buffers cover absolute positions [T0, T0+T)
         self._ensure_rope_cache(T0 + T, device=idx.device)
-
-        # Now it's safe to slice
+    
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
         assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
-
+    
+        # If kv cache exists, offset RoPE by current absolute position
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T]
 
         # Forward the trunk of the Transformer
