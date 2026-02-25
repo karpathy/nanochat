@@ -13,15 +13,22 @@ import time
 import requests
 import pyarrow.parquet as pq
 from multiprocessing import Pool
+from functools import partial
 
 from nanochat.common import get_base_dir
 
 # -----------------------------------------------------------------------------
 # The specifics of the current pretraining dataset
 
-# The URL on the internet where the data is hosted and downloaded from on demand
-BASE_URL = "https://huggingface.co/datasets/karpathy/fineweb-edu-100b-shuffle/resolve/main"
-MAX_SHARD = 1822 # the last datashard is shard_01822.parquet
+# The URLs on the internet where the data is hosted and downloaded from on demand
+# FineWeb-Edu dataset
+BASE_URL_FW = "https://huggingface.co/datasets/karpathy/fineweb-edu-100b-shuffle/resolve/main"
+MAX_SHARD_FW = 1822 # the last datashard is shard_01822.parquet
+
+# NVIDIA ClimbMix dataset
+BASE_URL_NVCM = "https://huggingface.co/datasets/ddudek/nanochat-climbmix-80b-shuffle/resolve/main"
+MAX_SHARD_NVCM = 1306
+
 index_to_filename = lambda index: f"shard_{index:05d}.parquet" # format of the filenames
 base_dir = get_base_dir()
 DATA_DIR = os.path.join(base_dir, "base_data")
@@ -57,8 +64,10 @@ def parquets_iter_batched(split, start=0, step=1):
             yield texts
 
 # -----------------------------------------------------------------------------
-def download_single_file(index):
+def download_single_file(index, ds_climbmix):
     """ Downloads a single file index, with some backoff """
+
+    base_url = BASE_URL_NVCM if ds_climbmix else BASE_URL_FW
 
     # Construct the local filepath for this file and skip if it already exists
     filename = index_to_filename(index)
@@ -68,7 +77,7 @@ def download_single_file(index):
         return True
 
     # Construct the remote URL for this file
-    url = f"{BASE_URL}/{filename}"
+    url = f"{base_url}/{filename}"
     print(f"Downloading {filename}...")
 
     # Download with retries
@@ -110,18 +119,24 @@ def download_single_file(index):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Download FineWeb-Edu 100BT dataset shards")
+    parser = argparse.ArgumentParser(description="Download dataset shards")
     parser.add_argument("-n", "--num-files", type=int, default=-1, help="Number of shards to download (default: -1), -1 = disable")
     parser.add_argument("-w", "--num-workers", type=int, default=4, help="Number of parallel download workers (default: 4)")
+    parser.add_argument("-dscm", "--ds-climbmix", action="store_true", help="Use NVIDIA Climbmix dataset, otherwise use default Fineweb-Edu")
     args = parser.parse_args()
 
-    num = MAX_SHARD + 1 if args.num_files == -1 else min(args.num_files, MAX_SHARD + 1)
+    num_shards = MAX_SHARD_NVCM if args.ds_climbmix else MAX_SHARD_FW
+
+    num = num_shards + 1 if args.num_files == -1 else min(args.num_files, num_shards + 1)
     ids_to_download = list(range(num))
     print(f"Downloading {len(ids_to_download)} shards using {args.num_workers} workers...")
     print(f"Target directory: {DATA_DIR}")
+    if args.ds_climbmix:
+        print("Using NVIDIA ClimbMix dataset")
     print()
     with Pool(processes=args.num_workers) as pool:
-        results = pool.map(download_single_file, ids_to_download)
+        func = partial(download_single_file, ds_climbmix=args.ds_climbmix)
+        results = pool.map(func, ids_to_download)
 
     # Report results
     successful = sum(1 for success in results if success)
