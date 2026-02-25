@@ -468,7 +468,7 @@ while True:
     if step == 1:
         gc.collect() # manually collect a lot of garbage from setup
         gc.freeze() # freeze all currently surviving objects and exclude them from GC
-        gc.disable() # disable GC entirely except:
+        gc.disable() # disable GC entirely except Exception:
     elif step % 5000 == 0: # every 5000 steps...
         gc.collect() # manually collect, just to be safe for very long runs
 

@@ -95,7 +95,7 @@ def download_single_file(index):
                 if os.path.exists(path):
                     try:
                         os.remove(path)
-                    except:
+                    except Exception:
                         pass
             # Try a few times with exponential backoff: 2^attempt seconds
             if attempt < max_attempts:
