@@ -91,6 +91,10 @@ I've published a number of guides that might contain helpful information, most r
 - To customize your nanochat, see [Guide: infusing identity to your nanochat](https://github.com/karpathy/nanochat/discussions/139) in Discussions, which describes how you can tune your nanochat's personality through synthetic data generation and mixing that data into the SFT stage.
 - [Oct 13 2025: original nanochat post](https://github.com/karpathy/nanochat/discussions/1) introducing nanochat, though now it contains some deprecated information and the model is a lot older (with worse results) than current master.
 
+## Benchmarks
+
+[NanoKnow](https://github.com/castorini/NanoKnow) ([paper](https://arxiv.org/abs/2602.20122)) provides pre-built relevance judgments that classify SQuAD and Natural Questions into **supported** (answer exists in fineweb-edu) and **unsupported** (answer not in training data) splits. 28–34% of standard benchmark questions are about facts that never appeared in the training corpus. NanoKnow lets you evaluate your checkpoint on questions it was actually trained on, giving a much cleaner signal of what the model learned.
+
 ## File structure
 
 ```
