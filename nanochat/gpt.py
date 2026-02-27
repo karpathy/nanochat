@@ -788,23 +788,12 @@ class GPT(nn.Module):
             )
             loss = ce_loss
             if combined_aux_loss is not None:
-                if not self.config.use_bias_balancing:
-                    loss = (
-                        loss
-                        + self.config.load_balance_loss_weight
-                        * combined_aux_loss["load_balance_loss"]
-                        + self.config.router_z_loss_weight
-                        * combined_aux_loss["router_z_loss"]
-                    )
-                if (
-                    self.config.compute_loss_weight > 0
-                    and "compute_loss" in combined_aux_loss
-                ):
-                    loss = (
-                        loss
-                        + self.config.compute_loss_weight
-                        * combined_aux_loss["compute_loss"]
-                    )
+                if self.config.load_balance_loss_weight > 0:
+                    loss = loss + self.config.load_balance_loss_weight * combined_aux_loss["load_balance_loss"]
+                if self.config.router_z_loss_weight > 0:
+                    loss = loss + self.config.router_z_loss_weight * combined_aux_loss["router_z_loss"]
+                if self.config.compute_loss_weight > 0 and "compute_loss" in combined_aux_loss:
+                    loss = loss + self.config.compute_loss_weight * combined_aux_loss["compute_loss"]
                 combined_aux_loss["ce_loss"] = ce_loss
 
             return logits, loss, combined_aux_loss

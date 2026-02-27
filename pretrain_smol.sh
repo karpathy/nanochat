@@ -31,7 +31,7 @@ python -m nanochat.dataset -n 50
 # train tokenizer if not already present
 python -m scripts.tok_train --max_chars=500000000
 
-# Model: depth=12, dim=768, 12 heads (~167M active params with MoE)
+# Model: depth=12, dim=768, 6 heads (~167M active params with MoE)
 # Training: 2.5B tokens on 3 GPUs
 # batch: 10 * 1024 * 3 * 18 (grad_accum) = 552,960 tokens/step
 # iterations: 2.5B / 552,960 = 4,521
@@ -40,7 +40,7 @@ torchrun --standalone --nproc_per_node=3 -m scripts.base_train -- \
     --run=synth-moe-12L-768d-2.5B \
     --depth=12 \
     --model_dim=768 \
-    --num_heads=12 \
+    --num_heads=6 \
     --max_seq_len=1024 \
     --device_batch_size=10 \
     --total_batch_size=552960 \

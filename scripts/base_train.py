@@ -50,6 +50,14 @@ model_dim = -1  # model dimension (-1 = derive from depth as depth * 64)
 num_heads = -1  # number of attention heads (-1 = derive from model_dim)
 num_kv_heads = -1  # number of kv heads for GQA (-1 = same as num_heads)
 max_seq_len = 2048  # max context length
+# MoE routing
+expert_sizes = [(64, 256)]  # list of (count, width) tuples
+num_active_experts = 8  # top-k experts per token
+load_balance_loss_weight = 0.08
+router_z_loss_weight = 0.001
+compute_loss_weight = 0.004
+use_bias_balancing = False
+bias_update_speed = 0.001
 # Training horizon. Only one of these 3 will be used, in this order of precedence.
 num_iterations = -1  # explicit number of steps of the optimization (-1 = disable)
 target_flops = -1.0  # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
@@ -79,7 +87,7 @@ save_every = -1  # save checkpoint every N steps (-1 = only at end)
 config_keys = [
     k
     for k, v in globals().items()
-    if not k.startswith("_") and isinstance(v, (int, float, bool, str))
+    if not k.startswith("_") and isinstance(v, (int, float, bool, str, list))
 ]
 exec(
     open(os.path.join("nanochat", "configurator.py")).read()
@@ -152,6 +160,13 @@ model_config_kwargs = dict(
     n_head=num_heads,
     n_kv_head=num_kv_heads,
     n_embd=model_dim,
+    expert_sizes=expert_sizes,
+    num_active_experts=num_active_experts,
+    load_balance_loss_weight=load_balance_loss_weight,
+    router_z_loss_weight=router_z_loss_weight,
+    compute_loss_weight=compute_loss_weight,
+    use_bias_balancing=use_bias_balancing,
+    bias_update_speed=bias_update_speed,
 )
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
@@ -433,11 +448,17 @@ for step in range(num_iterations + 1):
             if "expert_bias_abs_max" in combined_aux_loss:
                 log_dict["train/expert_bias_abs_max"] = combined_aux_loss["expert_bias_abs_max"].item()
                 log_dict["train/expert_bias_abs_mean"] = combined_aux_loss["expert_bias_abs_mean"].item()
+            if "expert_usage" in combined_aux_loss:
+                for j, val in enumerate(combined_aux_loss["expert_usage"]):
+                    log_dict[f"train/expert_usage_{j}"] = val.item()
             if step % 1000 == 0 and "expert_bias_per_layer" in combined_aux_loss:
                 for i, bias_vec in enumerate(combined_aux_loss["expert_bias_per_layer"]):
-                    log_dict[f"train/expert_bias_layer_{i}"] = wandb.Histogram(
-                        bias_vec.float().cpu().numpy()
-                    )
+                    for j, val in enumerate(bias_vec):
+                        log_dict[f"train/expert_bias_layer_{i}_expert_{j}"] = val.item()
+            if step % 1000 == 0 and "expert_usage_per_layer" in combined_aux_loss:
+                for i, usage_vec in enumerate(combined_aux_loss["expert_usage_per_layer"]):
+                    for j, val in enumerate(usage_vec):
+                        log_dict[f"train/expert_usage_layer_{i}_expert_{j}"] = val.item()
         wandb_run.log(log_dict)
 
 # print a few more stats
