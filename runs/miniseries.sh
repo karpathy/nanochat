@@ -13,7 +13,6 @@ mkdir -p $NANOCHAT_BASE_DIR
 if [ -z "$SKIP_SETUP" ]; then
     # uv
     command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-    [ -d ".venv" ] || uv venv
     uv sync --extra gpu
     source .venv/bin/activate
 
