@@ -360,7 +360,7 @@ async def chat_completions(request: ChatRequest):
                     top_k=request.top_k
                 ):
                     # Accumulate response for logging
-                    chunk_data = json.loads(chunk.replace("data: ", "").strip())
+                    chunk_data = json.loads(chunk.removeprefix("data: ").strip())
                     if "token" in chunk_data:
                         response_tokens.append(chunk_data["token"])
                     yield chunk
