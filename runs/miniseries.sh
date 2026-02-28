@@ -85,7 +85,7 @@ for d in "${DEPTHS[@]}"; do
     NUM_PARAMS=$(grep "Number of parameters:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | head -1 | tr -d ',')
     NUM_SCALING_PARAMS=$(grep "Number of parameters:" "$LOG_FILE" | tail -1 | grep -oP 'scaling: [\d,]+' | grep -oP '[\d,]+' | tr -d ',')
     NUM_ITERS=$(grep "Calculated number of iterations" "$LOG_FILE" | tail -1 | sed 's/.*: //' | tr -d ',')
-    TOKENS_TRAINED=$((NUM_ITERS * 524288))
+    TOKENS_TRAINED=$(grep "Total number of training tokens:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
     PARAM_DATA_RATIO=$(python -c "print(f'{$TOKENS_TRAINED / $NUM_SCALING_PARAMS:.2f}')")
     MODEL_DIM=$((d * 64))
     VAL_BPB=$(grep "Validation bpb:" "$LOG_FILE" | tail -1 | grep -oP '[\d.]+$')
