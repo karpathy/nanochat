@@ -179,8 +179,7 @@ class GPT(nn.Module):
         # Precompute a reasonably large RoPE cache up front (cheap relative to model weights).
         # The cache may also grow lazily in forward() if generation exceeds this length.
         self.rotary_seq_len = config.sequence_len * 10
-        # Bound lazy growth to avoid unbounded memory usage during very long generation runs.
-        self.max_rotary_seq_len = max(self.rotary_seq_len, config.sequence_len * 64)
+        self.max_rotary_seq_len = self.rotary_seq_len
         
         head_dim = config.n_embd // config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
