@@ -31,7 +31,7 @@ class MockModel:
     def __init__(self, vocab_size=262):  # 256 bytes + 6 special tokens
         self.vocab_size = vocab_size
         self.config = MockConfig()
-        self._device = "cpu"
+        self._device = torch.device("cpu")
 
     def get_device(self):
         return self._device
