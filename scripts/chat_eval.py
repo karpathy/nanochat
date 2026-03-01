@@ -183,7 +183,7 @@ if __name__ == "__main__":
 
     # Parse command-line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--source', type=str, required=True, help="Source of the model: sft|rl")
+    parser.add_argument('-i', '--source', type=str, required=True, choices=["sft", "rl"], help="Source of the model: sft|rl")
     parser.add_argument('-a', '--task-name', type=str, default=None, help="Task name. Default = all tasks. Use | to split multiple tasks.")
     parser.add_argument('-d', '--dtype', type=str, default='bfloat16', choices=['float32', 'bfloat16'])
     parser.add_argument('-t', '--temperature', type=float, default=0.0)
@@ -215,7 +215,10 @@ if __name__ == "__main__":
         'HumanEval': 0.0, # open-ended => 0%
         'SpellingBee': 0.0, # open-ended => 0%
     }
-    task_names = all_tasks if args.task_name is None else args.task_name.split('|')
+    task_names = all_tasks if args.task_name is None else [t.strip() for t in args.task_name.split('|')]
+    for task_name in task_names:
+        if task_name not in all_tasks:
+            raise ValueError(f"Invalid task name: {task_name!r}. Choose from: {', '.join(all_tasks)}")
 
     # Run all the task evaluations sequentially
     results = {}
