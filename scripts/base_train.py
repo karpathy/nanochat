@@ -237,6 +237,10 @@ def disable_fp8(model):
 # -----------------------------------------------------------------------------
 # Compile the model
 
+# MoE uses torch._grouped_mm with cumulative offsets — dynamo needs this to
+# trace through scalar tensor operations that arise from cumsum/histc in routing
+torch._dynamo.config.capture_scalar_outputs = True
+
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
 model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
 
@@ -257,8 +261,9 @@ print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 # We've already initialized the model so we have Params. Optimal Tokens is now simply target-param-data-ratio * Params
 def get_scaling_params(m):
     # As for which params to use exactly, transformer matrices + lm_head gives cleanest scaling laws (see dev/LOG.md Jan 27, 2026)
+    # For MoE, use active params (only top_k routed experts + shared, not all experts)
     params_counts = m.num_scaling_params()
-    scaling_params = params_counts['transformer_matrices'] + params_counts['lm_head']
+    scaling_params = params_counts['active_transformer_matrices'] + params_counts['lm_head']
     return scaling_params
 num_scaling_params = get_scaling_params(model)
 target_tokens = int(args.target_param_data_ratio * num_scaling_params) # optimal tokens for the model we are about to train
@@ -506,6 +511,8 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+    moe_stats = orig_model.get_moe_stats() if step % 100 == 0 else {}
+    model.update_moe_balancing()
     optimizer.step()
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
@@ -547,6 +554,7 @@ while True:
             "train/mfu": mfu,
             "train/epoch": epoch,
         }
+        log_data.update(moe_stats)
         wandb_run.log(log_data)
 
     # state update

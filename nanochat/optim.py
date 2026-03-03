@@ -246,9 +246,13 @@ class MuonAdamW(torch.optim.Optimizer):
             state["momentum_buffer"] = torch.zeros(num_params, *shape, dtype=dtype, device=device)
         momentum_buffer = state["momentum_buffer"]
 
-        # Second momentum buffer is factored, either per-row or per-column
+        # Second momentum buffer is factored, either per-row or per-column.
+        # Uses *shape[:-1] / *shape[:-2] to preserve leading dims (e.g. expert dim for 3D MoE params).
         if "second_momentum_buffer" not in state:
-            state_shape = (num_params, shape[-2], 1) if shape[-2] >= shape[-1] else (num_params, 1, shape[-1])
+            if shape[-2] >= shape[-1]:
+                state_shape = (num_params, *shape[:-1], 1)
+            else:
+                state_shape = (num_params, *shape[:-2], 1, shape[-1])
             state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
         second_momentum_buffer = state["second_momentum_buffer"]
         red_dim = -1 if shape[-2] >= shape[-1] else -2
@@ -463,8 +467,12 @@ class DistMuonAdamW(torch.optim.Optimizer):
         state = self.state[p]
         if "momentum_buffer" not in state:
             state["momentum_buffer"] = torch.zeros(chunk_size, *shape, dtype=dtype, device=device)
+        # Second momentum buffer: preserve leading dims for 3D MoE params
         if "second_momentum_buffer" not in state:
-            state_shape = (chunk_size, shape[-2], 1) if shape[-2] >= shape[-1] else (chunk_size, 1, shape[-1])
+            if shape[-2] >= shape[-1]:
+                state_shape = (chunk_size, *shape[:-1], 1)
+            else:
+                state_shape = (chunk_size, *shape[:-2], 1, shape[-1])
             state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
         red_dim = -1 if shape[-2] >= shape[-1] else -2
 
