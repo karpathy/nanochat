@@ -1,6 +1,6 @@
 """
 A nice and efficient mixed AdamW/Muon Combined Optimizer.
-Usually the embeddings and scalars go into AdamW, and the matrix parameters go into Muon.
+Usually the embeddings and scalars go into AdamW, and the matrix parameters go into Muon/Hyperball.
 Two versions are provided (MuonAdamW, DistMuonAdamW), for single GPU and distributed.
 
 Addapted from: https://github.com/KellerJordan/modded-nanogpt
@@ -146,6 +146,80 @@ def muon_step_fused(
     stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
 
 # -----------------------------------------------------------------------------
+"""
+Hyperball optimizer (MuonH): Muon with scale-invariant updates.
+https://github.com/marin-community/marin/blob/main/lib/levanter/src/levanter/optim/muonh.py
+
+The key difference from Muon is that weights maintain constant Frobenius norm
+throughout training via the following update rule:
+
+    p_new_intermediate = p - lr * u * ||p|| / ||u||
+    p_new = p_new_intermediate / ||p_new_intermediate|| * ||p||
+
+This projects the update onto the hypersphere of constant norm, hence "Hyperball".
+Uses variance reduction like Muon, but no cautious weight decay.
+"""
+
+@torch.compile(dynamic=False, fullgraph=True)
+def hyperball_step_fused(
+    stacked_grads: Tensor,          # (K, M, N) - stacked gradients
+    stacked_params: Tensor,         # (K, M, N) - stacked parameters
+    momentum_buffer: Tensor,        # (K, M, N) - momentum buffer
+    second_momentum_buffer: Tensor, # (K, M, 1) or (K, 1, N) - factored second moment
+    p_norm: Tensor,                 # (K, 1, 1) - pre-computed Frobenius norm of params (constant)
+    momentum_t: Tensor,             # () - 0-D CPU tensor, momentum coefficient
+    lr_t: Tensor,                   # () - 0-D CPU tensor, learning rate
+    beta2_t: Tensor,                # () - 0-D CPU tensor, beta2 for second moment
+    ns_steps: int,                  # 5 - number of Newton-Schulz/Polar Express iterations
+    red_dim: int,                   # -1 or -2 - reduction dimension for variance
+) -> None:
+    """
+    Fused Hyperball step: momentum -> polar_express -> variance_reduction -> scale_invariant_update
+    All in one compiled graph. Weights maintain constant Frobenius norm.
+    """
+
+    # Nesterov momentum
+    momentum = momentum_t.to(stacked_grads.dtype)
+    momentum_buffer.lerp_(stacked_grads, 1 - momentum)
+    g = stacked_grads.lerp_(momentum_buffer, momentum)
+
+    # Polar express orthogonalization
+    X = g.bfloat16()
+    X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
+    if g.size(-2) > g.size(-1):  # Tall matrix
+        for a, b, c in polar_express_coeffs[:ns_steps]:
+            A = X.mT @ X
+            B = b * A + c * (A @ A)
+            X = a * X + X @ B
+    else:  # Wide matrix
+        for a, b, c in polar_express_coeffs[:ns_steps]:
+            A = X @ X.mT
+            B = b * A + c * (A @ A)
+            X = a * X + B @ X
+    g = X
+
+    # Variance reduction (note: this preserves ||g||_F, so ||u||_F == ||g||_F == v_norm)
+    beta2 = beta2_t.to(g.dtype)
+    v_mean = g.float().square().mean(dim=red_dim, keepdim=True)
+    red_dim_size = g.size(red_dim)
+    second_momentum_buffer.lerp_(v_mean.to(dtype=second_momentum_buffer.dtype), 1 - beta2)
+    step_size = second_momentum_buffer.clamp_min(1e-10).rsqrt()
+    scaled_sq_sum = (v_mean * red_dim_size) * step_size.float().square()
+    v_norm_new = scaled_sq_sum.sum(dim=(-2, -1), keepdim=True).sqrt()
+    p_norm = p_norm.to(v_norm_new.dtype)
+    final_scale = step_size * p_norm / v_norm_new.clamp_min(1e-10)
+    g = g * final_scale.to(g.dtype)
+    u = g.to(stacked_params.dtype)
+
+    # Scale-invariant update: keeps ||p|| constant
+    lr = lr_t.to(stacked_params.dtype)
+    stacked_params.sub_(lr * u)
+
+    # Project back to hypersphere: p = p * (||p_orig|| / ||p_new||)
+    p_new_norm = stacked_params.norm(dim=(-2, -1), keepdim=True).clamp_min(1e-10)
+    stacked_params.mul_(p_norm / p_new_norm)
+
+# -----------------------------------------------------------------------------
 # Single GPU version of the MuonAdamW optimizer.
 # Used mostly for reference, debugging and testing.
 
@@ -171,9 +245,10 @@ class MuonAdamW(torch.optim.Optimizer):
     Arguments:
         param_groups: List of dicts, each containing:
             - 'params': List of parameters
-            - 'kind': 'adamw' or 'muon'
+            - 'kind': 'adamw', 'muon', or 'hyperball'
             - For AdamW groups: 'lr', 'betas', 'eps', 'weight_decay'
             - For Muon groups: 'lr', 'momentum', 'ns_steps', 'beta2', 'weight_decay'
+            - For Hyperball groups: 'lr', 'momentum', 'ns_steps', 'beta2'
     """
     def __init__(self, param_groups: list[dict]):
         super().__init__(param_groups, defaults={})
@@ -190,6 +265,10 @@ class MuonAdamW(torch.optim.Optimizer):
         self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        # Hyperball tensors
+        self._hyperball_momentum_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        self._hyperball_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        self._hyperball_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
 
     def _step_adamw(self, group: dict) -> None:
         """
@@ -280,6 +359,64 @@ class MuonAdamW(torch.optim.Optimizer):
         # Copy back to original params
         torch._foreach_copy_(params, list(stacked_params.unbind(0)))
 
+    def _step_hyperball(self, group: dict) -> None:
+        """
+        Hyperball update for all params in the group (stacked for efficiency).
+        Like Muon, but uses scale-invariant updates that keep weight norms constant.
+        """
+        params: list[Tensor] = group['params']
+        if not params:
+            return
+
+        # Get or create group-level buffers (stored in first param's state for convenience)
+        p = params[0]
+        state = self.state[p]
+        num_params = len(params)
+        shape, device, dtype = p.shape, p.device, p.dtype
+
+        # Stack grads and params (NOTE: this assumes all params have the same shape)
+        stacked_grads = torch.stack([p.grad for p in params])
+        stacked_params = torch.stack(params)
+
+        # Momentum buffer for every individual parameter
+        if "momentum_buffer" not in state:
+            state["momentum_buffer"] = torch.zeros(num_params, *shape, dtype=dtype, device=device)
+        momentum_buffer = state["momentum_buffer"]
+
+        # Second momentum buffer is factored, either per-row or per-column
+        if "second_momentum_buffer" not in state:
+            state_shape = (num_params, shape[-2], 1) if shape[-2] >= shape[-1] else (num_params, 1, shape[-1])
+            state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
+        second_momentum_buffer = state["second_momentum_buffer"]
+        red_dim = -1 if shape[-2] >= shape[-1] else -2
+
+        # Pre-compute and cache p_norm (Frobenius norm of each param, constant throughout training)
+        if "p_norm" not in state:
+            state["p_norm"] = stacked_params.norm(dim=(-2, -1), keepdim=True).clone()
+        p_norm = state["p_norm"]
+
+        # Fill all the 0-D tensors with current values
+        self._hyperball_momentum_t.fill_(group["momentum"])
+        self._hyperball_lr_t.fill_(group["lr"])
+        self._hyperball_beta2_t.fill_(group["beta2"] if group["beta2"] is not None else 0.0)
+
+        # Single fused kernel: momentum -> polar_express -> variance_reduction -> scale_invariant_update
+        hyperball_step_fused(
+            stacked_grads,
+            stacked_params,
+            momentum_buffer,
+            second_momentum_buffer,
+            p_norm,
+            self._hyperball_momentum_t,
+            self._hyperball_lr_t,
+            self._hyperball_beta2_t,
+            group["ns_steps"],
+            red_dim,
+        )
+
+        # Copy back to original params
+        torch._foreach_copy_(params, list(stacked_params.unbind(0)))
+
     @torch.no_grad()
     def step(self):
         for group in self.param_groups:
@@ -287,6 +424,8 @@ class MuonAdamW(torch.optim.Optimizer):
                 self._step_adamw(group)
             elif group['kind'] == 'muon':
                 self._step_muon(group)
+            elif group['kind'] == 'hyperball':
+                self._step_hyperball(group)
             else:
                 raise ValueError(f"Unknown optimizer kind: {group['kind']}")
 
@@ -348,9 +487,10 @@ class DistMuonAdamW(torch.optim.Optimizer):
     Arguments:
         param_groups: List of dicts, each containing:
             - 'params': List of parameters
-            - 'kind': 'adamw' or 'muon'
+            - 'kind': 'adamw', 'muon', or 'hyperball'
             - For AdamW groups: 'lr', 'betas', 'eps', 'weight_decay'
             - For Muon groups: 'lr', 'momentum', 'ns_steps', 'beta2', 'weight_decay'
+            - For Hyperball groups: 'lr', 'momentum', 'ns_steps', 'beta2'
     """
     def __init__(self, param_groups: list[dict]):
         super().__init__(param_groups, defaults={})
@@ -365,6 +505,10 @@ class DistMuonAdamW(torch.optim.Optimizer):
         self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        # Hyperball tensors
+        self._hyperball_momentum_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        self._hyperball_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        self._hyperball_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
 
     def _reduce_adamw(self, group: dict, world_size: int) -> dict:
         """Launch async reduce ops for AdamW group. Returns info dict with per-param infos."""
@@ -496,6 +640,85 @@ class DistMuonAdamW(torch.optim.Optimizer):
         future = dist.all_gather_into_tensor(stacked_params, updated_params, async_op=True).get_future()
         gather_list.append(dict(future=future, stacked_params=stacked_params, params=params))
 
+    def _reduce_hyperball(self, group: dict, world_size: int) -> dict:
+        """Launch async reduce op for Hyperball group. Returns info dict."""
+        params = group['params']
+        chunk_size = (len(params) + world_size - 1) // world_size
+        padded_num_params = chunk_size * world_size
+        p = params[0]
+        shape, device, dtype = p.shape, p.device, p.dtype
+
+        # Stack grads and zero-pad to padded_num_params
+        grad_stack = torch.stack([p.grad for p in params])
+        stacked_grads = torch.empty(padded_num_params, *shape, dtype=dtype, device=device)
+        stacked_grads[:len(params)].copy_(grad_stack)
+        if len(params) < padded_num_params:
+            stacked_grads[len(params):].zero_()
+
+        # Reduce_scatter to get this rank's chunk
+        grad_chunk = torch.empty(chunk_size, *shape, dtype=dtype, device=device)
+        future = dist.reduce_scatter_tensor(grad_chunk, stacked_grads, op=dist.ReduceOp.AVG, async_op=True).get_future()
+
+        return dict(future=future, grad_chunk=grad_chunk, stacked_grads=stacked_grads, chunk_size=chunk_size)
+
+    def _compute_hyperball(self, group: dict, info: dict, gather_list: list, rank: int) -> None:
+        """Wait for reduce, compute Hyperball updates, launch gather."""
+        info['future'].wait()
+        params = group['params']
+        chunk_size = info['chunk_size']
+        grad_chunk = info['grad_chunk']
+        p = params[0]
+        shape, device, dtype = p.shape, p.device, p.dtype
+
+        # How many params does this rank own?
+        start_idx = rank * chunk_size
+        num_owned = min(chunk_size, max(0, len(params) - start_idx))
+
+        # Get or create group-level state
+        state = self.state[p]
+        if "momentum_buffer" not in state:
+            state["momentum_buffer"] = torch.zeros(chunk_size, *shape, dtype=dtype, device=device)
+        if "second_momentum_buffer" not in state:
+            state_shape = (chunk_size, shape[-2], 1) if shape[-2] >= shape[-1] else (chunk_size, 1, shape[-1])
+            state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
+        red_dim = -1 if shape[-2] >= shape[-1] else -2
+
+        # Build output buffer for all_gather
+        updated_params = torch.empty(chunk_size, *shape, dtype=dtype, device=device)
+
+        if num_owned > 0:
+            owned_params = [params[start_idx + i] for i in range(num_owned)]
+            stacked_owned = torch.stack(owned_params)
+
+            # Pre-compute and cache p_norm for owned params (constant throughout training)
+            if "p_norm" not in state:
+                state["p_norm"] = stacked_owned.norm(dim=(-2, -1), keepdim=True).clone()
+            p_norm = state["p_norm"]
+
+            # Fill 0-D tensors and run fused kernel
+            self._hyperball_momentum_t.fill_(group["momentum"])
+            self._hyperball_lr_t.fill_(group["lr"])
+            self._hyperball_beta2_t.fill_(group["beta2"] if group["beta2"] is not None else 0.0)
+            hyperball_step_fused(
+                grad_chunk[:num_owned], stacked_owned,
+                state["momentum_buffer"][:num_owned],
+                state["second_momentum_buffer"][:num_owned],
+                p_norm,
+                self._hyperball_momentum_t, self._hyperball_lr_t,
+                self._hyperball_beta2_t,
+                group["ns_steps"],
+                red_dim,
+            )
+            updated_params[:num_owned].copy_(stacked_owned)
+
+        if num_owned < chunk_size:
+            updated_params[num_owned:].zero_()
+
+        # Reuse stacked_grads buffer for all_gather output
+        stacked_params = info["stacked_grads"]
+        future = dist.all_gather_into_tensor(stacked_params, updated_params, async_op=True).get_future()
+        gather_list.append(dict(future=future, stacked_params=stacked_params, params=params))
+
     def _finish_gathers(self, gather_list: list) -> None:
         """Wait for all gathers and copy Muon params back."""
         for info in gather_list:
@@ -516,6 +739,8 @@ class DistMuonAdamW(torch.optim.Optimizer):
                 reduce_infos.append(self._reduce_adamw(group, world_size))
             elif group['kind'] == 'muon':
                 reduce_infos.append(self._reduce_muon(group, world_size))
+            elif group['kind'] == 'hyperball':
+                reduce_infos.append(self._reduce_hyperball(group, world_size))
             else:
                 raise ValueError(f"Unknown optimizer kind: {group['kind']}")
 
@@ -526,6 +751,8 @@ class DistMuonAdamW(torch.optim.Optimizer):
                 self._compute_adamw(group, info, gather_list, rank, world_size)
             elif group['kind'] == 'muon':
                 self._compute_muon(group, info, gather_list, rank)
+            elif group['kind'] == 'hyperball':
+                self._compute_hyperball(group, info, gather_list, rank)
             else:
                 raise ValueError(f"Unknown optimizer kind: {group['kind']}")
 
