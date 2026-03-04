@@ -3,6 +3,7 @@ Common utilities for nanochat.
 """
 
 import os
+import time
 import re
 import logging
 import urllib.request
@@ -78,19 +79,41 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
         if os.path.exists(file_path):
             return file_path
 
-        # Download the content as bytes
-        print(f"Downloading {url}...")
-        with urllib.request.urlopen(url) as response:
-            content = response.read() # bytes
-
-        # Write to local file
-        with open(file_path, 'wb') as f:
-            f.write(content)
-        print(f"Downloaded to {file_path}")
-
-        # Run the postprocess function if provided
-        if postprocess_fn is not None:
-            postprocess_fn(file_path)
+        # Download with retries
+        max_attempts = 5
+        for attempt in range(1, max_attempts + 1):
+            try:
+                print(f"Downloading {url}... (attempt {attempt}/{max_attempts})")
+                with urllib.request.urlopen(url, timeout=30) as response:
+                    content = response.read() # bytes
+                    
+                # Write to local file
+                with open(file_path, 'wb') as f:
+                    f.write(content)
+                print(f"Downloaded to {file_path}")
+                
+                # Run the postprocess function if provided
+                if postprocess_fn is not None:
+                    postprocess_fn(file_path)
+                    
+                return file_path
+            
+            except Exception as e:
+                print(f"Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
+                # Clean up any partial files
+                if os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                    except:
+                        pass
+                # Try a few times with exponential backoff: 2^attempt seconds
+                if attempt < max_attempts:
+                    wait_time = 2 ** attempt
+                    print(f"Waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Failed to download {filename} after {max_attempts} attempts")
+                    raise
 
     return file_path
 
