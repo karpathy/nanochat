@@ -28,7 +28,7 @@ fi
 # Series name: from arg, env var, or default to today's date (e.g., jan11)
 SERIES_NAME="${1:-${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}}"
 # Depths to train (the "miniseries")
-DEPTHS=(12 14)
+DEPTHS=(12 14 16 18 20 22 24 26)
 # Hardware
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 # Logging
@@ -63,7 +63,7 @@ for d in "${DEPTHS[@]}"; do
     elif [ $d -ge 20 ]; then
         DEVICE_BATCH_SIZE_ARG="--device-batch-size=16"
     else
-        DEVICE_BATCH_SIZE_ARG="--device-batch-size=16"
+        DEVICE_BATCH_SIZE_ARG="--device-batch-size=32"
     fi
 
     torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- \
