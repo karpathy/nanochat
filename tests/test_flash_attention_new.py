@@ -62,6 +62,32 @@ def test_sdpa_attention_branches():
     assert y3.shape == q3.shape
 
 
+def test_flex_attention_sliding_window_matches_sdpa(monkeypatch):
+    """flex_attention sliding window path (Tq==Tk) must match explicit-mask SDPA."""
+    if not fa.HAS_FLEX_ATTN:
+        pytest.skip("flex_attention not available")
+
+    torch.manual_seed(0)
+    T, window = 16, 4
+    q = torch.randn(1, 2, T, 8)
+    k = torch.randn(1, 2, T, 8)
+    v = torch.randn(1, 2, T, 8)
+
+    # Force explicit-mask path
+    monkeypatch.setattr(fa, "HAS_FLEX_ATTN", False)
+    fa._block_mask_cache.clear()
+    y_sdpa = fa._sdpa_attention(q, k, v, window_size=(window, 0), enable_gqa=False)
+
+    # Force flex_attention path
+    monkeypatch.setattr(fa, "HAS_FLEX_ATTN", True)
+    fa._block_mask_cache.clear()
+    y_flex = fa._sdpa_attention(q, k, v, window_size=(window, 0), enable_gqa=False)
+
+    assert y_flex.shape == y_sdpa.shape
+    assert torch.allclose(y_flex, y_sdpa, atol=1e-5), \
+        f"flex_attention and SDPA outputs differ: max_diff={( y_flex - y_sdpa).abs().max():.6f}"
+
+
 def test_public_flash_attn_paths(monkeypatch):
     q = torch.randn(1, 3, 2, 4)
     k = torch.randn(1, 3, 2, 4)

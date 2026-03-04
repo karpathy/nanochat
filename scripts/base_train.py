@@ -31,7 +31,7 @@ from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
-from nanochat.flash_attention import HAS_FA3
+from nanochat.flash_attention import HAS_FA3, HAS_FLEX_ATTN
 from scripts.base_eval import evaluate_core
 print_banner()
 
@@ -105,11 +105,14 @@ if HAS_FA3:
     print0("✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.")
 else:
     print0("!" * 80)
-    print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback")
+    print0("WARNING: Flash Attention 3 not available, using PyTorch fallback")
     print0("WARNING: Training will be less efficient without FA3")
     if args.window_pattern != "L":
-        print0(f"WARNING: SDPA has no support for sliding window attention (window_pattern='{args.window_pattern}'). Your GPU utilization will be terrible.")
-        print0("WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.")
+        if HAS_FLEX_ATTN:
+            print0(f"✓ Using flex_attention for sliding window (window_pattern='{args.window_pattern}'). Block-sparse, efficient.")
+        else:
+            print0(f"WARNING: flex_attention not available for sliding window (window_pattern='{args.window_pattern}'). Your GPU utilization will be terrible.")
+            print0("WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.")
     print0("!" * 80)
 
 # -----------------------------------------------------------------------------

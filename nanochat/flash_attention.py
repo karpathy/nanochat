@@ -16,6 +16,31 @@ Usage (drop-in replacement for FA3):
 import torch
 import torch.nn.functional as F
 
+# Try to import flex_attention for efficient sliding window on non-Hopper GPUs
+try:
+    from torch.nn.attention.flex_attention import (
+        flex_attention as _flex_attn_fn,
+        create_block_mask as _create_block_mask,
+    )
+    HAS_FLEX_ATTN = True
+except ImportError:
+    HAS_FLEX_ATTN = False
+
+# Block mask cache keyed by (T, window, device_str)
+_block_mask_cache: dict = {}
+
+
+def _make_sliding_causal_block_mask(T, window, device):
+    """Create or retrieve cached BlockMask for causal sliding window attention."""
+    key = (T, window, str(device))
+    if key not in _block_mask_cache:
+        def mask_mod(b, h, q_idx, kv_idx):
+            return (q_idx >= kv_idx) & ((q_idx - kv_idx) <= window)
+        _block_mask_cache[key] = _create_block_mask(
+            mask_mod, B=None, H=None, Q_LEN=T, KV_LEN=T, device=device,
+        )
+    return _block_mask_cache[key]
+
 
 # =============================================================================
 # Detection: Try to load FA3 on Hopper+ GPUs
@@ -70,6 +95,12 @@ def _sdpa_attention(q, k, v, window_size, enable_gqa):
     # Full context, same length
     if (window < 0 or window >= Tq) and Tq == Tk:
         return F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa)
+
+    # Training: sliding window via flex_attention (block-sparse, no dense mask)
+    # Tq == Tk here means we're in the training forward pass (causal sliding window).
+    if Tq == Tk and HAS_FLEX_ATTN:
+        block_mask = _make_sliding_causal_block_mask(Tq, window, q.device)
+        return _flex_attn_fn(q, k, v, block_mask=block_mask, enable_gqa=enable_gqa)
 
     # Single token generation
     if Tq == 1:
