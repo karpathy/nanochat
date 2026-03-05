@@ -6,9 +6,12 @@ import os
 import re
 import logging
 import urllib.request
+from dotenv import load_dotenv
+from filelock import FileLock
+
 import torch
 import torch.distributed as dist
-from filelock import FileLock
+
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
@@ -47,15 +50,24 @@ def setup_default_logging():
 setup_default_logging()
 logger = logging.getLogger(__name__)
 
-def get_base_dir():
-    # co-locate nanochat intermediates with other cached data in ~/.cache (by default)
+load_dotenv() # 将 .env 注入到环境变量
+def get_base_dir() -> str:
+    """项目数据存储的基础目录
+
+    Args:
+        None
+    
+    Returns:
+        str: 基础目录的路径
+    """
     if os.environ.get("NANOCHAT_BASE_DIR"):
-        nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR")
+        nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR", "")
+        assert os.path.isdir(nanochat_dir), f"NANOCHAT_BASE_DIR is set to {nanochat_dir} but that is not a directory"
     else:
         home_dir = os.path.expanduser("~")
         cache_dir = os.path.join(home_dir, ".cache")
         nanochat_dir = os.path.join(cache_dir, "nanochat")
-    os.makedirs(nanochat_dir, exist_ok=True)
+        os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
 def download_file_with_lock(url, filename, postprocess_fn=None):

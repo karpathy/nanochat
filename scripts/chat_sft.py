@@ -60,7 +60,7 @@ parser.add_argument("--warmdown-ratio", type=float, default=0.5, help="ratio of 
 parser.add_argument("--final-lr-frac", type=float, default=0.0, help="final LR as fraction of initial LR")
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=200, help="evaluate val bpb every N steps (-1 = disable)")
-parser.add_argument("--eval-tokens", type=int, default=40*524288, help="number of tokens to evaluate val loss on")
+parser.add_argument("--eval-tokens", type=int, default=4*524288, help="number of tokens to evaluate val loss on")
 parser.add_argument("--chatcore-every", type=int, default=200, help="evaluate ChatCORE metric every N steps (-1 = disable)")
 parser.add_argument("--chatcore-max-cat", type=int, default=-1, help="max problems per categorical task for ChatCORE")
 parser.add_argument("--chatcore-max-sample", type=int, default=24, help="max problems per generative task for ChatCORE")
@@ -393,6 +393,7 @@ while True:
         })
         model.train()
 
+    last_step = step == 10
     # save checkpoint at the end of the run (all ranks participate so each saves its optimizer shard)
     if last_step:
         output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
@@ -435,6 +436,13 @@ while True:
         loss.backward()
         x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
         progress = max(progress, approx_progress) # only increase progress monotonically
+    # 梯度裁剪
+    total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    if torch.isnan(total_norm) or torch.isinf(total_norm):
+        print0(f"WARNING: gradient norm is {total_norm}, skipping step")
+        model.zero_grad(set_to_none=True)
+        # step += 1
+        continue
     # step the optimizer
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)

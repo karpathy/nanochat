@@ -24,6 +24,8 @@ import csv
 import time
 import json
 import yaml
+import math
+from typing import Optional, Literal
 import shutil
 import random
 import zipfile
@@ -95,7 +97,12 @@ EVAL_BUNDLE_URL = "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundl
 
 
 def place_eval_bundle(file_path):
-    """Unzip eval_bundle.zip and place it in the base directory."""
+    """将 eval_bundle.zip 解压到 base_dir/eval_bundle 目录下
+    Args:
+        file_path: eval_bundle.zip 文件路径
+    Returns:
+        None
+    """
     base_dir = get_base_dir()
     eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -105,18 +112,33 @@ def place_eval_bundle(file_path):
         shutil.move(extracted_bundle_dir, eval_bundle_dir)
     print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
+scale_map = {
+    "small": 0.1,
+    "medium": 0.4,
+    "large": 0.7
+}
+def evaluate_core(model, tokenizer, device, scale: Optional[Literal["small", "medium", "large"]] = None, max_per_task=-1):
+    """在 CORE 评测上评测模型, 返回每个任务的 accuracy 和 centered result, 以及最终的 CORE metric
+    Args:
+        - model: 评测模型
+        - tokenizer: 模型对应的 tokenizer
+        - device: 评测设备
+        - scale: 可选的评测规模, small/medium/large, 分别使用 10%/40%/70% 的任务进行评测 (默认: 100%)
+        - max_per_task: 每个任务的最大题目数量, -1 表示使用所有题目 (默认: -1)
 
-def evaluate_core(model, tokenizer, device, max_per_task=-1):
-    """
-    Evaluate a base model on the CORE benchmark.
-    Returns dict with results, centered_results, and core_metric.
+    Returns:
+        - dict 包含以下字段:
+            - "results": 每个任务的 accuracy, dict 形式 {task_label: accuracy}
+            - "centered_results": 每个任务的 centered result, dict 形式 {task_label: centered_result}
+            - "core_metric": 所有任务的 centered result 的平均, 即最终的 CORE metric
     """
     base_dir = get_base_dir()
     eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
-    # Download the eval bundle if needed
+    # 任务下载
     if not os.path.exists(eval_bundle_dir):
         download_file_with_lock(EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=place_eval_bundle)
 
+    # 加载配置和数据
     config_path = os.path.join(eval_bundle_dir, "core.yaml")
     data_base_path = os.path.join(eval_bundle_dir, "eval_data")
     eval_meta_data = os.path.join(eval_bundle_dir, "eval_meta_data.csv")
@@ -125,7 +147,7 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
         config = yaml.safe_load(f)
     tasks = config['icl_tasks']
 
-    # Load random baseline values
+    # 加载每个任务的 baseline, 例如有四个选项的题目的 baseline 是 25.0, 判断题的 baseline 是 50.0
     random_baselines = {}
     with open(eval_meta_data, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
@@ -134,11 +156,22 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
             random_baseline = row['Random baseline']
             random_baselines[task_name] = float(random_baseline)
 
-    # Evaluate each task
+    # 评测每个任务, 计算 accuracy 和 centered result, 最后计算 CORE metric
     results = {}
     centered_results = {}
+
+    # 限制任务数量
+    if scale is not None and len(tasks) > 1:
+        if scale not in scale_map:
+            raise ValueError(f"Invalid scale: {scale}. Must be one of {list(scale_map.keys())}")
+        num_tasks = math.ceil(len(tasks) * scale_map[scale])
+        print0(f"Scaling CORE evaluation: {scale} -> using {num_tasks} tasks (out of {len(tasks)})")
+        tasks = tasks[:num_tasks]
+
+    # 开始评测
     for task in tasks:
         start_time = time.time()
+        # 构造任务元信息
         label = task['label']
         task_meta = {
             'task_type': task['icl_task_type'],
@@ -148,16 +181,18 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
         }
         print0(f"Evaluating: {label} ({task_meta['num_fewshot']}-shot, type: {task_meta['task_type']})... ", end='')
 
+        # 加载任务
         data_path = os.path.join(data_base_path, task_meta['dataset_uri'])
         with open(data_path, 'r', encoding='utf-8') as f:
             data = [json.loads(line.strip()) for line in f]
 
-        # Shuffle for consistent subsampling when using max_per_task
+        # 限制每个任务的题目数量, 并确保顺序随机但可复现
         shuffle_rng = random.Random(1337)
         shuffle_rng.shuffle(data)
         if max_per_task > 0:
             data = data[:max_per_task]
 
+        # 评测任务并计算结果
         accuracy = evaluate_task(model, tokenizer, data, device, task_meta)
         results[label] = accuracy
         random_baseline = random_baselines[label]
@@ -166,6 +201,7 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
         elapsed = time.time() - start_time
         print0(f"accuracy: {accuracy:.4f} | centered: {centered_result:.4f} | time: {elapsed:.2f}s")
 
+    # 计算 CORE metric: 所有任务的 centered result 的平均
     core_metric = sum(centered_results.values()) / len(centered_results)
     out = {
         "results": results,
@@ -185,23 +221,23 @@ def main():
     parser.add_argument('--step', type=int, default=None, help='Model step to load (default = last)')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per CORE task (-1 = all)')
     parser.add_argument('--device-batch-size', type=int, default=32, help='Per-device batch size for BPB evaluation')
-    parser.add_argument('--split-tokens', type=int, default=40*524288, help='Number of tokens to evaluate per split for BPB')
+    parser.add_argument('--split-tokens', type=int, default=4*524288, help='Number of tokens to evaluate per split for BPB')
     parser.add_argument('--device-type', type=str, default='', help='cuda|cpu|mps (empty = autodetect)')
     args = parser.parse_args()
 
-    # Parse evaluation modes
+    # 检查 eval mode 的合法性 (core, bpb, sample)
     eval_modes = set(mode.strip() for mode in args.eval.split(','))
     valid_modes = {'core', 'bpb', 'sample'}
     invalid = eval_modes - valid_modes
     if invalid:
         parser.error(f"Invalid eval modes: {invalid}. Valid: {valid_modes}")
 
-    # Distributed / precision setup
+    # 初始化测评环境
     device_type = autodetect_device_type() if args.device_type == '' else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
     autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 
-    # Load model and tokenizer
+    # 加载模型和 tokenizer
     is_hf_model = args.hf_path is not None
     if is_hf_model:
         model, tokenizer = load_hf_model(args.hf_path, device)
@@ -225,7 +261,7 @@ def main():
     samples = []
     unconditioned_samples = []
 
-    # --- Sampling ---
+    # 采样测评
     if 'sample' in eval_modes and not is_hf_model:
         print0("\n" + "="*80)
         print0("Model Samples")
@@ -263,7 +299,7 @@ def main():
     elif 'sample' in eval_modes and is_hf_model:
         print0("\nSkipping sampling for HuggingFace models (not supported)")
 
-    # --- BPB evaluation ---
+    # BPB 测评
     if 'bpb' in eval_modes:
         print0("\n" + "="*80)
         print0("BPB Evaluation")
@@ -282,13 +318,13 @@ def main():
             bpb_results[split_name] = bpb
             print0(f"{split_name} bpb: {bpb:.6f}")
 
-    # --- CORE evaluation ---
+    # CORE 测评
     if 'core' in eval_modes:
         print0("\n" + "="*80)
         print0("CORE Evaluation")
         print0("="*80)
         with autocast_ctx:
-            core_results = evaluate_core(model, tokenizer, device, max_per_task=args.max_per_task)
+            core_results = evaluate_core(model, tokenizer, device, scale="small", max_per_task=args.max_per_task)
 
         # Write CSV output
         if ddp_rank == 0:
@@ -305,7 +341,7 @@ def main():
             print0(f"\nResults written to: {output_csv_path}")
             print0(f"CORE metric: {core_results['core_metric']:.4f}")
 
-    # --- Log to report ---
+    # 日志记录
     from nanochat.report import get_report
     report_data = [{"model": model_name}]
 
