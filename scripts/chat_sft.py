@@ -18,7 +18,7 @@ import wandb
 import torch
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
 from nanochat.tokenizer import get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state
+from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state, upload_to_hf
 from nanochat.loss_eval import evaluate_bpb
 import torch.distributed as dist
 from nanochat.flash_attention import HAS_FA3
@@ -66,6 +66,8 @@ parser.add_argument("--chatcore-max-sample", type=int, default=24, help="max pro
 # Data mixture
 parser.add_argument("--mmlu-epochs", type=int, default=3, help="number of epochs of MMLU in training mixture (teaches Multiple Choice)")
 parser.add_argument("--gsm8k-epochs", type=int, default=4, help="number of epochs of GSM8K in training mixture (teaches Math and Tool Use)")
+parser.add_argument("--hf-repo", type=str, default=None, help="Hugging Face repo ID to upload final model")
+parser.add_argument("--hf-upload-optim", action="store_true", help="upload optimizer state to Hugging Face")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
@@ -513,6 +515,10 @@ get_report().log(section="SFT", data=[
         "Minimum validation bpb": min_val_bpb,
     }
 ])
+
+# upload to huggingface
+if args.hf_repo and master_process:
+    upload_to_hf(checkpoint_dir, step, args.hf_repo, with_optimizer=args.hf_upload_optim)
 
 # cleanup
 wandb_run.finish() # wandb run finish
