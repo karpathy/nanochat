@@ -26,3 +26,14 @@ python -m nanochat.dataset -n 240
 
 # modal set up 
 pip install modal
+uv run modal setup
+uv run modal secret create nanochat-secrets \
+    WANDB_API_KEY=<your_wandb_key> \
+    HF_TOKEN=hf_<your_hf_token>
+
+# running models - part 2 ablation studies 
+- first time: uv run modal run nanochat_modal.py::main
+- re-run one ablation after data/tokenizer are already on the volume
+uv run modal run nanochat_modal.py::run_baseline
+uv run modal run nanochat_modal.py::run_swiglu
+uv run modal run nanochat_modal.py::run_rope500k
