@@ -233,6 +233,37 @@ def stage_ctx_eval(
     print(f"Done: {run_name}")
 
 
+@app.function(
+    image=image, secrets=[secret], volumes={VOLUME_MOUNT: volume},
+    gpu=GPU, timeout=TRAIN_TIMEOUT_SEC,
+)
+def stage_passkey_eval(
+    run_name: str,
+    model_tag: str,
+    step: int | None = None,
+    seq_lens: str = "256,512,1024,2048",
+    num_trials: int = 50,
+) -> None:
+    """Run passkey retrieval evaluation."""
+    _setup_cache()
+    print(f"\n{'='*60}")
+    print(f"Passkey eval: {run_name} ({model_tag})")
+    print(f"{'='*60}\n")
+
+    args = [
+        f"--model-tag={model_tag}",
+        f"--seq-lens={seq_lens}",
+        f"--num-trials={num_trials}",
+        f"--run={run_name}",
+    ]
+    if step is not None:
+        args.append(f"--step={step}")
+
+    _python("scripts.passkey_eval", args)
+    volume.commit()
+    print(f"Done: {run_name}")
+
+
 # =============================================================================
 # ENTRYPOINTS
 # =============================================================================
@@ -277,6 +308,21 @@ def run_ctx_evals() -> None:
     )
     stage_ctx_eval.remote(
         run_name="ctx-eval-checkpoint2",
+        model_tag=MODEL_TAG,
+        step=5000,
+    )
+
+
+@app.local_entrypoint()
+def run_passkey_evals() -> None:
+    """Passkey retrieval eval for both checkpoints."""
+    stage_passkey_eval.remote(
+        run_name="passkey-eval-checkpoint1",
+        model_tag=MODEL_TAG,
+        step=3000,
+    )
+    stage_passkey_eval.remote(
+        run_name="passkey-eval-checkpoint2",
         model_tag=MODEL_TAG,
         step=5000,
     )
@@ -333,6 +379,18 @@ def main() -> None:
     )
     stage_ctx_eval.remote(
         run_name="ctx-eval-checkpoint2",
+        model_tag=MODEL_TAG,
+        step=5000,
+    )
+
+    print("[passkey] Passkey retrieval eval for both checkpoints...")
+    stage_passkey_eval.remote(
+        run_name="passkey-eval-checkpoint1",
+        model_tag=MODEL_TAG,
+        step=3000,
+    )
+    stage_passkey_eval.remote(
+        run_name="passkey-eval-checkpoint2",
         model_tag=MODEL_TAG,
         step=5000,
     )
