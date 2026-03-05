@@ -10,6 +10,9 @@ eval_bundle/
 
 # Local setup
 CLAUDE.md
+pyrightconfig.json 
 wandb/
 
-*.pdf 
+*.pdf
+
+.*
