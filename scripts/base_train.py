@@ -51,6 +51,8 @@ parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = de
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+parser.add_argument("--mlp-type", type=str, default="relu2", choices=["relu2", "swiglu"], help="MLP activation: relu2 (baseline) or swiglu")
+parser.add_argument("--rope-base", type=int, default=10000, help="RoPE base theta (10K baseline, 500K for long-context ablation)")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -133,6 +135,8 @@ def build_model_meta(depth):
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        mlp_type=args.mlp_type,
+        rope_base=args.rope_base,
     )
     with torch.device("meta"):
         model_meta = GPT(config)

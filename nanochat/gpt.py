@@ -37,6 +37,9 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (half context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    # Ablation options
+    mlp_type: str = "relu2"   # "relu2" (baseline) or "swiglu"
+    rope_base: int = 10000    # RoPE base theta (10K baseline, 500K for long-context)
 
 
 def norm(x):
@@ -121,14 +124,24 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.mlp_type = config.mlp_type
+        if config.mlp_type == "swiglu":
+            # hidden_dim = 8/3 * n_embd to match relu2 param count:
+            # relu2: n_embd*(4n) + (4n)*n_embd = 8*n^2
+            # swiglu: n*(h) + n*(h) + h*n = 3*h*n => h = 8/3*n
+            hidden_dim = int(8 / 3 * config.n_embd)
+            self.c_gate = nn.Linear(config.n_embd, hidden_dim, bias=False)
+            self.c_up   = nn.Linear(config.n_embd, hidden_dim, bias=False)
+            self.c_proj = nn.Linear(hidden_dim, config.n_embd, bias=False)
+        else:  # relu2
+            self.c_fc   = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
+            self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
 
     def forward(self, x):
-        x = self.c_fc(x)
-        x = F.relu(x).square()
-        x = self.c_proj(x)
-        return x
+        if self.mlp_type == "swiglu":
+            return self.c_proj(F.silu(self.c_gate(x)) * self.c_up(x))
+        else:
+            return self.c_proj(F.relu(self.c_fc(x)).square())
 
 
 class Block(nn.Module):
@@ -213,7 +226,11 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
-            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
+            if block.mlp.mlp_type == "swiglu":
+                torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
+                torch.nn.init.uniform_(block.mlp.c_up.weight, -s, s)
+            else:
+                torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
         # Per-layer scalars
@@ -240,8 +257,9 @@ class GPT(nn.Module):
             for ve in self.value_embeds.values():
                 ve.to(dtype=torch.bfloat16)
 
-    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
-        # TODO: bump base theta more? e.g. 100K is more common more recently
+    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=None, device=None):
+        if base is None:
+            base = self.config.rope_base
         # autodetect the device from model embeddings
         if device is None:
             device = self.transformer.wte.weight.device

@@ -24,3 +24,5 @@ uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 # train tokenizer 
 python -m nanochat.dataset -n 240
 
+# modal set up 
+pip install modal
