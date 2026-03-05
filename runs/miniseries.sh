@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # See speedrun.sh for more comments
 # Usage: ./miniseries.sh [series_name]

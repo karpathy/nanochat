@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # This script is configured to train your own GPT-2 grade LLM (pretraining + finetuning)
 # It is designed to run on a blank 8XH100 GPU node and takes approximately 3 hours to complete.

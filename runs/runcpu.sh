@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Showing an example run for exercising some of the code paths on the CPU (or MPS on Macbooks)
 # This script was last updated/tuned on Jan 17, 2026.
