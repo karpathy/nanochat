@@ -65,7 +65,13 @@ torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval -- -
 
 # -----------------------------------------------------------------------------
 # 指令微调数据集下载，并进行指令微调和评测
-curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
+IDENTITY_FILE="$NANOCHAT_BASE_DIR/identity_conversations.jsonl"
+if [ ! -f "$IDENTITY_FILE" ]; then
+    echo "文件不存在，正在从 S3 下载..."
+    curl -L -o "$IDENTITY_FILE" https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
+else
+    echo "文件已存在，跳过下载: $IDENTITY_FILE"
+fi
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_sft -- --device-batch-size=1 --run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i sft
 
