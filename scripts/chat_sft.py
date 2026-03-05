@@ -499,7 +499,7 @@ print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
 # Log to report
 from nanochat.report import get_report
-get_report().log(section="SFT", data=[
+get_report().log(section="Chat sft", data=[
     user_config, # CLI args
     { # stats about the training setup
         "Number of iterations": step,
