@@ -53,6 +53,8 @@ parser.add_argument("--max-seq-len", type=int, default=2048, help="max context l
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
 parser.add_argument("--mlp-type", type=str, default="relu2", choices=["relu2", "swiglu"], help="MLP activation: relu2 (baseline) or swiglu")
 parser.add_argument("--rope-base", type=int, default=10000, help="RoPE base theta (10K baseline, 500K for long-context ablation)")
+parser.add_argument("--num-mtp-steps", type=int, default=0, help="Multi-Token Prediction steps (0=disabled, 1=predict 2 tokens ahead)")
+parser.add_argument("--mtp-loss-weight", type=float, default=0.3, help="Weight for each auxiliary MTP loss term (DeepSeek-V3 default: 0.3)")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -137,6 +139,8 @@ def build_model_meta(depth):
         window_pattern=args.window_pattern,
         mlp_type=args.mlp_type,
         rope_base=args.rope_base,
+        num_mtp_steps=args.num_mtp_steps,
+        mtp_loss_weight=args.mtp_loss_weight,
     )
     with torch.device("meta"):
         model_meta = GPT(config)

@@ -40,6 +40,9 @@ class GPTConfig:
     # Ablation options
     mlp_type: str = "relu2"   # "relu2" (baseline) or "swiglu"
     rope_base: int = 10000    # RoPE base theta (10K baseline, 500K for long-context)
+    # Multi-Token Prediction (DeepSeek-V3 / LLaMA 3.1 style)
+    num_mtp_steps: int = 0       # 0=disabled; k>0 adds k auxiliary heads predicting tokens 2..k+1 ahead
+    mtp_loss_weight: float = 0.3 # weight of each auxiliary MTP loss term (DeepSeek-V3 default)
 
 
 def norm(x):
@@ -188,6 +191,14 @@ class GPT(nn.Module):
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
         self.value_embeds = nn.ModuleDict({str(i): nn.Embedding(padded_vocab_size, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
+        # MTP projection layers: one n_embd→n_embd linear per additional prediction step.
+        # Each proj_k transforms hidden states to predict token at t+(k+2) using the shared lm_head.
+        if config.num_mtp_steps > 0:
+            self.mtp_projs = nn.ModuleList([
+                nn.Linear(config.n_embd, config.n_embd, bias=False)
+                for _ in range(config.num_mtp_steps)
+            ])
+
         # To support meta device initialization, we init the rotary embeddings here, but it's just "fake" meta tensors only.
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
@@ -232,6 +243,11 @@ class GPT(nn.Module):
             else:
                 torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
+
+        # MTP projection layers (same std as attention projections)
+        if hasattr(self, 'mtp_projs'):
+            for proj in self.mtp_projs:
+                torch.nn.init.uniform_(proj.weight, -s, s)
 
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)   # 1.0 => typical residual connections at init
@@ -350,7 +366,8 @@ class GPT(nn.Module):
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
-        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
+        mtp_params = sum(p.numel() for p in self.mtp_projs.parameters()) if hasattr(self, 'mtp_projs') else 0
+        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters()) + mtp_params
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
         total = wte + value_embeds + lm_head + transformer_matrices + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
@@ -369,6 +386,8 @@ class GPT(nn.Module):
 
         # Separate out all parameters into groups
         matrix_params = list(self.transformer.h.parameters())
+        if hasattr(self, 'mtp_projs'):
+            matrix_params += list(self.mtp_projs.parameters())
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
@@ -422,6 +441,7 @@ class GPT(nn.Module):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+        x_hidden = x  # pre-norm hidden states, used by MTP heads
         x = norm(x)
 
         # Forward the lm_head (compute logits)
@@ -435,6 +455,29 @@ class GPT(nn.Module):
             # training: given the targets, compute and return the loss
             # TODO experiment with chunked cross-entropy?
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+
+            # Multi-Token Prediction: auxiliary heads predict tokens k+1 steps ahead.
+            # mtp_projs[k] transforms h[t] → predict targets[t+k+1] (i.e. token at t+k+2).
+            # Targets are already shifted by 1 (targets[t] = idx[t+1]), so:
+            #   shift=1 → predict targets[t+1]=idx[t+2] from x_hidden[t]
+            # Only run during training (loss_reduction='mean'): eval uses 'none' for per-token
+            # losses, and the MTP sequence lengths (T-shift) differ from the main (T), making
+            # them impossible to combine under 'none' reduction.
+            if hasattr(self, 'mtp_projs') and loss_reduction == 'mean':
+                for k, proj in enumerate(self.mtp_projs):
+                    shift = k + 1
+                    mtp_h = norm(proj(x_hidden[:, :-shift, :]))        # (B, T-shift, n_embd)
+                    mtp_logits = self.lm_head(mtp_h)[..., :self.config.vocab_size]
+                    mtp_logits = softcap * torch.tanh(mtp_logits.float() / softcap)
+                    mtp_targets = targets[:, shift:]                    # (B, T-shift), non-contiguous slice
+                    mtp_loss = F.cross_entropy(
+                        mtp_logits.reshape(-1, mtp_logits.size(-1)),   # reshape handles non-contiguous
+                        mtp_targets.reshape(-1),
+                        ignore_index=-1,
+                        reduction='mean',
+                    )
+                    loss = loss + self.config.mtp_loss_weight * mtp_loss
+
             return loss
         else:
             # inference: just return the logits directly
