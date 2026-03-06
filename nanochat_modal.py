@@ -35,7 +35,6 @@ Reference: Angela Sha, https://github.com/UofT-CSC490-W2026/022326-tutorial-nano
 
 import os
 import subprocess
-import modal
 from modal import App, Image as ModalImage, Volume, Secret
 
 # =============================================================================
@@ -59,8 +58,7 @@ GPU = "A10G:1"
 NUM_SHARDS = 12
 
 # ── W&B ───────────────────────────────────────────────────────────────────────
-# Runs appear in wandb.ai/yoyoliuuu/nanochat
-WANDB_ENTITY = "yoyoliuuu"
+# WANDB_ENTITY is read from the Modal secret (set via modal secret create)
 
 # ── Volume + paths ─────────────────────────────────────────────────────────────
 VOLUME_MOUNT = "/vol"
@@ -114,7 +112,6 @@ image = (
     .env({
         "OMP_NUM_THREADS": "1",
         "NANOCHAT_BASE_DIR": NANOCHAT_CACHE,
-        "WANDB_ENTITY": WANDB_ENTITY,
         "HF_HOME": f"{VOLUME_MOUNT}/hf_cache",
     })
 )
