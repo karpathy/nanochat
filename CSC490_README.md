@@ -34,10 +34,13 @@ uv run modal secret create nanochat-secrets \
     WANDB_API_KEY=<your_wandb_key> \
     HF_TOKEN=hf_<your_hf_token> \
     WANDB_ENTITY=<your_wandb_username>
+    HF_TOKEN=hf_<your_hf_token> \
+    WANDB_ENTITY=<your_wandb_username>
 ```
 
 ---
 
+## Part 2 — Ablation Studies (yoyoliuuu)
 ## Part 2 — Ablation Studies (yoyoliuuu)
 
 ### Full pipeline (first time — downloads data, trains tokenizer, runs all 3 ablations)
@@ -66,6 +69,7 @@ uv run modal run nanochat_modal.py::run_rope500k   # supplemental ablation
 ```
 
 ### Ablation Configurations
+### Ablation Configurations
 
 | Run name            | mlp_type | rope_base | num_mtp_steps | Role        |
 |---------------------|----------|-----------|---------------|-------------|
@@ -77,7 +81,15 @@ uv run modal run nanochat_modal.py::run_rope500k   # supplemental ablation
 All runs use: `depth=8`, `n_embd=512`, `max_seq_len=512`, `device_batch_size=16`, A10G GPU.
 
 ### Cost Reference (A10G @ ~$1.10/hr)
+### Cost Reference (A10G @ ~$1.10/hr)
 
+| Stage                   | Duration  | Cost/run | × 3 seeds   |
+|-------------------------|-----------|----------|-------------|
+| Data + tokenizer        | ~25 min   | ~$0.11   | one-time    |
+| picochat-baseline       | ~51 min   | ~$0.94   | ~$2.82      |
+| picochat-swiglu         | ~55 min   | ~$1.00   | ~$3.00      |
+| picochat-mtp            | ~66 min   | ~$1.21   | ~$3.63      |
+| picochat-rope500k       | ~51 min   | ~$0.94   | ~$2.82      |
 | Stage                   | Duration  | Cost/run | × 3 seeds   |
 |-------------------------|-----------|----------|-------------|
 | Data + tokenizer        | ~25 min   | ~$0.11   | one-time    |
