@@ -1,5 +1,6 @@
 """
 Ablation study: picochat (depth=8) — baseline vs SwiGLU vs RoPE-500K
+Part 4 final run: nanochat (depth=12) — SwiGLU + RoPE 500K, 3 seeds
 
 Setup (one-time):
     modal setup                                   # authenticate (yoyoliuuu workspace)
@@ -8,7 +9,10 @@ Setup (one-time):
         HF_TOKEN=hf_<your_token>
 
 Run all 3 ablations end-to-end (data + tokenizer once, then 3 training runs):
-    modal run nanochat_modal.py
+    modal run nanochat_modal.py::main
+
+Run Part 4 final training (3 seeds, nanochat depth=12, SwiGLU + RoPE 500K):
+    modal run nanochat_modal.py::run_nanochat_final
 
 Run individual stages:
     modal run nanochat_modal.py::stage_data
@@ -18,17 +22,17 @@ Run individual stages:
     modal run nanochat_modal.py::run_rope500k
 
 Cost reference (A10G at ~$1.10/hr):
-    picochat d8, 1 GPU: ~1-2 hr per run → ~$1.50-3 per run
-    3 runs total: ~$5-9
+    nanochat d12, seq_len=2048, 1 GPU: ~45-75 min per run
+    3 seeds total: ~$3.50
 
 Notes:
     - Data and tokenizer are cached in a persistent Modal Volume.
-      All 3 runs share the same data/tokenizer — download only happens once.
+      All runs share the same data/tokenizer — download only happens once.
     - Stages are idempotent where possible.
     - The nanochat repo is copied into the container image at build time.
       If you change gpt.py or base_train.py, Modal auto-rebuilds the image.
-    - W&B runs go to the yoyoliuuu workspace under project "nanochat".
-      Each run is tagged: picochat-baseline, picochat-swiglu, picochat-rope500k.
+    - W&B runs go to the workspace set in the Modal secret (WANDB_ENTITY).
+      Each run is tagged: nanochat-swiglu-rope500k-seed{0,1,2}.
 
 Reference: Angela Sha, https://github.com/UofT-CSC490-W2026/022326-tutorial-nanochat
 """
@@ -41,14 +45,15 @@ from modal import App, Image as ModalImage, Volume, Secret
 # CONFIGURATION
 # =============================================================================
 
-# ── picochat config ────────────────────────────────────────────────────────────
-# depth=8 → model_dim=512, n_heads=4, ~42M params. Trains in ~1-2hr on A10G.
-DEPTH = 8
-MAX_SEQ_LEN = 512
+# ── nanochat config (Part 4 final run) ────────────────────────────────────────
+# depth=12 → model_dim=768, n_heads=6, ~120M params. ~45-75 min per run on A10G.
+DEPTH = 12
+MAX_SEQ_LEN = 2048
 DEVICE_BATCH_SIZE = 16
+NUM_SEEDS = 3
 
 # ── GPU ────────────────────────────────────────────────────────────────────────
-# A10G: cheapest that comfortably fits picochat, no FA3 (SDPA fallback is fine)
+# A10G: cheapest that comfortably fits nanochat, no FA3 (SDPA fallback is fine)
 # Switch to "H100:1" (~$3.09/hr) if you want 2x speed
 GPU = "A10G:1"
 
@@ -65,7 +70,7 @@ VOLUME_MOUNT = "/vol"
 NANOCHAT_CACHE = f"{VOLUME_MOUNT}/nanochat_cache"
 
 # ── Timeouts ──────────────────────────────────────────────────────────────────
-TRAIN_TIMEOUT_SEC  = 60 * 60 * 4   # 4h max per picochat run (safe margin)
+TRAIN_TIMEOUT_SEC  = 60 * 60 * 6   # 6h max per run (safe margin for d12 seq_len=2048)
 DOWNLOAD_TIMEOUT_SEC = 60 * 60     # 1h for data download
 
 # ── Eval toggle ──────────────────────────────────────────────────────────────
@@ -194,7 +199,7 @@ def stage_tokenizer() -> None:
 
 
 # =============================================================================
-# STAGE 2: PRETRAIN (parametric — used by all 3 ablations)
+# STAGE 2: PRETRAIN (parametric — used by all runs)
 # =============================================================================
 
 @app.function(
@@ -213,11 +218,11 @@ def stage_pretrain(
     mtp_loss_weight: float = 0.3,
 ) -> None:
     """
-    Pretrain one picochat ablation variant.
+    Pretrain one nanochat variant.
 
     Args:
-        run_name:       W&B run name (e.g. 'picochat-baseline')
-        model_tag:      checkpoint directory name (e.g. 'picochat-baseline')
+        run_name:       W&B run name (e.g. 'nanochat-swiglu-rope500k-seed0')
+        model_tag:      checkpoint directory name (e.g. 'nanochat-swiglu-rope500k-seed0')
         mlp_type:       'relu2' or 'swiglu'
         rope_base:      RoPE base theta (10000 or 500000)
         num_mtp_steps:  MTP auxiliary heads (0=disabled, 1=predict 2 tokens ahead)
@@ -225,7 +230,7 @@ def stage_pretrain(
     """
     _setup_cache()
     print(f"\n{'='*60}")
-    print(f"Picochat ablation: {run_name}")
+    print(f"Nanochat run: {run_name}")
     print(f"  mlp_type={mlp_type}  rope_base={rope_base}  num_mtp_steps={num_mtp_steps}")
     print(f"  depth={DEPTH}  seq_len={MAX_SEQ_LEN}  gpu={GPU}")
     print(f"{'='*60}\n")
@@ -255,54 +260,71 @@ def stage_pretrain(
 
 
 # =============================================================================
-# INDIVIDUAL ABLATION ENTRYPOINTS
-# (use ::run_baseline etc. to re-run one study after data/tokenizer are ready)
+# Part 2 ablation entrypoints (kept for reference)
+# =============================================================================
+
+# @app.local_entrypoint()
+# def run_baseline() -> None:
+#     """Re-run baseline only (requires data+tokenizer already on volume)."""
+#     stage_pretrain.remote(
+#         run_name="picochat-baseline",
+#         model_tag="picochat-baseline",
+#         mlp_type="relu2",
+#         rope_base=10000,
+#     )
+
+
+# @app.local_entrypoint()
+# def run_swiglu() -> None:
+#     """Re-run SwiGLU ablation only (requires data+tokenizer already on volume)."""
+#     stage_pretrain.remote(
+#         run_name="picochat-swiglu",
+#         model_tag="picochat-swiglu",
+#         mlp_type="swiglu",
+#         rope_base=10000,
+#     )
+
+
+# @app.local_entrypoint()
+# def run_rope500k() -> None:
+#     """Re-run RoPE-500K ablation only (requires data+tokenizer already on volume)."""
+#     stage_pretrain.remote(
+#         run_name="picochat-rope500k",
+#         model_tag="picochat-rope500k",
+#         mlp_type="relu2",
+#         rope_base=500000,
+#     )
+
+
+# @app.local_entrypoint()
+# def run_mtp() -> None:
+#     """Re-run MTP ablation only (requires data+tokenizer already on volume)."""
+#     stage_pretrain.remote(
+#         run_name="picochat-mtp",
+#         model_tag="picochat-mtp",
+#         mlp_type="relu2",
+#         rope_base=10000,
+#         num_mtp_steps=1,
+#         mtp_loss_weight=0.3,
+#     )
+
+
+# =============================================================================
+# PART 4 FINAL TRAINING ENTRYPOINT
 # =============================================================================
 
 @app.local_entrypoint()
-def run_baseline() -> None:
-    """Re-run baseline only (requires data+tokenizer already on volume)."""
-    stage_pretrain.remote(
-        run_name="picochat-baseline",
-        model_tag="picochat-baseline",
-        mlp_type="relu2",
-        rope_base=10000,
-    )
-
-
-@app.local_entrypoint()
-def run_swiglu() -> None:
-    """Re-run SwiGLU ablation only (requires data+tokenizer already on volume)."""
-    stage_pretrain.remote(
-        run_name="picochat-swiglu",
-        model_tag="picochat-swiglu",
-        mlp_type="swiglu",
-        rope_base=10000,
-    )
-
-
-@app.local_entrypoint()
-def run_rope500k() -> None:
-    """Re-run RoPE-500K ablation only (requires data+tokenizer already on volume)."""
-    stage_pretrain.remote(
-        run_name="picochat-rope500k",
-        model_tag="picochat-rope500k",
-        mlp_type="relu2",
-        rope_base=500000,
-    )
-
-
-@app.local_entrypoint()
-def run_mtp() -> None:
-    """Re-run MTP ablation only (requires data+tokenizer already on volume)."""
-    stage_pretrain.remote(
-        run_name="picochat-mtp",
-        model_tag="picochat-mtp",
-        mlp_type="relu2",
-        rope_base=10000,
-        num_mtp_steps=1,
-        mtp_loss_weight=0.3,
-    )
+def run_nanochat_final() -> None:
+    """Run 3 seeds of nanochat (depth=12) with SwiGLU + RoPE 500K."""
+    for seed in range(NUM_SEEDS):
+        stage_pretrain.remote(
+            run_name=f"nanochat-swiglu-rope500k-seed{seed}",
+            model_tag=f"nanochat-swiglu-rope500k-seed{seed}",
+            mlp_type="swiglu",
+            rope_base=500000,
+            num_mtp_steps=0,
+            mtp_loss_weight=0.3,
+        )
 
 
 # =============================================================================
@@ -318,55 +340,40 @@ def run_mtp() -> None:
 )
 def run_pipeline(num_shards: int = NUM_SHARDS) -> None:
     """
-    Full ablation pipeline running entirely on Modal servers.
+    Full nanochat final run pipeline running entirely on Modal servers.
     Called via .spawn() from main() so your laptop can close immediately.
 
     Stages:
       1. Download data (idempotent — skips shards already on volume)
       2. Train tokenizer (idempotent — skips if tokenizer.pkl exists)
-      3. Baseline   — relu2, RoPE 10K           (~50 min)
-      4. SwiGLU     — swiglu, RoPE 10K          (~50 min)
-      5. MTP        — relu2, 1 MTP step, w=0.3  (~52 min)
+      3. seed 0 — nanochat d12, SwiGLU + RoPE 500K
+      4. seed 1 — nanochat d12, SwiGLU + RoPE 500K
+      5. seed 2 — nanochat d12, SwiGLU + RoPE 500K
     """
     _setup_cache()
+    wandb_entity = os.environ.get("WANDB_ENTITY", "unknown-entity")
     print("\n" + "="*60)
-    print("Picochat Ablation Study  |  yoyoliuuu/nanochat  |  W&B")
+    print("Nanochat Final Run  |  SwiGLU + RoPE 500K  |  3 seeds")
+    print(f"W&B entity: {wandb_entity}/nanochat")
     print("="*60 + "\n")
 
-    print("[1/5] Downloading data shards...")
+    print("[1/5] Data/tokenizer may already be cached — running idempotent check...")
     stage_data.remote(num_shards=num_shards)
 
-    print("[2/5] Training tokenizer...")
+    print("[2/5] Data/tokenizer may already be cached — running idempotent check...")
     stage_tokenizer.remote()
 
-    print("[3/5] Training baseline (relu2 + RoPE 10K)...")
-    stage_pretrain.remote(
-        run_name="picochat-baseline",
-        model_tag="picochat-baseline",
-        mlp_type="relu2",
-        rope_base=10000,
-    )
-
-    print("[4/5] Training SwiGLU ablation (swiglu + RoPE 10K)...")
-    stage_pretrain.remote(
-        run_name="picochat-swiglu",
-        model_tag="picochat-swiglu",
-        mlp_type="swiglu",
-        rope_base=10000,
-    )
-
-    print("[5/5] Training MTP ablation (relu2 + 1 MTP step, weight=0.3)...")
-    stage_pretrain.remote(
-        run_name="picochat-mtp",
-        model_tag="picochat-mtp",
-        mlp_type="relu2",
-        rope_base=10000,
-        num_mtp_steps=1,
-        mtp_loss_weight=0.3,
-    )
+    for i, seed in enumerate(range(NUM_SEEDS)):
+        print(f"[{i+3}/5] Training nanochat-swiglu-rope500k-seed{seed}...")
+        stage_pretrain.remote(
+            run_name=f"nanochat-swiglu-rope500k-seed{seed}",
+            model_tag=f"nanochat-swiglu-rope500k-seed{seed}",
+            mlp_type="swiglu",
+            rope_base=500000,
+        )
 
     print("\n" + "="*60)
-    print("All done! Check W&B at wandb.ai/yoyoliuuu/nanochat")
+    print(f"All done! Check W&B at wandb.ai/{wandb_entity}/nanochat")
     print("="*60 + "\n")
 
 
@@ -377,10 +384,12 @@ def run_pipeline(num_shards: int = NUM_SHARDS) -> None:
 @app.local_entrypoint()
 def main() -> None:
     """
-    Submit the full pipeline to Modal and return immediately.
+    Submit the nanochat final run pipeline to Modal and return immediately.
+    Trains nanochat (depth=12) with SwiGLU + RoPE 500K across 3 seeds.
     The pipeline runs entirely on Modal servers — close your laptop anytime.
-    Monitor at: wandb.ai/yoyoliuuu/nanochat  or  modal.com/apps
+    Monitor at: wandb.ai/<WANDB_ENTITY>/nanochat  or  modal.com/apps
     """
-    print("Submitting pipeline to Modal (runs server-side, safe to close terminal)...")
+    wandb_entity = os.environ.get("WANDB_ENTITY", "unknown-entity")
+    print("Submitting nanochat final run pipeline to Modal (runs server-side, safe to close terminal)...")
     run_pipeline.spawn()
-    print("Submitted! Monitor at wandb.ai/yoyoliuuu/nanochat")
+    print(f"Submitted! Monitor at wandb.ai/{wandb_entity}/nanochat")
