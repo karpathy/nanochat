@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from nanochat.common import get_dist_info, print0
+from nanochat.common import get_dist_info, print0, COMPUTE_DTYPE
 from nanochat.optim import MuonAdamW, DistMuonAdamW
 
 # Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
@@ -40,11 +40,20 @@ class GPTConfig:
     # Ablation options
     mlp_type: str = "relu2"   # "relu2" (baseline) or "swiglu"
     rope_base: int = 10000    # RoPE base theta (10K baseline, 500K for long-context)
+    # Multi-Token Prediction (DeepSeek-V3 / LLaMA 3.1 style)
+    num_mtp_steps: int = 0       # 0=disabled; k>0 adds k auxiliary heads predicting tokens 2..k+1 ahead
+    mtp_loss_weight: float = 0.3 # weight of each auxiliary MTP loss term (DeepSeek-V3 default)
 
 
 def norm(x):
-    # Purely functional rmsnorm with no learnable params
-    return F.rms_norm(x, (x.size(-1),))
+    return F.rms_norm(x, (x.size(-1),)) # note that this will run in bf16, seems ok
+
+class Linear(nn.Linear):
+    """nn.Linear that casts weights to match input dtype in forward.
+    Replaces autocast: master weights stay fp32 for optimizer precision,
+    but matmuls run in the activation dtype (typically bf16 from embeddings)."""
+    def forward(self, x):
+        return F.linear(x, self.weight.to(dtype=x.dtype))
 
 
 def has_ve(layer_idx, n_layer):
@@ -69,12 +78,12 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
-        self.c_q = nn.Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
-        self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
-        self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
-        self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
+        self.c_q = Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
+        self.c_k = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+        self.c_v = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+        self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 32
-        self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         B, T, C = x.size()
@@ -136,7 +145,6 @@ class MLP(nn.Module):
         else:  # relu2
             self.c_fc   = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
             self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
-
     def forward(self, x):
         if self.mlp_type == "swiglu":
             return self.c_proj(F.silu(self.c_gate(x)) * self.c_up(x))
@@ -177,7 +185,7 @@ class GPT(nn.Module):
             "wte": nn.Embedding(padded_vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
-        self.lm_head = nn.Linear(config.n_embd, padded_vocab_size, bias=False)
+        self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
         # x0_lambdas: blends initial embedding back in at each layer (init 0.0 = disabled)
@@ -188,6 +196,14 @@ class GPT(nn.Module):
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
         self.value_embeds = nn.ModuleDict({str(i): nn.Embedding(padded_vocab_size, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
+        # MTP projection layers: one n_embd→n_embd linear per additional prediction step.
+        # Each proj_k transforms hidden states to predict token at t+(k+2) using the shared lm_head.
+        if config.num_mtp_steps > 0:
+            self.mtp_projs = nn.ModuleList([
+                nn.Linear(config.n_embd, config.n_embd, bias=False)
+                for _ in range(config.num_mtp_steps)
+            ])
+
         # To support meta device initialization, we init the rotary embeddings here, but it's just "fake" meta tensors only.
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
@@ -233,6 +249,11 @@ class GPT(nn.Module):
                 torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
+        # MTP projection layers (same std as attention projections)
+        if hasattr(self, 'mtp_projs'):
+            for proj in self.mtp_projs:
+                torch.nn.init.uniform_(proj.weight, -s, s)
+
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)   # 1.0 => typical residual connections at init
         self.x0_lambdas.fill_(0.1)      # 0.1 => small initial weight for skip connection to input embedding
@@ -251,11 +272,13 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
 
-        # Cast embeddings to bf16: optimizer can tolerate it and it saves memory
-        if self.transformer.wte.weight.device.type == "cuda":
-            self.transformer.wte.to(dtype=torch.bfloat16)
+        # Cast embeddings to COMPUTE_DTYPE: optimizer can tolerate reduced-precision
+        # embeddings and it saves memory. Exception: fp16 requires fp32 embeddings
+        # because GradScaler cannot unscale fp16 gradients.
+        if COMPUTE_DTYPE != torch.float16:
+            self.transformer.wte.to(dtype=COMPUTE_DTYPE)
             for ve in self.value_embeds.values():
-                ve.to(dtype=torch.bfloat16)
+                ve.to(dtype=COMPUTE_DTYPE)
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=None, device=None):
         if base is None:
@@ -271,7 +294,7 @@ class GPT(nn.Module):
         # calculate the rotation frequencies at each (time, channel) pair
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16() # keep them in bfloat16
+        cos, sin = cos.to(COMPUTE_DTYPE), sin.to(COMPUTE_DTYPE)
         cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
         return cos, sin
 
@@ -350,7 +373,8 @@ class GPT(nn.Module):
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
-        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
+        mtp_params = sum(p.numel() for p in self.mtp_projs.parameters()) if hasattr(self, 'mtp_projs') else 0
+        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters()) + mtp_params
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel()
         total = wte + value_embeds + lm_head + transformer_matrices + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
@@ -369,6 +393,8 @@ class GPT(nn.Module):
 
         # Separate out all parameters into groups
         matrix_params = list(self.transformer.h.parameters())
+        if hasattr(self, 'mtp_projs'):
+            matrix_params += list(self.mtp_projs.parameters())
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
@@ -409,23 +435,25 @@ class GPT(nn.Module):
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
-        assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
+        assert self.cos.dtype == COMPUTE_DTYPE, f"Rotary embeddings must be in {COMPUTE_DTYPE}, got {self.cos.dtype}"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
 
         # Forward the trunk of the Transformer
         x = self.transformer.wte(idx) # embed current token
+        x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
+            ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+        x_hidden = x  # pre-norm hidden states, used by MTP heads
         x = norm(x)
 
         # Forward the lm_head (compute logits)
-        softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
+        softcap = 20 # smoothly cap the logits to the range [-softcap, softcap]
         logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
         logits = logits[..., :self.config.vocab_size] # slice to remove padding
         logits = logits.float() # switch to fp32 for logit softcap and loss computation
@@ -435,6 +463,29 @@ class GPT(nn.Module):
             # training: given the targets, compute and return the loss
             # TODO experiment with chunked cross-entropy?
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+
+            # Multi-Token Prediction: auxiliary heads predict tokens k+1 steps ahead.
+            # mtp_projs[k] transforms h[t] → predict targets[t+k+1] (i.e. token at t+k+2).
+            # Targets are already shifted by 1 (targets[t] = idx[t+1]), so:
+            #   shift=1 → predict targets[t+1]=idx[t+2] from x_hidden[t]
+            # Only run during training (loss_reduction='mean'): eval uses 'none' for per-token
+            # losses, and the MTP sequence lengths (T-shift) differ from the main (T), making
+            # them impossible to combine under 'none' reduction.
+            if hasattr(self, 'mtp_projs') and loss_reduction == 'mean':
+                for k, proj in enumerate(self.mtp_projs):
+                    shift = k + 1
+                    mtp_h = norm(proj(x_hidden[:, :-shift, :]))        # (B, T-shift, n_embd)
+                    mtp_logits = self.lm_head(mtp_h)[..., :self.config.vocab_size]
+                    mtp_logits = softcap * torch.tanh(mtp_logits.float() / softcap)
+                    mtp_targets = targets[:, shift:]                    # (B, T-shift), non-contiguous slice
+                    mtp_loss = F.cross_entropy(
+                        mtp_logits.reshape(-1, mtp_logits.size(-1)),   # reshape handles non-contiguous
+                        mtp_targets.reshape(-1),
+                        ignore_index=-1,
+                        reduction='mean',
+                    )
+                    loss = loss + self.config.mtp_loss_weight * mtp_loss
+
             return loss
         else:
             # inference: just return the logits directly

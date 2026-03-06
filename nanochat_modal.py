@@ -209,20 +209,24 @@ def stage_pretrain(
     model_tag: str,
     mlp_type: str = "relu2",
     rope_base: int = 10000,
+    num_mtp_steps: int = 0,
+    mtp_loss_weight: float = 0.3,
 ) -> None:
     """
     Pretrain one picochat ablation variant.
 
     Args:
-        run_name:  W&B run name (e.g. 'picochat-baseline')
-        model_tag: checkpoint directory name (e.g. 'picochat-baseline')
-        mlp_type:  'relu2' or 'swiglu'
-        rope_base: RoPE base theta (10000 or 500000)
+        run_name:       W&B run name (e.g. 'picochat-baseline')
+        model_tag:      checkpoint directory name (e.g. 'picochat-baseline')
+        mlp_type:       'relu2' or 'swiglu'
+        rope_base:      RoPE base theta (10000 or 500000)
+        num_mtp_steps:  MTP auxiliary heads (0=disabled, 1=predict 2 tokens ahead)
+        mtp_loss_weight: weight for each MTP auxiliary loss term
     """
     _setup_cache()
     print(f"\n{'='*60}")
     print(f"Picochat ablation: {run_name}")
-    print(f"  mlp_type={mlp_type}  rope_base={rope_base}")
+    print(f"  mlp_type={mlp_type}  rope_base={rope_base}  num_mtp_steps={num_mtp_steps}")
     print(f"  depth={DEPTH}  seq_len={MAX_SEQ_LEN}  gpu={GPU}")
     print(f"{'='*60}\n")
 
@@ -237,6 +241,8 @@ def stage_pretrain(
             f"--window-pattern=L",          # full context; SDPA works cleanly with this
             f"--mlp-type={mlp_type}",
             f"--rope-base={rope_base}",
+            f"--num-mtp-steps={num_mtp_steps}",
+            f"--mtp-loss-weight={mtp_loss_weight}",
             f"--run={run_name}",
             f"--model-tag={model_tag}",
             f"--core-metric-every={CORE_METRIC_EVERY}",  # skip expensive CORE eval
@@ -286,6 +292,19 @@ def run_rope500k() -> None:
     )
 
 
+@app.local_entrypoint()
+def run_mtp() -> None:
+    """Re-run MTP ablation only (requires data+tokenizer already on volume)."""
+    stage_pretrain.remote(
+        run_name="picochat-mtp",
+        model_tag="picochat-mtp",
+        mlp_type="relu2",
+        rope_base=10000,
+        num_mtp_steps=1,
+        mtp_loss_weight=0.3,
+    )
+
+
 # =============================================================================
 # PIPELINE ORCHESTRATOR (runs on Modal servers, not locally)
 # =============================================================================
@@ -305,9 +324,9 @@ def run_pipeline(num_shards: int = NUM_SHARDS) -> None:
     Stages:
       1. Download data (idempotent — skips shards already on volume)
       2. Train tokenizer (idempotent — skips if tokenizer.pkl exists)
-      3. Baseline   — relu2, RoPE 10K   (~50 min)
-      4. SwiGLU     — swiglu, RoPE 10K  (~50 min)
-      5. RoPE-500K  — relu2, RoPE 500K  (~50 min)
+      3. Baseline   — relu2, RoPE 10K           (~50 min)
+      4. SwiGLU     — swiglu, RoPE 10K          (~50 min)
+      5. MTP        — relu2, 1 MTP step, w=0.3  (~52 min)
     """
     _setup_cache()
     print("\n" + "="*60)
@@ -336,12 +355,14 @@ def run_pipeline(num_shards: int = NUM_SHARDS) -> None:
         rope_base=10000,
     )
 
-    print("[5/5] Training RoPE-500K ablation (relu2 + RoPE 500K)...")
+    print("[5/5] Training MTP ablation (relu2 + 1 MTP step, weight=0.3)...")
     stage_pretrain.remote(
-        run_name="picochat-rope500k",
-        model_tag="picochat-rope500k",
+        run_name="picochat-mtp",
+        model_tag="picochat-mtp",
         mlp_type="relu2",
-        rope_base=500000,
+        rope_base=10000,
+        num_mtp_steps=1,
+        mtp_loss_weight=0.3,
     )
 
     print("\n" + "="*60)
