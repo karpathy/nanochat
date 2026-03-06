@@ -39,7 +39,7 @@ class GPTConfig:
     window_pattern: str = "SSSL"
     # Ablation options
     mlp_type: str = "relu2"   # "relu2" (baseline) or "swiglu"
-    rope_base: int = 10000    # RoPE base theta (10K baseline, 500K for long-context)
+    rope_base: int = 500000   # RoPE base theta (500K for long-context; 10K baseline)
     # Multi-Token Prediction (DeepSeek-V3 / LLaMA 3.1 style)
     num_mtp_steps: int = 0       # 0=disabled; k>0 adds k auxiliary heads predicting tokens 2..k+1 ahead
     mtp_loss_weight: float = 0.3 # weight of each auxiliary MTP loss term (DeepSeek-V3 default)
