@@ -139,12 +139,12 @@ class MLP(nn.Module):
             # relu2: n_embd*(4n) + (4n)*n_embd = 8*n^2
             # swiglu: n*(h) + n*(h) + h*n = 3*h*n => h = 8/3*n
             hidden_dim = int(8 / 3 * config.n_embd)
-            self.c_gate = nn.Linear(config.n_embd, hidden_dim, bias=False)
-            self.c_up   = nn.Linear(config.n_embd, hidden_dim, bias=False)
-            self.c_proj = nn.Linear(hidden_dim, config.n_embd, bias=False)
+            self.c_gate = Linear(config.n_embd, hidden_dim, bias=False)
+            self.c_up   = Linear(config.n_embd, hidden_dim, bias=False)
+            self.c_proj = Linear(hidden_dim, config.n_embd, bias=False)
         else:  # relu2
-            self.c_fc   = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-            self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+            self.c_fc   = Linear(config.n_embd, 4 * config.n_embd, bias=False)
+            self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
     def forward(self, x):
         if self.mlp_type == "swiglu":
             return self.c_proj(F.silu(self.c_gate(x)) * self.c_up(x))
@@ -200,7 +200,7 @@ class GPT(nn.Module):
         # Each proj_k transforms hidden states to predict token at t+(k+2) using the shared lm_head.
         if config.num_mtp_steps > 0:
             self.mtp_projs = nn.ModuleList([
-                nn.Linear(config.n_embd, config.n_embd, bias=False)
+                Linear(config.n_embd, config.n_embd, bias=False)
                 for _ in range(config.num_mtp_steps)
             ])
 

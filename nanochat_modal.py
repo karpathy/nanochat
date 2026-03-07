@@ -1,38 +1,34 @@
 """
 Ablation study: picochat (depth=8) — baseline vs SwiGLU vs RoPE-500K
-Part 4 final run: nanochat (depth=12) — SwiGLU + RoPE 500K, 3 seeds
+Part 4 run 1: nanochat (depth=12) — SwiGLU + RoPE 500K, 3 seeds (completed)
+Part 4 run 2: nanochat (depth=12) — SwiGLU + MTP, 3 seeds
 
 Setup (one-time):
-    modal setup                                   # authenticate (yoyoliuuu workspace)
+    modal setup                                   # authenticate
     modal secret create nanochat-secrets \\
         WANDB_API_KEY=<your_key> \\
         HF_TOKEN=hf_<your_token>
 
-Run all 3 ablations end-to-end (data + tokenizer once, then 3 training runs):
-    modal run nanochat_modal.py::main
-
-Run Part 4 final training (3 seeds, nanochat depth=12, SwiGLU + RoPE 500K):
+Run Part 4 run 2 (SwiGLU + MTP, 3 seeds in parallel):
     modal run nanochat_modal.py::run_nanochat_final
+
+Run fire-and-forget pipeline (safe to close terminal):
+    modal run nanochat_modal.py::main
 
 Run individual stages:
     modal run nanochat_modal.py::stage_data
     modal run nanochat_modal.py::stage_tokenizer
-    modal run nanochat_modal.py::run_baseline
-    modal run nanochat_modal.py::run_swiglu
-    modal run nanochat_modal.py::run_rope500k
 
-Cost reference (A10G at ~$1.10/hr):
-    nanochat d12, seq_len=2048, 1 GPU: ~45-75 min per run
-    3 seeds total: ~$3.50
+Cost reference (H100 at ~$3.09/hr):
+    nanochat d12, seq_len=2048, 3x H100 in parallel: ~80 min total → ~$12
+    Data + tokenizer already cached — skipped this run.
 
 Notes:
     - Data and tokenizer are cached in a persistent Modal Volume.
-      All runs share the same data/tokenizer — download only happens once.
-    - Stages are idempotent where possible.
     - The nanochat repo is copied into the container image at build time.
       If you change gpt.py or base_train.py, Modal auto-rebuilds the image.
     - W&B runs go to the workspace set in the Modal secret (WANDB_ENTITY).
-      Each run is tagged: nanochat-swiglu-rope500k-seed{0,1,2}.
+      Each run is tagged: nanochat-swiglu-mtp-seed{0,1,2}.
 
 Reference: Angela Sha, https://github.com/UofT-CSC490-W2026/022326-tutorial-nanochat
 """
@@ -55,7 +51,7 @@ NUM_SEEDS = 3
 # ── GPU ────────────────────────────────────────────────────────────────────────
 # A10G: cheapest that comfortably fits nanochat, no FA3 (SDPA fallback is fine)
 # Switch to "H100:1" (~$3.09/hr) if you want 2x speed
-GPU = "A10G:1"
+GPU = "H100:1"
 
 # ── Data shards ────────────────────────────────────────────────────────────────
 # picochat needs ~500M tokens → ~8 shards at 250M chars/shard ≈ 4 chars/token
@@ -82,7 +78,7 @@ CORE_METRIC_EVERY = -1   # disable mid-training CORE eval to keep runs cheap
 # MODAL PRIMITIVES
 # =============================================================================
 
-app = App("nanochat-ablation")
+app = App("nanochat-final")
 
 # Persistent volume: data shards, tokenizer, and checkpoints survive restarts
 volume = Volume.from_name("nanochat-vol", create_if_missing=True)
@@ -221,8 +217,8 @@ def stage_pretrain(
     Pretrain one nanochat variant.
 
     Args:
-        run_name:       W&B run name (e.g. 'nanochat-swiglu-rope500k-seed0')
-        model_tag:      checkpoint directory name (e.g. 'nanochat-swiglu-rope500k-seed0')
+        run_name:       W&B run name (e.g. 'nanochat-swiglu-mtp-seed0')
+        model_tag:      checkpoint directory name (e.g. 'nanochat-swiglu-mtp-seed0')
         mlp_type:       'relu2' or 'swiglu'
         rope_base:      RoPE base theta (10000 or 500000)
         num_mtp_steps:  MTP auxiliary heads (0=disabled, 1=predict 2 tokens ahead)
@@ -243,7 +239,7 @@ def stage_pretrain(
             f"--depth={DEPTH}",
             f"--max-seq-len={MAX_SEQ_LEN}",
             f"--device-batch-size={DEVICE_BATCH_SIZE}",
-            f"--window-pattern=L",          # full context; SDPA works cleanly with this
+            f"--window-pattern=SSSL",         # H100 has FA3, sliding window works and is faster
             f"--mlp-type={mlp_type}",
             f"--rope-base={rope_base}",
             f"--num-mtp-steps={num_mtp_steps}",
@@ -310,21 +306,51 @@ def stage_pretrain(
 
 
 # =============================================================================
-# PART 4 FINAL TRAINING ENTRYPOINT
+# Part 4 run 1: SwiGLU + RoPE 500K (completed)
+# =============================================================================
+
+# @app.local_entrypoint()
+# def run_nanochat_final() -> None:
+#     """Run 3 seeds of nanochat (depth=12) with SwiGLU + RoPE 500K, in parallel on 3x H100."""
+#     handles = [
+#         stage_pretrain.spawn(
+#             run_name=f"nanochat-swiglu-rope500k-seed{seed}",
+#             model_tag=f"nanochat-swiglu-rope500k-seed{seed}",
+#             mlp_type="swiglu",
+#             rope_base=500000,
+#             num_mtp_steps=0,
+#             mtp_loss_weight=0.3,
+#         )
+#         for seed in range(NUM_SEEDS)
+#     ]
+#     print(f"Spawned {NUM_SEEDS} seeds in parallel. Waiting for all to complete...")
+#     for seed, handle in enumerate(handles):
+#         handle.get()
+#         print(f"seed{seed} complete.")
+
+
+# =============================================================================
+# PART 4 RUN 2: SwiGLU + MTP
 # =============================================================================
 
 @app.local_entrypoint()
 def run_nanochat_final() -> None:
-    """Run 3 seeds of nanochat (depth=12) with SwiGLU + RoPE 500K."""
-    for seed in range(NUM_SEEDS):
-        stage_pretrain.remote(
-            run_name=f"nanochat-swiglu-rope500k-seed{seed}",
-            model_tag=f"nanochat-swiglu-rope500k-seed{seed}",
+    """Run 3 seeds of nanochat (depth=12) with SwiGLU + MTP, in parallel on 3x H100."""
+    handles = [
+        stage_pretrain.spawn(
+            run_name=f"nanochat-swiglu-mtp-seed{seed}",
+            model_tag=f"nanochat-swiglu-mtp-seed{seed}",
             mlp_type="swiglu",
-            rope_base=500000,
-            num_mtp_steps=0,
+            rope_base=10000,
+            num_mtp_steps=1,
             mtp_loss_weight=0.3,
         )
+        for seed in range(NUM_SEEDS)
+    ]
+    print(f"Spawned {NUM_SEEDS} seeds in parallel. Waiting for all to complete...")
+    for seed, handle in enumerate(handles):
+        handle.get()
+        print(f"seed{seed} complete.")
 
 
 # =============================================================================
@@ -336,41 +362,42 @@ def run_nanochat_final() -> None:
     secrets=[secret],
     volumes={VOLUME_MOUNT: volume},
     cpu=1,
-    timeout=60 * 60 * 5,  # 5 hours: enough for tokenizer + 3 training runs
+    timeout=60 * 60 * 5,  # 5 hours: enough for 3 training runs in parallel
 )
 def run_pipeline(num_shards: int = NUM_SHARDS) -> None:
     """
-    Full nanochat final run pipeline running entirely on Modal servers.
+    Nanochat Part 4 run 2 pipeline running entirely on Modal servers.
     Called via .spawn() from main() so your laptop can close immediately.
+    Data and tokenizer are already cached — skips those stages.
 
     Stages:
-      1. Download data (idempotent — skips shards already on volume)
-      2. Train tokenizer (idempotent — skips if tokenizer.pkl exists)
-      3. seed 0 — nanochat d12, SwiGLU + RoPE 500K
-      4. seed 1 — nanochat d12, SwiGLU + RoPE 500K
-      5. seed 2 — nanochat d12, SwiGLU + RoPE 500K
+      1. seed 0 — nanochat d12, SwiGLU + MTP (num_mtp_steps=1)
+      2. seed 1 — nanochat d12, SwiGLU + MTP (num_mtp_steps=1)
+      3. seed 2 — nanochat d12, SwiGLU + MTP (num_mtp_steps=1)
     """
     _setup_cache()
     wandb_entity = os.environ.get("WANDB_ENTITY", "unknown-entity")
     print("\n" + "="*60)
-    print("Nanochat Final Run  |  SwiGLU + RoPE 500K  |  3 seeds")
+    print("Nanochat Part 4 Run 2  |  SwiGLU + MTP  |  3 seeds")
     print(f"W&B entity: {wandb_entity}/nanochat")
     print("="*60 + "\n")
 
-    print("[1/5] Data/tokenizer may already be cached — running idempotent check...")
-    stage_data.remote(num_shards=num_shards)
-
-    print("[2/5] Data/tokenizer may already be cached — running idempotent check...")
-    stage_tokenizer.remote()
-
-    for i, seed in enumerate(range(NUM_SEEDS)):
-        print(f"[{i+3}/5] Training nanochat-swiglu-rope500k-seed{seed}...")
-        stage_pretrain.remote(
-            run_name=f"nanochat-swiglu-rope500k-seed{seed}",
-            model_tag=f"nanochat-swiglu-rope500k-seed{seed}",
+    # Data and tokenizer already cached from run 1 — skipping those stages.
+    print("Launching 3 seeds in parallel on 3x H100...")
+    handles = [
+        stage_pretrain.spawn(
+            run_name=f"nanochat-swiglu-mtp-seed{seed}",
+            model_tag=f"nanochat-swiglu-mtp-seed{seed}",
             mlp_type="swiglu",
-            rope_base=500000,
+            rope_base=10000,
+            num_mtp_steps=1,
+            mtp_loss_weight=0.3,
         )
+        for seed in range(NUM_SEEDS)
+    ]
+    for seed, handle in enumerate(handles):
+        handle.get()
+        print(f"seed{seed} complete.")
 
     print("\n" + "="*60)
     print(f"All done! Check W&B at wandb.ai/{wandb_entity}/nanochat")
@@ -384,12 +411,12 @@ def run_pipeline(num_shards: int = NUM_SHARDS) -> None:
 @app.local_entrypoint()
 def main() -> None:
     """
-    Submit the nanochat final run pipeline to Modal and return immediately.
-    Trains nanochat (depth=12) with SwiGLU + RoPE 500K across 3 seeds.
+    Submit the nanochat Part 4 run 2 pipeline to Modal and return immediately.
+    Trains nanochat (depth=12) with SwiGLU + MTP across 3 seeds in parallel.
     The pipeline runs entirely on Modal servers — close your laptop anytime.
     Monitor at: wandb.ai/<WANDB_ENTITY>/nanochat  or  modal.com/apps
     """
     wandb_entity = os.environ.get("WANDB_ENTITY", "unknown-entity")
-    print("Submitting nanochat final run pipeline to Modal (runs server-side, safe to close terminal)...")
+    print("Submitting nanochat SwiGLU+MTP pipeline to Modal (runs server-side, safe to close terminal)...")
     run_pipeline.spawn()
     print(f"Submitted! Monitor at wandb.ai/{wandb_entity}/nanochat")
