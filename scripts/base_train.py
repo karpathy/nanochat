@@ -244,7 +244,17 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+# torch.compile requires Triton, which is not available on all platforms (e.g. Jetson aarch64)
+_can_compile = True
+try:
+    import triton  # noqa: F401
+except ImportError:
+    _can_compile = False
+if _can_compile and device_type == "cuda":
+    model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+    print0("✓ torch.compile enabled")
+else:
+    print0("⚠ torch.compile disabled (Triton not available or non-CUDA device), running in eager mode")
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
