@@ -117,7 +117,12 @@ for name, fallback, source in [
         print0(f"Using {name}={arg_val}")
 
 orig_model = model
-model = torch.compile(model, dynamic=False)
+try:
+    import triton  # noqa: F401
+    model = torch.compile(model, dynamic=False)
+    print0("⚡ torch.compile enabled")
+except ImportError:
+    print0("⚠ torch.compile disabled (Triton not available), running in eager mode")
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
@@ -451,6 +456,8 @@ while True:
         if is_ddp_initialized():
             for v in scaler._found_inf_per_device(optimizer).values():
                 dist.all_reduce(v, op=dist.ReduceOp.MAX)
+    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    if scaler is not None:
         scaler.step(optimizer)
         scaler.update()
     else:
