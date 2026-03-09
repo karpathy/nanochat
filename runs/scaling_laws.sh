@@ -86,17 +86,17 @@ for flops in "${FLOPS_BUDGETS[@]}"; do
         LOG_FILE="$RESULTS_DIR/${TAG}_train.log"
 
         # Extract detailed parameter counts (for scaling law analysis with different conventions)
-        PARAMS_WTE=$(grep "wte:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
-        PARAMS_BIGRAM=$(grep "bigram_embed:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
-        PARAMS_VE=$(grep "value_embeds:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
-        PARAMS_LM=$(grep "lm_head:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
-        PARAMS_TRANSFORMER=$(grep "transformer_matrices:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
-        PARAMS_SCALARS=$(grep "scalars:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
-        PARAMS_TOTAL=$(grep "total:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
+        PARAMS_WTE=$(grep -P "wte\s+:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
+        PARAMS_BIGRAM=$(grep -P "bigram_embed\s+:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
+        PARAMS_VE=$(grep -P "value_embeds\s+:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
+        PARAMS_LM=$(grep -P "lm_head\s+:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
+        PARAMS_TRANSFORMER=$(grep -P "transformer_matrices\s+:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
+        PARAMS_SCALARS=$(grep -P "scalars\s+:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
+        PARAMS_TOTAL=$(grep -P "total\s+:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
 
         NUM_ITERS=$(grep "Calculated number of iterations" "$LOG_FILE" | tail -1 | sed 's/.*: //' | tr -d ',')
-        # Calculate tokens trained (iterations * batch_size, default 524288)
-        TOKENS_TRAINED=$((NUM_ITERS * 524288))
+        # Extract actual tokens trained from log (batch size is auto-computed, may differ from 524288)
+        TOKENS_TRAINED=$(grep "Total number of training tokens:" "$LOG_FILE" | tail -1 | grep -oP '[\d,]+' | tr -d ',')
         # Model dim
         MODEL_DIM=$((d * 64))
         # Val BPB from final eval
