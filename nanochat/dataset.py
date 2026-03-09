@@ -22,6 +22,7 @@ from nanochat.common import get_base_dir
 # The URL on the internet where the data is hosted and downloaded from on demand
 BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
 MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
+VAL_SHARD = MAX_SHARD # the validation shard is pinned to shard_06542
 index_to_filename = lambda index: f"shard_{index:05d}.parquet" # format of the filenames
 base_dir = get_base_dir()
 DATA_DIR = os.path.join(base_dir, "base_data_climbmix")
@@ -64,15 +65,23 @@ def list_parquet_files(data_dir=None, warn_on_legacy=False):
     parquet_paths = [os.path.join(data_dir, f) for f in parquet_files]
     return parquet_paths
 
+def split_parquet_paths(parquet_paths, split):
+    """Split parquet paths into train or val by matching the pinned validation shard filename."""
+    assert split in ["train", "val"], "split must be 'train' or 'val'"
+    val_filename = index_to_filename(VAL_SHARD)
+    val_paths = [p for p in parquet_paths if os.path.basename(p) == val_filename]
+    assert val_paths, f"Validation shard {val_filename} not found. Run: python -m nanochat.dataset -n 1"
+    return [p for p in parquet_paths if os.path.basename(p) != val_filename] if split == "train" else val_paths
+
 def parquets_iter_batched(split, start=0, step=1):
     """
     Iterate through the dataset, in batches of underlying row_groups for efficiency.
-    - split can be "train" or "val". the last parquet file will be val.
+    - split can be "train" or "val". val is pinned to shard_06542.
     - start/step are useful for skipping rows in DDP. e.g. start=rank, step=world_size
     """
     assert split in ["train", "val"], "split must be 'train' or 'val'"
     parquet_paths = list_parquet_files()
-    parquet_paths = parquet_paths[:-1] if split == "train" else parquet_paths[-1:]
+    parquet_paths = split_parquet_paths(parquet_paths, split)
     for filepath in parquet_paths:
         pf = pq.ParquetFile(filepath)
         for rg_idx in range(start, pf.num_row_groups, step):
