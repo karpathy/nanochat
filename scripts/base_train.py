@@ -69,7 +69,6 @@ embedding_lr = 0.2  # learning rate for the embedding parameters (Adam)
 unembedding_lr = 0.004  # learning rate for the unembedding parameters (Adam)
 weight_decay = 0.0  # weight decay for the embedding/unembedding parameters (Adam)
 matrix_lr = 0.02  # learning rate for the matrix parameters (Muon)
-grad_clip = 1.0  # gradient clipping value (0.0 = disabled)
 # Evaluation
 eval_every = 250  # every how many steps to evaluate the model for val bpb
 eval_tokens = 20 * 524288  # number of tokens to evaluate val loss on
@@ -383,9 +382,6 @@ for step in range(num_iterations + 1):
         x, y = next(
             train_loader
         )  # prefetch the next batch while the GPU is busy with forward/backward
-    # gradient clipping (TODO possibly expertiment with)
-    if grad_clip > 0.0:
-        torch.nn.utils.clip_grad_norm_(orig_model.parameters(), grad_clip)
     # step the optimizers
     lrm = get_lr_multiplier(step)
     for opt in optimizers:
