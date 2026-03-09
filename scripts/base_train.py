@@ -1,32 +1,36 @@
 """
-Train model. Run as:
+Train model. From root directory of the project, run as:
 
-python base_train.py
+python -m scripts.base_train
 
 or distributed as:
 
-torchrun --nproc_per_node=8 base_train.py
+torchrun --nproc_per_node=8 -m scripts.base_train
 
 If you are only on CPU/Macbook, you'll want to train a much much smaller LLM. Example:
-python -m scripts.base_train --depth=4 --max_seq_len=512 --device_batch_size=1 --eval_tokens=512 --core_metric_every=-1 --total_batch_size=512 --num_iterations=20
+python -m scripts.base_train --depth=4 --max-seq-len=512 --device-batch-size=1 --eval-tokens=512 --core-metric-every=-1 --total-batch-size=512 --num-iterations=20
 """
 
 import os
 
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+import json
 import time
-from contextlib import nullcontext
+import argparse
 
 import torch
 
 import wandb
 from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.common import (
+    COMPUTE_DTYPE,
+    COMPUTE_DTYPE_REASON,
     DummyWandb,
     autodetect_device_type,
     compute_cleanup,
     compute_init,
     get_base_dir,
+    get_peak_flops,
     print0,
     print_banner,
 )
@@ -40,78 +44,76 @@ from scripts.base_eval import evaluate_model
 print_banner()
 
 # -----------------------------------------------------------------------------
-# User settings
-run = "dummy"  # wandb run name default ("dummy" is special - we won't log to wandb)
+# CLI arguments
+parser = argparse.ArgumentParser(description="Pretrain base model")
+# Logging
+parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
 # Runtime
-device_type = ""  # cuda|cpu|mps (empty => autodetect good device type default, in order: CUDA > MPS > CPU)
+parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 # Model architecture
-depth = 20  # number of transformer layers
-model_dim = -1  # model dimension (-1 = derive from depth as depth * 64)
-num_heads = -1  # number of attention heads (-1 = derive from model_dim)
-num_kv_heads = -1  # number of kv heads for GQA (-1 = same as num_heads)
-max_seq_len = 2048  # max context length
+parser.add_argument("--depth", type=int, default=20, help="number of transformer layers")
+parser.add_argument("--model-dim", type=int, default=-1, help="model dimension (-1 = derive from depth as depth * 64)")
+parser.add_argument("--num-heads", type=int, default=-1, help="number of attention heads (-1 = derive from model_dim)")
+parser.add_argument("--num-kv-heads", type=int, default=-1, help="number of kv heads for GQA (-1 = same as num_heads)")
+parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 # MoE routing
-expert_sizes = [(64, 256)]  # list of (count, width) tuples
-num_active_experts = 8  # top-k experts per token
-load_balance_loss_weight = 0.08
-router_z_loss_weight = 0.001
-compute_loss_weight = 0.004
-use_bias_balancing = False
-bias_update_speed = 0.001
-# Training horizon. Only one of these 3 will be used, in this order of precedence.
-num_iterations = -1  # explicit number of steps of the optimization (-1 = disable)
-target_flops = -1.0  # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
-target_param_data_ratio = 20  # calculate num_iterations to maintain fixed data:param ratio (Chinchilla=20) (-1 = disable)
+parser.add_argument("--expert-sizes", type=json.loads, default=[(64, 256)], help="JSON list of [count, width] tuples, e.g. '[[64,256]]'")
+parser.add_argument("--num-active-experts", type=int, default=8, help="top-k experts per token")
+parser.add_argument("--load-balance-loss-weight", type=float, default=0.08, help="load balance loss weight")
+parser.add_argument("--router-z-loss-weight", type=float, default=0.001, help="router z-loss weight")
+parser.add_argument("--compute-loss-weight", type=float, default=0.004, help="compute loss weight")
+parser.add_argument("--use-bias-balancing", action="store_true", help="enable bias balancing for expert routing")
+parser.add_argument("--bias-update-speed", type=float, default=0.001, help="bias update speed for bias balancing")
+# Training horizon (only one used, in order of precedence)
+parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
+parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
+parser.add_argument("--target-param-data-ratio", type=float, default=20, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
 # Optimization
-device_batch_size = 32  # per-device batch size (set to not OOM)
-total_batch_size = 524288  # total desired batch size, in #tokens
-embedding_lr = 0.2  # learning rate for the embedding parameters (Adam)
-unembedding_lr = 0.004  # learning rate for the unembedding parameters (Adam)
-weight_decay = 0.0  # weight decay for the embedding/unembedding parameters (Adam)
-matrix_lr = 0.02  # learning rate for the matrix parameters (Muon)
+parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size (reduce if OOM)")
+parser.add_argument("--total-batch-size", type=int, default=524288, help="total batch size in tokens")
+parser.add_argument("--embedding-lr", type=float, default=0.2, help="learning rate for embedding parameters (Adam)")
+parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
+parser.add_argument("--weight-decay", type=float, default=0.0, help="weight decay for embedding/unembedding (Adam)")
+parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
+parser.add_argument("--warmup-ratio", type=float, default=0.0, help="ratio of iterations for LR warmup")
+parser.add_argument("--warmdown-ratio", type=float, default=0.2, help="ratio of iterations for LR warmdown")
+parser.add_argument("--final-lr-frac", type=float, default=0.0, help="final LR as fraction of initial LR")
 # Evaluation
-eval_every = 250  # every how many steps to evaluate the model for val bpb
-eval_tokens = 20 * 524288  # number of tokens to evaluate val loss on
-core_metric_every = (
-    2000  # every how many steps to evaluate the core metric (-1 = disable)
-)
-core_metric_max_per_task = 500  # examples per task in estimating the core metric
-sample_every = 2000  # every how many steps to sample from the model
+parser.add_argument("--eval-every", type=int, default=250, help="evaluate val bpb every N steps (-1 = disable)")
+parser.add_argument("--eval-tokens", type=int, default=20 * 524288, help="number of tokens to evaluate val loss on")
+parser.add_argument("--core-metric-every", type=int, default=2000, help="evaluate CORE metric every N steps (-1 = disable)")
+parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
+parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 # Output
-model_tag = (
-    ""  # optionally override the model tag for the output checkpoint directory name
-)
-save_every = -1  # save checkpoint every N steps (-1 = only at end)
-# now allow CLI to override the settings via the configurator lol
-config_keys = [
-    k
-    for k, v in globals().items()
-    if not k.startswith("_") and isinstance(v, (int, float, bool, str, list))
-]
-exec(
-    open(os.path.join("nanochat", "configurator.py")).read()
-)  # overrides from command line or config file
-user_config = {k: globals()[k] for k in config_keys}  # will be useful for logging
+parser.add_argument("--model-tag", type=str, default="", help="override model tag for checkpoint directory name")
+parser.add_argument("--save-every", type=int, default=-1, help="save checkpoint every N steps (-1 = only at end)")
+parser.add_argument("--resume-from-step", type=int, default=-1, help="resume training from this step (-1 = disable)")
+args = parser.parse_args()
+user_config = vars(args).copy()  # for logging
+# Convert expert_sizes from list of lists to list of tuples (JSON gives lists)
+args.expert_sizes = [tuple(x) for x in args.expert_sizes]
 # -----------------------------------------------------------------------------
 
 # Compute init
-device_type = autodetect_device_type() if device_type == "" else device_type
+device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
-autocast_ctx = (
-    torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16)
-    if device_type == "cuda"
-    else nullcontext()
-)
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
+if device_type == "cuda":
+    gpu_device_name = torch.cuda.get_device_name(0)
+    gpu_peak_flops = get_peak_flops(gpu_device_name)
+    print0(f"GPU: {gpu_device_name} | Peak FLOPS (BF16): {gpu_peak_flops:.2e}")
+else:
+    gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
+print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 
 # wandb logging init
-use_dummy_wandb = run == "dummy" or not master_process
+use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = (
     DummyWandb()
     if use_dummy_wandb
-    else wandb.init(project="nanochat", name=run, config=user_config)
+    else wandb.init(project="nanochat", name=args.run, config=user_config)
 )
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
@@ -121,7 +123,12 @@ vocab_size = tokenizer.get_vocab_size()
 print0(f"Vocab size: {vocab_size:,}")
 
 # Model kwargs - use provided values or derive from depth
+depth = args.depth
 num_layers = depth
+model_dim = args.model_dim
+num_heads = args.num_heads
+num_kv_heads = args.num_kv_heads
+max_seq_len = args.max_seq_len
 if model_dim == -1:
     model_dim = depth * 64  # default aspect ratio 64
 if num_heads == -1:
@@ -134,22 +141,15 @@ print0(f"num_heads: {num_heads}")
 print0(f"num_kv_heads: {num_kv_heads}")
 
 # Optimizer / data / training length related hyperparameters
-# figure out the needed gradient accumulation to reach the desired total batch size
-tokens_per_fwdbwd = (
-    device_batch_size * max_seq_len
-)  # tokens per iteration for a single rank
-world_tokens_per_fwdbwd = (
-    tokens_per_fwdbwd * ddp_world_size
-)  # total tokens per iteration for all ranks
+device_batch_size = args.device_batch_size
+total_batch_size = args.total_batch_size
+tokens_per_fwdbwd = device_batch_size * max_seq_len
+world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size
 assert total_batch_size % world_tokens_per_fwdbwd == 0
 grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
-print0(
-    f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}"
-)
+print0(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
-print0(
-    f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}"
-)
+print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 # -----------------------------------------------------------------------------
 # Initialize the Model
 model_config_kwargs = dict(
@@ -159,13 +159,13 @@ model_config_kwargs = dict(
     n_head=num_heads,
     n_kv_head=num_kv_heads,
     n_embd=model_dim,
-    expert_sizes=expert_sizes,
-    num_active_experts=num_active_experts,
-    load_balance_loss_weight=load_balance_loss_weight,
-    router_z_loss_weight=router_z_loss_weight,
-    compute_loss_weight=compute_loss_weight,
-    use_bias_balancing=use_bias_balancing,
-    bias_update_speed=bias_update_speed,
+    expert_sizes=args.expert_sizes,
+    num_active_experts=args.num_active_experts,
+    load_balance_loss_weight=args.load_balance_loss_weight,
+    router_z_loss_weight=args.router_z_loss_weight,
+    compute_loss_weight=args.compute_loss_weight,
+    use_bias_balancing=args.use_bias_balancing,
+    bias_update_speed=args.bias_update_speed,
 )
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
@@ -173,7 +173,7 @@ with torch.device("meta"):
 model.to_empty(device=device)
 model.init_weights()
 orig_model = model  # original, uncompiled model, for saving raw model state_dict
-model = torch.compile(model, dynamic=False)  # TODO: dynamic True/False think through
+model = torch.compile(model, dynamic=False)
 total_params = sum(p.numel() for p in model.parameters())
 if model_config.use_moe:
     total_expert_width = sum(count * size for count, size in model_config.expert_sizes)
@@ -191,43 +191,39 @@ num_flops_per_token = model.estimate_flops()
 print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 num_params = active_params if model_config.use_moe else total_params
 
-# Calculate number of iterations. Either it is given, or from target flops, or from target data:param ratio (in that order)
+# Calculate number of iterations
+num_iterations = args.num_iterations
+target_flops = args.target_flops
+target_param_data_ratio = args.target_param_data_ratio
 assert num_iterations > 0 or target_param_data_ratio > 0 or target_flops > 0
 if num_iterations > 0:
     print0(f"Using user-provided number of iterations: {num_iterations:,}")
 elif target_flops > 0:
-    # calculate the number of iterations from the target flops
     num_iterations = round(target_flops / (num_flops_per_token * total_batch_size))
     print0(f"Calculated number of iterations from target FLOPs: {num_iterations:,}")
 elif target_param_data_ratio > 0:
-    # calculate the number of iterations from the target param data ratio
     target_tokens = target_param_data_ratio * num_params
     num_iterations = target_tokens // total_batch_size
-    print0(
-        f"Calculated number of iterations from target data:param ratio: {num_iterations:,}"
-    )
+    print0(f"Calculated number of iterations from target data:param ratio: {num_iterations:,}")
 else:
     raise ValueError("No training horizon specified")
 total_tokens = total_batch_size * num_iterations
 print0(f"Total number of training tokens: {total_tokens:,}")
-print0(
-    f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params:.2f}"
-)  # Chinchilla is ~20
+print0(f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params:.2f}")
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
 optimizers = model.setup_optimizers(
-    unembedding_lr=unembedding_lr,
-    embedding_lr=embedding_lr,
-    matrix_lr=matrix_lr,
-    weight_decay=weight_decay,
+    unembedding_lr=args.unembedding_lr,
+    embedding_lr=args.embedding_lr,
+    matrix_lr=args.matrix_lr,
+    weight_decay=args.weight_decay,
 )
 adamw_optimizer, muon_optimizer = optimizers
 
 # Initialize the DataLoaders for train/val
 base_dir = get_base_dir()
-tokens_dir = os.path.join(base_dir, "tokenized_data")
 train_loader = tokenizing_distributed_data_loader(
     device_batch_size, max_seq_len, split="train", device=device
 )
@@ -239,12 +235,9 @@ x, y = next(train_loader)  # kick off load of the very first batch of data
 # -----------------------------------------------------------------------------
 # Set up hyperparameter schedulers
 
-# Learning rate scheduler
-# TODO: experiment with a short warmup for the AdamW params (expecting slight improvement)
-warmup_ratio = 0.0  # ratio of iterations for LR warmup
-warmdown_ratio = 0.2  # ratio of iterations for LR warmdown
-final_lr_frac = 0.0  # final LR is this fraction of the initial LR
-
+warmup_ratio = args.warmup_ratio
+warmdown_ratio = args.warmdown_ratio
+final_lr_frac = args.final_lr_frac
 
 def get_lr_multiplier(it):
     warmup_iters = round(warmup_ratio * num_iterations)
@@ -257,13 +250,11 @@ def get_lr_multiplier(it):
         progress = (num_iterations - it) / warmdown_iters
         return progress * 1.0 + (1 - progress) * final_lr_frac
 
-
 # Momentum scheduler for Muon optimizer
 def get_muon_momentum(it):
     frac = min(it / 300, 1)
     momentum = (1 - frac) * 0.85 + frac * 0.95
     return momentum
-
 
 # -----------------------------------------------------------------------------
 # Training loop
@@ -271,6 +262,14 @@ min_val_bpb = float("inf")
 smooth_train_loss = 0  # EMA of training loss
 ema_beta = 0.9  # EMA decay factor
 total_training_time = 0  # total wall-clock time of training
+save_every = args.save_every
+eval_every = args.eval_every
+eval_tokens = args.eval_tokens
+core_metric_every = args.core_metric_every
+core_metric_max_per_task = args.core_metric_max_per_task
+sample_every = args.sample_every
+model_tag = args.model_tag
+
 # note that we run +1 steps only so that we can eval and save at the end
 for step in range(num_iterations + 1):
     last_step = step == num_iterations
@@ -281,8 +280,7 @@ for step in range(num_iterations + 1):
         model.eval()
         val_loader = build_val_loader()
         eval_steps = eval_tokens // (device_batch_size * max_seq_len * ddp_world_size)
-        with autocast_ctx:
-            val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
+        val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
@@ -297,16 +295,14 @@ for step in range(num_iterations + 1):
         model.train()
 
     # once in a while: estimate the CORE metric (all ranks participate)
-    # use the original uncompiled model because the inputs keep changing shape
     results = {}
     if core_metric_every > 0 and (
         last_step or (step > 0 and step % core_metric_every == 0)
     ):
         model.eval()
-        with autocast_ctx:
-            results = evaluate_model(
-                orig_model, tokenizer, device, max_per_task=core_metric_max_per_task
-            )
+        results = evaluate_model(
+            orig_model, tokenizer, device, max_per_task=core_metric_max_per_task
+        )
         print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
         wandb_run.log(
             {
@@ -319,7 +315,6 @@ for step in range(num_iterations + 1):
         model.train()
 
     # once in a while: sample from the model (only on master process)
-    # use the original uncompiled model because the inputs keep changing shape
     if master_process and (last_step or (step > 0 and step % sample_every == 0)):
         model.eval()
         prompts = [
@@ -331,13 +326,12 @@ for step in range(num_iterations + 1):
             "My favorite color is",
             "If 5*x + 3 = 13, then x is",
         ]
-        engine = Engine(orig_model, tokenizer)  # use orig_model to avoid recompilation
+        engine = Engine(orig_model, tokenizer)
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
-            with autocast_ctx:
-                sample, _ = engine.generate_batch(
-                    tokens, num_samples=1, max_tokens=16, temperature=0
-                )
+            sample, _ = engine.generate_batch(
+                tokens, num_samples=1, max_tokens=16, temperature=0
+            )
             print0(tokenizer.decode(sample[0]))
         model.train()
 
@@ -350,14 +344,12 @@ for step in range(num_iterations + 1):
             checkpoint_dir,
             step,
             orig_model.state_dict(),
-            [
-                opt.state_dict() for opt in optimizers
-            ],  # TODO: make sure saving across ranks is done correctly
+            [opt.state_dict() for opt in optimizers],
             {
                 "step": step,
-                "val_bpb": val_bpb,  # loss at last step
+                "val_bpb": val_bpb,
                 "model_config": model_config_kwargs,
-                "user_config": user_config,  # inputs to the training script
+                "user_config": user_config,
                 "device_batch_size": device_batch_size,
                 "max_seq_len": max_seq_len,
             },
@@ -368,20 +360,14 @@ for step in range(num_iterations + 1):
 
     # -------------------------------------------------------------------------
     # single training step
-    # evaluate the gradient
     synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
-        with autocast_ctx:
-            logits, loss, combined_aux_loss = model(x, y)
-        train_loss = loss.detach()  # for logging
-        loss = (
-            loss / grad_accum_steps
-        )  # each .backward() is a grad sum => normalize loss here
+        logits, loss, combined_aux_loss = model(x, y)
+        train_loss = loss.detach()
+        loss = loss / grad_accum_steps
         loss.backward()
-        x, y = next(
-            train_loader
-        )  # prefetch the next batch while the GPU is busy with forward/backward
+        x, y = next(train_loader)
     # step the optimizers
     lrm = get_lr_multiplier(step)
     for opt in optimizers:
@@ -399,19 +385,13 @@ for step in range(num_iterations + 1):
     # -------------------------------------------------------------------------
 
     # logging
-    smooth_train_loss = (
-        ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss.item()
-    )  # EMA the training loss
-    debiased_smooth_loss = smooth_train_loss / (
-        1 - ema_beta ** (step + 1)
-    )  # debias the EMA
+    smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss.item()
+    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta ** (step + 1))
     pct_done = 100 * step / num_iterations
     tok_per_sec = int(world_tokens_per_fwdbwd / dt)
     flops_per_sec = num_flops_per_token * total_batch_size / dt
-    promised_flops_per_sec_h100 = (
-        989e12 * ddp_world_size
-    )  # bfloat16 H100 SXM and without 2:4 sparsity
-    mfu = 100 * flops_per_sec / promised_flops_per_sec_h100  # in %
+    promised_flops_per_sec = gpu_peak_flops * ddp_world_size
+    mfu = 100 * flops_per_sec / promised_flops_per_sec  # in %
     if step > 10:
         total_training_time += dt  # only count the time after the first 10 steps
     print0(
@@ -431,13 +411,9 @@ for step in range(num_iterations + 1):
         if combined_aux_loss is not None:
             log_dict["train/ce_loss"] = combined_aux_loss["ce_loss"].item()
             log_dict["train/router_z_loss"] = combined_aux_loss["router_z_loss"].item()
-            log_dict["train/load_balance_loss"] = combined_aux_loss[
-                "load_balance_loss"
-            ].item()
+            log_dict["train/load_balance_loss"] = combined_aux_loss["load_balance_loss"].item()
             if "compute_loss" in combined_aux_loss:
-                log_dict["train/compute_loss"] = combined_aux_loss[
-                    "compute_loss"
-                ].item()
+                log_dict["train/compute_loss"] = combined_aux_loss["compute_loss"].item()
             if "router_logits_abs_max" in combined_aux_loss:
                 log_dict["train/router_logits_abs_max"] = combined_aux_loss["router_logits_abs_max"].item()
                 log_dict["train/router_logits_abs_mean"] = combined_aux_loss["router_logits_abs_mean"].item()
@@ -468,8 +444,8 @@ from nanochat.report import get_report
 get_report().log(
     section="Base model training",
     data=[
-        user_config,  # CLI args
-        {  # stats about the training setup
+        user_config,
+        {
             "Number of parameters": num_params,
             "Number of FLOPs per token": f"{num_flops_per_token:e}",
             "Calculated number of iterations": num_iterations,
@@ -480,7 +456,7 @@ get_report().log(
             "warmdown_ratio": warmdown_ratio,
             "final_lr_frac": final_lr_frac,
         },
-        {  # stats about training outcomes
+        {
             "Minimum validation bpb": min_val_bpb,
             "Final validation bpb": val_bpb,
             "CORE metric estimate": results.get("core_metric", None),
@@ -493,5 +469,5 @@ get_report().log(
 )
 
 # cleanup
-wandb_run.finish()  # wandb run finish
+wandb_run.finish()
 compute_cleanup()
