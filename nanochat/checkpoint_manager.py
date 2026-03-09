@@ -116,6 +116,10 @@ def build_model(checkpoint_dir, step, device, phase):
 
 
 def find_largest_model(checkpoints_dir):
+    # Check if the directory exists to prevent FileNotFoundError on Windows/Linux
+    if not os.path.exists(checkpoints_dir):
+        raise FileNotFoundError(f"Directory not found: {checkpoints_dir}. You may need to train a model first.")
+
     # attempt to guess the model tag: take the biggest model available
     model_tags = [f for f in os.listdir(checkpoints_dir) if os.path.isdir(os.path.join(checkpoints_dir, f))]
     if not model_tags:
