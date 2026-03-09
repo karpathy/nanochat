@@ -29,8 +29,6 @@ import random
 import zipfile
 import tempfile
 import argparse
-from contextlib import nullcontext
-
 import torch
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
@@ -73,7 +71,7 @@ def load_hf_model(hf_path: str, device):
     model = AutoModelForCausalLM.from_pretrained(hf_path)
     model.to(device)
     model.eval()
-    max_seq_len = 1024 if "openai-community/gpt2" in hf_path else None
+    max_seq_len = 1024 if "gpt2" in hf_path else None
     model = ModelWrapper(model, max_seq_len=max_seq_len)
     tokenizer = HuggingFaceTokenizer.from_pretrained(hf_path)
     return model, tokenizer
@@ -180,7 +178,7 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
 def main():
     parser = argparse.ArgumentParser(description="Base model evaluation")
     parser.add_argument('--eval', type=str, default='core,bpb,sample', help='Comma-separated evaluations to run: core,bpb,sample (default: all)')
-    parser.add_argument('--hf-path', type=str, default=None, help='HuggingFace model path (e.g. openai-community/gpt2)')
+    parser.add_argument('--hf-path', type=str, default=None, help='HuggingFace model path (e.g. openai-community/gpt2-xl)')
     parser.add_argument('--model-tag', type=str, default=None, help='nanochat model tag to identify the checkpoint directory')
     parser.add_argument('--step', type=int, default=None, help='Model step to load (default = last)')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per CORE task (-1 = all)')
@@ -199,8 +197,6 @@ def main():
     # Distributed / precision setup
     device_type = autodetect_device_type() if args.device_type == '' else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
-    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
-
     # Load model and tokenizer
     is_hf_model = args.hf_path is not None
     if is_hf_model:
@@ -225,48 +221,6 @@ def main():
     samples = []
     unconditioned_samples = []
 
-    # --- CORE evaluation ---
-    if 'core' in eval_modes:
-        print0("\n" + "="*80)
-        print0("CORE Evaluation")
-        print0("="*80)
-        with autocast_ctx:
-            core_results = evaluate_core(model, tokenizer, device, max_per_task=args.max_per_task)
-
-        # Write CSV output
-        if ddp_rank == 0:
-            base_dir = get_base_dir()
-            output_csv_path = os.path.join(base_dir, "base_eval", f"{model_slug}.csv")
-            os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
-            with open(output_csv_path, 'w', encoding='utf-8', newline='') as f:
-                f.write(f"{'Task':<35}, {'Accuracy':<10}, {'Centered':<10}\n")
-                for label in core_results["results"]:
-                    acc = core_results["results"][label]
-                    centered = core_results["centered_results"][label]
-                    f.write(f"{label:<35}, {acc:<10.6f}, {centered:<10.6f}\n")
-                f.write(f"{'CORE':<35}, {'':<10}, {core_results['core_metric']:<10.6f}\n")
-            print0(f"\nResults written to: {output_csv_path}")
-            print0(f"CORE metric: {core_results['core_metric']:.4f}")
-
-    # --- BPB evaluation ---
-    if 'bpb' in eval_modes:
-        print0("\n" + "="*80)
-        print0("BPB Evaluation")
-        print0("="*80)
-        tokens_per_step = args.device_batch_size * sequence_len * ddp_world_size
-        if args.split_tokens % tokens_per_step != 0:
-            # Adjust to nearest multiple
-            args.split_tokens = (args.split_tokens // tokens_per_step) * tokens_per_step
-            print0(f"Adjusted split_tokens to {args.split_tokens} (must be divisible by {tokens_per_step})")
-        steps = args.split_tokens // tokens_per_step
-
-        for split_name in ["train", "val"]:
-            loader = tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, sequence_len, split_name, device=device)
-            with autocast_ctx:
-                bpb = evaluate_bpb(model, loader, steps, token_bytes)
-            bpb_results[split_name] = bpb
-            print0(f"{split_name} bpb: {bpb:.6f}")
-
     # --- Sampling ---
     if 'sample' in eval_modes and not is_hf_model:
         print0("\n" + "="*80)
@@ -286,8 +240,7 @@ def main():
             print0("\nConditioned samples:")
             for prompt in prompts:
                 tokens = tokenizer(prompt, prepend="<|bos|>")
-                with autocast_ctx:
-                    sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
+                sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
                 sample_str = tokenizer.decode(sample[0])
                 print0("-" * 80)
                 print0(sample_str)
@@ -295,8 +248,7 @@ def main():
 
             print0("\nUnconditioned samples:")
             tokens = tokenizer("", prepend="<|bos|>")
-            with autocast_ctx:
-                uncond, _ = engine.generate_batch(tokens, num_samples=8, max_tokens=128, temperature=1.0)
+            uncond, _ = engine.generate_batch(tokens, num_samples=8, max_tokens=128, temperature=1.0)
             for sample in uncond:
                 sample_str = tokenizer.decode(sample)
                 print0("-" * 80)
@@ -304,6 +256,46 @@ def main():
                 unconditioned_samples.append(sample_str)
     elif 'sample' in eval_modes and is_hf_model:
         print0("\nSkipping sampling for HuggingFace models (not supported)")
+
+    # --- BPB evaluation ---
+    if 'bpb' in eval_modes:
+        print0("\n" + "="*80)
+        print0("BPB Evaluation")
+        print0("="*80)
+        tokens_per_step = args.device_batch_size * sequence_len * ddp_world_size
+        if args.split_tokens % tokens_per_step != 0:
+            # Adjust to nearest multiple
+            args.split_tokens = (args.split_tokens // tokens_per_step) * tokens_per_step
+            print0(f"Adjusted split_tokens to {args.split_tokens} (must be divisible by {tokens_per_step})")
+        steps = args.split_tokens // tokens_per_step
+
+        for split_name in ["train", "val"]:
+            loader = tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, sequence_len, split_name, device=device)
+            bpb = evaluate_bpb(model, loader, steps, token_bytes)
+            bpb_results[split_name] = bpb
+            print0(f"{split_name} bpb: {bpb:.6f}")
+
+    # --- CORE evaluation ---
+    if 'core' in eval_modes:
+        print0("\n" + "="*80)
+        print0("CORE Evaluation")
+        print0("="*80)
+        core_results = evaluate_core(model, tokenizer, device, max_per_task=args.max_per_task)
+
+        # Write CSV output
+        if ddp_rank == 0:
+            base_dir = get_base_dir()
+            output_csv_path = os.path.join(base_dir, "base_eval", f"{model_slug}.csv")
+            os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
+            with open(output_csv_path, 'w', encoding='utf-8', newline='') as f:
+                f.write(f"{'Task':<35}, {'Accuracy':<10}, {'Centered':<10}\n")
+                for label in core_results["results"]:
+                    acc = core_results["results"][label]
+                    centered = core_results["centered_results"][label]
+                    f.write(f"{label:<35}, {acc:<10.6f}, {centered:<10.6f}\n")
+                f.write(f"{'CORE':<35}, {'':<10}, {core_results['core_metric']:<10.6f}\n")
+            print0(f"\nResults written to: {output_csv_path}")
+            print0(f"CORE metric: {core_results['core_metric']:.4f}")
 
     # --- Log to report ---
     from nanochat.report import get_report

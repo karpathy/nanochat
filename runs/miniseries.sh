@@ -28,7 +28,7 @@ fi
 # Series name: from arg, env var, or default to today's date (e.g., jan11)
 SERIES_NAME="${1:-${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}}"
 # Depths to train (the "miniseries")
-DEPTHS=(10 11 12 13 14 15 16 17 18 19 20)
+DEPTHS=(12 14 16 18 20 22 24 26)
 # Hardware
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 # Logging
@@ -57,8 +57,15 @@ for d in "${DEPTHS[@]}"; do
     TAG="${SERIES_NAME}_miniseries_d${d}"
     START_TIME=$(date +%s)
 
-    # Train the model with natural horizon (target_param_data_ratio default)
-    # No --target-flops, let it use the default ratio from base_train
+    # Reduce --device-batch-size to avoid OOM at larger depths
+    if [ $d -ge 28 ]; then
+        DEVICE_BATCH_SIZE_ARG="--device-batch-size=8"
+    elif [ $d -ge 20 ]; then
+        DEVICE_BATCH_SIZE_ARG="--device-batch-size=16"
+    else
+        DEVICE_BATCH_SIZE_ARG="--device-batch-size=32"
+    fi
+
     torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- \
         --depth=$d \
         --run="${WANDB_RUN}_d${d}" \
@@ -67,6 +74,7 @@ for d in "${DEPTHS[@]}"; do
         --core-metric-max-per-task=-1 \
         --sample-every=-1 \
         --save-every=-1 \
+        $DEVICE_BATCH_SIZE_ARG \
         2>&1 | tee "$RESULTS_DIR/${TAG}_train.log"
 
     END_TIME=$(date +%s)

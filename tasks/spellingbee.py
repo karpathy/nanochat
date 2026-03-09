@@ -20,7 +20,7 @@ LLM because it has to learn how every token (a little semantic chunk/atom)
 maps to the sequence of individual characters that make it up. Larger models
 learn this eventually on their own, but if we want this capability to exist
 in smaller models, we have to actively encourage it by over-representing it
-in the training data. Midtraining is a good place to do this.
+in the training data. SFT is a good place to do this.
 
 To preview a few example conversations, run:
 python -m tasks.spellingbee
