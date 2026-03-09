@@ -8,7 +8,9 @@ Notable features:
 - norm after token embedding
 - no learnable params in rmsnorm
 - no bias in linear layers
-- Multi-Query Attention (MQA) support for more efficient inference
+- Group-Query Attention (GQA) support for more efficient inference
+- Flash Attention 3 integration with SDPA fallback
+- Sliding window attention
 """
 
 import math
@@ -25,9 +27,10 @@ from megablocks import ops
 from megablocks.layers.relu_squared import relu_squared
 
 from nanochat.adamw import DistAdamW
-from nanochat.common import get_dist_info, print0
+from nanochat.common import get_dist_info, print0, COMPUTE_DTYPE
 from nanochat.muon import DistMuon, Muon
 from nanochat.topology_var import topology_var
+from nanochat.flash_attention import flash_attn
 
 # Keys in aux_loss that should be aggregated with max across layers, not mean
 _MAX_AGGREGATE_KEYS = frozenset({"router_logits_abs_max", "expert_bias_abs_max"})
@@ -39,8 +42,11 @@ class GPTConfig:
     vocab_size: int = 50304
     n_layer: int = 12
     n_head: int = 6  # number of query heads
-    n_kv_head: int = 6  # number of key/value heads (MQA)
+    n_kv_head: int = 6  # number of key/value heads (GQA)
     n_embd: int = 768
+    # Sliding window attention pattern string, tiled across layers. Final layer always L.
+    # Characters: L=long (full context), S=short (half context)
+    window_pattern: str = "SSSL"
     use_moe: bool = True
     expert_sizes: list = field(
         default_factory=lambda: [(64, 256)]
@@ -86,70 +92,41 @@ class CausalSelfAttention(nn.Module):
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
 
-    def forward(self, x, cos_sin, kv_cache):
+    def forward(self, x, cos_sin, window_size, kv_cache):
         B, T, C = x.size()
 
         # Project the input to get queries, keys, and values
+        # Shape: (B, T, H, D) — FA3's native layout
         q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
         k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
 
-        # Apply Rotary Embeddings to queries and keys to get relative positional encoding
+        # Apply Rotary Embeddings to queries and keys
         cos, sin = cos_sin
-        q, k = (
-            apply_rotary_emb(q, cos, sin),
-            apply_rotary_emb(k, cos, sin),
-        )  # QK rotary embedding
+        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k)  # QK norm
-        q, k, v = (
-            q.transpose(1, 2),
-            k.transpose(1, 2),
-            v.transpose(1, 2),
-        )  # make head be batch dim, i.e. (B, T, H, D) -> (B, H, T, D)
 
-        # Apply KV cache: insert current k,v into cache, get the full view so far
-        if kv_cache is not None:
-            k, v = kv_cache.insert_kv(self.layer_idx, k, v)
-        Tq = q.size(2)  # number of queries in this forward pass
-        Tk = k.size(
-            2
-        )  # number of keys/values in total (in the cache + current forward pass)
-
-        # Attention: queries attend to keys/values autoregressively. A few cases to handle:
-        enable_gqa = (
-            self.n_head != self.n_kv_head
-        )  # Group Query Attention (GQA): duplicate key/value heads to match query heads if desired
-        if kv_cache is None or Tq == Tk:
-            # During training (no KV cache), attend as usual with causal attention
-            # And even if there is KV cache, we can still use this simple version when Tq == Tk
-            y = F.scaled_dot_product_attention(
-                q, k, v, is_causal=True, enable_gqa=enable_gqa
-            )
-        elif Tq == 1:
-            # During inference but with a single query in this forward pass:
-            # The query has to attend to all the keys/values in the cache
-            y = F.scaled_dot_product_attention(
-                q, k, v, is_causal=False, enable_gqa=enable_gqa
-            )
+        # Flash Attention (FA3 on Hopper+, PyTorch SDPA fallback elsewhere)
+        # window_size is (left, right) tuple: (N, 0) for sliding window, (-1, 0) for full context
+        if kv_cache is None:
+            # Training: causal attention with optional sliding window
+            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
         else:
-            # During inference AND we have a chunk of queries in this forward pass:
-            # First, each query attends to all the cached keys/values (i.e. full prefix)
-            attn_mask = torch.zeros(
-                (Tq, Tk), dtype=torch.bool, device=q.device
-            )  # True = keep, False = mask
-            prefix_len = Tk - Tq
-            if prefix_len > 0:  # can't be negative but could be zero
-                attn_mask[:, :prefix_len] = True
-            # Then, causal attention within this chunk
-            attn_mask[:, prefix_len:] = torch.tril(
-                torch.ones((Tq, Tq), dtype=torch.bool, device=q.device)
+            # Inference: use flash_attn_with_kvcache which handles cache management
+            k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
+            y = flash_attn.flash_attn_with_kvcache(
+                q, k_cache, v_cache,
+                k=k, v=v,
+                cache_seqlens=kv_cache.cache_seqlens,
+                causal=True,
+                window_size=window_size,
             )
-            y = F.scaled_dot_product_attention(
-                q, k, v, attn_mask=attn_mask, enable_gqa=enable_gqa
-            )
+            # Advance position after last layer processes
+            if self.layer_idx == kv_cache.n_layers - 1:
+                kv_cache.advance(T)
 
-        # Re-assemble the heads side by side and project back to residual stream
-        y = y.transpose(1, 2).contiguous().view(B, T, -1)
+        # Re-assemble the heads and project back to residual stream
+        y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
 
@@ -540,8 +517,8 @@ class Block(nn.Module):
         else:
             self.mlp = MLP(config)
 
-    def forward(self, x, cos_sin, kv_cache):
-        x = x + self.attn(norm(x), cos_sin, kv_cache)
+    def forward(self, x, cos_sin, window_size, kv_cache):
+        x = x + self.attn(norm(x), cos_sin, window_size, kv_cache)
         mlp_x, aux_loss, f_i = self.mlp(norm(x))
         x = x + mlp_x
         return x, aux_loss, f_i
@@ -551,6 +528,9 @@ class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        # Compute per-layer window sizes for sliding window attention
+        # window_size is (left, right) tuple: (-1, 0) for full context, (N, 0) for sliding window
+        self.window_sizes = self._compute_window_sizes(config)
         self.transformer = nn.ModuleDict(
             {
                 "wte": nn.Embedding(config.vocab_size, config.n_embd),
@@ -563,16 +543,36 @@ class GPT(nn.Module):
         # To support meta device initialization, we init the rotary embeddings here, but it's fake
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them, but assert fail if we ever reach that amount.
-        # In the future we can dynamically grow the cache, for now it's fine.
         self.rotary_seq_len = (
             config.sequence_len * 10
-        )  # 10X over-compute should be enough, TODO make nicer?
+        )  # 10X over-compute should be enough
         head_dim = config.n_embd // config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer(
             "cos", cos, persistent=False
         )  # persistent=False means it's not saved to the checkpoint
         self.register_buffer("sin", sin, persistent=False)
+
+    @staticmethod
+    def _compute_window_sizes(config):
+        """Compute per-layer window sizes from the window_pattern string.
+        L = full context (-1, 0), S = half context (seq_len // 2, 0).
+        Pattern is tiled across layers, but the last layer always gets L (full context).
+        """
+        pattern = config.window_pattern.upper()
+        half_ctx = config.sequence_len // 2
+        window_map = {
+            'L': (-1, 0),    # full context
+            'S': (half_ctx, 0),  # half context sliding window
+        }
+        sizes = []
+        for i in range(config.n_layer):
+            if i == config.n_layer - 1:
+                sizes.append((-1, 0))  # last layer always full context
+            else:
+                char = pattern[i % len(pattern)]
+                sizes.append(window_map.get(char, (-1, 0)))
+        return sizes
 
     def init_weights(self):
         self.apply(self._init_weights)
@@ -587,9 +587,9 @@ class GPT(nn.Module):
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
-        # Cast the embeddings from fp32 to bf16: optim can tolerate it and it saves memory: both in the model and the activations
+        # Cast the embeddings from fp32 to compute dtype: optim can tolerate it and it saves memory
         if self.transformer.wte.weight.device.type == "cuda":
-            self.transformer.wte.to(dtype=torch.bfloat16)
+            self.transformer.wte.to(dtype=COMPUTE_DTYPE)
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -616,7 +616,7 @@ class GPT(nn.Module):
         # calculate the rotation frequencies at each (time, channel) pair
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16()  # keep them in bfloat16
+        cos, sin = cos.to(COMPUTE_DTYPE), sin.to(COMPUTE_DTYPE)
         cos, sin = (
             cos[None, :, None, :],
             sin[None, :, None, :],
@@ -705,7 +705,7 @@ class GPT(nn.Module):
         assert idx.device == self.cos.device, (
             f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
         )
-        assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
+        assert self.cos.dtype == COMPUTE_DTYPE, f"Rotary embeddings must be in {COMPUTE_DTYPE}"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = (
@@ -723,8 +723,9 @@ class GPT(nn.Module):
         expert_usage_count = 0
         expert_usage_per_layer = []
         expert_bias_per_layer = []
-        for block in self.transformer.h:
-            x, aux_loss, f_i = block(x, cos_sin, kv_cache)
+        for layer_idx, block in enumerate(self.transformer.h):
+            window_size = self.window_sizes[layer_idx]
+            x, aux_loss, f_i = block(x, cos_sin, window_size, kv_cache)
 
             if f_i is not None:
                 if expert_usage_sum is None:

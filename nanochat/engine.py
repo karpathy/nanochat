@@ -56,72 +56,70 @@ def use_calculator(expr):
 class KVCache:
     """
     Works hand-in-hand with the GPT model to maintain the KV cache.
-    Note that the .pos advances automatically after the last layer of the Transformer inserts.
+
+    Supports the flash_attn API: get_layer_cache returns (k_cache, v_cache) in (B, T, H, D) format,
+    and flash_attn_with_kvcache inserts new k/v in-place. Position is tracked via cache_seqlens.
     """
 
     def __init__(self, batch_size, num_heads, seq_len, head_dim, num_layers):
-        # Each of K/V is of shape (B, H, T, D) and we have one per layer of the Transformer.
-        self.kv_shape = (num_layers, 2, batch_size, num_heads, seq_len, head_dim)
-        self.kv_cache = None
-        self.pos = 0 # current position in time in the cache
+        # KV cache shape: (num_layers, 2, batch_size, seq_len, num_heads, head_dim) — (B, T, H, D) per layer
+        self.n_layers = num_layers
+        self.batch_size = batch_size
+        self.num_heads = num_heads
+        self.seq_len = seq_len
+        self.head_dim = head_dim
+        self.kv_cache = None  # lazy init
+        self.pos = 0
+
+    def _ensure_cache(self, dtype, device):
+        if self.kv_cache is None:
+            # shape: (num_layers, 2, batch_size, seq_len, num_heads, head_dim)
+            self.kv_cache = torch.zeros(
+                self.n_layers, 2, self.batch_size, self.seq_len, self.num_heads, self.head_dim,
+                dtype=dtype, device=device
+            )
+            self.cache_seqlens = torch.zeros(self.batch_size, dtype=torch.int32, device=device)
 
     def reset(self):
         self.pos = 0
+        if self.kv_cache is not None:
+            self.cache_seqlens.zero_()
 
     def get_pos(self):
         return self.pos
 
+    def init_cache(self, dtype, device):
+        """Eagerly allocate the cache. Must be called before the first forward pass."""
+        self._ensure_cache(dtype, device)
+
+    def get_layer_cache(self, layer_idx):
+        """Return (k_cache, v_cache) views of shape (B, T_max, H, D) for flash_attn_with_kvcache."""
+        assert self.kv_cache is not None, "KV cache not initialized. Call init_cache() or prefill() first."
+        return self.kv_cache[layer_idx, 0], self.kv_cache[layer_idx, 1]
+
+    def advance(self, num_tokens):
+        """Advance the cache position after all layers have processed."""
+        self.pos += num_tokens
+        self.cache_seqlens[:] = self.pos
+
     def prefill(self, other):
         """
         Prefill given another KV cache. Optionally expand along batch dim.
-        This is used when we do batch 1 prefill and then want to generate
-        multiple samples in parallel from there.
         """
-        # 1) validate the shapes
         assert self.kv_cache is None, "Cannot prefill a non-empty KV cache"
         assert other.kv_cache is not None, "Cannot prefill with a None KV cache"
-        for ix, (dim1, dim2) in enumerate(zip(self.kv_shape, other.kv_shape)):
-            if ix in [0, 1, 3, 5]:
-                # num_layers, batch_size, num_heads, head_dim must match
-                assert dim1 == dim2, f"Batch dim mismatch: {dim1} != {dim2}"
-            elif ix == 2:
-                # batch_size can be expanded
-                assert dim1 == dim2 or dim2 == 1, f"Batch dim mismatch: {dim1} != {dim2}"
-            elif ix == 4:
-                # seq_len: self must be longer than other
-                assert dim1 >= dim2, f"Seq len mismatch: {dim1} < {dim2}"
-        # 2) initialize the cache
-        dtype, device = other.kv_cache.dtype, other.kv_cache.device
-        self.kv_cache = torch.empty(self.kv_shape, dtype=dtype, device=device)
-        # 3) copy the data over
-        self.kv_cache[:, :, :, :, :other.pos, :] = other.kv_cache
-        # 4) update the pos
-        self.pos = other.pos
+        assert self.n_layers == other.n_layers
+        assert self.num_heads == other.num_heads
+        assert self.head_dim == other.head_dim
+        assert self.seq_len >= other.seq_len
+        assert self.batch_size == other.batch_size or other.batch_size == 1
 
-    def insert_kv(self, layer_idx, k, v):
-        # Lazy initialize the cache here because we need to know the dtype/device
-        if self.kv_cache is None:
-            self.kv_cache = torch.empty(self.kv_shape, dtype=k.dtype, device=k.device)
-        # Insert new keys/values to the cache and return the full cache so far
-        B, H, T_add, D = k.size()
-        t0, t1 = self.pos, self.pos + T_add
-        # Dynamically grow the cache if needed
-        if t1 > self.kv_cache.size(4):
-            t_needed = t1 + 1024 # as much as we need plus buffer of 1024
-            t_needed = (t_needed + 1023) & ~1023 # then round up to the nearest multiple of 1024
-            current_shape = list(self.kv_cache.shape)
-            current_shape[4] = t_needed
-            self.kv_cache.resize_(current_shape)
-        # Insert k, v into the cache
-        self.kv_cache[layer_idx, 0, :, :, t0:t1] = k
-        self.kv_cache[layer_idx, 1, :, :, t0:t1] = v
-        # Return the full cached keys/values up to current position (as a view)
-        key_view = self.kv_cache[layer_idx, 0, :, :, :t1]
-        value_view = self.kv_cache[layer_idx, 1, :, :, :t1]
-        # Increment pos after the last layer of the Transformer processes
-        if layer_idx == self.kv_cache.size(0) - 1:
-            self.pos = t1
-        return key_view, value_view
+        dtype, device = other.kv_cache.dtype, other.kv_cache.device
+        self._ensure_cache(dtype, device)
+        # Copy data: (num_layers, 2, B, T, H, D)
+        self.kv_cache[:, :, :, :other.pos, :, :] = other.kv_cache[:, :, :, :other.pos, :, :]
+        self.pos = other.pos
+        self.cache_seqlens[:] = self.pos
 
 
 # -----------------------------------------------------------------------------
@@ -185,6 +183,8 @@ class Engine:
             seq_len=len(tokens),
             **kv_model_kwargs,
         )
+        from nanochat.common import COMPUTE_DTYPE
+        kv_cache_prefill.init_cache(COMPUTE_DTYPE, device)
         ids = torch.tensor([tokens], dtype=torch.long, device=device)
         logits = self.model.forward(ids, kv_cache=kv_cache_prefill)
         logits = logits[:, -1, :]

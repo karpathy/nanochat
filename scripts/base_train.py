@@ -36,6 +36,7 @@ from nanochat.common import (
 )
 from nanochat.dataloader import tokenizing_distributed_data_loader
 from nanochat.engine import Engine
+from nanochat.flash_attention import USE_FA3, HAS_FA3
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.tokenizer import get_token_bytes, get_tokenizer
@@ -56,6 +57,7 @@ parser.add_argument("--model-dim", type=int, default=-1, help="model dimension (
 parser.add_argument("--num-heads", type=int, default=-1, help="number of attention heads (-1 = derive from model_dim)")
 parser.add_argument("--num-kv-heads", type=int, default=-1, help="number of kv heads for GQA (-1 = same as num_heads)")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
+parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context")
 # MoE routing
 parser.add_argument("--expert-sizes", type=json.loads, default=[(64, 256)], help="JSON list of [count, width] tuples, e.g. '[[64,256]]'")
 parser.add_argument("--num-active-experts", type=int, default=8, help="top-k experts per token")
@@ -107,6 +109,10 @@ if device_type == "cuda":
 else:
     gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
 print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
+if USE_FA3:
+    print0("Using Flash Attention 3 (Hopper GPU detected)")
+else:
+    print0("Using PyTorch SDPA fallback (FA3 not available)")
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
@@ -159,6 +165,7 @@ model_config_kwargs = dict(
     n_head=num_heads,
     n_kv_head=num_kv_heads,
     n_embd=model_dim,
+    window_pattern=args.window_pattern,
     expert_sizes=args.expert_sizes,
     num_active_experts=args.num_active_experts,
     load_balance_loss_weight=args.load_balance_loss_weight,
