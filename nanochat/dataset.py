@@ -10,6 +10,7 @@ For details of how the dataset was prepared, see `repackage_data_reference.py`.
 import os
 import argparse
 import time
+import tempfile
 import requests
 import pyarrow.parquet as pq
 from multiprocessing import Pool
@@ -101,21 +102,23 @@ def download_single_file(index):
         try:
             response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
-            # Write to temporary file first
-            temp_path = filepath + f".tmp"
-            with open(temp_path, 'wb') as f:
+            # Write to a unique temporary file to avoid races between concurrent workers
+            with tempfile.NamedTemporaryFile(
+                dir=os.path.dirname(filepath), delete=False, suffix=".tmp"
+            ) as tmp_f:
+                temp_path = tmp_f.name
                 for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
                     if chunk:
-                        f.write(chunk)
-            # Move temp file to final location
-            os.rename(temp_path, filepath)
+                        tmp_f.write(chunk)
+            # Atomically move temp file to final location
+            os.replace(temp_path, filepath)
             print(f"Successfully downloaded {filename}")
             return True
 
         except (requests.RequestException, IOError) as e:
             print(f"Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
             # Clean up any partial files
-            for path in [filepath + f".tmp", filepath]:
+            for path in [temp_path if 'temp_path' in dir() else filepath + ".tmp", filepath]:
                 if os.path.exists(path):
                     try:
                         os.remove(path)
