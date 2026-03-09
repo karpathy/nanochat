@@ -8,6 +8,22 @@ import logging
 import torch
 import torch.distributed as dist
 
+# The dtype used for compute (matmuls, activations). Master weights stay fp32 for optimizer precision.
+# Linear layers cast their weights to this dtype in forward, replacing torch.amp.autocast.
+# Override with NANOCHAT_DTYPE env var: "bfloat16", "float16", "float32"
+_DTYPE_MAP = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
+def _detect_compute_dtype():
+    env = os.environ.get("NANOCHAT_DTYPE")
+    if env is not None:
+        return _DTYPE_MAP[env], f"set via NANOCHAT_DTYPE={env}"
+    if torch.cuda.is_available():
+        capability = torch.cuda.get_device_capability()
+        if capability >= (8, 0):
+            return torch.bfloat16, f"auto-detected: CUDA SM {capability[0]}{capability[1]} (bf16 supported)"
+        return torch.float32, f"auto-detected: CUDA SM {capability[0]}{capability[1]} (pre-Ampere, bf16 not supported, using fp32)"
+    return torch.float32, "auto-detected: no CUDA (CPU/MPS)"
+COMPUTE_DTYPE, COMPUTE_DTYPE_REASON = _detect_compute_dtype()
+
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
     # ANSI color codes
@@ -75,12 +91,16 @@ def print_banner():
 """
     print0(banner)
 
-def is_ddp():
-    # TODO is there a proper way
-    return int(os.environ.get('RANK', -1)) != -1
+def is_ddp_requested() -> bool:
+    """True if launched by torchrun (env present), even before init."""
+    return all(k in os.environ for k in ("RANK", "LOCAL_RANK", "WORLD_SIZE"))
+
+def is_ddp_initialized() -> bool:
+    """True if torch.distributed is available and the process group is initialized."""
+    return dist.is_available() and dist.is_initialized()
 
 def get_dist_info():
-    if is_ddp():
+    if is_ddp_requested():
         assert all(var in os.environ for var in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE'])
         ddp_rank = int(os.environ['RANK'])
         ddp_local_rank = int(os.environ['LOCAL_RANK'])
@@ -116,14 +136,13 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     # skipping full reproducibility for now, possibly investigate slowdown later
     # torch.use_deterministic_algorithms(True)
 
-    # Precision - use TF32 for matmuls on Ampere+ GPUs
+    # Precision
     if device_type == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
 
     # Distributed setup: Distributed Data Parallel (DDP), optional, and requires CUDA
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
-    if ddp and device_type == "cuda":
+    is_ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
+    if is_ddp and device_type == "cuda":
         device = torch.device("cuda", ddp_local_rank)
         torch.cuda.set_device(device) # make "cuda" default to this device
         dist.init_process_group(backend="nccl", device_id=device)
@@ -134,11 +153,11 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     if ddp_rank == 0:
         logger.info(f"Distributed world size: {ddp_world_size}")
 
-    return ddp, ddp_rank, ddp_local_rank, ddp_world_size, device
+    return is_ddp, ddp_rank, ddp_local_rank, ddp_world_size, device
 
 def compute_cleanup():
     """Companion function to compute_init, to clean things up before script exit"""
-    if is_ddp():
+    if is_ddp_initialized():
         dist.destroy_process_group()
 
 class DummyWandb:
@@ -149,3 +168,42 @@ class DummyWandb:
         pass
     def finish(self):
         pass
+
+# hardcoded BF16 peak flops for various GPUs
+# inspired by torchtitan and upstream nanochat
+def get_peak_flops(device_name: str) -> float:
+    name = device_name.lower()
+    _PEAK_FLOPS_TABLE = (
+        # NVIDIA Blackwell
+        (["gb200"], 2.5e15),
+        (["b200"], 2.25e15),
+        (["b100"], 1.8e15),
+        # NVIDIA Hopper
+        (["h200", "nvl"], 836e12),
+        (["h200"], 989e12),
+        (["h100", "nvl"], 835e12),
+        (["h100", "pcie"], 756e12),
+        (["h100"], 989e12),
+        (["h800"], 756e12),
+        # NVIDIA Ampere data center
+        (["a100"], 312e12),
+        (["a800"], 312e12),
+        (["a40"], 149.7e12),
+        (["a30"], 165e12),
+        # NVIDIA Ada data center
+        (["l40s"], 362e12),
+        (["l4"], 121e12),
+        # AMD CDNA
+        (["mi300x"], 1.3074e15),
+        (["mi300a"], 980.6e12),
+        (["mi250x"], 383e12),
+        # Consumer RTX
+        (["5090"], 209.5e12),
+        (["4090"], 165.2e12),
+        (["3090"], 71e12),
+    )
+    for patterns, flops in _PEAK_FLOPS_TABLE:
+        if all(p in name for p in patterns):
+            return flops
+    logger.warning(f"Peak flops undefined for: {device_name}, MFU will show as 0%")
+    return float('inf')

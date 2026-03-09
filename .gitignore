@@ -6,3 +6,9 @@ dev-ignore/
 report.md
 eval_bundle/
 wandb/
+
+# Secrets
+.env
+
+# Local setup
+CLAUDE.md
