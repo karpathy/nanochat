@@ -26,6 +26,9 @@ device_type = autodetect_device_type() if args.device_type == "" else args.devic
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
 
+# Get sequence length from model config for sliding window
+sequence_len = meta["model_config"]["sequence_len"]
+
 # Special tokens for the chat state machine
 bos = tokenizer.get_bos_token_id()
 user_start, user_end = tokenizer.encode_special("<|user_start|>"), tokenizer.encode_special("<|user_end|>")
@@ -75,6 +78,13 @@ while True:
 
     # Kick off the assistant
     conversation_tokens.append(assistant_start)
+
+    # Truncate conversation to fit within model's sequence length
+    # Keep the bos token and the most recent tokens
+    if len(conversation_tokens) > sequence_len:
+        conversation_tokens = [bos] + conversation_tokens[-(sequence_len - 1):]
+        print(f"\n[Truncated conversation to {sequence_len} tokens]", flush=True)
+
     generate_kwargs = {
         "num_samples": 1,
         "max_tokens": 256,
