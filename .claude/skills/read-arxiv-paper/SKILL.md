@@ -33,7 +33,7 @@ Every latex source usually has an entrypoint, such as `main.tex` or something li
 
 Once you've found the entrypoint, Read the contents and then recurse through all other relevant source files to read the paper.
 
-#### Part 6: Report
+### Part 6: Report
 
 Once you've read the paper, produce a summary of the paper into a markdown file at `./knowledge/summary_{tag}.md`. Notice that 1) use the local knowledge directory here (it's easier for me to open and reference here), not in `~/.cache`, and 2) generate some reasonable `tag` like e.g. `conditional_memory` or whatever seems appropriate given the paper. Probably make sure that the tag doesn't exist yet so you're not overwriting files.
 
