@@ -1,4 +1,8 @@
-# nanochat
+# nanochat (Custom Debugging Fork)
+
+> [!NOTE]
+> This is a fork of Andrej Karpathy's `nanochat` aimed at adding debugging and visualization scripts.
+> See [README_scripts.md](README_scripts.md) for documentation on the custom scripts.
 
 ![nanochat logo](dev/nanochat.png)
 ![scaling laws](dev/scaling_laws_jan26.png)
