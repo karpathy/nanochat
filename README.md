@@ -42,6 +42,34 @@ python -m scripts.chat_web
 
 And then visit the URL shown. Make sure to access it correctly, e.g. on Lambda use the public IP of the node you're on, followed by the port, so for example [http://209.20.xxx.xxx:8000/](http://209.20.xxx.xxx:8000/), etc. Then talk to your LLM as you'd normally talk to ChatGPT! Get it to write stories or poems. Ask it to tell you who you are to see a hallucination. Ask it why the sky is blue. Or why it's green. The speedrun is a 4e19 FLOPs capability model so it's a bit like talking to a kindergartener :).
 
+### CPU Inference
+
+If you want to run inference on CPU (e.g., on your laptop or a machine without GPU), use the CPU web server:
+
+```bash
+python -m scripts.chat_web_cpu --model-dir /tmp/nanochat
+```
+
+This script automatically converts the model to float32 and runs inference on CPU. You can then access the web UI at `http://localhost:8000` or use it via the OpenAI-compatible API.
+
+CPU web server (`chat_web_cpu.py`) is compatible with the OpenAI API specification. This means you can use any OpenAI SDK, tool, or framework with your NanoChat models:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+  api_key="not_set"
+  base_url="http://localhost:8000/v1",
+)
+
+response = client.chat.completions.create(
+  model="nanochat",
+  messages=[{"role": "user", "content": "Hello!"}]
+)
+print(response.choices[0].message.content)
+```
+
+
 ---
 
 <img width="2672" height="1520" alt="image" src="https://github.com/user-attachments/assets/ed39ddf8-2370-437a-bedc-0f39781e76b5" />
