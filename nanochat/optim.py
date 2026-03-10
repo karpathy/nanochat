@@ -113,7 +113,7 @@ def muon_step_fused(
 
     # Polar express
     X = g.bfloat16()
-    X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
+    X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.01 + 1e-6)
     if g.size(-2) > g.size(-1): # Tall matrix
         for a, b, c in polar_express_coeffs[:ns_steps]:
             A = X.mT @ X
