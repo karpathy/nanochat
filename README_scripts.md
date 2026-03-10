@@ -10,6 +10,7 @@ Visualizes the trained vocabulary, showing special tokens and samples of merged 
 **How to run:**
 From the root directory, run:
 ```bash
+source .venv/bin/activate
 python -m scripts.custom.inspect_tokens
 ```
 

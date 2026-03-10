@@ -12,6 +12,11 @@ for name in tokenizer.get_special_tokens():
     token_id = tokenizer.encode_special(name)
     print(f"  {token_id:5d}: {name}")
 
+print("\nSample of Base Bytes, tokens with inidices 0-20:")
+for i in range(0, 20):
+    token_str = tokenizer.decode([i])
+    print(f"  {i:5d}: {repr(token_str)}")
+
 print("\nSample of Regular Tokens (the first 20):")
 for i in range(256, 276):  # Tokens 0-255 are standard bytes, let's look at merges
     token_str = tokenizer.decode([i])
