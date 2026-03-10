@@ -432,11 +432,18 @@ while True:
     for micro_step in range(grad_accum_steps):
         loss = model(x, y)
         train_loss = loss.detach() # for logging
-        loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
-        if scaler is not None:
-            scaler.scale(loss).backward()
+        # Check if there are valid targets (not -1) to avoid NaN loss from cross_entropy
+        # When all labels are -1 (ignored), cross_entropy returns NaN
+        has_valid_targets = (y != -1).any()
+        if has_valid_targets:
+            loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
+            if scaler is not None:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
         else:
-            loss.backward()
+            # Skip this micro-batch entirely - contributes zero to gradients
+            pass
         x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
         progress = max(progress, approx_progress) # only increase progress monotonically
     # step the optimizer
