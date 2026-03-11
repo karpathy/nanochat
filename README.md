@@ -1,4 +1,4 @@
-# nanochat
+# nanochat modificado por Peter
 
 ![nanochat logo](dev/nanochat.png)
 ![scaling laws](dev/scaling_laws_jan26.png)
