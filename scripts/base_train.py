@@ -78,6 +78,11 @@ parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
+
+# Validate training horizon arguments
+if args.target_param_data_ratio == 0:
+    parser.error("--target-param-data-ratio cannot be 0 (would cause division by zero). Use -1 to disable auto-computation or a positive value.")
+
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
 # Compute init and wandb logging
