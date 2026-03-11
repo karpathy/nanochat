@@ -223,7 +223,7 @@ def disable_fp8(model):
             fp8_module.in_features,
             fp8_module.out_features,
             bias=fp8_module.bias is not None,
-            device=fp8_module.weight.device,
+            device='meta',  # Use meta device to avoid VRAM spike during allocation
             dtype=fp8_module.weight.dtype,
         )
         linear.weight = fp8_module.weight  # share, don't copy
