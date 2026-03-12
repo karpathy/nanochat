@@ -31,10 +31,9 @@ if [ -z "$WANDB_RUN" ]; then
 fi
 
 # train tokenizer on ~2B characters (~34 seconds on my MacBook Pro M3 Max)
-# python -m nanochat.dataset -n 8
-# python -m scripts.tok_train --max-chars=2000000000
+python -m nanochat.dataset -n 8
+python -m scripts.tok_train --max-chars=2000000000
 python -m scripts.tok_eval
-# Target directory: /Users/sushrutkarnik_1/.cache/nanochat/base_data_climbmix
 
 # train a small 4 layer model
 # I tuned this run to complete in about 30 minutes on my MacBook Pro M3 Max.
