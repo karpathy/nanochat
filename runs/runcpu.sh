@@ -10,21 +10,31 @@
 # Think of this run as educational/fun demo, not something you should expect to work well.
 # You may also want to run this script manually and one by one, copy pasting commands into your terminal.
 
-# all the setup stuff
+# # all the setup stuff
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
+# ## Fails on macbook, instead remove torch cpu from UV file and do this here
 uv sync --extra cpu
+uv pip install torch torchvision torchaudio --upgrade --index-url https://download.pytorch.org/whl/cpu
+uv pip uninstall numpy
+uv pip install --force-reinstall -v "numpy==1.25.2"
+
 source .venv/bin/activate
+uv pip install torch torchvision torchaudio --upgrade --index-url https://download.pytorch.org/whly/cpu
+uv pip uninstall numpy
+uv pip install --force-reinstall -v "numpy==1.25.2"
+
 if [ -z "$WANDB_RUN" ]; then
     WANDB_RUN=dummy
 fi
 
 # train tokenizer on ~2B characters (~34 seconds on my MacBook Pro M3 Max)
-python -m nanochat.dataset -n 8
-python -m scripts.tok_train --max-chars=2000000000
+# python -m nanochat.dataset -n 8
+# python -m scripts.tok_train --max-chars=2000000000
 python -m scripts.tok_eval
+# Target directory: /Users/sushrutkarnik_1/.cache/nanochat/base_data_climbmix
 
 # train a small 4 layer model
 # I tuned this run to complete in about 30 minutes on my MacBook Pro M3 Max.

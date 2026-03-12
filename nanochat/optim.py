@@ -17,7 +17,7 @@ Good old AdamW optimizer, fused kernel.
 https://arxiv.org/abs/1711.05101
 """
 
-@torch.compile(dynamic=False, fullgraph=True)
+# @torch.compile(dynamic=False, fullgraph=True)
 def adamw_step_fused(
     p: Tensor,              # (32768, 768) - parameter tensor
     grad: Tensor,           # (32768, 768) - gradient, same shape as p
@@ -35,6 +35,7 @@ def adamw_step_fused(
     All in one compiled graph to eliminate Python overhead between ops.
     The 0-D CPU tensors avoid recompilation when hyperparameter values change.
     """
+    p = p.to(grad.device)
     # Weight decay (decoupled, applied before the update)
     p.mul_(1 - lr_t * wd_t)
     # Update running averages (lerp_ is cleaner and fuses well)
@@ -87,7 +88,7 @@ polar_express_coeffs = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 ]
 
-@torch.compile(dynamic=False, fullgraph=True)
+# @torch.compile(dynamic=False, fullgraph=True)
 def muon_step_fused(
     stacked_grads: Tensor,          # (12, 768, 3072) - stacked gradients
     stacked_params: Tensor,         # (12, 768, 3072) - stacked parameters
@@ -112,7 +113,7 @@ def muon_step_fused(
     g = stacked_grads.lerp_(momentum_buffer, momentum)
 
     # Polar express
-    X = g.bfloat16()
+    X = g.bfloat16() if torch.cuda.is_available() else g
     X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.01 + 1e-6)
     if g.size(-2) > g.size(-1): # Tall matrix
         for a, b, c in polar_express_coeffs[:ns_steps]:
@@ -179,36 +180,39 @@ class MuonAdamW(torch.optim.Optimizer):
         super().__init__(param_groups, defaults={})
         # 0-D CPU tensors to avoid torch.compile recompilation when values change
         # AdamW tensors
-        self._adamw_step_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_beta1_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_eps_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        device="mps"
+        self._adamw_step_t = torch.tensor(0.0, dtype=torch.float32, device=device)
+        self._adamw_lr_t = torch.tensor(0.0, dtype=torch.float32, device=device)
+        self._adamw_beta1_t = torch.tensor(0.0, dtype=torch.float32, device=device)
+        self._adamw_beta2_t = torch.tensor(0.0, dtype=torch.float32, device=device)
+        self._adamw_eps_t = torch.tensor(0.0, dtype=torch.float32, device=device)
+        self._adamw_wd_t = torch.tensor(0.0, dtype=torch.float32, device=device)
         # Muon tensors
-        self._muon_momentum_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        self._muon_momentum_t = torch.tensor(0.0, dtype=torch.float32, device=device)
+        self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device=device)
+        self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device=device)
+        self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device=device)
 
     def _step_adamw(self, group: dict) -> None:
         """
         AdamW update for each param in the group individually.
         Lazy init the state, fill in all 0-D tensors, call the fused kernel.
         """
+
+        device = self._adamw_step_t.device
         for p in group['params']:
             if p.grad is None:
                 continue
-            grad = p.grad
+            grad = p.grad.to(device)
             state = self.state[p]
 
             # State init
             if not state:
                 state['step'] = 0
-                state['exp_avg'] = torch.zeros_like(p)
-                state['exp_avg_sq'] = torch.zeros_like(p)
-            exp_avg = state['exp_avg']
-            exp_avg_sq = state['exp_avg_sq']
+                state['exp_avg'] = torch.zeros_like(p).to(device)
+                state['exp_avg_sq'] = torch.zeros_like(p).to(device)
+            exp_avg = state['exp_avg'].to(device)
+            exp_avg_sq = state['exp_avg_sq'].to(device)
             state['step'] += 1
 
             # Fill 0-D tensors with current values
@@ -244,18 +248,18 @@ class MuonAdamW(torch.optim.Optimizer):
         # Momentum for every individual parameter
         if "momentum_buffer" not in state:
             state["momentum_buffer"] = torch.zeros(num_params, *shape, dtype=dtype, device=device)
-        momentum_buffer = state["momentum_buffer"]
+        momentum_buffer = state["momentum_buffer"].to(self._muon_momentum_t.device)
 
         # Second momentum buffer is factored, either per-row or per-column
         if "second_momentum_buffer" not in state:
             state_shape = (num_params, shape[-2], 1) if shape[-2] >= shape[-1] else (num_params, 1, shape[-1])
             state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
-        second_momentum_buffer = state["second_momentum_buffer"]
+        second_momentum_buffer = state["second_momentum_buffer"].to(self._muon_momentum_t.device)
         red_dim = -1 if shape[-2] >= shape[-1] else -2
 
         # Stack grads and params (NOTE: this assumes all params have the same shape)
-        stacked_grads = torch.stack([p.grad for p in params])
-        stacked_params = torch.stack(params)
+        stacked_grads = torch.stack([p.grad for p in params]).to(self._muon_momentum_t.device)
+        stacked_params = torch.stack(params).to(self._muon_momentum_t.device)
 
         # Fill all the 0-D tensors with current values
         self._muon_momentum_t.fill_(group["momentum"])
@@ -278,7 +282,9 @@ class MuonAdamW(torch.optim.Optimizer):
         )
 
         # Copy back to original params
-        torch._foreach_copy_(params, list(stacked_params.unbind(0)))
+        # torch._foreach_copy_(params, list(stacked_params.unbind(0)))
+        for p, sp in zip(params, stacked_params.unbind(0)):
+            p.copy_(sp)
 
     @torch.no_grad()
     def step(self):

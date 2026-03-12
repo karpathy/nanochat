@@ -242,7 +242,7 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+# model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
@@ -313,14 +313,17 @@ optimizer = model.setup_optimizer(
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,
 )
-
+# optimizer.to(device)
 if resuming:
     optimizer.load_state_dict(optimizer_data)
     del optimizer_data
 
 # -----------------------------------------------------------------------------
 # GradScaler for fp16 training (bf16/fp32 don't need it — bf16 has the same exponent range as fp32)
-scaler = torch.amp.GradScaler() if COMPUTE_DTYPE == torch.float16 else None
+# scaler = torch.amp.GradScaler() if COMPUTE_DTYPE == torch.float16 else None
+scaler = torch.cuda.amp.GradScaler() if COMPUTE_DTYPE == torch.float16 else None
+# scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
+
 if scaler is not None:
     print0("GradScaler enabled for fp16 training")
 

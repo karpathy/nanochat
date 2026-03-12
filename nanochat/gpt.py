@@ -40,7 +40,7 @@ class GPTConfig:
 
 
 def norm(x):
-    return F.rms_norm(x, (x.size(-1),)) # note that this will run in bf16, seems ok
+    return F.layer_norm(x, (x.size(-1),)) # note that this will run in bf16, seems ok
 
 class Linear(nn.Linear):
     """nn.Linear that casts weights to match input dtype in forward.
