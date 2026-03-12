@@ -68,6 +68,8 @@ parser.add_argument("--adam-beta2", type=float, default=0.95, help="Adam beta2 f
 parser.add_argument("--warmup-ratio", type=float, default=0.0, help="ratio of iterations for LR warmup")
 parser.add_argument("--warmdown-ratio", type=float, default=0.5, help="ratio of iterations for LR warmdown")
 parser.add_argument("--final-lr-frac", type=float, default=0.0, help="final LR as fraction of initial LR")
+parser.add_argument("--use-mup", action="store_true", help="use muP (Maximal Update Parameterization) LR scaling")
+parser.add_argument("--base-width", type=int, default=256, help="base width for muP LR scaling (LRs tuned at this width)")
 parser.add_argument("--resume-from-step", type=int, default=-1, help="resume training from this step (-1 = disable)")
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=250, help="evaluate val bpb every N steps (-1 = disable)")
@@ -309,6 +311,9 @@ optimizer = model.setup_optimizer(
     # Muon hyperparameters
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,
+    # muP scaling
+    use_mup=args.use_mup,
+    base_width=args.base_width,
 )
 
 if resuming:
