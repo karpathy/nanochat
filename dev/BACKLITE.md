@@ -13,7 +13,7 @@ uv pip install --no-build-isolation BackLite/hopper/
 
 ### Launch a BackLite training run
 
-Pass `--backlite-negl-prob` to `base_train`:
+Pass `--backlite-negl-prob` and `--negl-prob-warmup-steps` to `base_train`:
 
 ```bash
 OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
@@ -21,7 +21,8 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train
     --run="d24-backlite" \
     --model-tag="d24_backlite" \
     --fp8 \
-    --backlite-negl-prob=0.1
+    --backlite-negl-prob=0.1 \
+    --negl-prob-warmup-steps=100
 ```
 
 You should see `✓ BackLite enabled, negl_prob=0.1` in the output.
