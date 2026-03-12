@@ -1,0 +1,43 @@
+{
+  "step": 32146,
+  "val_bpb": 0.513061147322009,
+  "model_config": {
+    "sequence_len": 2048,
+    "vocab_size": 32768,
+    "n_layer": 8,
+    "n_head": 8,
+    "n_kv_head": 8,
+    "n_embd": 512,
+    "window_pattern": "L"
+  },
+  "user_config": {
+    "run": "sft-baseline",
+    "device_type": "",
+    "model_tag": "picochat-ctx-s1",
+    "model_step": 5000,
+    "load_optimizer": 1,
+    "num_iterations": -1,
+    "max_seq_len": null,
+    "device_batch_size": 4,
+    "total_batch_size": 16384,
+    "embedding_lr": null,
+    "unembedding_lr": null,
+    "matrix_lr": null,
+    "init_lr_frac": 0.8,
+    "warmup_ratio": 0.0,
+    "warmdown_ratio": 0.5,
+    "final_lr_frac": 0.0,
+    "eval_every": -1,
+    "eval_tokens": 20971520,
+    "chatcore_every": -1,
+    "chatcore_max_cat": -1,
+    "chatcore_max_sample": 24,
+    "mmlu_epochs": 3,
+    "gsm8k_epochs": 4,
+    "metamathqa_size": 0,
+    "orcamath_size": 0,
+    "ultrachat_size": 0,
+    "lora_rank": 0,
+    "lora_alpha": 16.0
+  }
+}
