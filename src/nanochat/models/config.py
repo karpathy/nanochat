@@ -51,6 +51,7 @@ class TrainingConfig:
     warmup_steps: int = 40
     warmdown_ratio: float = 0.65
     final_lr_frac: float = 0.05
+    resume_from_step: int = -1
     
     # Evaluation
     eval_every: int = 250
@@ -64,11 +65,10 @@ class TrainingConfig:
     device_type: str = ""
     fp8: bool = False
     fp8_recipe: str = "tensorwise"
-    seed: int = 42
     
     # Output
     model_tag: Optional[str] = None
-    run_name: str = "dummy"
+    run: str = "dummy"  # wandb run name
     
     def save(self, path: Path) -> None:
         """Save configuration to JSON file."""
