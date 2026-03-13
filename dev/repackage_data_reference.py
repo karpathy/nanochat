@@ -1,5 +1,5 @@
 """
-Repackage the FinewebEdu-100B dataset into shards:
+Repackage a given dataset into simple parquet shards:
 
 - each shard is ~100MB in size (after zstd compression)
 - parquets are written with row group size of 1000
@@ -9,6 +9,16 @@ This will be uploaded to HuggingFace for hosting.
 The big deal is that our DataLoader will be able to stream
 the data and cache it along the way on disk, decreasing the
 training latency.
+
+Historical context:
+Originally, nanochat used the FinewebEdu-100B dataset.
+Then we switched to the ClimbMix-400B dataset due to superior performance.
+This script documents how both were prepared.
+
+The outputs are here:
+
+https://huggingface.co/datasets/karpathy/fineweb-edu-100b-shuffle
+https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle
 
 NOTE: This file is meant only as reference/documentation of the
 dataset preparation and it is not used during the project runtime.
@@ -20,12 +30,37 @@ from datasets import load_dataset
 import pyarrow.parquet as pq
 import pyarrow as pa
 
+# You can change these:
+dataset_tag = "climbmix"
+upload_to_hf = True
+
+# Dataset configurations:
+if dataset_tag == "fineweb_edu":
+    dataset_kwargs = {
+        "path": "HuggingFaceFW/fineweb-edu",
+        "split": "train",
+        "name": "sample-100BT", # ~100B GPT-2 tokens at ~3 chars/token => ~300B chars total
+    }
+    output_dirname = "fineweb_edu"
+    data_column_name = "text"
+    tokenizer = None
+    upload_tag = "fineweb-edu-100b-shuffle"
+
+elif dataset_tag == "climbmix":
+    import tiktoken # the ClimbMix data is stored tokenized with GPT-2 tokenizer
+    dataset_kwargs = {
+        "path": "nvidia/Nemotron-ClimbMix",
+        "split": "train",
+    }
+    output_dirname = "climbmix"
+    data_column_name = "tokens"
+    tokenizer = tiktoken.encoding_for_model("gpt-2")
+    upload_tag = "climbmix-400b-shuffle"
+
+else:
+    raise ValueError(f"Unknown dataset tag: {dataset_tag}")
+
 # Source dataset
-dataset_kwargs = {
-    "path": "HuggingFaceFW/fineweb-edu",
-    "split": "train",
-    "name": "sample-100BT", # ~100B GPT-2 tokens at ~3 chars/token => ~300B chars total
-}
 ds = load_dataset(**dataset_kwargs)
 
 # Shuffle to scramble the order
@@ -34,7 +69,7 @@ ndocs = len(ds) # total number of documents to process
 print(f"Total number of documents: {ndocs}")
 
 # Repackage into parquet files
-output_dir = "/home/ubuntu/.cache/nanochat/base_data"
+output_dir = f"/home/ubuntu/.cache/nanochat/base_data_{output_dirname}"
 os.makedirs(output_dir, exist_ok=True)
 
 # Write to parquet files
@@ -47,7 +82,8 @@ total_docs_processed = 0
 total_time_spent = 0
 t0 = time.time()
 for doc in ds:
-    text = doc['text']
+    data = doc[data_column_name]
+    text = tokenizer.decode(data) if tokenizer is not None else data
     shard_docs.append(text)
     shard_characters += len(text)
     collected_enough_chars = shard_characters >= chars_per_shard
@@ -79,14 +115,12 @@ for doc in ds:
         shard_index += 1
 
 # Demonstration of how the data was later uploaded to HuggingFace
-def upload():
-    import os
+if upload_to_hf:
     from huggingface_hub import HfApi
     token = os.getenv("HF_TOKEN")
     api = HfApi(token=token)
     api.upload_large_folder(
         folder_path=output_dir,
-        repo_id="karpathy/fineweb-edu-100b-shuffle",
+        repo_id=f"karpathy/{upload_tag}",
         repo_type="dataset",
     )
-# upload()
