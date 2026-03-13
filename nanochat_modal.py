@@ -535,7 +535,7 @@ def stage_rl(
     image=image,
     secrets=[secret],
     volumes={VOLUME_MOUNT: volume},
-    gpu="H100:4",
+    gpu="H100:2",
     timeout=TRAIN_TIMEOUT_SEC,
 )
 def stage_rl_d12(
@@ -574,7 +574,7 @@ def stage_rl_d12(
             f"--eval-examples={eval_examples}",
             f"--save-every={save_every}",
         ],
-        nproc=4,
+        nproc=2,
     )
     volume.commit()
     print(f"Done: {run_name}")
@@ -673,10 +673,10 @@ def run_rl_gsm8k_d12() -> None:
 
 # ── Fill these in before running ─────────────────────────────────────────────
 TEAMMATE_HF_REPO        = "alvina-yang/csc490a4p2"   # HuggingFace repo
-TEAMMATE_CHECKPOINT     = "sft-teammate"              # folder name in the HF repo
-TEAMMATE_STEP           = None                        # int step, or None = auto-detect last
+TEAMMATE_CHECKPOINT     = "sft-teammate"              # folder name in the HF repo (d24 SFT baseline)
+TEAMMATE_STEP           = 483                         # sft-baseline-d24 step
 TEAMMATE_RUN_NAME       = "rl-gsm8k-teammate"        # W&B run name + eval log folder
-TEAMMATE_GPU            = "H100:4"                   # e.g. "A10G:1" or "H100:4"
+TEAMMATE_GPU            = "H100:2"                   # 2x H100 as requested
 TEAMMATE_EPOCHS         = 1
 TEAMMATE_DEVICE_BATCH   = 8
 TEAMMATE_EXAMPLES_STEP  = 64
