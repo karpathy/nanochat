@@ -37,7 +37,7 @@ bash runs/speedrun.sh
 You may wish to do so in a screen session as this will take ~3 hours to run. Once it's done, you can talk to it via the ChatGPT-like web UI. Make sure again that your local uv virtual environment is active (run `source .venv/bin/activate`), and serve it:
 
 ```bash
-python -m scripts.chat_web
+python -m nanochat.scripts.chat_web
 ```
 
 And then visit the URL shown. Make sure to access it correctly, e.g. on Lambda use the public IP of the node you're on, followed by the port, so for example [http://209.20.xxx.xxx:8000/](http://209.20.xxx.xxx:8000/), etc. Then talk to your LLM as you'd normally talk to ChatGPT! Get it to write stories or poems. Ask it to tell you who you are to see a hallucination. Ask it why the sky is blue. Or why it's green. The speedrun is a 4e19 FLOPs capability model so it's a bit like talking to a kindergartener :).
@@ -60,7 +60,7 @@ A few more notes:
 If you are a researcher and wish to help improve nanochat, two scripts of interest are [runs/scaling_laws.sh](runs/scaling_laws.sh) and [runs/miniseries.sh](runs/miniseries.sh). See [Jan 7 miniseries v1](https://github.com/karpathy/nanochat/discussions/420) for related documentation. For quick experimentation (~5 min pretraining runs) my favorite scale is to train a 12-layer model (GPT-1 sized), e.g. like this:
 
 ```
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.base_train -- \
     --depth=12 \
     --run="d12" \
     --model-tag="d12" \
@@ -96,8 +96,8 @@ nanochat does not use `torch.amp.autocast`. Instead, precision is managed explic
 You can override the default with the `NANOCHAT_DTYPE` environment variable:
 
 ```bash
-NANOCHAT_DTYPE=float32 python -m scripts.chat_cli -p "hello"   # force fp32
-NANOCHAT_DTYPE=bfloat16 torchrun --nproc_per_node=8 -m scripts.base_train  # force bf16
+NANOCHAT_DTYPE=float32 python -m nanochat.scripts.chat_cli -p "hello"   # force fp32
+NANOCHAT_DTYPE=bfloat16 torchrun --nproc_per_node=8 -m nanochat.scripts.base_train  # force bf16
 ```
 
 How it works: model weights are stored in fp32 (for optimizer precision), but our custom `Linear` layer casts them to `COMPUTE_DTYPE` during the forward pass. Embeddings are stored directly in `COMPUTE_DTYPE` to save memory. This gives us the same mixed-precision benefit as autocast but with full explicit control over what runs in which precision.
@@ -125,47 +125,58 @@ I've published a number of guides that might contain helpful information, most r
 │   ├── generate_logo.html
 │   ├── nanochat.png
 │   └── repackage_data_reference.py # Pretraining data shard generation
-├── nanochat
-│   ├── __init__.py                 # empty
-│   ├── checkpoint_manager.py       # Save/Load model checkpoints
-│   ├── common.py                   # Misc small utilities, quality of life
-│   ├── core_eval.py                # Evaluates base model CORE score (DCLM paper)
-│   ├── dataloader.py               # Tokenizing Distributed Data Loader
-│   ├── dataset.py                  # Download/read utils for pretraining data
-│   ├── engine.py                   # Efficient model inference with KV Cache
-│   ├── execution.py                # Allows the LLM to execute Python code as tool
-│   ├── gpt.py                      # The GPT nn.Module Transformer
-│   ├── logo.svg
-│   ├── loss_eval.py                # Evaluate bits per byte (instead of loss)
-│   ├── optim.py                    # AdamW + Muon optimizer, 1GPU and distributed
-│   ├── report.py                   # Utilities for writing the nanochat Report
-│   ├── tokenizer.py                # BPE Tokenizer wrapper in style of GPT-4
-│   └── ui.html                     # HTML/CSS/JS for nanochat frontend
 ├── pyproject.toml
 ├── runs
 │   ├── miniseries.sh               # Miniseries training script
 │   ├── runcpu.sh                   # Small example of how to run on CPU/MPS
 │   ├── scaling_laws.sh             # Scaling laws experiments
 │   └── speedrun.sh                 # Train the ~$100 nanochat d20
-├── scripts
-│   ├── base_eval.py                # Base model: CORE score, bits per byte, samples
-│   ├── base_train.py               # Base model: train
-│   ├── chat_cli.py                 # Chat model: talk to over CLI
-│   ├── chat_eval.py                # Chat model: eval tasks
-│   ├── chat_rl.py                  # Chat model: reinforcement learning
-│   ├── chat_sft.py                 # Chat model: train SFT
-│   ├── chat_web.py                 # Chat model: talk to over WebUI
-│   ├── tok_eval.py                 # Tokenizer: evaluate compression rate
-│   └── tok_train.py                # Tokenizer: train it
-├── tasks
-│   ├── arc.py                      # Multiple choice science questions
-│   ├── common.py                   # TaskMixture | TaskSequence
-│   ├── customjson.py               # Make Task from arbitrary jsonl convos
-│   ├── gsm8k.py                    # 8K Grade School Math questions
-│   ├── humaneval.py                # Misnomer; Simple Python coding task
-│   ├── mmlu.py                     # Multiple choice questions, broad topics
-│   ├── smoltalk.py                 # Conglomerate dataset of SmolTalk from HF
-│   └── spellingbee.py              # Task teaching model to spell/count letters
+├── src
+│   └── nanochat
+│       ├── __init__.py             # empty
+│       ├── common.py               # Misc small utilities, quality of life
+│       ├── execution.py            # Allows the LLM to execute Python code as tool
+│       ├── flash_attention.py      # Flash attention implementation
+│       ├── fp8.py                  # FP8 precision support
+│       ├── report.py               # Utilities for writing the nanochat Report
+│       ├── cli/                    # CLI utilities
+│       ├── data/
+│       │   ├── dataset.py          # Download/read utils for pretraining data
+│       │   └── tokenizer.py        # BPE Tokenizer wrapper in style of GPT-4
+│       ├── evaluation/
+│       │   ├── core_eval.py        # Evaluates base model CORE score (DCLM paper)
+│       │   ├── engine.py           # Efficient model inference with KV Cache
+│       │   └── loss_eval.py        # Evaluate bits per byte (instead of loss)
+│       ├── models/
+│       │   ├── attention.py        # Attention mechanisms
+│       │   ├── config.py           # Model configuration
+│       │   ├── gpt.py              # The GPT nn.Module Transformer
+│       │   └── mlp.py              # MLP layers
+│       ├── scripts/
+│       │   ├── base_eval.py        # Base model: CORE score, bits per byte, samples
+│       │   ├── base_train.py       # Base model: train
+│       │   ├── chat_cli.py         # Chat model: talk to over CLI
+│       │   ├── chat_eval.py        # Chat model: eval tasks
+│       │   ├── chat_rl.py          # Chat model: reinforcement learning
+│       │   ├── chat_sft.py         # Chat model: train SFT
+│       │   ├── chat_web.py         # Chat model: talk to over WebUI
+│       │   ├── tok_eval.py         # Tokenizer: evaluate compression rate
+│       │   └── tok_train.py        # Tokenizer: train it
+│       ├── tasks/
+│       │   ├── arc.py              # Multiple choice science questions
+│       │   ├── base.py             # Base task classes
+│       │   ├── customjson.py       # Make Task from arbitrary jsonl convos
+│       │   ├── gsm8k.py            # 8K Grade School Math questions
+│       │   ├── humaneval.py        # Misnomer; Simple Python coding task
+│       │   ├── mmlu.py             # Multiple choice questions, broad topics
+│       │   ├── smoltalk.py         # Conglomerate dataset of SmolTalk from HF
+│       │   ├── spellingbee.py      # Task teaching model to spell/count letters
+│       │   └── types.py            # Task type definitions
+│       └── training/
+│           ├── checkpoint.py       # Save/Load model checkpoints
+│           ├── dataloader.py       # Tokenizing Distributed Data Loader
+│           ├── optimizer.py        # AdamW + Muon optimizer, 1GPU and distributed
+│           └── schedulers.py       # Learning rate schedulers
 ├── tests
 │   └── test_engine.py
 └── uv.lock
