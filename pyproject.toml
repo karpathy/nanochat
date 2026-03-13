@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 dependencies = [
     "datasets>=4.0.0",
     "fastapi>=0.117.1",
+    "filelock>=3.0.0",
     "ipykernel>=7.1.0",
     "kernels>=0.11.7",
     "matplotlib>=3.10.8",
@@ -26,9 +27,19 @@ dependencies = [
     "zstandard>=0.25.0",
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nanochat"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
+    "pyright>=1.1.0",
+    "ruff>=0.8.0",
 ]
 
 [tool.pytest.ini_options]
@@ -40,11 +51,12 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-# target torch to cuda 12.8 or CPU
+# target torch to cuda 12.8, CPU, or MPS (Apple Silicon)
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu128", extra = "gpu" },
+    # mps: no index override, standard PyPI wheel includes MPS support
 ]
 
 [[tool.uv.index]]
@@ -64,11 +76,30 @@ cpu = [
 gpu = [
     "torch==2.9.1",
 ]
+mps = [
+    "torch==2.9.1",
+]
 
 [tool.uv]
 conflicts = [
     [
         { extra = "cpu" },
         { extra = "gpu" },
+        { extra = "mps" },
     ],
 ]
+
+[tool.pyright]
+pythonVersion = "3.10"
+typeCheckingMode = "strict"
+reportUnusedImport = true
+reportUnusedVariable = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
