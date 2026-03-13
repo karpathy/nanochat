@@ -50,6 +50,7 @@ from nanochat.training.dataloader import (
     tokenizing_distributed_data_loader_bos_bestfit,
     tokenizing_distributed_data_loader_with_state_bos_bestfit,
 )
+from nanochat.compression_metrics import CompressionMetrics
 
 print_banner()
 
@@ -130,6 +131,11 @@ parser.add_argument(
 parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
+# Compression metrics
+parser.add_argument("--track-compression", action="store_true", help="enable compression metrics tracking")
+parser.add_argument("--compression-log-every", type=int, default=100, help="log compression metrics every N steps")
+parser.add_argument("--track-layer-compression", action="store_true", help="track per-layer compression (slower)")
+parser.add_argument("--compression-early-stop", action="store_true", help="stop training when compression plateaus")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
@@ -508,12 +514,18 @@ def train_base_model(
     num_params,
     total_tokens,
     args,
+    vocab_size,
 ):
     """Train base model.
 
     Returns:
         tuple: (model, metrics) where metrics contains final training stats
     """
+    # Initialize compression tracker if enabled
+    compression_tracker = None
+    if args.track_compression:
+        compression_tracker = CompressionMetrics(vocab_size=vocab_size)
+        print0("✓ Compression metrics tracking enabled")
     # Loop state (variables updated by the training loop)
     if not resuming:
         step = 0
@@ -644,8 +656,18 @@ def train_base_model(
         # evaluate the gradient
         synchronize()
         t0 = time.time()
+        logits_for_compression = None  # store logits for compression tracking
         for micro_step in range(grad_accum_steps):
-            loss = model(x, y)
+            # Forward pass - capture logits if tracking compression
+            if compression_tracker and step % args.compression_log_every == 0 and micro_step == 0:
+                with torch.amp.autocast(device_type=device_type, dtype=COMPUTE_DTYPE):
+                    logits_for_compression = model(x)
+                loss = torch.nn.functional.cross_entropy(
+                    logits_for_compression.view(-1, logits_for_compression.size(-1)),
+                    y.view(-1)
+                )
+            else:
+                loss = model(x, y)
             train_loss = loss.detach()  # for logging
             loss = loss / grad_accum_steps  # each .backward() is a grad sum => normalize loss here
             if scaler is not None:
@@ -706,6 +728,29 @@ def train_base_model(
         print0(
             f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time / 60:.2f}m{eta_str}"
         )
+        # Track compression metrics if enabled
+        if compression_tracker and step % args.compression_log_every == 0 and logits_for_compression is not None:
+            with torch.no_grad():
+                compression_metrics = compression_tracker.log_metrics(
+                    step=step,
+                    tokens=y,  # target tokens
+                    logits=logits_for_compression,
+                    loss=train_loss_f,
+                )
+                
+                # Check for overfitting if early stopping enabled
+                if args.compression_early_stop and compression_tracker.detect_overfitting():
+                    print0(f"[Step {step}] Compression plateau detected - possible overfitting")
+                
+                # Log compression metrics to wandb
+                if master_process:
+                    compression_log = {
+                        f"compression/{k}": v 
+                        for k, v in compression_metrics.items() 
+                        if k != 'step'
+                    }
+                    wandb_run.log(compression_log)
+        
         if step % 100 == 0:
             log_data = {
                 "step": step,
@@ -823,6 +868,7 @@ def main():
         num_params=num_params,
         total_tokens=total_tokens,
         args=args,
+        vocab_size=vocab_size,
     )
 
     # cleanup
