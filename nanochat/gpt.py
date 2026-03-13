@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from nanochat.common import get_dist_info, print0
+from nanochat.common import get_dist_info, print0, COMPUTE_DTYPE
 from nanochat.optim import MuonAdamW, DistMuonAdamW
 
 # Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
@@ -43,8 +43,14 @@ class GPTConfig:
 
 
 def norm(x):
-    # Purely functional rmsnorm with no learnable params
-    return F.rms_norm(x, (x.size(-1),))
+    return F.rms_norm(x, (x.size(-1),)) # note that this will run in bf16, seems ok
+
+class Linear(nn.Linear):
+    """nn.Linear that casts weights to match input dtype in forward.
+    Replaces autocast: master weights stay fp32 for optimizer precision,
+    but matmuls run in the activation dtype (typically bf16 from embeddings)."""
+    def forward(self, x):
+        return F.linear(x, self.weight.to(dtype=x.dtype))
 
 
 def has_ve(layer_idx, n_layer):
@@ -69,12 +75,12 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
-        self.c_q = nn.Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
-        self.c_k = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
-        self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
-        self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.ve_gate_channels = 32
-        self.ve_gate = nn.Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        self.c_q = Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
+        self.c_k = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+        self.c_v = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+        self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
+        self.ve_gate_channels = 12
+        self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         B, T, C = x.size()
@@ -88,13 +94,15 @@ class CausalSelfAttention(nn.Module):
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
             ve = ve.view(B, T, self.n_kv_head, self.head_dim)
-            gate = 2 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))  # (B, T, n_kv_head), range (0, 2)
+            gate = 3 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))  # (B, T, n_kv_head), range (0, 3)
             v = v + gate.unsqueeze(-1) * ve
 
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
         cos, sin = cos_sin
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         q, k = norm(q), norm(k) # QK norm
+        q = q * 1.15  # sharper attention (split scale between Q and K), TODO think through better
+        k = k * 1.15
 
         # Flash Attention (FA3 on Hopper+, PyTorch SDPA fallback elsewhere)
         # window_size is (left, right) tuple: (N, 0) for causal, (-1, 0) for full context
@@ -124,8 +132,8 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
+        self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -167,7 +175,7 @@ class GPT(nn.Module):
             "wte": nn.Embedding(padded_vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
-        self.lm_head = nn.Linear(config.n_embd, padded_vocab_size, bias=False)
+        self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
         # x0_lambdas: blends initial embedding back in at each layer (init 0.0 = disabled)
@@ -193,19 +201,19 @@ class GPT(nn.Module):
         """
         Initialize the full model in this one function for maximum clarity.
 
-        wte (embedding):     normal, std=1.0
+        wte (embedding):     normal, std=0.8
         lm_head:             normal, std=0.001
         for each block:
             attn.c_q:        uniform, std=1/sqrt(n_embd)
             attn.c_k:        uniform, std=1/sqrt(n_embd)
             attn.c_v:        uniform, std=1/sqrt(n_embd)
-            attn.c_proj:     zeros
-            mlp.c_fc:        uniform, std=1/sqrt(n_embd)
-            mlp.c_proj:      zeros
+            attn.c_proj:     zeros (SP) or uniform (muP)
+            mlp.c_fc:        uniform, std=0.5/sqrt(n_embd)
+            mlp.c_proj:      zeros (SP) or uniform (muP)
         """
 
         # Embedding and unembedding
-        torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=1.0)
+        torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=0.8)
         lm_head_std = 0.001
         if self.config.mup_base_width > 0:
             # muP: scale lm_head init by 1/sqrt(m_d) so raw logit magnitude is O(1) across widths.
@@ -220,7 +228,7 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
+            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.5, s * 0.5)  # 0.5x init scale for c_fc
             if self.config.mup_base_width > 0:
                 # muP: output projections use same scale as hidden weights (std = sigma_base/sqrt(m_d))
                 # Zero init causes attn/FFN outputs to vanish as width increases with muP LR scaling
@@ -238,24 +246,25 @@ class GPT(nn.Module):
         for ve in self.value_embeds.values():
             torch.nn.init.uniform_(ve.weight, -s, s)
 
-        # Gate weights init to zero so gates start at sigmoid(0) = 0.5, scaled by 2 -> 1.0 (neutral)
+        # Gate weights init with small positive values so gates start slightly above neutral
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
-                torch.nn.init.zeros_(block.attn.ve_gate.weight)
+                torch.nn.init.uniform_(block.attn.ve_gate.weight, 0.0, 0.02)
 
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
 
-        # Cast embeddings to bf16: optimizer can tolerate it and it saves memory
-        if self.transformer.wte.weight.device.type == "cuda":
-            self.transformer.wte.to(dtype=torch.bfloat16)
+        # Cast embeddings to COMPUTE_DTYPE: optimizer can tolerate reduced-precision
+        # embeddings and it saves memory. Exception: fp16 requires fp32 embeddings
+        # because GradScaler cannot unscale fp16 gradients.
+        if COMPUTE_DTYPE != torch.float16:
+            self.transformer.wte.to(dtype=COMPUTE_DTYPE)
             for ve in self.value_embeds.values():
-                ve.to(dtype=torch.bfloat16)
+                ve.to(dtype=COMPUTE_DTYPE)
 
-    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
-        # TODO: bump base theta more? e.g. 100K is more common more recently
+    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=100000, device=None):
         # autodetect the device from model embeddings
         if device is None:
             device = self.transformer.wte.weight.device
@@ -267,7 +276,7 @@ class GPT(nn.Module):
         # calculate the rotation frequencies at each (time, channel) pair
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16() # keep them in bfloat16
+        cos, sin = cos.to(COMPUTE_DTYPE), sin.to(COMPUTE_DTYPE)
         cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
         return cos, sin
 
@@ -286,7 +295,7 @@ class GPT(nn.Module):
         assert all(c in "SL" for c in pattern), f"Invalid window_pattern: {pattern}. Use only S and L."
         # Map characters to window sizes
         long_window = config.sequence_len
-        short_window = long_window // 2
+        short_window = -(-long_window // 3 // 128) * 128  # ceil to FA3 tile size (2048 -> 768)
         char_to_window = {
             "L": (long_window, 0),
             "S": (short_window, 0),
@@ -359,7 +368,7 @@ class GPT(nn.Module):
             'total': total,
         }
 
-    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, adam_betas=(0.8, 0.95), scalar_lr=0.5, use_mup=False, base_width=256, muon_lr_exponent=0.0):
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, scalar_lr=0.5, use_mup=False, base_width=256, muon_lr_exponent=0.0):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
 
@@ -388,6 +397,7 @@ class GPT(nn.Module):
             #
             # The muon_lr_exponent parameter is kept for experimentation but defaults to 0.
             width_ratio = base_width / model_dim  # e.g., 128/1024 = 0.125
+            dmodel_lr_scale = 1.0     # muP: no sqrt-based scaling (width scaling handled explicitly)
             emb_lr_scale = 1.0        # Embeddings: NO width scaling (standard muP)
             hidden_lr_scale = width_ratio ** muon_lr_exponent  # Hidden (Muon): default 0 = no scaling
             output_lr_scale = 1.0     # Output (AdamW): NO LR scaling (logit scaling in forward suffices)
@@ -402,12 +412,13 @@ class GPT(nn.Module):
             print0(f"Standard scaling: dmodel_lr_scale={dmodel_lr_scale:.6f}")
 
         # Build param_groups with all required fields explicit
+        # Per-group betas and weight decay tuned by Andrej for SP; muP uses same base HPs
         param_groups = [
             # AdamW groups (embeddings, lm_head, scalars)
-            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * output_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=embedding_params, lr=embedding_lr * emb_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * emb_lr_scale, betas=adam_betas, eps=1e-10, weight_decay=0.0),
-            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=adam_betas, eps=1e-10, weight_decay=0.0),
+            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * output_lr_scale, betas=(0.8, 0.96), eps=1e-10, weight_decay=0.01),
+            dict(kind='adamw', params=embedding_params, lr=embedding_lr * emb_lr_scale, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.001),
+            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * emb_lr_scale * 0.5, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.01),
+            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.05),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
         ]
         # Muon groups (matrix params, grouped by shape for stacking)
@@ -415,7 +426,7 @@ class GPT(nn.Module):
             group_params = [p for p in matrix_params if p.shape == shape]
             param_groups.append(dict(
                 kind='muon', params=group_params, lr=matrix_lr * hidden_lr_scale,
-                momentum=0.95, ns_steps=5, beta2=0.95, weight_decay=weight_decay,
+                momentum=0.95, ns_steps=5, beta2=0.9, weight_decay=weight_decay,
             ))
 
         Factory = DistMuonAdamW if ddp else MuonAdamW
@@ -430,18 +441,19 @@ class GPT(nn.Module):
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
-        assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
+        assert self.cos.dtype == COMPUTE_DTYPE, f"Rotary embeddings must be in {COMPUTE_DTYPE}, got {self.cos.dtype}"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
 
         # Forward the trunk of the Transformer
         x = self.transformer.wte(idx) # embed current token
+        x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
+            ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
         x = norm(x)
 
