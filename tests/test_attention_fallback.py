@@ -17,7 +17,7 @@ import torch
 import pytest
 import nanochat.flash_attention as fa_module
 from nanochat.flash_attention import flash_attn, HAS_FA3
-from nanochat.engine import KVCache
+from nanochat.evaluation.engine import KVCache
 
 
 def set_impl(impl):

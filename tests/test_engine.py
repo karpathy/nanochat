@@ -5,7 +5,7 @@ python -m pytest tests/test_engine.py -v
 """
 
 import torch
-from nanochat.engine import KVCache, Engine
+from nanochat.evaluation.engine import KVCache, Engine
 from dataclasses import dataclass
 
 
