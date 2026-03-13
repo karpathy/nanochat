@@ -13,3 +13,12 @@ eval_bundle/
 # Local setup
 CLAUDE.md
 wandb/
+
+# Local data and models
+data/
+tok*.model
+base_checkpoints/
+mid_checkpoints/
+sft_checkpoints/
+rl_checkpoints/
+local/
