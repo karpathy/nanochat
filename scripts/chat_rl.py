@@ -264,6 +264,7 @@ for step in range(num_steps):
         wandb_run.log({
             "step": step,
             **log_passk,
+            "examples": sample_table,
         })
         # Save eval records to JSON for later analysis (master process only)
         if master_process and args.run != "dummy":

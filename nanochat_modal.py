@@ -410,11 +410,26 @@ def stage_download_sft_checkpoint(
     checkpoint_name: str = "sft-baseline",
     step: int = 32146,
 ) -> None:
-    """Download SFT checkpoint .pt files from HuggingFace into the Modal volume."""
+    """Download SFT checkpoint .pt files from HuggingFace into the Modal volume.
+    Pass step=0 to auto-detect the step from common candidates."""
     import urllib.request
     dest_dir = f"{NANOCHAT_CACHE}/chatsft_checkpoints/{checkpoint_name}"
     os.makedirs(dest_dir, exist_ok=True)
     base_url = f"https://huggingface.co/{hf_repo}/resolve/main/{checkpoint_name}"
+    # Auto-detect step if not specified
+    if step == 0:
+        for try_step in [50000, 40000, 32146, 30000, 25000, 20000, 15530, 15000, 10000, 5000]:
+            meta_url = f"{base_url}/meta_{try_step:06d}.json"
+            dest_meta = os.path.join(dest_dir, f"meta_{try_step:06d}.json")
+            try:
+                urllib.request.urlretrieve(meta_url, dest_meta)
+                step = try_step
+                print(f"Auto-detected step {step} for {checkpoint_name}")
+                break
+            except Exception:
+                if os.path.exists(dest_meta):
+                    os.remove(dest_meta)
+        assert step != 0, f"Could not auto-detect step for {checkpoint_name} in {hf_repo}"
     files = [
         f"model_{step:06d}.pt",
         f"meta_{step:06d}.json",
@@ -430,7 +445,7 @@ def stage_download_sft_checkpoint(
         size_mb = os.path.getsize(dest) / 1e6
         print(f"  Done: {size_mb:.1f} MB")
     volume.commit()
-    print("Volume committed.")
+    print(f"Volume committed. Checkpoint: {checkpoint_name} step={step}")
 
 
 @app.local_entrypoint()
@@ -650,6 +665,89 @@ def run_rl_gsm8k_d12() -> None:
     Logs to W&B project nanochat-rl under run name rl-gsm8k-d12.
     """
     stage_rl_d12.remote()
+
+
+# =============================================================================
+# TEAMMATE RL RUN — edit TEAMMATE_* vars below then run run_rl_teammate
+# =============================================================================
+
+# ── Fill these in before running ─────────────────────────────────────────────
+TEAMMATE_HF_REPO        = "alvina-yang/csc490a4p2"   # HuggingFace repo
+TEAMMATE_CHECKPOINT     = "sft-teammate"              # folder name in the HF repo
+TEAMMATE_STEP           = None                        # int step, or None = auto-detect last
+TEAMMATE_RUN_NAME       = "rl-gsm8k-teammate"        # W&B run name + eval log folder
+TEAMMATE_GPU            = "H100:4"                   # e.g. "A10G:1" or "H100:4"
+TEAMMATE_EPOCHS         = 1
+TEAMMATE_DEVICE_BATCH   = 8
+TEAMMATE_EXAMPLES_STEP  = 64
+TEAMMATE_NUM_SAMPLES    = 8
+TEAMMATE_MAX_NEW_TOKENS = 512
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.local_entrypoint()
+def run_rl_teammate() -> None:
+    """
+    Step 1: download SFT checkpoint from HuggingFace to the Modal volume.
+    Step 2: run RL training.
+
+    Edit TEAMMATE_* constants above, then:
+        uv run modal run --detach nanochat_modal.py::run_rl_teammate
+    """
+    # Download checkpoint from HuggingFace
+    stage_download_sft_checkpoint.remote(
+        hf_repo=TEAMMATE_HF_REPO,
+        checkpoint_name=TEAMMATE_CHECKPOINT,
+        step=TEAMMATE_STEP or 0,   # 0 triggers auto-detect inside stage_download
+    )
+    # Run RL on H100:4 (same as stage_rl_d12 but with teammate config)
+    stage_rl_d12.remote(
+        run_name=TEAMMATE_RUN_NAME,
+        model_tag=TEAMMATE_CHECKPOINT,
+        model_step=TEAMMATE_STEP,
+        num_epochs=TEAMMATE_EPOCHS,
+        device_batch_size=TEAMMATE_DEVICE_BATCH,
+        examples_per_step=TEAMMATE_EXAMPLES_STEP,
+        num_samples=TEAMMATE_NUM_SAMPLES,
+        max_new_tokens=TEAMMATE_MAX_NEW_TOKENS,
+        eval_every=60,
+        eval_examples=400,
+        save_every=60,
+    )
+
+
+@app.local_entrypoint()
+def download_eval_logs() -> None:
+    """
+    Download all eval log JSONs from the Modal volume to ./eval_logs/<run_name>/ locally.
+    Edit run_name below to match the run you want.
+    Run: uv run modal run nanochat_modal.py::download_eval_logs
+    """
+    _download_eval_logs.remote(run_name=TEAMMATE_RUN_NAME)
+
+
+@app.function(
+    image=image,
+    secrets=[secret],
+    volumes={VOLUME_MOUNT: volume},
+    cpu=1,
+    timeout=120,
+)
+def _download_eval_logs(run_name: str) -> dict:
+    """Return all eval log JSONs as a dict keyed by filename."""
+    import json as _json, glob as _glob
+    log_dir = f"{NANOCHAT_CACHE}/chatrl_eval_logs/{run_name}"
+    files = sorted(_glob.glob(f"{log_dir}/eval_step_*.json"))
+    if not files:
+        print(f"No eval logs found at {log_dir}")
+        return {}
+    result = {}
+    for fpath in files:
+        fname = os.path.basename(fpath)
+        with open(fpath) as f:
+            result[fname] = _json.load(f)
+        print(f"  Loaded {fname}")
+    return result
 
 
 # =============================================================================
