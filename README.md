@@ -91,6 +91,95 @@ I've published a number of guides that might contain helpful information, most r
 - To customize your nanochat, see [Guide: infusing identity to your nanochat](https://github.com/karpathy/nanochat/discussions/139) in Discussions, which describes how you can tune your nanochat's personality through synthetic data generation and mixing that data into the SFT stage.
 - [Oct 13 2025: original nanochat post](https://github.com/karpathy/nanochat/discussions/1) introducing nanochat, though now it contains some deprecated information and the model is a lot older (with worse results) than current master.
 
+## Reinforcement Learning on GSM8K (CSC490 A4P3)
+
+This section documents the RL training pipeline added for CSC490 Assignment 4 Part 3, which replicates Karpathy's RL run on GSM8K and compares against the original.
+
+### Overview
+
+RL is implemented as REINFORCE (simplified GRPO) in `scripts/chat_rl.py`. Starting from an SFT checkpoint, the model generates multiple rollouts per problem, receives a binary reward (1 if the final `#### answer` matches the ground truth, 0 otherwise), and is updated with a policy gradient. Advantages are computed as `reward - mean(rewards)` (mean-subtracted, not z-scored).
+
+### Checkpoints
+
+| Checkpoint | Model | Step | HuggingFace |
+|---|---|---|---|
+| `sft-baseline` | picochat d8 (42M) | 32146 | [alvina-yang/csc490a4p2](https://huggingface.co/alvina-yang/csc490a4p2/tree/main/sft-baseline) |
+| `sft-baseline-d12` | nanochat d12 (~200M) | 15530 | [alvina-yang/csc490a4p2](https://huggingface.co/alvina-yang/csc490a4p2/tree/main/sft-baseline-d12) |
+| `rl-gsm8k-d12` | nanochat d12 post-RL | latest | [alvina-yang/csc490a4p2](https://huggingface.co/alvina-yang/csc490a4p2/tree/main/rl-gsm8k-d12) |
+
+### Running RL on Modal
+
+All RL runs are launched via `nanochat_modal.py` on Modal cloud GPUs.
+
+**One-time setup:**
+```bash
+modal setup
+modal secret create nanochat-secrets \
+    WANDB_API_KEY=<your_key> \
+    HF_TOKEN=hf_<your_token>
+```
+
+**Download SFT checkpoint from HuggingFace to Modal volume:**
+```bash
+# d8 checkpoint (sft-baseline, step 32146)
+uv run modal run nanochat_modal.py::download_sft_checkpoint
+
+# d12 checkpoint (sft-baseline-d12, step 15530)
+uv run modal run nanochat_modal.py::download_sft_checkpoint_d12
+```
+
+**Run RL training:**
+```bash
+# d8 picochat run (1x A10G, ~2 hrs)
+uv run modal run --detach nanochat_modal.py::run_rl_gsm8k
+
+# d12 nanochat run (4x H100, ~1 hr)
+uv run modal run --detach nanochat_modal.py::run_rl_gsm8k_d12
+```
+
+W&B logs appear under project `nanochat-rl`. Eval logs (generated text + correctness per example) are saved to `/vol/nanochat_cache/chatrl_eval_logs/<run_name>/eval_step_XXXXXX.json` on the Modal volume.
+
+**Inspect model outputs from eval log:**
+```bash
+uv run modal run nanochat_modal.py::peek_eval
+```
+
+**Run inference on base + SFT checkpoints:**
+```bash
+uv run modal run nanochat_modal.py::run_inference
+```
+
+**Push trained RL checkpoint to HuggingFace:**
+```bash
+uv run modal run nanochat_modal.py::push_rl_to_hf
+```
+
+### Key hyperparameters
+
+| Parameter | d8 run | d12 run |
+|---|---|---|
+| GPU | 1x A10G | 4x H100 |
+| `--num-epochs` | 1 | 1 |
+| `--examples-per-step` | 16 | 64 |
+| `--num-samples` | 8 | 8 |
+| `--device-batch-size` | 8 | 8 |
+| `--max-new-tokens` | 256 | 512 |
+| `--eval-every` | 60 steps | 60 steps |
+| `--eval-examples` | 400 | 400 |
+
+### Reward function
+
+Reward is binary: 1 if the model outputs `#### <number>` matching the ground truth, 0 otherwise. This uses the official GSM8K answer extraction regex:
+```python
+GSM_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
+```
+
+If the model does not output this format, all rewards are 0 and no gradient signal is produced for that example. This is the primary failure mode for small or weakly SFT-initialized models.
+
+### Analysis
+
+EDA notebooks and plots comparing our runs to Karpathy's original W&B curves are in `dev/rl_gsm8k_analysis.ipynb`.
+
 ## File structure
 
 ```
@@ -129,6 +218,7 @@ I've published a number of guides that might contain helpful information, most r
 │   ├── base_train.py               # Base model: train
 │   ├── chat_cli.py                 # Chat model: talk to over CLI
 │   ├── chat_eval.py                # Chat model: eval tasks
+│   ├── chat_inference.py           # Chat model: quick inference + GSM8K eval
 │   ├── chat_rl.py                  # Chat model: reinforcement learning
 │   ├── chat_sft.py                 # Chat model: train SFT
 │   ├── chat_web.py                 # Chat model: talk to over WebUI

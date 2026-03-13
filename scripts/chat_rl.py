@@ -18,6 +18,7 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
 
 import argparse
 import os
+import json
 import itertools
 import wandb
 import torch
@@ -181,17 +182,22 @@ def run_gsm8k_eval(task, tokenizer, engine,
             top_k=top_k
         )
         # Check each sample for correctness
+        question = conversation["messages"][0]["content"]
+        ref_parts = conversation["messages"][-1]["content"]
+        ref_text = "".join(p["text"] for p in ref_parts if p["type"] == "text")
         outcomes = []
         for sample_tokens in generated_token_sequences:
             generated_tokens = sample_tokens[prefix_length:]
             generated_text = tokenizer.decode(generated_tokens)
             is_correct = task.evaluate(conversation, generated_text)
             outcomes.append({
-                "is_correct": is_correct
+                "is_correct": is_correct,
+                "generated_text": generated_text,
             })
-        # A bit bloated because I wanted to do more complex logging at one point.
         record = {
             "idx": idx,
+            "question": question,
+            "reference": ref_text,
             "outcomes": outcomes,
         }
         yield record
@@ -244,10 +250,34 @@ for step in range(num_steps):
         print_passk = [f"Pass@{k}: {passk[k - 1].item():.4f}" for k in range(1, args.device_batch_size + 1)]
         print0(f"Step {step} | {', '.join(print_passk)}")
         log_passk = {f"pass@{k}": passk[k - 1].item() for k in range(1, args.device_batch_size + 1)}
+        sample_table = wandb.Table(columns=["step", "question", "reference", "model_output", "is_correct"])
+        # Log the first 10 examples from the eval set to keep the UI snappy
+        for r in records[:10]:
+            for outcome in r["outcomes"][:1]: # just log the first sample per question
+                sample_table.add_data(
+                    step, 
+                    r["question"], 
+                    r["reference"], 
+                    outcome["generated_text"], 
+                    outcome["is_correct"]
+                )
         wandb_run.log({
             "step": step,
             **log_passk,
         })
+        # Save eval records to JSON for later analysis (master process only)
+        if master_process and args.run != "dummy":
+            base_dir = get_base_dir()
+            eval_log_dir = os.path.join(base_dir, "chatrl_eval_logs", args.run)
+            os.makedirs(eval_log_dir, exist_ok=True)
+            eval_log_path = os.path.join(eval_log_dir, f"eval_step_{step:06d}.json")
+            with open(eval_log_path, "w") as f:
+                json.dump({
+                    "step": step,
+                    "pass@k": {f"pass@{k}": passk[k - 1].item() for k in range(1, args.device_batch_size + 1)},
+                    "records": records,
+                }, f, indent=2)
+            print(f"Saved eval log to {eval_log_path}")
 
     # Forward/Backward on rollouts over multiple examples in the dataset
     rewards_list = []
