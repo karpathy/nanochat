@@ -1,6 +1,7 @@
 """Task definitions for evaluation and training."""
 
 from nanochat.tasks.base import Task, TaskMixture, TaskSequence, render_mc
+from nanochat.tasks.types import Message, Conversation
 from nanochat.tasks.mmlu import MMLU
 from nanochat.tasks.arc import ARC
 from nanochat.tasks.gsm8k import GSM8K
@@ -14,6 +15,8 @@ __all__ = [
     "TaskMixture",
     "TaskSequence",
     "render_mc",
+    "Message",
+    "Conversation",
     "MMLU",
     "ARC",
     "GSM8K",
