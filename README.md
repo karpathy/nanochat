@@ -79,6 +79,25 @@ See an example [here](https://github.com/karpathy/nanochat/pull/498#issuecomment
 
 The important thing to note is that nanochat is written and configured around one single dial of complexity - the depth of the transformer. This single integer automatically determines all other hyperparameters (the width of the transformer, number of heads, learning rate adjustments, training horizons, weight decays, ...) so that the trained model comes out compute optimal. The idea is that the user doesn't have to think about or set any of this, they are simply asking for a smaller or bigger model using `--depth`, and everything "just works". By sweeping out the depth, you achieve the nanochat miniseries of compute optimal models at various sizes. GPT-2 capability model (which is of most interest at the moment) happens to be somewhere around d24-d26 range with the current code. But any candidate changes to the repo have to be principled enough that they work for all settings of depth.
 
+## Running on a single consumer GPU (e.g. RTX 4070)
+
+The script [runs/run4070.sh](runs/run4070.sh) trains a d12 model (~290M params) end-to-end on a single GPU with 12GB VRAM. It runs the full pipeline: tokenizer training, pretraining, SFT, evaluation, and report generation. Expected wall time is ~6-10 hours for pretraining and ~1 hour for SFT.
+
+```bash
+bash runs/run4070.sh
+# Or with wandb logging:
+WANDB_RUN=d12-4070 bash runs/run4070.sh
+```
+
+Key differences from the 8xH100 speedrun:
+- **Model:** d12 (~290M params) instead of d24 (~1.2B params) to fit in 12GB VRAM
+- **Sequence length:** 1024 instead of 2048 to reduce activation memory
+- **Batch size:** `--device-batch-size=8` (reduce to 4 if OOM; gradient accumulation compensates automatically)
+- **No FP8:** FP8 requires Hopper (H100+); consumer GPUs with SM 80+ (RTX 30xx/40xx) use bf16 natively
+- **No torchrun:** single GPU, no DDP overhead
+
+If you have a GPU with more VRAM (e.g. RTX 3090/4090 with 24GB), you can try `--depth=16` or increase `--device-batch-size`.
+
 ## Running on CPU / MPS
 
 The script [runs/runcpu.sh](runs/runcpu.sh) shows a very simple example of running on CPU or Apple Silicon. It dramatically shrinks the LLM that is being trained to make things fit into a reasonable time interval of a few ten minutes of training. You will not get strong results in this way.
@@ -144,6 +163,7 @@ I've published a number of guides that might contain helpful information, most r
 ├── pyproject.toml
 ├── runs
 │   ├── miniseries.sh               # Miniseries training script
+│   ├── run4070.sh                  # Single GPU training for RTX 4070 (12GB)
 │   ├── runcpu.sh                   # Small example of how to run on CPU/MPS
 │   ├── scaling_laws.sh             # Scaling laws experiments
 │   └── speedrun.sh                 # Train the ~$100 nanochat d20
