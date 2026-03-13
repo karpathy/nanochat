@@ -44,11 +44,21 @@ def get_git_info():
 def get_gpu_info():
     """Get GPU information."""
     if not torch.cuda.is_available():
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            chip_name = platform.processor() or "Apple Silicon"
+            return {
+                "available": True,
+                "backend": "mps",
+                "count": 1,
+                "names": [chip_name],
+                "memory_gb": [psutil.virtual_memory().total / (1024**3)],
+            }
         return {"available": False}
 
     num_devices = torch.cuda.device_count()
     info = {
         "available": True,
+        "backend": "cuda",
         "count": num_devices,
         "names": [],
         "memory_gb": []
@@ -146,9 +156,14 @@ Generated: {timestamp}
     if gpu_info.get("available"):
         gpu_names = ", ".join(set(gpu_info["names"]))
         total_vram = sum(gpu_info["memory_gb"])
-        header += f"""- GPUs: {gpu_info['count']}x {gpu_names}
+        if gpu_info.get("backend") == "cuda":
+            header += f"""- GPUs: {gpu_info['count']}x {gpu_names}
 - GPU Memory: {total_vram:.1f} GB total
 - CUDA Version: {gpu_info['cuda_version']}
+"""
+        else:
+            header += f"""- Accelerator: {gpu_names} via MPS
+- Unified Memory: {total_vram:.1f} GB total
 """
     else:
         header += "- GPUs: None available\n"

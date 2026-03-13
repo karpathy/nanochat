@@ -254,8 +254,8 @@ class TestFA3VsSDPA:
 class TestSDPAOnly:
     """Test SDPA fallback works correctly. Runs on any device."""
 
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    DTYPE = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+    DEVICE = "cuda" if torch.cuda.is_available() else "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu"
+    DTYPE = torch.bfloat16 if DEVICE == "cuda" else torch.float32
 
     def test_basic_forward(self):
         """Test SDPA forward pass produces valid output."""

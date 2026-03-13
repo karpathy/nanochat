@@ -83,6 +83,16 @@ The important thing to note is that nanochat is written and configured around on
 
 The script [runs/runcpu.sh](runs/runcpu.sh) shows a very simple example of running on CPU or Apple Silicon. It dramatically shrinks the LLM that is being trained to make things fit into a reasonable time interval of a few ten minutes of training. You will not get strong results in this way.
 
+For dependency install, use the PyTorch wheel that matches your machine:
+
+```bash
+uv sync --extra gpu    # CUDA Linux
+uv sync --extra cpu    # Linux CPU-only
+uv sync --extra macos  # Apple Silicon / MPS
+```
+
+On Apple Silicon, nanochat will autodetect `mps` and run in eager mode by default. This skips `torch.compile`, which is still less predictable on MPS for training. If you want to try it anyway, set `NANOCHAT_COMPILE=1`.
+
 ## Precision / dtype
 
 nanochat does not use `torch.amp.autocast`. Instead, precision is managed explicitly through a single global `COMPUTE_DTYPE` (defined in `nanochat/common.py`). By default this is auto-detected based on your hardware:

@@ -30,6 +30,9 @@ def _detect_compute_dtype():
     return torch.float32, "auto-detected: no CUDA (CPU/MPS)"
 COMPUTE_DTYPE, COMPUTE_DTYPE_REASON = _detect_compute_dtype()
 
+def is_mps_available() -> bool:
+    return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
     # ANSI color codes
@@ -119,6 +122,23 @@ def print0(s="",**kwargs):
     if ddp_rank == 0:
         print(s, **kwargs)
 
+def should_torch_compile(device_type: str) -> bool:
+    env = os.environ.get("NANOCHAT_COMPILE")
+    if env is not None:
+        return env.lower() in {"1", "true", "yes", "on"}
+    # torch.compile on MPS is still less predictable than eager mode for training.
+    return device_type != "mps"
+
+def maybe_torch_compile(model, device_type: str, *, dynamic: bool):
+    if not should_torch_compile(device_type):
+        print0("Skipping torch.compile on MPS by default. Set NANOCHAT_COMPILE=1 to force it.")
+        return model
+    try:
+        return torch.compile(model, dynamic=dynamic)
+    except Exception as exc:
+        print0(f"torch.compile failed on {device_type}: {exc}. Continuing without compilation.")
+        return model
+
 def print_banner():
     # Cool DOS Rebel font ASCII banner made with https://manytools.org/hacker-tools/ascii-banner/
     banner = """
@@ -163,7 +183,7 @@ def autodetect_device_type():
     # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
     if torch.cuda.is_available():
         device_type = "cuda"
-    elif torch.backends.mps.is_available():
+    elif is_mps_available():
         device_type = "mps"
     else:
         device_type = "cpu"
@@ -177,7 +197,7 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     if device_type == "cuda":
         assert torch.cuda.is_available(), "Your PyTorch installation is not configured for CUDA but device_type is 'cuda'"
     if device_type == "mps":
-        assert torch.backends.mps.is_available(), "Your PyTorch installation is not configured for MPS but device_type is 'mps'"
+        assert is_mps_available(), "Your PyTorch installation is not configured for MPS but device_type is 'mps'"
 
     # Reproducibility
     # Note that we set the global seeds here, but most of the code uses explicit rng objects.
