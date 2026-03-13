@@ -172,6 +172,47 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
     }
     return out
 
+def evaluate_base_model(
+    model,
+    tokenizer,
+    device,
+    max_per_task: int = -1,
+):
+    """Evaluate base model on CORE metric.
+    
+    Returns:
+        dict: Results with core_metric, results, and centered_results
+    """
+    return evaluate_core(model, tokenizer, device, max_per_task=max_per_task)
+
+
+def evaluate_validation_loss(
+    model,
+    tokenizer,
+    device,
+    device_batch_size: int,
+    sequence_len: int,
+    ddp_world_size: int,
+    token_bytes,
+    eval_tokens: int = 80 * 524288,
+):
+    """Evaluate validation bits per byte.
+    
+    Returns:
+        float: Validation BPB
+    """
+    tokens_per_step = device_batch_size * sequence_len * ddp_world_size
+    if eval_tokens % tokens_per_step != 0:
+        eval_tokens = (eval_tokens // tokens_per_step) * tokens_per_step
+        print0(f"Adjusted eval_tokens to {eval_tokens} (must be divisible by {tokens_per_step})")
+    steps = eval_tokens // tokens_per_step
+    
+    loader = tokenizing_distributed_data_loader_bos_bestfit(
+        tokenizer, device_batch_size, sequence_len, "val", device=device
+    )
+    return evaluate_bpb(model, loader, steps, token_bytes)
+
+
 # -----------------------------------------------------------------------------
 # Main
 

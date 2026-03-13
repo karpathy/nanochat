@@ -17,11 +17,11 @@ from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0
 from nanochat.training.checkpoint import load_model
 from nanochat.evaluation.engine import Engine
 
-from tasks.humaneval import HumanEval
-from tasks.mmlu import MMLU
-from tasks.arc import ARC
-from tasks.gsm8k import GSM8K
-from tasks.spellingbee import SpellingBee
+from nanochat.tasks.humaneval import HumanEval
+from nanochat.tasks.mmlu import MMLU
+from nanochat.tasks.arc import ARC
+from nanochat.tasks.gsm8k import GSM8K
+from nanochat.tasks.spellingbee import SpellingBee
 
 # -----------------------------------------------------------------------------
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
@@ -177,6 +177,40 @@ def run_chat_eval(task_name, model, tokenizer, engine,
     return acc
 
 # -----------------------------------------------------------------------------
+def evaluate_chat_model(
+    model,
+    tokenizer,
+    engine,
+    task_names: list[str],
+    device,
+    batch_size: int = 8,
+    num_samples: int = 1,
+    max_new_tokens: int = 512,
+    temperature: float = 0.0,
+    top_k: int = 50,
+    max_problems: int = None,
+):
+    """Evaluate chat model on task suite.
+    
+    Returns:
+        dict: Task results with accuracies
+    """
+    results = {}
+    for task_name in task_names:
+        acc = run_chat_eval(
+            task_name,
+            model, tokenizer, engine,
+            batch_size=batch_size,
+            num_samples=num_samples,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            max_problems=max_problems,
+        )
+        results[task_name] = acc
+        print0(f"{task_name} accuracy: {100 * acc:.2f}%")
+    return results
+
 if __name__ == "__main__":
 
     # Parse command-line arguments
@@ -213,20 +247,19 @@ if __name__ == "__main__":
     task_names = all_tasks if args.task_name is None else args.task_name.split('|')
 
     # Run all the task evaluations sequentially
-    results = {}
-    for task_name in task_names:
-        acc = run_chat_eval(
-            task_name,
-            model, tokenizer, engine,
-            batch_size=args.batch_size,
-            num_samples=args.num_samples,
-            max_new_tokens=args.max_new_tokens,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            max_problems=args.max_problems,
-        )
-        results[task_name] = acc
-        print0(f"{task_name} accuracy: {100 * acc:.2f}%")
+    results = evaluate_chat_model(
+        model=model,
+        tokenizer=tokenizer,
+        engine=engine,
+        task_names=task_names,
+        device=device,
+        batch_size=args.batch_size,
+        num_samples=args.num_samples,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+        top_k=args.top_k,
+        max_problems=args.max_problems,
+    )
 
     # Log to report
     from nanochat.report import get_report
