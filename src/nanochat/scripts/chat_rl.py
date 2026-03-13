@@ -25,7 +25,7 @@ import torch.distributed as dist
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type
 from nanochat.training.checkpoint import save_checkpoint, load_model
 from nanochat.evaluation.engine import Engine
-from tasks.gsm8k import GSM8K
+from nanochat.tasks.gsm8k import GSM8K
 
 # -----------------------------------------------------------------------------
 # CLI arguments
@@ -74,152 +74,143 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl
 model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
 engine = Engine(model, tokenizer) # for sampling rollouts
 
-# -----------------------------------------------------------------------------
-# Rollout / sampling generator loop that yields batches of examples for training
-
-train_task = GSM8K(subset="main", split="train")
-val_task = GSM8K(subset="main", split="test")
-num_steps = (len(train_task) // args.examples_per_step) * args.num_epochs
-print0(f"Calculated number of steps: {num_steps}")
-
-@torch.no_grad()
-def get_batch():
-    assistant_end = tokenizer.encode_special("<|assistant_end|>") # ok to use this token, it's only for padding and isn't used in the loss.
-    rank_indices = range(ddp_rank, len(train_task), ddp_world_size) # each rank is responsible for different examples in the training data
-    for example_idx in itertools.cycle(rank_indices):
-
-        # First get the full conversation of both user and assistant messages
-        conversation = train_task[example_idx]
-
-        # Tokenize the conversation, deleting the last Assistant message and priming the Assistant for a completion instead
-        # (i.e. keep the <|assistant_start|>, but delete everything after it)
-        tokens = tokenizer.render_for_completion(conversation)
-        prefix_length = len(tokens)
-
-        # Generate num_samples samples using batched generation, use loop to avoid OOMs
-        model.eval() # ensure the model is in eval mode
-        generated_token_sequences = []
-        masks = []
-        num_sampling_steps = args.num_samples // args.device_batch_size # go sequentially to prevent OOMs
-        for sampling_step in range(num_sampling_steps):
-            seed = hash((step, example_idx, sampling_step)) & 0x7FFFFFFF # positive half of int32
-            generated_token_sequences_batch, masks_batch = engine.generate_batch(
-                tokens,
-                num_samples=args.device_batch_size,
-                max_tokens=args.max_new_tokens,
-                temperature=args.temperature,
-                top_k=args.top_k,
-                seed=seed, # must make sure to change the seed for each sampling step
-            )
-            generated_token_sequences.extend(generated_token_sequences_batch)
-            masks.extend(masks_batch)
-
-        # Calculate the rewards for each sample
-        rewards = []
-        for sample_tokens in generated_token_sequences:
-            # Get just the generated tokens (after the prompt)
-            generated_tokens = sample_tokens[prefix_length:]
-            # Decode the generated response
-            generated_text = tokenizer.decode(generated_tokens)
-            # Calculate the reward
-            reward = train_task.reward(conversation, generated_text)
-            rewards.append(reward)
-
-        # Pad the sequences so that their lengths (in time) match
-        max_length = max(len(seq) for seq in generated_token_sequences)
-        padded_generated_token_sequences = [seq + [assistant_end] * (max_length - len(seq)) for seq in generated_token_sequences]
-        padded_masks = [mask + [0] * (max_length - len(mask)) for mask in masks]
-        # Stack up the sequences and masks into PyTorch tensors
-        ids = torch.tensor(padded_generated_token_sequences, dtype=torch.long, device=device)
-        mask_ids = torch.tensor(padded_masks, dtype=torch.long, device=device)
-        # Generate autoregressive inputs and targets to the Transformer
-        inputs = ids[:, :-1]
-        targets = ids[:, 1:].clone() # clone to avoid in-place modification:
-        targets[mask_ids[:, 1:] == 0] = -1 # <-- inplace modification right here. -1 is the ignore index
-        # NOTE also that the Engine returns mask=0 for BOTH the prompt tokens AND the tool use tokens.
-        # So we will (correctly) end up not training on the prompt tokens, or the tool use forced tokens.
-        rewards = torch.tensor(rewards, dtype=torch.float, device=device)
-        # Calculate the advantages by simply subtracting the mean (instead of z-score (x-mu)/sigma)
-        mu = rewards.mean()
-        advantages = rewards - mu
-        # yield inputs/targets as (B, T) of ids and rewards as (B,) of floats
-        yield generated_token_sequences, inputs, targets, rewards, advantages
-
-# -----------------------------------------------------------------------------
-# Simple evaluation loop for GSM8K pass@k
-def run_gsm8k_eval(task, tokenizer, engine,
-    max_examples=None,
-    num_samples=1,
-    max_completion_tokens=256,
-    temperature=0.0,
-    top_k=50
+def train_rl_model(
+    model,
+    tokenizer,
+    engine,
+    train_task,
+    val_task,
+    optimizer,
+    device,
+    device_type,
+    ddp,
+    ddp_rank,
+    ddp_world_size,
+    master_process,
+    num_steps,
+    examples_per_rank,
+    wandb_run,
+    user_config,
+    args,
 ):
+    """Train RL model.
+    
+    Returns:
+        tuple: (model, metrics) where metrics contains final training stats
     """
-    Evaluates GSM8K task and returns a list of records of evaluation outcomes.
-    In a distributed setting, all ranks cooperate but this function will NOT
-    do the reduction across ranks. This is the responsibility of the caller.
-    Because the evaluation can take a while, this function will yield records one by one.
-    """
-    max_examples = min(max_examples, len(task)) if max_examples is not None else len(task)
-    for idx in range(ddp_rank, max_examples, ddp_world_size):
-        conversation = task[idx]
-        tokens = tokenizer.render_for_completion(conversation)
-        prefix_length = len(tokens)
-        # Generate k samples using batched generation inside the Engine
-        assert num_samples <= args.device_batch_size # usually this is true. we can add a loop if not...
-        generated_token_sequences, masks = engine.generate_batch(
-            tokens,
-            num_samples=num_samples,
-            max_tokens=max_completion_tokens,
-            temperature=temperature,
-            top_k=top_k
-        )
-        # Check each sample for correctness
-        outcomes = []
-        for sample_tokens in generated_token_sequences:
-            generated_tokens = sample_tokens[prefix_length:]
-            generated_text = tokenizer.decode(generated_tokens)
-            is_correct = task.evaluate(conversation, generated_text)
-            outcomes.append({
-                "is_correct": is_correct
-            })
-        # A bit bloated because I wanted to do more complex logging at one point.
-        record = {
-            "idx": idx,
-            "outcomes": outcomes,
-        }
-        yield record
+    # Rollout / sampling generator loop that yields batches of examples for training
+    @torch.no_grad()
+    def get_batch():
+        assistant_end = tokenizer.encode_special("<|assistant_end|>") # ok to use this token, it's only for padding and isn't used in the loss.
+        rank_indices = range(ddp_rank, len(train_task), ddp_world_size) # each rank is responsible for different examples in the training data
+        for example_idx in itertools.cycle(rank_indices):
 
-# -----------------------------------------------------------------------------
-# Training loop
+            # First get the full conversation of both user and assistant messages
+            conversation = train_task[example_idx]
 
-# Init the optimizer
-optimizer = model.setup_optimizer(
-    unembedding_lr=args.unembedding_lr,
-    embedding_lr=args.embedding_lr,
-    matrix_lr=args.matrix_lr,
-    weight_decay=args.weight_decay,
-)
+            # Tokenize the conversation, deleting the last Assistant message and priming the Assistant for a completion instead
+            # (i.e. keep the <|assistant_start|>, but delete everything after it)
+            tokens = tokenizer.render_for_completion(conversation)
+            prefix_length = len(tokens)
 
-# Set the initial learning rate as a fraction of the base learning rate
-for group in optimizer.param_groups:
-    group["lr"] = group["lr"] * args.init_lr_frac
-    group["initial_lr"] = group["lr"]
+            # Generate num_samples samples using batched generation, use loop to avoid OOMs
+            model.eval() # ensure the model is in eval mode
+            generated_token_sequences = []
+            masks = []
+            num_sampling_steps = args.num_samples // args.device_batch_size # go sequentially to prevent OOMs
+            for sampling_step in range(num_sampling_steps):
+                seed = hash((step, example_idx, sampling_step)) & 0x7FFFFFFF # positive half of int32
+                generated_token_sequences_batch, masks_batch = engine.generate_batch(
+                    tokens,
+                    num_samples=args.device_batch_size,
+                    max_tokens=args.max_new_tokens,
+                    temperature=args.temperature,
+                    top_k=args.top_k,
+                    seed=seed, # must make sure to change the seed for each sampling step
+                )
+                generated_token_sequences.extend(generated_token_sequences_batch)
+                masks.extend(masks_batch)
 
-# Learning rate scheduler: simple rampdown to zero over num_steps
-def get_lr_multiplier(it):
-    lrm = 1.0 - it / num_steps
-    return lrm
+            # Calculate the rewards for each sample
+            rewards = []
+            for sample_tokens in generated_token_sequences:
+                # Get just the generated tokens (after the prompt)
+                generated_tokens = sample_tokens[prefix_length:]
+                # Decode the generated response
+                generated_text = tokenizer.decode(generated_tokens)
+                # Calculate the reward
+                reward = train_task.reward(conversation, generated_text)
+                rewards.append(reward)
 
-# Calculate the number of examples each rank handles to achieve the desired examples_per_step
-print0(f"Total sequences per step: {args.examples_per_step * args.num_samples}") # total batch size in sequences/step
-assert args.examples_per_step % ddp_world_size == 0, "Desired examples per step must be divisible by the number of ranks"
-examples_per_rank = args.examples_per_step // ddp_world_size # per GPU
-print0(f"Calculated examples per rank: {examples_per_rank}")
+            # Pad the sequences so that their lengths (in time) match
+            max_length = max(len(seq) for seq in generated_token_sequences)
+            padded_generated_token_sequences = [seq + [assistant_end] * (max_length - len(seq)) for seq in generated_token_sequences]
+            padded_masks = [mask + [0] * (max_length - len(mask)) for mask in masks]
+            # Stack up the sequences and masks into PyTorch tensors
+            ids = torch.tensor(padded_generated_token_sequences, dtype=torch.long, device=device)
+            mask_ids = torch.tensor(padded_masks, dtype=torch.long, device=device)
+            # Generate autoregressive inputs and targets to the Transformer
+            inputs = ids[:, :-1]
+            targets = ids[:, 1:].clone() # clone to avoid in-place modification:
+            targets[mask_ids[:, 1:] == 0] = -1 # <-- inplace modification right here. -1 is the ignore index
+            # NOTE also that the Engine returns mask=0 for BOTH the prompt tokens AND the tool use tokens.
+            # So we will (correctly) end up not training on the prompt tokens, or the tool use forced tokens.
+            rewards = torch.tensor(rewards, dtype=torch.float, device=device)
+            # Calculate the advantages by simply subtracting the mean (instead of z-score (x-mu)/sigma)
+            mu = rewards.mean()
+            advantages = rewards - mu
+            # yield inputs/targets as (B, T) of ids and rewards as (B,) of floats
+            yield generated_token_sequences, inputs, targets, rewards, advantages
 
-# Kick off the training loop
-batch_iterator = get_batch()
-for step in range(num_steps):
+    # Simple evaluation loop for GSM8K pass@k
+    def run_gsm8k_eval(task, tokenizer, engine,
+        max_examples=None,
+        num_samples=1,
+        max_completion_tokens=256,
+        temperature=0.0,
+        top_k=50
+    ):
+        """
+        Evaluates GSM8K task and returns a list of records of evaluation outcomes.
+        In a distributed setting, all ranks cooperate but this function will NOT
+        do the reduction across ranks. This is the responsibility of the caller.
+        Because the evaluation can take a while, this function will yield records one by one.
+        """
+        max_examples = min(max_examples, len(task)) if max_examples is not None else len(task)
+        for idx in range(ddp_rank, max_examples, ddp_world_size):
+            conversation = task[idx]
+            tokens = tokenizer.render_for_completion(conversation)
+            prefix_length = len(tokens)
+            # Generate k samples using batched generation inside the Engine
+            assert num_samples <= args.device_batch_size # usually this is true. we can add a loop if not...
+            generated_token_sequences, masks = engine.generate_batch(
+                tokens,
+                num_samples=num_samples,
+                max_tokens=max_completion_tokens,
+                temperature=temperature,
+                top_k=top_k
+            )
+            # Check each sample for correctness
+            outcomes = []
+            for sample_tokens in generated_token_sequences:
+                generated_tokens = sample_tokens[prefix_length:]
+                generated_text = tokenizer.decode(generated_tokens)
+                is_correct = task.evaluate(conversation, generated_text)
+                outcomes.append({
+                    "is_correct": is_correct
+                })
+            # A bit bloated because I wanted to do more complex logging at one point.
+            record = {
+                "idx": idx,
+                "outcomes": outcomes,
+            }
+            yield record
+
+    # Training loop
+    batch_iterator = get_batch()
+    final_passk = None
+    
+    for step in range(num_steps):
 
     # Evaluate the model once in a while and log to wandb
     if step % args.eval_every == 0:
@@ -304,29 +295,83 @@ for step in range(num_steps):
         "lrm": lrm,
     })
 
-    # Master process saves the model once in a while. Skip first step. Save last step.
-    if master_process and ((step > 0 and step % args.save_every == 0) or step == num_steps - 1):
-        base_dir = get_base_dir()
-        depth = model.config.n_layer
-        output_dirname = args.model_tag if args.model_tag else f"d{depth}" # base the model tag on the depth of the base model
-        checkpoint_dir = os.path.join(base_dir, "chatrl_checkpoints", output_dirname)
-        model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
-        save_checkpoint(
-            checkpoint_dir,
-            step,
-            model.state_dict(),
-            None, # note: we don't bother to save the optimizer state
-            {
-                "model_config": model_config_kwargs,
-            }
-        )
-        print(f"✅ Saved model checkpoint to {checkpoint_dir}")
+        # Master process saves the model once in a while. Skip first step. Save last step.
+        if master_process and ((step > 0 and step % args.save_every == 0) or step == num_steps - 1):
+            base_dir = get_base_dir()
+            depth = model.config.n_layer
+            output_dirname = args.model_tag if args.model_tag else f"d{depth}" # base the model tag on the depth of the base model
+            checkpoint_dir = os.path.join(base_dir, "chatrl_checkpoints", output_dirname)
+            model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
+            save_checkpoint(
+                checkpoint_dir,
+                step,
+                model.state_dict(),
+                None, # note: we don't bother to save the optimizer state
+                {
+                    "model_config": model_config_kwargs,
+                }
+            )
+            print(f"✅ Saved model checkpoint to {checkpoint_dir}")
 
-# Log to report
-from nanochat.report import get_report
-get_report().log(section="Chat RL", data=[
-    user_config, # CLI args
-])
+    # Log to report
+    from nanochat.report import get_report
+    get_report().log(section="Chat RL", data=[
+        user_config, # CLI args
+    ])
 
-wandb_run.finish() # wandb run finish
-compute_cleanup()
+    return model, {
+        "final_passk": final_passk,
+        "mean_reward": mean_reward,
+    }
+
+# -----------------------------------------------------------------------------
+# CLI wrapper
+
+if __name__ == "__main__":
+    train_task = GSM8K(subset="main", split="train")
+    val_task = GSM8K(subset="main", split="test")
+    num_steps = (len(train_task) // args.examples_per_step) * args.num_epochs
+    print0(f"Calculated number of steps: {num_steps}")
+
+    # Init the optimizer
+    optimizer = model.setup_optimizer(
+        unembedding_lr=args.unembedding_lr,
+        embedding_lr=args.embedding_lr,
+        matrix_lr=args.matrix_lr,
+        weight_decay=args.weight_decay,
+    )
+
+    # Set the initial learning rate as a fraction of the base learning rate
+    for group in optimizer.param_groups:
+        group["lr"] = group["lr"] * args.init_lr_frac
+        group["initial_lr"] = group["lr"]
+
+    # Calculate the number of examples each rank handles to achieve the desired examples_per_step
+    print0(f"Total sequences per step: {args.examples_per_step * args.num_samples}") # total batch size in sequences/step
+    assert args.examples_per_step % ddp_world_size == 0, "Desired examples per step must be divisible by the number of ranks"
+    examples_per_rank = args.examples_per_step // ddp_world_size # per GPU
+    print0(f"Calculated examples per rank: {examples_per_rank}")
+
+    # Run training
+    model_trained, metrics = train_rl_model(
+        model=model,
+        tokenizer=tokenizer,
+        engine=engine,
+        train_task=train_task,
+        val_task=val_task,
+        optimizer=optimizer,
+        device=device,
+        device_type=device_type,
+        ddp=ddp,
+        ddp_rank=ddp_rank,
+        ddp_world_size=ddp_world_size,
+        master_process=master_process,
+        num_steps=num_steps,
+        examples_per_rank=examples_per_rank,
+        wandb_run=wandb_run,
+        user_config=user_config,
+        args=args,
+    )
+    
+    wandb_run.finish() # wandb run finish
+    compute_cleanup()

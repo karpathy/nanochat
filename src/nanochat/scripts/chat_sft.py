@@ -25,12 +25,12 @@ from nanochat.flash_attention import HAS_FA3
 from nanochat.evaluation.engine import Engine
 from nanochat.scripts.chat_eval import run_chat_eval
 
-from tasks.common import TaskMixture
-from tasks.gsm8k import GSM8K
-from tasks.mmlu import MMLU
-from tasks.smoltalk import SmolTalk
-from tasks.customjson import CustomJSON
-from tasks.spellingbee import SimpleSpelling, SpellingBee
+from nanochat.tasks.base import TaskMixture
+from nanochat.tasks.gsm8k import GSM8K
+from nanochat.tasks.mmlu import MMLU
+from nanochat.tasks.smoltalk import SmolTalk
+from nanochat.tasks.customjson import CustomJSON
+from nanochat.tasks.spellingbee import SimpleSpelling, SpellingBee
 
 # -----------------------------------------------------------------------------
 # CLI arguments
@@ -326,15 +326,47 @@ def get_muon_momentum(it):
     momentum = (1 - frac) * 0.85 + frac * 0.95
     return momentum
 
-# -----------------------------------------------------------------------------
-# Training loop
-x, y = next(train_loader) # prefetch the very first batch of data
-min_val_bpb = float("inf")
-smooth_train_loss = 0 # EMA of training loss
-ema_beta = 0.9 # EMA decay factor
-total_training_time = 0 # total wall-clock time of training
-step = 0
-while True:
+def train_sft_model(
+    model,
+    orig_model,
+    optimizer,
+    train_loader,
+    build_val_loader,
+    tokenizer,
+    token_bytes,
+    device,
+    device_type,
+    ddp,
+    ddp_rank,
+    ddp_world_size,
+    master_process,
+    synchronize,
+    get_max_memory,
+    gpu_peak_flops,
+    scaler,
+    num_flops_per_token,
+    grad_accum_steps,
+    wandb_run,
+    user_config,
+    depth,
+    args,
+):
+    """Train SFT model.
+    
+    Returns:
+        tuple: (model, metrics) where metrics contains final training stats
+    """
+    # Training loop
+    x, y = next(train_loader) # prefetch the very first batch of data
+    min_val_bpb = float("inf")
+    smooth_train_loss = 0 # EMA of training loss
+    ema_beta = 0.9 # EMA decay factor
+    total_training_time = 0 # total wall-clock time of training
+    step = 0
+    progress = 0 # will go from 0 to 1 over the course of the epoch
+    chatcore_results = {}
+    
+    while True:
     flops_so_far = num_flops_per_token * args.total_batch_size * step
 
     # Synchronize last_step across all ranks to avoid hangs in the distributed setting
@@ -487,33 +519,73 @@ while True:
             "train/epoch": current_epoch,
         })
 
-    # The garbage collector spends ~500ms scanning for cycles quite frequently.
-    # We manually manage it to avoid these pauses during training.
-    if step == 1:
-        gc.collect() # manually collect a lot of garbage from setup
-        gc.freeze() # freeze all currently surviving objects and exclude them from GC
-        gc.disable() # disable GC entirely except:
-    elif step % 5000 == 0: # every 5000 steps...
-        gc.collect() # manually collect, just to be safe for very long runs
+        # The garbage collector spends ~500ms scanning for cycles quite frequently.
+        # We manually manage it to avoid these pauses during training.
+        if step == 1:
+            gc.collect() # manually collect a lot of garbage from setup
+            gc.freeze() # freeze all currently surviving objects and exclude them from GC
+            gc.disable() # disable GC entirely except:
+        elif step % 5000 == 0: # every 5000 steps...
+            gc.collect() # manually collect, just to be safe for very long runs
 
-# print a few more stats
-print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
-print0(f"Total training time: {total_training_time/60:.2f}m")
-print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
+    # print a few more stats
+    print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
+    print0(f"Total training time: {total_training_time/60:.2f}m")
+    print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
-# Log to report
-from nanochat.report import get_report
-get_report().log(section="SFT", data=[
-    user_config, # CLI args
-    { # stats about the training setup
-        "Number of iterations": step,
-        "DDP world size": ddp_world_size,
-    },
-    { # stats about training outcomes
-        "Minimum validation bpb": min_val_bpb,
+    # Log to report
+    from nanochat.report import get_report
+    get_report().log(section="SFT", data=[
+        user_config, # CLI args
+        { # stats about the training setup
+            "Number of iterations": step,
+            "DDP world size": ddp_world_size,
+        },
+        { # stats about training outcomes
+            "Minimum validation bpb": min_val_bpb,
+        }
+    ])
+
+    return orig_model, {
+        "val_bpb": val_bpb,
+        "min_val_bpb": min_val_bpb,
+        "chatcore_metric": chatcore_results.get("chatcore_metric", None),
+        "mfu": mfu,
+        "total_training_time": total_training_time,
+        "peak_memory": get_max_memory() / 1024 / 1024,
     }
-])
 
-# cleanup
-wandb_run.finish() # wandb run finish
-compute_cleanup()
+# -----------------------------------------------------------------------------
+# CLI wrapper
+
+if __name__ == "__main__":
+    # Run training
+    model_trained, metrics = train_sft_model(
+        model=model,
+        orig_model=orig_model,
+        optimizer=optimizer,
+        train_loader=train_loader,
+        build_val_loader=build_val_loader,
+        tokenizer=tokenizer,
+        token_bytes=token_bytes,
+        device=device,
+        device_type=device_type,
+        ddp=ddp,
+        ddp_rank=ddp_rank,
+        ddp_world_size=ddp_world_size,
+        master_process=master_process,
+        synchronize=synchronize,
+        get_max_memory=get_max_memory,
+        gpu_peak_flops=gpu_peak_flops,
+        scaler=scaler,
+        num_flops_per_token=num_flops_per_token,
+        grad_accum_steps=grad_accum_steps,
+        wandb_run=wandb_run,
+        user_config=user_config,
+        depth=depth,
+        args=args,
+    )
+    
+    # cleanup
+    wandb_run.finish() # wandb run finish
+    compute_cleanup()
