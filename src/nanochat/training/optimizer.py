@@ -7,6 +7,7 @@ Addapted from: https://github.com/KellerJordan/modded-nanogpt
 Further contributions from @karpathy and @chrisjmccormick.
 """
 
+from typing import List, Dict, Any, Optional
 import torch
 import torch.distributed as dist
 from torch import Tensor
@@ -175,7 +176,7 @@ class MuonAdamW(torch.optim.Optimizer):
             - For AdamW groups: 'lr', 'betas', 'eps', 'weight_decay'
             - For Muon groups: 'lr', 'momentum', 'ns_steps', 'beta2', 'weight_decay'
     """
-    def __init__(self, param_groups: list[dict]):
+    def __init__(self, param_groups: List[Dict[str, Any]]) -> None:
         super().__init__(param_groups, defaults={})
         # 0-D CPU tensors to avoid torch.compile recompilation when values change
         # AdamW tensors
@@ -191,7 +192,7 @@ class MuonAdamW(torch.optim.Optimizer):
         self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
 
-    def _step_adamw(self, group: dict) -> None:
+    def _step_adamw(self, group: Dict[str, Any]) -> None:
         """
         AdamW update for each param in the group individually.
         Lazy init the state, fill in all 0-D tensors, call the fused kernel.
@@ -226,12 +227,12 @@ class MuonAdamW(torch.optim.Optimizer):
                 self._adamw_beta2_t, self._adamw_eps_t, self._adamw_wd_t,
             )
 
-    def _step_muon(self, group: dict) -> None:
+    def _step_muon(self, group: Dict[str, Any]) -> None:
         """
         Muon update for all params in the group (stacked for efficiency).
         Lazy init the state, fill in all 0-D tensors, call the fused kernel.
         """
-        params: list[Tensor] = group['params']
+        params: List[Tensor] = group['params']
         if not params:
             return
 
@@ -289,10 +290,6 @@ class MuonAdamW(torch.optim.Optimizer):
                 self._step_muon(group)
             else:
                 raise ValueError(f"Unknown optimizer kind: {group['kind']}")
-
-# -----------------------------------------------------------------------------
-# Distributed version of the MuonAdamW optimizer.
-# Used for training on multiple GPUs.
 
 class DistMuonAdamW(torch.optim.Optimizer):
     """
@@ -352,7 +349,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
             - For AdamW groups: 'lr', 'betas', 'eps', 'weight_decay'
             - For Muon groups: 'lr', 'momentum', 'ns_steps', 'beta2', 'weight_decay'
     """
-    def __init__(self, param_groups: list[dict]):
+    def __init__(self, param_groups: List[Dict[str, Any]]) -> None:
         super().__init__(param_groups, defaults={})
         # 0-D CPU tensors to avoid torch.compile recompilation when values change
         self._adamw_step_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
@@ -366,7 +363,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
         self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
 
-    def _reduce_adamw(self, group: dict, world_size: int) -> dict:
+    def _reduce_adamw(self, group: Dict[str, Any], world_size: int) -> Dict[str, Any]:
         """Launch async reduce ops for AdamW group. Returns info dict with per-param infos."""
         param_infos = {}
         for p in group['params']:
@@ -384,7 +381,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
                 param_infos[p] = dict(future=future, grad_slice=grad_slice, is_small=False)
         return dict(param_infos=param_infos)
 
-    def _reduce_muon(self, group: dict, world_size: int) -> dict:
+    def _reduce_muon(self, group: Dict[str, Any], world_size: int) -> Dict[str, Any]:
         """Launch async reduce op for Muon group. Returns info dict."""
         params = group['params']
         chunk_size = (len(params) + world_size - 1) // world_size
@@ -405,7 +402,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
 
         return dict(future=future, grad_chunk=grad_chunk, stacked_grads=stacked_grads, chunk_size=chunk_size)
 
-    def _compute_adamw(self, group: dict, info: dict, gather_list: list, rank: int, world_size: int) -> None:
+    def _compute_adamw(self, group: Dict[str, Any], info: Dict[str, Any], gather_list: List[Dict[str, Any]], rank: int, world_size: int) -> None:
         """Wait for reduce, compute AdamW updates, launch gathers for large params."""
         param_infos = info['param_infos']
         for p in group['params']:
@@ -446,7 +443,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
                 future = dist.all_gather_into_tensor(p, p_slice, async_op=True).get_future()
                 gather_list.append(dict(future=future, params=None))
 
-    def _compute_muon(self, group: dict, info: dict, gather_list: list, rank: int) -> None:
+    def _compute_muon(self, group: Dict[str, Any], info: Dict[str, Any], gather_list: List[Dict[str, Any]], rank: int) -> None:
         """Wait for reduce, compute Muon updates, launch gather."""
         info['future'].wait()
         params = group['params']
@@ -496,7 +493,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
         future = dist.all_gather_into_tensor(stacked_params, updated_params, async_op=True).get_future()
         gather_list.append(dict(future=future, stacked_params=stacked_params, params=params))
 
-    def _finish_gathers(self, gather_list: list) -> None:
+    def _finish_gathers(self, gather_list: List[Dict[str, Any]]) -> None:
         """Wait for all gathers and copy Muon params back."""
         for info in gather_list:
             info["future"].wait()
