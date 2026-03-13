@@ -4,6 +4,8 @@ __pycache__/
 dev-ignore/
 report.md
 eval_bundle/
+.pytest_cache/
+.ruff_cache/
 
 # Secrets
 .env
