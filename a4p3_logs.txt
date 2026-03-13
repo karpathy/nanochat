@@ -1,0 +1,137 @@
+# A4P3 RL Training Logs — rl-gsm8k-teammate
+# W&B: https://wandb.ai/alvinay73-university-of-toronto/nanochat-rl/runs/tv4ti309
+# Model: sft-teammate (d24, SwiGLU, RoPE 10K, SFT step 483)
+# Pretrained with: SwiGLU + RoPE 500K (a3p4 architecture, NOT Karpathy baseline)
+# GPU: 2x H100, nproc=2
+# Total steps planned: 116 (1 epoch over GSM8K train)
+# Actual steps completed: 54 (timed out at 4h Modal limit)
+
+## Configuration
+model_tag: sft-teammate
+model_step: 483
+model_config: d24, n_embd=1536, n_layer=24, SwiGLU, RoPE 10K, SSSL window
+pretrain_config: d24, SwiGLU, RoPE 500K (a3p4 architecture — accidentally used)
+examples_per_step: 64 (32 per rank × 2 ranks)
+num_samples: 8
+max_new_tokens: 512
+device_batch_size: 8
+eval_every: 60
+eval_examples: 400 (200 per rank)
+save_every: 60
+
+## Step 0 Eval (before any RL training)
+Pass@1: 1.00%
+Pass@2: 1.25%
+Pass@3: 1.75%
+Pass@4: 1.75%
+Pass@5: 1.75%
+Pass@6: 2.00%
+Pass@7: 2.25%
+Pass@8: 2.25%
+Records with ≥1 correct sample: 5/200 (2.5%)
+
+## Training Summary (steps 0-54, then timeout)
+
+### Per-step average rewards:
+Step 0:  avg_reward=0.00195, seq_len=404.5
+Step 1:  avg_reward=0.00391, seq_len=395.4
+Step 2:  avg_reward=0.00391, seq_len=387.7
+Step 3:  avg_reward=0.00000, seq_len=393.1
+Step 4:  avg_reward=0.00195, seq_len=386.1
+Step 5:  avg_reward=0.00000, seq_len=414.2
+Step 6:  avg_reward=0.00000, seq_len=399.6
+Step 7:  avg_reward=0.01367, seq_len=400.4  ← best step (2/8 correct on one example)
+Step 8:  avg_reward=0.00000, seq_len=394.6
+Step 9:  avg_reward=0.00195, seq_len=406.2
+...
+Step 37: avg_reward=0.00781, seq_len=404.9
+Step 38: avg_reward=0.00195, seq_len=416.7
+Step 39: avg_reward=0.00195, seq_len=414.4
+Step 40: avg_reward=0.00195, seq_len=400.3
+Step 41: avg_reward=0.00781, seq_len=426.6
+Step 42: avg_reward=0.00195, seq_len=429.8
+Step 43: avg_reward=0.00781, seq_len=413.9  ← 3 non-zero examples in one step
+Step 44: avg_reward=0.00391, seq_len=414.5
+Step 45: avg_reward=0.00391, seq_len=440.0
+Step 46: avg_reward=0.00000, seq_len=426.0
+Step 47: avg_reward=0.00195, seq_len=429.6
+Step 48: avg_reward=0.00391, seq_len=446.1
+Step 49: avg_reward=0.00586, seq_len=436.5
+Step 50: avg_reward=0.00000, seq_len=429.9
+Step 51: avg_reward=0.00000, seq_len=443.5
+Step 52: avg_reward=0.00586, seq_len=426.2
+Step 53: avg_reward=0.00000, seq_len=416.5
+Step 54: timed out mid-step at example 22
+
+## Key Observations
+
+1. COLD-START PROBLEM: ~97% of training examples produce zero gradient
+   - 32 examples per step × 8 samples = 256 samples
+   - Typically 0-2 correct answers per step
+   - Average reward oscillates between 0.000 and 0.008
+
+2. NO LEARNING SIGNAL: Reward does not trend upward over 54 steps
+   - Steps 0-9 avg reward: ~0.003
+   - Steps 40-53 avg reward: ~0.003
+   - Flat curve — model is not improving
+
+3. SEQUENCE LENGTH INCREASING: avg_seq_len went from ~395 to ~440
+   - Model is generating longer responses over training
+   - But not generating more correct answers
+   - May be learning to ramble rather than reason
+
+4. TIMEOUT: Hit 4h Modal limit at step 54/116
+   - Each step takes ~8 min (32 examples × 8 samples on 2x H100)
+   - 116 steps would need ~15.5 hours
+   - No checkpoints saved (save_every=60, didn't reach step 60)
+
+## Sample Model Outputs (from eval_step_000000.json)
+
+The model produces INCOHERENT TEXT — no math reasoning, no tool calls, no #### format:
+
+Example 1 (incorrect):
+  Q: "Darrell and Allen's ages are in the ratio of 7:11..."
+  A: "The ratio represents the relationship between consecutive values over a
+      certain period of time. In order to simplify our expression..."
+
+Example 2 (incorrect):
+  Q: "Indras has 6 letters in her name..."
+  A: "Half of the 6-letter English name Indras' last name contains 5 letters
+      and is already included by English names..."
+
+Example 3 (incorrect):
+  Q: "An ice cream truck is traveling through a neighborhood..."
+  A: "Each round ends with one child remaining behind. This brings the original
+      five children into the process for round termination..."
+
+## Root Cause Analysis
+
+1. WRONG ARCHITECTURE: Pretrained with SwiGLU + RoPE 500K (a3p4 experimental
+   config) instead of relu2 + RoPE 10K (Karpathy baseline). The a4p3 branch
+   code overrode --mlp-type=relu2 --rope-base=10000 flags.
+
+2. SFT DIDN'T TEACH GSM8K FORMAT: The model doesn't output:
+   - Tool calls (<|python_start|>/<|python_end|>)
+   - Answer markers (#### N)
+   - Chain-of-thought math reasoning
+   Instead it generates rambling text about the problem.
+
+3. INSUFFICIENT BASE ACCURACY: Pass@1=1.0% means the model randomly stumbles
+   onto correct answers ~1% of the time. For RL to work, Karpathy needs ~5-10%
+   base accuracy to provide sufficient exploration signal.
+
+## Comparison to Karpathy's Expected Results
+| Metric              | Karpathy (expected) | Our run           |
+|---------------------|--------------------|--------------------|
+| Architecture        | relu2, RoPE 10K    | SwiGLU, RoPE 500K |
+| Pass@1 start        | 3-5%               | 1.0%               |
+| Pass@1 end          | 10-15%             | ~1% (no change)    |
+| Reward curve        | Gradual increase   | Flat near 0        |
+| Answer format       | #### N + tool calls | Incoherent text   |
+| Training completed  | Yes (1 epoch)      | No (54/116 steps)  |
+
+## Files on HuggingFace (alvina-yang/csc490a4p2)
+- rl-gsm8k-teammate/eval_step_000000.json  ← step 0 eval with 200 examples
+- pretrained-d24/                           ← pretrained base (step 6612)
+- sft-baseline-d24/                         ← SFT original mixture (step 483)
+- sft-enhanced-d24/                         ← SFT + MetaMathQA + OrcaMath + UltraChat (step 621)
