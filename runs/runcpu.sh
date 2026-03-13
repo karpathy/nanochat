@@ -10,7 +10,7 @@
 # Think of this run as educational/fun demo, not something you should expect to work well.
 # You may also want to run this script manually and one by one, copy pasting commands into your terminal.
 
-# # all the setup stuff
+# # # all the setup stuff
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -18,11 +18,12 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # ## Fails on macbook, instead remove torch cpu from UV file and do this here
 uv sync --extra cpu
 uv pip install torch torchvision torchaudio --upgrade --index-url https://download.pytorch.org/whl/cpu
-uv pip uninstall numpy
-uv pip install --force-reinstall -v "numpy==1.25.2"
+# uv pip uninstall numpy
+# uv pip install --force-reinstall -v "numpy==1.25.2"
+# uv sync --extra cpu
 
 source .venv/bin/activate
-uv pip install torch torchvision torchaudio --upgrade --index-url https://download.pytorch.org/whly/cpu
+uv pip install torch torchvision torchaudio --upgrade --index-url https://download.pytorch.org/whl/cpu
 uv pip uninstall numpy
 uv pip install --force-reinstall -v "numpy==1.25.2"
 
@@ -49,7 +50,7 @@ python -m scripts.base_train \
     --eval-tokens=524288 \
     --core-metric-every=-1 \
     --sample-every=100 \
-    --num-iterations=5000 \
+    --num-iterations=100 \
     --run=$WANDB_RUN
 python -m scripts.base_eval --device-batch-size=1 --split-tokens=16384 --max-per-task=16
 
