@@ -19,8 +19,8 @@ if [ -z "$SKIP_SETUP" ]; then
 
     # Tokenizer, download 1000 shards for pretraining
     # (probably this can be reduced but it's tricky to determine the exact right number, TODO).
-    python -m nanochat.dataset -n 1000
-    python -m scripts.tok_train --max-chars=2000000000 --vocab-size=32768
+    python -m nanochat.data.dataset -n 1000
+    python -m nanochat.scripts.tok_train --max-chars=2000000000 --vocab-size=32768
 else
     source .venv/bin/activate
 fi
@@ -66,7 +66,7 @@ for d in "${DEPTHS[@]}"; do
         DEVICE_BATCH_SIZE_ARG="--device-batch-size=32"
     fi
 
-    torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- \
+    torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m nanochat.scripts.base_train -- \
         --depth=$d \
         --run="${WANDB_RUN}_d${d}" \
         --model-tag="${TAG}" \

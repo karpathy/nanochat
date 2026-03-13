@@ -449,8 +449,8 @@ def train_base_model(
 
     # Go!
     while True:
-    last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
-    flops_so_far = num_flops_per_token * total_batch_size * step
+        last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
+        flops_so_far = num_flops_per_token * total_batch_size * step
 
     # once in a while: evaluate the val bpb (all ranks participate)
     if args.eval_every > 0 and (last_step or step % args.eval_every == 0):
@@ -673,7 +673,7 @@ def train_base_model(
 # -----------------------------------------------------------------------------
 # CLI wrapper
 
-if __name__ == "__main__":
+def main():
     # Get first batch before training loop
     x, y, dataloader_state_dict = next(train_loader)
     
@@ -716,3 +716,6 @@ if __name__ == "__main__":
     # cleanup
     wandb_run.finish() # wandb run finish
     compute_cleanup()
+
+if __name__ == "__main__":
+    main()

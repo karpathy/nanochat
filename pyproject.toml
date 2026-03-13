@@ -27,6 +27,17 @@ dependencies = [
     "zstandard>=0.25.0",
 ]
 
+[project.scripts]
+nanochat-train = "nanochat.scripts.base_train:main"
+nanochat-eval = "nanochat.scripts.base_eval:main"
+nanochat-chat = "nanochat.scripts.chat_cli:main"
+nanochat-sft = "nanochat.scripts.chat_sft:main"
+nanochat-rl = "nanochat.scripts.chat_rl:main"
+nanochat-chat-eval = "nanochat.scripts.chat_eval:main"
+nanochat-web = "nanochat.scripts.chat_web:main"
+nanochat-tok-train = "nanochat.scripts.tok_train:main"
+nanochat-tok-eval = "nanochat.scripts.tok_eval:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
