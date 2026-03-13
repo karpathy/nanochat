@@ -6,6 +6,7 @@ import os
 import re
 import logging
 import urllib.request
+from typing import Tuple, Optional, Callable, Any
 import torch
 import torch.distributed as dist
 from filelock import FileLock
@@ -67,7 +68,7 @@ def setup_default_logging():
 setup_default_logging()
 logger = logging.getLogger(__name__)
 
-def get_base_dir():
+def get_base_dir() -> str:
     # co-locate nanochat intermediates with other cached data in ~/.cache (by default)
     if os.environ.get("NANOCHAT_BASE_DIR"):
         nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR")
@@ -78,7 +79,7 @@ def get_base_dir():
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
-def download_file_with_lock(url, filename, postprocess_fn=None):
+def download_file_with_lock(url: str, filename: str, postprocess_fn: Optional[Callable[[str], None]] = None) -> str:
     """
     Downloads a file from a URL to a local path in the base directory.
     Uses a lock file to prevent concurrent downloads among multiple ranks.
@@ -114,12 +115,12 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
 
     return file_path
 
-def print0(s="",**kwargs):
+def print0(s: str = "", **kwargs) -> None:
     ddp_rank = int(os.environ.get('RANK', 0))
     if ddp_rank == 0:
         print(s, **kwargs)
 
-def print_banner():
+def print_banner() -> None:
     # Cool DOS Rebel font ASCII banner made with https://manytools.org/hacker-tools/ascii-banner/
     banner = """
                                                        █████                █████
@@ -147,7 +148,7 @@ def is_ddp_initialized() -> bool:
     """
     return dist.is_available() and dist.is_initialized()
 
-def get_dist_info():
+def get_dist_info() -> Tuple[bool, int, int, int]:
     if is_ddp_requested():
         # We rely on torchrun's env to decide if we SHOULD init.
         # (Initialization itself happens in compute init.)
@@ -159,7 +160,7 @@ def get_dist_info():
     else:
         return False, 0, 0, 1
 
-def autodetect_device_type():
+def autodetect_device_type() -> str:
     # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
     if torch.cuda.is_available():
         device_type = "cuda"
@@ -170,7 +171,7 @@ def autodetect_device_type():
     print0(f"Autodetected device type: {device_type}")
     return device_type
 
-def compute_init(device_type="cuda"): # cuda|cpu|mps
+def compute_init(device_type: str = "cuda") -> Tuple[bool, int, int, int, torch.device]:
     """Basic initialization that we keep doing over and over, so make common."""
 
     assert device_type in ["cuda", "mps", "cpu"], "Invalid device type atm"
@@ -207,7 +208,7 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
 
     return is_ddp_requested, ddp_rank, ddp_local_rank, ddp_world_size, device
 
-def compute_cleanup():
+def compute_cleanup() -> None:
     """Companion function to compute_init, to clean things up before script exit"""
     if is_ddp_initialized():
         dist.destroy_process_group()
