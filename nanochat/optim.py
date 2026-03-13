@@ -7,9 +7,25 @@ Addapted from: https://github.com/KellerJordan/modded-nanogpt
 Further contributions from @karpathy and @chrisjmccormick.
 """
 
+import os
 import torch
 import torch.distributed as dist
 from torch import Tensor
+
+
+def _should_compile_fused_kernels() -> bool:
+    env = os.environ.get("NANOCHAT_FUSED_COMPILE")
+    if env is not None:
+        return env.lower() in {"1", "true", "yes", "on"}
+    # MPS training is stable in eager mode, but torch.compile on the optimizer
+    # kernels can hit recompile limits as model depth and parameter-group shapes grow.
+    return not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+
+
+def _compile_fused_kernel(fn):
+    if not _should_compile_fused_kernels():
+        return fn
+    return torch.compile(fn, dynamic=False, fullgraph=True)
 
 # -----------------------------------------------------------------------------
 """
@@ -17,7 +33,7 @@ Good old AdamW optimizer, fused kernel.
 https://arxiv.org/abs/1711.05101
 """
 
-@torch.compile(dynamic=False, fullgraph=True)
+@_compile_fused_kernel
 def adamw_step_fused(
     p: Tensor,              # (32768, 768) - parameter tensor
     grad: Tensor,           # (32768, 768) - gradient, same shape as p
@@ -35,17 +51,23 @@ def adamw_step_fused(
     All in one compiled graph to eliminate Python overhead between ops.
     The 0-D CPU tensors avoid recompilation when hyperparameter values change.
     """
+    lr = lr_t.to(device=p.device, dtype=p.dtype)
+    beta1 = beta1_t.to(device=p.device, dtype=p.dtype)
+    beta2 = beta2_t.to(device=p.device, dtype=p.dtype)
+    step = step_t.to(device=p.device, dtype=p.dtype)
+    eps = eps_t.to(device=p.device, dtype=p.dtype)
+    wd = wd_t.to(device=p.device, dtype=p.dtype)
     # Weight decay (decoupled, applied before the update)
-    p.mul_(1 - lr_t * wd_t)
+    p.mul_(1 - lr * wd)
     # Update running averages (lerp_ is cleaner and fuses well)
-    exp_avg.lerp_(grad, 1 - beta1_t)
-    exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
+    exp_avg.lerp_(grad, 1 - beta1)
+    exp_avg_sq.lerp_(grad.square(), 1 - beta2)
     # Bias corrections
-    bias1 = 1 - beta1_t ** step_t
-    bias2 = 1 - beta2_t ** step_t
+    bias1 = 1 - beta1 ** step
+    bias2 = 1 - beta2 ** step
     # Compute update and apply
-    denom = (exp_avg_sq / bias2).sqrt() + eps_t
-    step_size = lr_t / bias1
+    denom = (exp_avg_sq / bias2).sqrt() + eps
+    step_size = lr / bias1
     p.add_(exp_avg / denom, alpha=-step_size)
 
 # -----------------------------------------------------------------------------
@@ -87,7 +109,7 @@ polar_express_coeffs = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 ]
 
-@torch.compile(dynamic=False, fullgraph=True)
+@_compile_fused_kernel
 def muon_step_fused(
     stacked_grads: Tensor,          # (12, 768, 3072) - stacked gradients
     stacked_params: Tensor,         # (12, 768, 3072) - stacked parameters
@@ -107,7 +129,7 @@ def muon_step_fused(
     """
 
     # Nesterov momentum
-    momentum = momentum_t.to(stacked_grads.dtype)
+    momentum = momentum_t.to(device=stacked_grads.device, dtype=stacked_grads.dtype)
     momentum_buffer.lerp_(stacked_grads, 1 - momentum)
     g = stacked_grads.lerp_(momentum_buffer, momentum)
 
@@ -127,7 +149,7 @@ def muon_step_fused(
     g = X
 
     # Variance reduction
-    beta2 = beta2_t.to(g.dtype)
+    beta2 = beta2_t.to(device=second_momentum_buffer.device, dtype=second_momentum_buffer.dtype)
     v_mean = g.float().square().mean(dim=red_dim, keepdim=True)
     red_dim_size = g.size(red_dim)
     v_norm_sq = v_mean.sum(dim=(-2, -1), keepdim=True) * red_dim_size
@@ -140,8 +162,9 @@ def muon_step_fused(
     g = g * final_scale.to(g.dtype)
 
     # Cautious weight decay + parameter update
-    lr = lr_t.to(g.dtype)
-    wd = wd_t.to(g.dtype)
+    g = g.to(stacked_params.dtype)
+    lr = lr_t.to(device=stacked_params.device, dtype=stacked_params.dtype)
+    wd = wd_t.to(device=stacked_params.device, dtype=stacked_params.dtype)
     mask = (g * stacked_params) >= 0
     stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
 

@@ -93,6 +93,10 @@ uv sync --extra macos  # Apple Silicon / MPS
 
 On Apple Silicon, nanochat will autodetect `mps` and run in eager mode by default. This skips `torch.compile`, which is still less predictable on MPS for training. If you want to try it anyway, set `NANOCHAT_COMPILE=1`.
 
+For larger Apple Silicon machines such as M2 Ultra, use [runs/runm2ultra.sh](runs/runm2ultra.sh) and [dev/benchmark_mps_scaling.py](dev/benchmark_mps_scaling.py) to establish a benchmark-driven scaling ladder before choosing a deeper training run.
+
+On the M2 Ultra machine used for development, a synthetic 1024-token train-step probe reached a stable default tier around a 2.8B-parameter model (`depth=32`, `device-batch-size=2`) on a single MPS device. See [dev/M2_ULTRA_SCALING.md](dev/M2_ULTRA_SCALING.md) for the measured ladder and [runs/runm2ultra_base32.sh](runs/runm2ultra_base32.sh) for the recommended starter run. The M2 Ultra scripts also auto-bootstrap missing dataset shards and tokenizer artifacts before benchmarking or training.
+
 ## Precision / dtype
 
 nanochat does not use `torch.amp.autocast`. Instead, precision is managed explicitly through a single global `COMPUTE_DTYPE` (defined in `nanochat/common.py`). By default this is auto-detected based on your hardware:
