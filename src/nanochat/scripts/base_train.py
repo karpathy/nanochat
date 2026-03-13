@@ -42,7 +42,7 @@ from nanochat.common import (
 from nanochat.data.tokenizer import get_token_bytes, get_tokenizer
 from nanochat.evaluation.engine import Engine
 from nanochat.evaluation.loss_eval import evaluate_bpb
-from nanochat.flash_attention import HAS_FA3
+from nanochat.flash_attention import HAS_FA3, USE_FA3
 from nanochat.models.gpt import GPT, GPTConfig, Linear
 from nanochat.scripts.base_eval import evaluate_core
 from nanochat.training.checkpoint import load_checkpoint, save_checkpoint
@@ -155,7 +155,6 @@ use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
 
 # Flash Attention status
-from nanochat.flash_attention import USE_FA3
 
 using_fa3 = USE_FA3
 if using_fa3:

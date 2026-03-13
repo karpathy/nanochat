@@ -12,6 +12,7 @@ import torch
 from nanochat.common import get_base_dir
 from nanochat.data.dataset import parquets_iter_batched
 from nanochat.data.tokenizer import RustBPETokenizer
+from nanochat.report import get_report
 
 # -----------------------------------------------------------------------------
 # Parse command line arguments
@@ -99,7 +100,6 @@ with open(token_bytes_path, "wb") as f:
 print(f"Saved token_bytes to {token_bytes_path}")
 
 # Log to report
-from nanochat.report import get_report
 
 token_bytes_nonzero = (token_bytes[token_bytes > 0]).to(dtype=torch.float32)
 get_report().log(

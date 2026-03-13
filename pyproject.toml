@@ -113,4 +113,13 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
-ignore = ["E501"]
+ignore = [
+    "E501",  # Line too long
+    "E722",  # Bare except (intentional in some cases)
+    "E731",  # Lambda assignment (common pattern in ML code)
+    "N801",  # Class name conventions (redirect_stdin is intentional)
+    "N803",  # Argument naming (B, T are standard in ML)
+    "N806",  # Variable naming (B, T, H, D, X, A are standard in ML)
+    "N812",  # Lowercase imported as non-lowercase (F for functional is standard)
+    "N818",  # Exception naming (TimeoutException is fine)
+]

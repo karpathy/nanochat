@@ -8,8 +8,16 @@ Two implementations are available:
 
 import copy
 import os
+import pickle
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+import rustbpe
+import tiktoken
+from tokenizers import Regex, decoders, pre_tokenizers
+from tokenizers import Tokenizer as HFTokenizer
+from tokenizers.models import BPE
+from tokenizers.trainers import BpeTrainer
 
 SPECIAL_TOKENS = [
     # every document begins with the Beginning of Sequence (BOS) token that delimits documents
@@ -34,10 +42,6 @@ SPLIT_PATTERN = (
 
 # -----------------------------------------------------------------------------
 # Generic GPT-4-style tokenizer based on HuggingFace Tokenizer
-from tokenizers import Regex, decoders, pre_tokenizers
-from tokenizers import Tokenizer as HFTokenizer
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
 
 
 class HuggingFaceTokenizer:
@@ -171,10 +175,6 @@ class HuggingFaceTokenizer:
 
 # -----------------------------------------------------------------------------
 # Tokenizer based on rustbpe + tiktoken combo
-import pickle
-
-import rustbpe
-import tiktoken
 
 
 class RustBPETokenizer:

@@ -14,6 +14,8 @@ Usage (drop-in replacement for FA3):
     y = flash_attn.flash_attn_with_kvcache(q, k_cache, v_cache, k=k, v=v, ...)
 """
 
+from types import SimpleNamespace
+
 import torch
 import torch.nn.functional as F
 
@@ -186,7 +188,6 @@ def flash_attn_with_kvcache(
 # =============================================================================
 # Export: flash_attn module interface (drop-in replacement for FA3)
 # =============================================================================
-from types import SimpleNamespace
 
 flash_attn = SimpleNamespace(
     flash_attn_func=flash_attn_func,

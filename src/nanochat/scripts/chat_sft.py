@@ -9,40 +9,43 @@ Or torchrun for training:
 torchrun --nproc_per_node=8 -m nanochat.scripts.chat_sft -- --device-batch-size=16
 """
 
-import gc
 import argparse
+import gc
 import os
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
-import time
-import wandb
-import torch
-from nanochat.common import (
-    compute_init,
-    compute_cleanup,
-    print0,
-    DummyWandb,
-    get_base_dir,
-    autodetect_device_type,
-    get_peak_flops,
-    COMPUTE_DTYPE,
-    COMPUTE_DTYPE_REASON,
-    is_ddp_initialized,
-)
-from nanochat.data.tokenizer import get_token_bytes
-from nanochat.training.checkpoint import save_checkpoint, load_model, load_optimizer_state
-from nanochat.evaluation.loss_eval import evaluate_bpb
-import torch.distributed as dist
-from nanochat.flash_attention import HAS_FA3
-from nanochat.evaluation.engine import Engine
-from nanochat.scripts.chat_eval import run_chat_eval
 
+import time
+
+import torch
+import torch.distributed as dist
+import wandb
 from tasks.common import TaskMixture
+from tasks.customjson import CustomJSON
 from tasks.gsm8k import GSM8K
 from tasks.mmlu import MMLU
 from tasks.smoltalk import SmolTalk
-from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
+
+from nanochat.common import (
+    COMPUTE_DTYPE,
+    COMPUTE_DTYPE_REASON,
+    DummyWandb,
+    autodetect_device_type,
+    compute_cleanup,
+    compute_init,
+    get_base_dir,
+    get_peak_flops,
+    is_ddp_initialized,
+    print0,
+)
+from nanochat.data.tokenizer import get_token_bytes
+from nanochat.evaluation.engine import Engine
+from nanochat.evaluation.loss_eval import evaluate_bpb
+from nanochat.flash_attention import HAS_FA3
+from nanochat.report import get_report
+from nanochat.scripts.chat_eval import run_chat_eval
+from nanochat.training.checkpoint import load_model, load_optimizer_state, save_checkpoint
 
 # -----------------------------------------------------------------------------
 # CLI arguments
@@ -568,10 +571,8 @@ while True:
 # print a few more stats
 print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time / 60:.2f}m")
-print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
 # Log to report
-from nanochat.report import get_report
 
 get_report().log(
     section="SFT",

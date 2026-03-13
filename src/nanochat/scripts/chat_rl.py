@@ -17,15 +17,25 @@ torchrun --nproc_per_node=8 -m nanochat.scripts.chat_rl -- --run=default
 """
 
 import argparse
-import os
 import itertools
-import wandb
+import os
+
 import torch
 import torch.distributed as dist
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type
-from nanochat.training.checkpoint import save_checkpoint, load_model
-from nanochat.evaluation.engine import Engine
+import wandb
 from tasks.gsm8k import GSM8K
+
+from nanochat.common import (
+    DummyWandb,
+    autodetect_device_type,
+    compute_cleanup,
+    compute_init,
+    get_base_dir,
+    print0,
+)
+from nanochat.evaluation.engine import Engine
+from nanochat.report import get_report
+from nanochat.training.checkpoint import load_model, save_checkpoint
 
 # -----------------------------------------------------------------------------
 # CLI arguments
@@ -349,8 +359,6 @@ for step in range(num_steps):
         print(f"✅ Saved model checkpoint to {checkpoint_dir}")
 
 # Log to report
-from nanochat.report import get_report
-
 get_report().log(
     section="Chat RL",
     data=[
