@@ -329,7 +329,6 @@ if scaler is not None:
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
 train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
 build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
-x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
 # Calculate the number of iterations we will train for and set up the various schedulers
@@ -380,32 +379,76 @@ def get_weight_decay(it):
 # -----------------------------------------------------------------------------
 # Training loop
 
-# Loop state (variables updated by the training loop)
-if not resuming:
-    step = 0
-    val_bpb = None # will be set if eval_every > 0
-    min_val_bpb = float("inf")
-    smooth_train_loss = 0 # EMA of training loss
-    total_training_time = 0 # total wall-clock time of training
-else:
-    step = meta_data["step"]
-    loop_state = meta_data["loop_state"]
-    val_bpb = meta_data["val_bpb"]
-    min_val_bpb = loop_state["min_val_bpb"]
-    smooth_train_loss = loop_state["smooth_train_loss"]
-    total_training_time = loop_state["total_training_time"]
+def train_base_model(
+    model,
+    orig_model,
+    optimizer,
+    train_loader,
+    build_val_loader,
+    tokenizer,
+    token_bytes,
+    device,
+    device_type,
+    ddp,
+    ddp_rank,
+    ddp_world_size,
+    master_process,
+    synchronize,
+    get_max_memory,
+    gpu_peak_flops,
+    scaler,
+    num_iterations,
+    total_batch_size,
+    num_flops_per_token,
+    num_scaling_params,
+    weight_decay_scaled,
+    checkpoint_dir,
+    resuming,
+    meta_data,
+    dataloader_state_dict_init,
+    wandb_run,
+    user_config,
+    model_config_kwargs,
+    num_params,
+    total_tokens,
+    args,
+):
+    """Train base model.
+    
+    Returns:
+        tuple: (model, metrics) where metrics contains final training stats
+    """
+    # Loop state (variables updated by the training loop)
+    if not resuming:
+        step = 0
+        val_bpb = None # will be set if eval_every > 0
+        min_val_bpb = float("inf")
+        smooth_train_loss = 0 # EMA of training loss
+        total_training_time = 0 # total wall-clock time of training
+        dataloader_state_dict = dataloader_state_dict_init
+    else:
+        step = meta_data["step"]
+        loop_state = meta_data["loop_state"]
+        val_bpb = meta_data["val_bpb"]
+        min_val_bpb = loop_state["min_val_bpb"]
+        smooth_train_loss = loop_state["smooth_train_loss"]
+        total_training_time = loop_state["total_training_time"]
+        dataloader_state_dict = dataloader_state_dict_init
 
-# Figure out the needed gradient accumulation micro-steps to reach the desired total batch size per step
-tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
-world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
-assert total_batch_size % world_tokens_per_fwdbwd == 0
-grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
-print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
-print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
-print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
+    # Figure out the needed gradient accumulation micro-steps to reach the desired total batch size per step
+    tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
+    world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
+    assert total_batch_size % world_tokens_per_fwdbwd == 0
+    grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
+    print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
+    print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
+    print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 
-# Go!
-while True:
+    # Get first batch
+    x, y, dataloader_state_dict = next(train_loader)
+
+    # Go!
+    while True:
     last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
     flops_so_far = num_flops_per_token * total_batch_size * step
 
@@ -571,52 +614,105 @@ while True:
         }
         wandb_run.log(log_data)
 
-    # state update
-    first_step_of_run = (step == 0) or (resuming and step == args.resume_from_step)
-    step += 1
+        # state update
+        first_step_of_run = (step == 0) or (resuming and step == args.resume_from_step)
+        step += 1
 
-    # The garbage collector is sadly a little bit overactive and for some poorly understood reason,
-    # it spends ~500ms scanning for cycles quite frequently, just to end up cleaning up very few tiny objects each time.
-    # So we manually manage and help it out here
-    if first_step_of_run:
-        gc.collect() # manually collect a lot of garbage from setup
-        gc.freeze() # immediately freeze all currently surviving objects and exclude them from GC
-        gc.disable() # nuclear intervention here: disable GC entirely except:
-    elif step % 5000 == 0: # every 5000 steps...
-        gc.collect() # manually collect, just to be safe for very, very long runs
+        # The garbage collector is sadly a little bit overactive and for some poorly understood reason,
+        # it spends ~500ms scanning for cycles quite frequently, just to end up cleaning up very few tiny objects each time.
+        # So we manually manage and help it out here
+        if first_step_of_run:
+            gc.collect() # manually collect a lot of garbage from setup
+            gc.freeze() # immediately freeze all currently surviving objects and exclude them from GC
+            gc.disable() # nuclear intervention here: disable GC entirely except:
+        elif step % 5000 == 0: # every 5000 steps...
+            gc.collect() # manually collect, just to be safe for very, very long runs
 
-# print a few more stats
-print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
-print0(f"Total training time: {total_training_time/60:.2f}m")
-if val_bpb is not None:
-    print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
+    # print a few more stats
+    print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
+    print0(f"Total training time: {total_training_time/60:.2f}m")
+    if val_bpb is not None:
+        print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
 
-# Log to report
-from nanochat.report import get_report
-get_report().log(section="Base model training", data=[
-    user_config, # CLI args
-    { # stats about the training setup
-        "Number of parameters": num_params,
-        "Number of FLOPs per token": f"{num_flops_per_token:e}",
-        "Calculated number of iterations": num_iterations,
-        "Number of training tokens": total_tokens,
-        "Tokens : Scaling params ratio": total_batch_size * num_iterations / num_scaling_params,
-        "DDP world size": ddp_world_size,
-        "warmup_steps": args.warmup_steps,
-        "warmdown_ratio": args.warmdown_ratio,
-        "final_lr_frac": args.final_lr_frac,
-    },
-    { # stats about training outcomes
-        "Minimum validation bpb": min_val_bpb if val_bpb is not None else None,
-        "Final validation bpb": val_bpb,
-        "CORE metric estimate": results.get("core_metric", None),
-        "MFU %": f"{mfu:.2f}%",
-        "Total training flops": f"{flops_so_far:e}",
-        "Total training time": f"{total_training_time/60:.2f}m",
-        "Peak memory usage": f"{get_max_memory() / 1024 / 1024:.2f}MiB",
+    # Log to report
+    from nanochat.report import get_report
+    get_report().log(section="Base model training", data=[
+        user_config, # CLI args
+        { # stats about the training setup
+            "Number of parameters": num_params,
+            "Number of FLOPs per token": f"{num_flops_per_token:e}",
+            "Calculated number of iterations": num_iterations,
+            "Number of training tokens": total_tokens,
+            "Tokens : Scaling params ratio": total_batch_size * num_iterations / num_scaling_params,
+            "DDP world size": ddp_world_size,
+            "warmup_steps": args.warmup_steps,
+            "warmdown_ratio": args.warmdown_ratio,
+            "final_lr_frac": args.final_lr_frac,
+        },
+        { # stats about training outcomes
+            "Minimum validation bpb": min_val_bpb if val_bpb is not None else None,
+            "Final validation bpb": val_bpb,
+            "CORE metric estimate": results.get("core_metric", None),
+            "MFU %": f"{mfu:.2f}%",
+            "Total training flops": f"{flops_so_far:e}",
+            "Total training time": f"{total_training_time/60:.2f}m",
+            "Peak memory usage": f"{get_max_memory() / 1024 / 1024:.2f}MiB",
+        }
+    ])
+
+    return orig_model, {
+        "val_bpb": val_bpb,
+        "min_val_bpb": min_val_bpb,
+        "core_metric": results.get("core_metric", None),
+        "mfu": mfu,
+        "total_training_flops": flops_so_far,
+        "total_training_time": total_training_time,
+        "peak_memory": get_max_memory() / 1024 / 1024,
     }
-])
 
-# cleanup
-wandb_run.finish() # wandb run finish
-compute_cleanup()
+# -----------------------------------------------------------------------------
+# CLI wrapper
+
+if __name__ == "__main__":
+    # Get first batch before training loop
+    x, y, dataloader_state_dict = next(train_loader)
+    
+    # Run training
+    model_trained, metrics = train_base_model(
+        model=model,
+        orig_model=orig_model,
+        optimizer=optimizer,
+        train_loader=train_loader,
+        build_val_loader=build_val_loader,
+        tokenizer=tokenizer,
+        token_bytes=token_bytes,
+        device=device,
+        device_type=device_type,
+        ddp=ddp,
+        ddp_rank=ddp_rank,
+        ddp_world_size=ddp_world_size,
+        master_process=master_process,
+        synchronize=synchronize,
+        get_max_memory=get_max_memory,
+        gpu_peak_flops=gpu_peak_flops,
+        scaler=scaler,
+        num_iterations=num_iterations,
+        total_batch_size=total_batch_size,
+        num_flops_per_token=num_flops_per_token,
+        num_scaling_params=num_scaling_params,
+        weight_decay_scaled=weight_decay_scaled,
+        checkpoint_dir=checkpoint_dir,
+        resuming=resuming,
+        meta_data=meta_data if resuming else None,
+        dataloader_state_dict_init=dataloader_state_dict,
+        wandb_run=wandb_run,
+        user_config=user_config,
+        model_config_kwargs=model_config_kwargs,
+        num_params=num_params,
+        total_tokens=total_tokens,
+        args=args,
+    )
+    
+    # cleanup
+    wandb_run.finish() # wandb run finish
+    compute_cleanup()
