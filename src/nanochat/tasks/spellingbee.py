@@ -26,10 +26,11 @@ To preview a few example conversations, run:
 python -m tasks.spellingbee
 """
 
-import re
 import random
-from nanochat.tasks.base import Task
+import re
+
 from nanochat.common import download_file_with_lock
+from nanochat.tasks.base import Task
 
 # Letters of the alphabet
 LETTERS = "abcdefghijklmnopqrstuvwxyz"
@@ -40,6 +41,8 @@ TEST_RANDOM_SEED_OFFSET = 10_000_000
 
 # Identical to gsm8k's answer extraction
 ANSWER_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
+
+
 def extract_answer(completion):
     """
     Extract the numerical answer after #### marker.
@@ -50,6 +53,7 @@ def extract_answer(completion):
         match_str = match_str.replace(",", "")
         return match_str
     return None
+
 
 # User message templates for data augmentation
 USER_MSG_TEMPLATES = [
@@ -112,8 +116,8 @@ USER_MSG_TEMPLATES = [
     "{word}に{letter}が何回出てくる",
 ]
 
-class SpellingBee(Task):
 
+class SpellingBee(Task):
     def __init__(self, size=1000, split="train", **kwargs):
         super().__init__(**kwargs)
         assert split in ["train", "test"], "SpellingBee split must be train|test"
@@ -121,19 +125,19 @@ class SpellingBee(Task):
         self.split = split
         filename = WORD_LIST_URL.split("/")[-1]
         word_list_path = download_file_with_lock(WORD_LIST_URL, filename)
-        with open(word_list_path, 'r', encoding='utf-8') as f:
+        with open(word_list_path, "r", encoding="utf-8") as f:
             words = [line.strip() for line in f]
         self.words = words
 
     @property
     def eval_type(self):
-        return 'generative'
+        return "generative"
 
     def num_examples(self):
         return self.size
 
     def get_example(self, index):
-        seed = index if self.split == 'train' else TEST_RANDOM_SEED_OFFSET + index
+        seed = index if self.split == "train" else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
 
         # pick a random word
@@ -149,13 +153,13 @@ class SpellingBee(Task):
         # 30% chance to lowercase the template (lazy people don't use shift)
         if rng.random() < 0.3:
             template = template.lower()
-        quote_options = ['', "'", '"']
-        letter_quote = rng.choice(quote_options) # is the letter quoted?
-        word_quote = rng.choice(quote_options) # is the word quoted?
+        quote_options = ["", "'", '"']
+        letter_quote = rng.choice(quote_options)  # is the letter quoted?
+        word_quote = rng.choice(quote_options)  # is the word quoted?
         letter_wrapped = f"{letter_quote}{letter}{letter_quote}"
         word_wrapped = f"{word_quote}{word}{word_quote}"
         user_msg = template.format(letter=letter_wrapped, word=word_wrapped)
-        if rng.random() < 0.5: # 50% of people don't even use question marks
+        if rng.random() < 0.5:  # 50% of people don't even use question marks
             user_msg += "?"
 
         # Now create the ideal assistant response - build as parts (text + tool calls)
@@ -192,13 +196,12 @@ Then count the occurrences of '{letter}':
         # Part 4: Python output
         assistant_parts.append({"type": "python_output", "text": str(count)})
         # Part 5: Final answer
-        assistant_parts.append({"type": "text", "text": f"\n\nPython gives us {count}.\n\nMy final answer is:\n\n#### {count}"})
+        assistant_parts.append(
+            {"type": "text", "text": f"\n\nPython gives us {count}.\n\nMy final answer is:\n\n#### {count}"}
+        )
 
         # return the full conversation
-        messages = [
-            {"role": "user", "content": user_msg},
-            {"role": "assistant", "content": assistant_parts}
-        ]
+        messages = [{"role": "user", "content": user_msg}, {"role": "assistant", "content": assistant_parts}]
         conversation = {
             "messages": messages,
         }
@@ -211,11 +214,11 @@ Then count the occurrences of '{letter}':
         """
         assert isinstance(assistant_response, str), "Assuming simple string response for now"
         # First extract the ground truth answer from the conversation
-        assistant_message = conversation['messages'][-1]
-        assert assistant_message['role'] == "assistant", "Last message must be from the Assistant"
-        assert isinstance(assistant_message['content'], list), "This is expected to be a list of parts"
+        assistant_message = conversation["messages"][-1]
+        assert assistant_message["role"] == "assistant", "Last message must be from the Assistant"
+        assert isinstance(assistant_message["content"], list), "This is expected to be a list of parts"
         # The last text part contains the final answer with ####
-        last_text_part = assistant_message['content'][-1]['text']
+        last_text_part = assistant_message["content"][-1]["text"]
         # Extract both the ground truth answer and the predicted answer
         ref_num = extract_answer(last_text_part)
         pred_num = extract_answer(assistant_response)
@@ -224,7 +227,7 @@ Then count the occurrences of '{letter}':
         return is_correct
 
     def reward(self, conversation, assistant_response):
-        """ Use simple 0-1 reward just like gsm8k."""
+        """Use simple 0-1 reward just like gsm8k."""
         is_correct = self.evaluate(conversation, assistant_response)
         is_correct_float = float(is_correct)
         return is_correct_float
@@ -240,21 +243,21 @@ class SimpleSpelling(Task):
         self.split = split
         filename = WORD_LIST_URL.split("/")[-1]
         word_list_path = download_file_with_lock(WORD_LIST_URL, filename)
-        with open(word_list_path, 'r', encoding='utf-8') as f:
+        with open(word_list_path, "r", encoding="utf-8") as f:
             words = [line.strip() for line in f]
         rng = random.Random(42)
-        rng.shuffle(words) # use a different word order than the SpellingBee task
+        rng.shuffle(words)  # use a different word order than the SpellingBee task
         self.words = words
 
     @property
     def eval_type(self):
-        return 'generative'
+        return "generative"
 
     def num_examples(self):
         return self.size
 
     def get_example(self, index):
-        seed = index if self.split == 'train' else TEST_RANDOM_SEED_OFFSET + index
+        seed = index if self.split == "train" else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
         # pick a random word
         word = rng.choice(self.words)
@@ -262,7 +265,7 @@ class SimpleSpelling(Task):
         # return the full conversation
         messages = [
             {"role": "user", "content": f"Spell the word: {word}"},
-            {"role": "assistant", "content": f"{word}:{word_letters}"}
+            {"role": "assistant", "content": f"{word}:{word_letters}"},
         ]
         conversation = {
             "messages": messages,
@@ -271,23 +274,22 @@ class SimpleSpelling(Task):
 
 
 if __name__ == "__main__":
-
     # preview the SpellingBee task, first 10 examples
     task = SpellingBee()
     for i in range(10):
         ex = task.get_example(i)
         print("=" * 100)
-        print(ex['messages'][0]['content'])
+        print(ex["messages"][0]["content"])
         print("-" * 100)
         # Assistant content is now a list of parts
-        assistant_parts = ex['messages'][1]['content']
+        assistant_parts = ex["messages"][1]["content"]
         for part in assistant_parts:
-            if part['type'] == 'text':
-                print(part['text'], end='')
-            elif part['type'] == 'python':
-                print(f"<<{part['text']}=", end='')
-            elif part['type'] == 'python_output':
-                print(f"{part['text']}>>", end='')
+            if part["type"] == "text":
+                print(part["text"], end="")
+            elif part["type"] == "python":
+                print(f"<<{part['text']}=", end="")
+            elif part["type"] == "python_output":
+                print(f"{part['text']}>>", end="")
         print()
         print("-" * 100)
 

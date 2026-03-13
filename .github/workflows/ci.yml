@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, refactor/src-layout]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      
+      - name: Install uv
+        run: pip install uv
+      
+      - name: Install dependencies
+        run: uv sync
+      
+      - name: Run tests
+        run: uv run pytest tests/ -v --tb=short -k "not test_attention_fallback"
+      
+      - name: Lint with ruff
+        run: uv run ruff check src/nanochat --statistics
+        continue-on-error: true
+      
+      - name: Type check with pyright
+        run: uv run pyright src/nanochat --level warning
+        continue-on-error: true

@@ -179,7 +179,7 @@ class _Float8Matmul(torch.autograd.Function):
         # Transposing gives column-major, but first arg needs row-major,
         # so we must call .contiguous() to physically rearrange the memory.
         go_T = go_fp8.t().contiguous()  # [N, B] row-major
-        in_col = _to_col_major(in_fp8)    # [B, K] column-major
+        in_col = _to_col_major(in_fp8)  # [B, K] column-major
         grad_weight = torch._scaled_mm(
             go_T,
             in_col,
@@ -254,6 +254,7 @@ def convert_to_float8_training(module, *, config=None, module_filter_fn=None):
             are converted. Common use: skip layers with dims not divisible by 16
             (hardware requirement for FP8 matmuls on H100).
     """
+
     def _convert(mod, prefix=""):
         for name, child in mod.named_children():
             fqn = f"{prefix}.{name}" if prefix else name

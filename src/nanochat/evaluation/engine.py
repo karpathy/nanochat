@@ -11,14 +11,17 @@ Notes:
 The whole thing is made as efficient as possible.
 """
 
-import torch
-import torch.nn.functional as F
 import signal
 import warnings
-from contextlib import contextmanager
 from collections import deque
-from nanochat.common import compute_init, autodetect_device_type
+from contextlib import contextmanager
+
+import torch
+import torch.nn.functional as F
+
+from nanochat.common import autodetect_device_type, compute_init
 from nanochat.training.checkpoint import load_model
+
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
@@ -32,16 +35,18 @@ def timeout(duration, formula):
     yield
     signal.alarm(0)
 
+
 def eval_with_timeout(formula, max_time=3):
     try:
         with timeout(max_time, formula):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
                 return eval(formula, {"__builtins__": {}}, {})
-    except Exception as e:
+    except Exception:
         signal.alarm(0)
         # print(f"Warning: Failed to eval {formula}, exception: {e}") # it's ok ignore wrong calculator usage
         return None
+
 
 def use_calculator(expr):
     """
@@ -64,19 +69,36 @@ def use_calculator(expr):
         return None
 
     # Disallow dangerous patterns
-    dangerous_patterns = ['__', 'import', 'exec', 'eval', 'compile', 'open', 'file',
-                         'input', 'raw_input', 'globals', 'locals', 'vars', 'dir',
-                         'getattr', 'setattr', 'delattr', 'hasattr']
+    dangerous_patterns = [
+        "__",
+        "import",
+        "exec",
+        "eval",
+        "compile",
+        "open",
+        "file",
+        "input",
+        "raw_input",
+        "globals",
+        "locals",
+        "vars",
+        "dir",
+        "getattr",
+        "setattr",
+        "delattr",
+        "hasattr",
+    ]
     expr_lower = expr.lower()
     if any(pattern in expr_lower for pattern in dangerous_patterns):
         return None
 
     # Only allow .count() method for now (can expand later)
-    if '.count(' not in expr:
+    if ".count(" not in expr:
         return None
 
     # Evaluate with timeout
     return eval_with_timeout(expr)
+
 
 # -----------------------------------------------------------------------------
 class KVCache:
@@ -130,6 +152,7 @@ class KVCache:
         self.v_cache[:, :, :other_pos, :, :] = other.v_cache[:, :, :other_pos, :, :]
         self.cache_seqlens.fill_(other_pos)
 
+
 # -----------------------------------------------------------------------------
 @torch.inference_mode()
 def sample_next_token(logits, rng, temperature=1.0, top_k=None):
@@ -149,22 +172,24 @@ def sample_next_token(logits, rng, temperature=1.0, top_k=None):
         probs = F.softmax(logits, dim=-1)
         return torch.multinomial(probs, num_samples=1, generator=rng)
 
+
 # -----------------------------------------------------------------------------
+
 
 class RowState:
     # Per-row state tracking during generation
     def __init__(self, current_tokens=None):
-        self.current_tokens = current_tokens or [] # Current token sequence for this row
-        self.forced_tokens = deque() # Queue of tokens to force inject
-        self.in_python_block = False # Whether we are inside a python block
-        self.python_expr_tokens = [] # Tokens of the current python expression
-        self.completed = False # Whether this row has completed generation
+        self.current_tokens = current_tokens or []  # Current token sequence for this row
+        self.forced_tokens = deque()  # Queue of tokens to force inject
+        self.in_python_block = False  # Whether we are inside a python block
+        self.python_expr_tokens = []  # Tokens of the current python expression
+        self.completed = False  # Whether this row has completed generation
+
 
 class Engine:
-
     def __init__(self, model, tokenizer):
         self.model = model
-        self.tokenizer = tokenizer # needed for tool use
+        self.tokenizer = tokenizer  # needed for tool use
 
     @torch.inference_mode()
     def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
@@ -187,8 +212,8 @@ class Engine:
         python_end = get_special("<|python_end|>")
         output_start = get_special("<|output_start|>")
         output_end = get_special("<|output_end|>")
-        assistant_end = get_special("<|assistant_end|>") # if sampled, ends row
-        bos = self.tokenizer.get_bos_token_id() # if sampled, ends row
+        assistant_end = get_special("<|assistant_end|>")  # if sampled, ends row
+        bos = self.tokenizer.get_bos_token_id()  # if sampled, ends row
 
         # 1) Run a batch 1 prefill of the prompt tokens
         m = self.model.config
@@ -214,7 +239,7 @@ class Engine:
             **kv_model_kwargs,
         )
         kv_cache_decode.prefill(kv_cache_prefill)
-        del kv_cache_prefill # no need to keep this memory around
+        del kv_cache_prefill  # no need to keep this memory around
 
         # 3) Initialize states for each sample
         row_states = [RowState(tokens.copy()) for _ in range(num_samples)]
@@ -234,12 +259,12 @@ class Engine:
             sampled_tokens = next_ids[:, 0].tolist()
 
             # Process each row: choose the next token, update state, optional tool use
-            token_column = [] # contains the next token id along each row
-            token_masks = [] # contains the mask (was it sampled (1) or forced (0)?) along each row
+            token_column = []  # contains the next token id along each row
+            token_masks = []  # contains the mask (was it sampled (1) or forced (0)?) along each row
             for i, state in enumerate(row_states):
                 # Select the next token in this row
-                is_forced = len(state.forced_tokens) > 0 # are there tokens waiting to be forced in deque?
-                token_masks.append(0 if is_forced else 1) # mask is 0 if forced, 1 if sampled
+                is_forced = len(state.forced_tokens) > 0  # are there tokens waiting to be forced in deque?
+                token_masks.append(0 if is_forced else 1)  # mask is 0 if forced, 1 if sampled
                 next_token = state.forced_tokens.popleft() if is_forced else sampled_tokens[i]
                 token_column.append(next_token)
                 # Update the state of this row to include the next token
@@ -304,6 +329,7 @@ if __name__ == "__main__":
     is equivalent to the faster Engine.generate function here.
     """
     import time
+
     # init compute
     device_type = autodetect_device_type()
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
@@ -331,11 +357,11 @@ if __name__ == "__main__":
     # generate tokens with Engine
     generated_tokens = []
     engine = Engine(model, tokenizer)
-    stream = engine.generate(prompt_tokens, num_samples=1, **kwargs) # note: runs in fp32
+    stream = engine.generate(prompt_tokens, num_samples=1, **kwargs)  # note: runs in fp32
     torch.cuda.synchronize()
     t0 = time.time()
     for token_column, token_masks in stream:
-        token = token_column[0] # only print out the first row
+        token = token_column[0]  # only print out the first row
         generated_tokens.append(token)
         chunk = tokenizer.decode([token])
         print(chunk, end="", flush=True)

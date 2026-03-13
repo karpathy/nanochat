@@ -2,16 +2,16 @@
 Configuration classes for GPT model and training.
 """
 
-from dataclasses import dataclass, asdict, field
-from typing import Optional, Any
-from pathlib import Path
 import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Optional
 
 
 @dataclass
 class GPTConfig:
     """Configuration for GPT model architecture."""
-    
+
     sequence_len: int = 2048
     vocab_size: int = 32768
     n_layer: int = 12
@@ -27,19 +27,19 @@ class GPTConfig:
 @dataclass
 class TrainingConfig:
     """Configuration for training hyperparameters."""
-    
+
     # Model architecture
     depth: int
     aspect_ratio: int = 64
     head_dim: int = 128
     max_seq_len: int = 2048
     window_pattern: str = "SSSL"
-    
+
     # Training horizon
     num_iterations: int = -1
     target_flops: float = -1.0
     target_param_data_ratio: float = 10.5
-    
+
     # Optimization
     device_batch_size: int = 32
     total_batch_size: int = -1
@@ -52,7 +52,7 @@ class TrainingConfig:
     warmdown_ratio: float = 0.65
     final_lr_frac: float = 0.05
     resume_from_step: int = -1
-    
+
     # Evaluation
     eval_every: int = 250
     eval_tokens: int = 80 * 524288
@@ -60,27 +60,27 @@ class TrainingConfig:
     core_metric_max_per_task: int = 500
     sample_every: int = 2000
     save_every: int = -1
-    
+
     # Runtime
     device_type: str = ""
     fp8: bool = False
     fp8_recipe: str = "tensorwise"
-    
+
     # Output
     model_tag: Optional[str] = None
     run: str = "dummy"  # wandb run name
-    
+
     def save(self, path: Path) -> None:
         """Save configuration to JSON file."""
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(asdict(self), f, indent=2)
-    
+
     @classmethod
     def load(cls, path: Path) -> "TrainingConfig":
         """Load configuration from JSON file."""
         with open(path) as f:
             return cls(**json.load(f))
-    
+
     @classmethod
     def from_args(cls, args: Any) -> "TrainingConfig":
         """Create TrainingConfig from argparse Namespace."""

@@ -1,32 +1,37 @@
 """
 Utilities for saving and loading model/optim/state checkpoints.
 """
-import os
-import re
+
 import glob
 import json
 import logging
+import os
+import re
+
 import torch
 
-from nanochat.common import get_base_dir
-from nanochat.models.gpt import GPT
-from nanochat.models.config import GPTConfig
+from nanochat.common import get_base_dir, setup_default_logging
 from nanochat.data.tokenizer import get_tokenizer
-from nanochat.common import setup_default_logging
+from nanochat.models.config import GPTConfig
+from nanochat.models.gpt import GPT
 
 # Set up logging
 setup_default_logging()
 logger = logging.getLogger(__name__)
+
+
 def log0(message):
-    if int(os.environ.get('RANK', 0)) == 0:
+    if int(os.environ.get("RANK", 0)) == 0:
         logger.info(message)
+
 
 def _patch_missing_config_keys(model_config_kwargs):
     """Add default values for new config keys missing in old checkpoints."""
     # Old models were trained with full context (no sliding window)
     if "window_pattern" not in model_config_kwargs:
         model_config_kwargs["window_pattern"] = "L"
-        log0(f"Patching missing window_pattern in model config to 'L'")
+        log0("Patching missing window_pattern in model config to 'L'")
+
 
 def _patch_missing_keys(model_data, model_config):
     """Add default values for new parameters that may be missing in old checkpoints."""
@@ -34,11 +39,12 @@ def _patch_missing_keys(model_data, model_config):
     # resid_lambdas defaults to 1.0 (identity scaling)
     if "resid_lambdas" not in model_data:
         model_data["resid_lambdas"] = torch.ones(n_layer)
-        log0(f"Patching missing resid_lambdas in model data to 1.0")
+        log0("Patching missing resid_lambdas in model data to 1.0")
     # x0_lambdas defaults to 0.0 (disabled)
     if "x0_lambdas" not in model_data:
         model_data["x0_lambdas"] = torch.zeros(n_layer)
-        log0(f"Patching missing x0_lambdas in model data to 0.0")
+        log0("Patching missing x0_lambdas in model data to 0.0")
+
 
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
     if rank == 0:
@@ -58,6 +64,7 @@ def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data,
         optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
         torch.save(optimizer_data, optimizer_path)
         logger.info(f"Saved optimizer state to: {optimizer_path}")
+
 
 def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
     # Load the model state
@@ -87,10 +94,7 @@ def build_model(checkpoint_dir, step, device, phase):
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, device, load_optimizer=False)
     if device.type in {"cpu", "mps"}:
         # Convert bfloat16 tensors to float for CPU inference
-        model_data = {
-            k: v.float() if v.dtype == torch.bfloat16 else v
-            for k, v in model_data.items()
-        }
+        model_data = {k: v.float() if v.dtype == torch.bfloat16 else v for k, v in model_data.items()}
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
     model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
@@ -102,7 +106,7 @@ def build_model(checkpoint_dir, step, device, phase):
         model = GPT(model_config)
     # Load the model state
     model.to_empty(device=device)
-    model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
+    model.init_weights()  # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
     model.load_state_dict(model_data, strict=True, assign=True)
     # Put the model in the right training phase / mode
     if phase == "eval":
@@ -112,7 +116,9 @@ def build_model(checkpoint_dir, step, device, phase):
     # Load the Tokenizer
     tokenizer = get_tokenizer()
     # Sanity check: compatibility between model and tokenizer
-    assert tokenizer.get_vocab_size() == model_config_kwargs["vocab_size"], f"Tokenizer vocab size {tokenizer.get_vocab_size()} does not match model config vocab size {model_config_kwargs['vocab_size']}"
+    assert tokenizer.get_vocab_size() == model_config_kwargs["vocab_size"], (
+        f"Tokenizer vocab size {tokenizer.get_vocab_size()} does not match model config vocab size {model_config_kwargs['vocab_size']}"
+    )
     return model, tokenizer, meta_data
 
 
@@ -144,8 +150,10 @@ def find_last_step(checkpoint_dir):
     last_step = int(max(os.path.basename(f).split("_")[-1].split(".")[0] for f in checkpoint_files))
     return last_step
 
+
 # -----------------------------------------------------------------------------
 # convenience functions that take into account nanochat's directory structure
+
 
 def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None):
     if model_tag is None:
@@ -162,6 +170,7 @@ def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=Non
     model, tokenizer, meta_data = build_model(checkpoint_dir, step, device, phase)
     return model, tokenizer, meta_data
 
+
 def load_model(source, *args, **kwargs):
     model_dir = {
         "base": "base_checkpoints",
@@ -171,6 +180,7 @@ def load_model(source, *args, **kwargs):
     base_dir = get_base_dir()
     checkpoints_dir = os.path.join(base_dir, model_dir)
     return load_model_from_dir(checkpoints_dir, *args, **kwargs)
+
 
 def load_optimizer_state(source, device, rank, model_tag=None, step=None):
     """Load just the optimizer shard for a given rank, without re-loading the model."""
