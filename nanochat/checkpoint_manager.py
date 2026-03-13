@@ -94,6 +94,14 @@ def build_model(checkpoint_dir, step, device, phase):
     model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
     _patch_missing_config_keys(model_config_kwargs)
+    # Auto-detect mlp_type from checkpoint weights if not saved in meta
+    if "mlp_type" not in model_config_kwargs:
+        if any("mlp.c_gate.weight" in k for k in model_data):
+            model_config_kwargs["mlp_type"] = "swiglu"
+            log0("Auto-detected mlp_type=swiglu from checkpoint keys")
+        else:
+            model_config_kwargs["mlp_type"] = "relu2"
+            log0("Auto-detected mlp_type=relu2 from checkpoint keys")
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)
     _patch_missing_keys(model_data, model_config)
