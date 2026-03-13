@@ -23,17 +23,17 @@ def adamw_step_fused(
     grad: Tensor,           # (32768, 768) - gradient, same shape as p
     exp_avg: Tensor,        # (32768, 768) - first moment, same shape as p
     exp_avg_sq: Tensor,     # (32768, 768) - second moment, same shape as p
-    step_t: Tensor,         # () - 0-D CPU tensor, step count
-    lr_t: Tensor,           # () - 0-D CPU tensor, learning rate
-    beta1_t: Tensor,        # () - 0-D CPU tensor, beta1
-    beta2_t: Tensor,        # () - 0-D CPU tensor, beta2
-    eps_t: Tensor,          # () - 0-D CPU tensor, epsilon
-    wd_t: Tensor,           # () - 0-D CPU tensor, weight decay
+    step_t: Tensor,         # () - 0-D tensor, step count
+    lr_t: Tensor,           # () - 0-D tensor, learning rate
+    beta1_t: Tensor,        # () - 0-D tensor, beta1
+    beta2_t: Tensor,        # () - 0-D tensor, beta2
+    eps_t: Tensor,          # () - 0-D tensor, epsilon
+    wd_t: Tensor,           # () - 0-D tensor, weight decay
 ) -> None:
     """
     Fused AdamW step: weight_decay -> momentum_update -> bias_correction -> param_update
     All in one compiled graph to eliminate Python overhead between ops.
-    The 0-D CPU tensors avoid recompilation when hyperparameter values change.
+    The 0-D tensors avoid recompilation when hyperparameter values change.
     """
     # Weight decay (decoupled, applied before the update)
     p.mul_(1 - lr_t * wd_t)
@@ -93,17 +93,17 @@ def muon_step_fused(
     stacked_params: Tensor,         # (12, 768, 3072) - stacked parameters
     momentum_buffer: Tensor,        # (12, 768, 3072) - first moment buffer
     second_momentum_buffer: Tensor, # (12, 768, 1) or (12, 1, 3072) - factored second moment
-    momentum_t: Tensor,             # () - 0-D CPU tensor, momentum coefficient
-    lr_t: Tensor,                   # () - 0-D CPU tensor, learning rate
-    wd_t: Tensor,                   # () - 0-D CPU tensor, weight decay
-    beta2_t: Tensor,                # () - 0-D CPU tensor, beta2 for second moment
+    momentum_t: Tensor,             # () - 0-D tensor, momentum coefficient
+    lr_t: Tensor,                   # () - 0-D tensor, learning rate
+    wd_t: Tensor,                   # () - 0-D tensor, weight decay
+    beta2_t: Tensor,                # () - 0-D tensor, beta2 for second moment
     ns_steps: int,                  # 5 - number of Newton-Schulz/Polar Express iterations
     red_dim: int,                   # -1 or -2 - reduction dimension for variance
 ) -> None:
     """
     Fused Muon step: momentum -> polar_express -> variance_reduction -> cautious_update
     All in one compiled graph to eliminate Python overhead between ops.
-    Some of the constants are 0-D CPU tensors to avoid recompilation when values change.
+    Some of the constants are 0-D tensors to avoid recompilation when values change.
     """
 
     # Nesterov momentum
@@ -145,6 +145,14 @@ def muon_step_fused(
     mask = (g * stacked_params) >= 0
     stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
 
+
+def _get_scalar_device(param_groups: list[dict]) -> torch.device:
+    for group in param_groups:
+        params = group.get('params', ())
+        if params:
+            return params[0].device
+    return torch.device('cpu')
+
 # -----------------------------------------------------------------------------
 # Single GPU version of the MuonAdamW optimizer.
 # Used mostly for reference, debugging and testing.
@@ -155,7 +163,7 @@ class MuonAdamW(torch.optim.Optimizer):
 
     AdamW - Fused AdamW optimizer step.
 
-    Muon - MomentUm Orthogonalized by Newton-schulz
+    Muon - MomentUm Orthogonalized by Newton-Schulz
     https://kellerjordan.github.io/posts/muon/
 
     Muon internally runs standard SGD-momentum, and then performs an orthogonalization post-
@@ -177,19 +185,20 @@ class MuonAdamW(torch.optim.Optimizer):
     """
     def __init__(self, param_groups: list[dict]):
         super().__init__(param_groups, defaults={})
-        # 0-D CPU tensors to avoid torch.compile recompilation when values change
+        scalar_device = _get_scalar_device(param_groups)
+        # 0-D device tensors to avoid recompilation and repeated host->device scalar movement
         # AdamW tensors
-        self._adamw_step_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_beta1_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_eps_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        self._adamw_step_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_lr_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_beta1_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_beta2_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_eps_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_wd_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
         # Muon tensors
-        self._muon_momentum_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        self._muon_momentum_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
 
     def _step_adamw(self, group: dict) -> None:
         """
@@ -253,9 +262,17 @@ class MuonAdamW(torch.optim.Optimizer):
         second_momentum_buffer = state["second_momentum_buffer"]
         red_dim = -1 if shape[-2] >= shape[-1] else -2
 
-        # Stack grads and params (NOTE: this assumes all params have the same shape)
-        stacked_grads = torch.stack([p.grad for p in params])
-        stacked_params = torch.stack(params)
+        # Reusable stacked parameter buffer to avoid per-step torch.stack allocation/copy churn
+        if "stacked_params" not in state:
+            state["stacked_params"] = torch.empty(num_params, *shape, dtype=dtype, device=device)
+        stacked_params = state["stacked_params"]
+        torch._foreach_copy_(list(stacked_params.unbind(0)), params)
+
+        # Reusable stacked gradient buffer to avoid per-step torch.stack allocation/copy churn
+        if "stacked_grads" not in state:
+            state["stacked_grads"] = torch.empty(num_params, *shape, dtype=dtype, device=device)
+        stacked_grads = state["stacked_grads"]
+        torch._foreach_copy_(list(stacked_grads.unbind(0)), [p.grad for p in params])
 
         # Fill all the 0-D tensors with current values
         self._muon_momentum_t.fill_(group["momentum"])
@@ -354,17 +371,18 @@ class DistMuonAdamW(torch.optim.Optimizer):
     """
     def __init__(self, param_groups: list[dict]):
         super().__init__(param_groups, defaults={})
-        # 0-D CPU tensors to avoid torch.compile recompilation when values change
-        self._adamw_step_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_beta1_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_eps_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._adamw_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_momentum_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
-        self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
+        scalar_device = _get_scalar_device(param_groups)
+        # 0-D device tensors to avoid recompilation and repeated host->device scalar movement
+        self._adamw_step_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_lr_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_beta1_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_beta2_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_eps_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._adamw_wd_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._muon_momentum_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._muon_lr_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._muon_wd_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
+        self._muon_beta2_t = torch.tensor(0.0, dtype=torch.float32, device=scalar_device)
 
     def _reduce_adamw(self, group: dict, world_size: int) -> dict:
         """Launch async reduce ops for AdamW group. Returns info dict with per-param infos."""
@@ -391,19 +409,23 @@ class DistMuonAdamW(torch.optim.Optimizer):
         padded_num_params = chunk_size * world_size
         p = params[0]
         shape, device, dtype = p.shape, p.device, p.dtype
+        state = self.state[p]
 
-        # Stack grads and zero-pad to padded_num_params
-        grad_stack = torch.stack([p.grad for p in params])
-        stacked_grads = torch.empty(padded_num_params, *shape, dtype=dtype, device=device)
-        stacked_grads[:len(params)].copy_(grad_stack)
+        # Reusable stacked buffer for reduce_scatter input / all_gather output
+        if "stacked_buffer" not in state:
+            state["stacked_buffer"] = torch.empty(padded_num_params, *shape, dtype=dtype, device=device)
+        stacked_buffer = state["stacked_buffer"]
+
+        # Copy grads directly into the reusable buffer and zero-pad to padded_num_params
+        torch._foreach_copy_(list(stacked_buffer[:len(params)].unbind(0)), [p.grad for p in params])
         if len(params) < padded_num_params:
-            stacked_grads[len(params):].zero_()
+            stacked_buffer[len(params):].zero_()
 
         # Reduce_scatter to get this rank's chunk
         grad_chunk = torch.empty(chunk_size, *shape, dtype=dtype, device=device)
-        future = dist.reduce_scatter_tensor(grad_chunk, stacked_grads, op=dist.ReduceOp.AVG, async_op=True).get_future()
+        future = dist.reduce_scatter_tensor(grad_chunk, stacked_buffer, op=dist.ReduceOp.AVG, async_op=True).get_future()
 
-        return dict(future=future, grad_chunk=grad_chunk, stacked_grads=stacked_grads, chunk_size=chunk_size)
+        return dict(future=future, grad_chunk=grad_chunk, stacked_buffer=stacked_buffer, chunk_size=chunk_size)
 
     def _compute_adamw(self, group: dict, info: dict, gather_list: list, rank: int, world_size: int) -> None:
         """Wait for reduce, compute AdamW updates, launch gathers for large params."""
@@ -468,12 +490,14 @@ class DistMuonAdamW(torch.optim.Optimizer):
             state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
         red_dim = -1 if shape[-2] >= shape[-1] else -2
 
-        # Build output buffer for all_gather
-        updated_params = torch.empty(chunk_size, *shape, dtype=dtype, device=device)
+        # Reusable owned-parameter buffer to avoid per-step torch.stack allocation/copy churn
+        if "owned_params_buffer" not in state:
+            state["owned_params_buffer"] = torch.empty(chunk_size, *shape, dtype=dtype, device=device)
+        updated_params = state["owned_params_buffer"]
 
         if num_owned > 0:
             owned_params = [params[start_idx + i] for i in range(num_owned)]
-            stacked_owned = torch.stack(owned_params)
+            torch._foreach_copy_(list(updated_params[:num_owned].unbind(0)), owned_params)
 
             # Fill 0-D tensors and run fused kernel
             self._muon_momentum_t.fill_(group["momentum"])
@@ -481,20 +505,19 @@ class DistMuonAdamW(torch.optim.Optimizer):
             self._muon_lr_t.fill_(group["lr"] * max(1.0, shape[-2] / shape[-1])**0.5)
             self._muon_wd_t.fill_(group["weight_decay"])
             muon_step_fused(
-                grad_chunk[:num_owned], stacked_owned,
+                grad_chunk[:num_owned], updated_params[:num_owned],
                 state["momentum_buffer"][:num_owned], state["second_momentum_buffer"][:num_owned],
                 self._muon_momentum_t, self._muon_lr_t, self._muon_wd_t, self._muon_beta2_t,
                 group["ns_steps"], red_dim,
             )
-            updated_params[:num_owned].copy_(stacked_owned)
 
         if num_owned < chunk_size:
             updated_params[num_owned:].zero_()
 
-        # Reuse stacked_grads buffer for all_gather output
-        stacked_params = info["stacked_grads"]
-        future = dist.all_gather_into_tensor(stacked_params, updated_params, async_op=True).get_future()
-        gather_list.append(dict(future=future, stacked_params=stacked_params, params=params))
+        # Reuse stacked buffer for all_gather output
+        stacked_buffer = info["stacked_buffer"]
+        future = dist.all_gather_into_tensor(stacked_buffer, updated_params, async_op=True).get_future()
+        gather_list.append(dict(future=future, stacked_params=stacked_buffer, params=params))
 
     def _finish_gathers(self, gather_list: list) -> None:
         """Wait for all gathers and copy Muon params back."""

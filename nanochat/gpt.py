@@ -34,9 +34,9 @@ class GPTConfig:
     n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
-    # Characters: L=long (full context), S=short (half context)
-    # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
-    window_pattern: str = "SSSL"
+    # Characters: L=long (full context), S=short (quarter context)
+    # Examples: "L"=all full context, "SL"=alternating, "SSSL"=three short then one long
+    window_pattern: str = "SSSSL"
 
 
 def norm(x):
@@ -51,8 +51,8 @@ class Linear(nn.Linear):
 
 
 def has_ve(layer_idx, n_layer):
-    """Returns True if GPT layer should have Value Embedding (alternating, last layer always included)."""
-    return layer_idx % 2 == (n_layer - 1) % 2
+    """Returns True if GPT layer should have Value Embedding every 3rd layer, last layer always included."""
+    return (layer_idx % 3 == (n_layer - 1) % 3) or (layer_idx == n_layer - 1)
 
 def apply_rotary_emb(x, cos, sin):
     assert x.ndim == 4  # multihead attention
@@ -179,7 +179,7 @@ class GPT(nn.Module):
         # Separate parameters so they can have different optimizer treatment
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))   # fake init, real init in init_weights()
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))     # fake init, real init in init_weights()
-        # Value embeddings (ResFormer-style): alternating layers, last layer always included
+        # Value embeddings (ResFormer-style): every 3rd layer, last layer always included
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
         self.value_embeds = nn.ModuleDict({str(i): nn.Embedding(padded_vocab_size, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
@@ -226,7 +226,7 @@ class GPT(nn.Module):
 
         # Per-layer scalars
         self.resid_lambdas.fill_(1.0)   # 1.0 => typical residual connections at init
-        self.x0_lambdas.fill_(0.1)      # 0.1 => small initial weight for skip connection to input embedding
+        self.x0_lambdas.fill_(0.05)     # slightly smaller initial skip to input embedding
 
         # Value embeddings (init like c_v: uniform with same std)
         for ve in self.value_embeds.values():
@@ -250,8 +250,7 @@ class GPT(nn.Module):
             for ve in self.value_embeds.values():
                 ve.to(dtype=COMPUTE_DTYPE)
 
-    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=100000, device=None):
-        # TODO: bump base theta more? e.g. 100K is more common more recently
+    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=200000, device=None):
         # autodetect the device from model embeddings
         if device is None:
             device = self.transformer.wte.weight.device
@@ -276,13 +275,13 @@ class GPT(nn.Module):
         - right: how many tokens after current position to attend to (0 for causal)
 
         Pattern string is tiled across layers. Final layer always gets L (full context).
-        Characters: L=long (full context), S=short (half context)
+        Characters: L=long (full context), S=short (quarter context)
         """
         pattern = config.window_pattern.upper()
         assert all(c in "SL" for c in pattern), f"Invalid window_pattern: {pattern}. Use only S and L."
         # Map characters to window sizes
         long_window = config.sequence_len
-        short_window = -(-long_window // 3 // 128) * 128  # ceil to FA3 tile size (2048 -> 768)
+        short_window = -(-long_window // 4 // 128) * 128  # ceil to FA3 tile size (2048 -> 512)
         char_to_window = {
             "L": (long_window, 0),
             "S": (short_window, 0),
