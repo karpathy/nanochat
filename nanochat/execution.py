@@ -306,7 +306,6 @@ def execute_code(
         >>> result.stdout
         'hello world\\n'
     """
-
     manager = multiprocessing.Manager()
     result_dict = manager.dict()
 
@@ -347,3 +346,6 @@ def execute_code(
         memory_exceeded=result_dict["memory_exceeded"],
     )
 
+# if __name__ == '__main__':
+#     multiprocessing.freeze_support()
+#     # manager = multiprocessing.Manager()

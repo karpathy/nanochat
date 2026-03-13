@@ -119,6 +119,10 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
         # The much harder alternative would be to just generate from the Assistant and check if it responded with the correct
         # letter (e.g. A, B, C, D), but evaluations typically make the task easier in this way.
         for idx, conversation in enumerate(conversations):
+
+            if i % 10 == 0 and idx % 10 == 0:
+                print0(f"run_categorical_eval Batch {i}/{num_batches} Processing conversation idx: {idx}/{batch_size}")
+
             # get the token ids of all the available letters of this problem
             letters = conversation['letters']
             letter_ids = []
@@ -215,6 +219,8 @@ if __name__ == "__main__":
     # Run all the task evaluations sequentially
     results = {}
     for task_name in task_names:
+        max_problems = 10 if (device_type != "cuda" and task_name in ["MMLU", "GSM8K", "HumanEval", "SpellingBee"]) else args.max_problems
+
         acc = run_chat_eval(
             task_name,
             model, tokenizer, engine,
@@ -223,7 +229,7 @@ if __name__ == "__main__":
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
             top_k=args.top_k,
-            max_problems=args.max_problems,
+            max_problems=max_problems,
         )
         results[task_name] = acc
         print0(f"{task_name} accuracy: {100 * acc:.2f}%")
