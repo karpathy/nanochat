@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- `paths.py` module as single source of truth for all `NANOCHAT_BASE_DIR` paths
+- `docs/data-layout.md` documenting hierarchical directory structure
+- `tests/test_paths.py` with 8 tests covering all path functions
+- 3 new config tests: TOML round-trip, from_args mapping, base_dir default
+- `build_parser()` in all three training scripts for reusable CLI setup
 - `--config` flag to load `TrainingConfig` from TOML file (CLI args override file values)
 - `--base-dir` flag to override `NANOCHAT_BASE_DIR` env var
 - TOML config save/load to `TrainingConfig` (replaces JSON)
@@ -14,6 +19,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `base_dir` field to `TrainingConfig`
 - Auto-save `config.toml` to checkpoint directory on training start
 - `tomli` and `tomli-w` dependencies for TOML support on Python 3.10
+
+### Changed
+- Restructured `NANOCHAT_BASE_DIR` from flat to hierarchical layout:
+  - `base_data_climbmix/` → `data/climbmix/`
+  - `eval_bundle/` → `data/eval_tasks/`
+  - `base_checkpoints/` → `checkpoints/base/`
+  - `chatsft_checkpoints/` → `checkpoints/sft/`
+  - `chatrl_checkpoints/` → `checkpoints/rl/`
+  - `base_eval/` → `eval/`
+  - `identity_conversations.jsonl` → `identity.jsonl`
+- All 8 consumer files updated to use `paths.py` instead of inline path construction
+- `COMPUTE_DTYPE` deferred to lazy `get_compute_dtype()` / `get_compute_dtype_reason()`
+- `setup_default_logging()` made idempotent, called from `compute_init()` instead of module level
+- `DATA_DIR` in `dataset.py` replaced with lazy `_get_data_dir()` function
+- `base_train.py`: all top-level setup wrapped in `main()`, `train_base_model` converted from 30-param function to closure, `build_parser()` extracted
+- `chat_sft.py`: all top-level setup wrapped in `main()`, `build_parser()` extracted, global vars converted to nonlocal
+- `chat_rl.py`: all top-level setup wrapped in `main()`, `build_parser()` extracted, nested closures for get_batch/run_gsm8k_eval
+- All three scripts now importable without side effects
+
+### Fixed
+- `config` shadowing bug in `build_model_meta()` (local `GPTConfig` named `config` shadowed outer `TrainingConfig`)
+- Missing `from pathlib import Path` import in `base_train.py`
+- Removed redundant `setup_default_logging()` call from `checkpoint.py`
 
 ### Changed
 - `base_train.py` now uses `TrainingConfig` throughout — raw `args` usage replaced

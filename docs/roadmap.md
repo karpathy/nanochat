@@ -6,7 +6,7 @@ read_when:
   - Deciding what to implement next
   - Understanding scope and sequencing
 status: draft
-last_updated: "2026-03-14"
+last_updated: "2026-03-15"
 ---
 
 # nanochat Roadmap
