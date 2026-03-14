@@ -37,9 +37,22 @@ last_updated: "2026-03-15"
 **Sub-phases**:
 - **1.5.0**: Data layout & configuration system — ✅ [Archived](archive/phase-1.5.0-data-layout-config.md)
 - **1.5.0.1**: Script entry-point refactor — ✅ [Archived](archive/phase-1.5.0.1-script-entry-points.md)
+- **1.5.0.2**: Code review & quality cleanup — 🔜 Next
 - **1.5.1**: Compression metrics integration — ✅ Code complete, 🔜 validation pending — [Validation Checklist](phase-1.5.1-validation-checklist.md)
 - **1.5.2**: Dataset quality via compression
 - **1.5.3**: Compression-aware optimization
+
+#### Phase 1.5.0.2 — Code Review & Quality Cleanup
+
+**Goal**: Full code quality review and address findings before moving to GPU-dependent validation work.
+
+**Sub-tasks**:
+- [ ] Full code review of `src/nanochat/` (structure, quality, patterns)
+- [ ] Full code review of `tests/` (coverage gaps, test quality)
+- [ ] Address findings — refactor improvements surfaced by review
+- [ ] Remaining cleanup: `base_eval.py` global state, `tok_train.py` top-level code (leftover from 1.5.0.1 scope)
+
+**Sequencing**: No GPU required. Clean up codebase before compression validation (1.5.1+).
 
 **Exit criteria**:
 - [ ] Compression ratio correlates with val loss (R² > 0.7)
