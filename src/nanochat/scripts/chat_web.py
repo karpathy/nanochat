@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# pyright: reportUnusedFunction=false
 """
 Unified web chat server - serves both UI and API from a single FastAPI instance.
 
