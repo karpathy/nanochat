@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `docs/archive/refactor-common-package.md`
 
 ### Changed
+- Rewrote `docs/m3-max-guide.md` from brainstorming notes into proper MPS backend documentation covering device detection, dtype behavior, limitations, and practical training guidelines
 - Refactored monolithic `common.py` into `common/` package with 7 focused modules (dtype, logging, distributed, io, hardware, wandb, paths)
 - Absorbed top-level `paths.py` into `common/paths.py`
 - `__init__.py` re-exports all public names — 16 consumer files required zero import changes

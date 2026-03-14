@@ -104,11 +104,11 @@ After completing the `reportMissingParameterType` retrofit, 128 errors remain ac
 - [ ] Suppress or fix remaining minor categories
 
 ### Apple Silicon (MPS) Documentation
-The [M3 Max guide](m3-max-guide.md) contains raw notes on running experiments on Apple Silicon. Needs cleanup into proper project documentation.
+The [MPS guide](m3-max-guide.md) documents how nanochat detects and uses the MPS backend on Apple Silicon, including dtype behavior, known limitations, and practical training guidelines.
 
-- [ ] Document MPS backend setup and limitations
-- [ ] Add hardware-specific batch size and memory guidelines
-- [ ] Integrate MPS device support into training scripts
+- [x] Document MPS backend setup and limitations
+- [x] Add hardware-specific batch size and memory guidelines
+- [x] Integrate MPS device support into training scripts (already integrated — documented existing support)
 
 ## Deferred Phases
 
