@@ -335,9 +335,21 @@ class MoEMLP(nn.Module):
 
         router_z_loss = torch.logsumexp(router_logits, dim=-1).pow(2).mean()
 
-        # Reuse histogram from routing instead of slow scatter_add_
+        # Batch-level f_i for expert usage logging
         f_i = (tokens_per_expert.float() / tokens_per_expert.sum()).to(x.dtype)
-        load_balance_loss = self._compute_load_balance_loss(router_probs, f_i)
+
+        # Load balance loss: sequence-level when bias balancing, batch-level otherwise
+        if self.use_bias_balancing:
+            selected_per_seq = selected_experts.view(batch_size, seq_len * self.num_active_experts)
+            f_i_seq = torch.zeros(batch_size, self.num_experts, device=x.device, dtype=torch.float32)
+            f_i_seq.scatter_add_(1, selected_per_seq.long(),
+                                 torch.ones_like(selected_per_seq, dtype=torch.float32))
+            f_i_seq = f_i_seq / (seq_len * self.num_active_experts)
+            p_i_seq = router_probs.view(batch_size, seq_len, self.num_experts).mean(dim=1)
+            load_balance_loss = self._compute_load_balance_loss(f_i_seq, p_i_seq)
+        else:
+            p_i = router_probs.mean(dim=0)
+            load_balance_loss = self._compute_load_balance_loss(f_i, p_i)
         router_probs_flat = rearrange(
             router_probs,
             "(batch_size seq_len) n_embd -> (batch_size seq_len) n_embd",
@@ -483,16 +495,16 @@ class MoEMLP(nn.Module):
             x, indices, bin_ids, weights, bins, padded_bins, self.num_active_experts
         )
 
-    def _compute_load_balance_loss(self, router_probs, f_i):
-        """Compute load balance loss within expert groups (vectorized)."""
-        p_i = router_probs.mean(dim=0)
+    def _compute_load_balance_loss(self, f_i, p_i):
+        """Compute load balance loss within expert groups.
 
+        Supports batch-level (f_i, p_i are 1D) and sequence-level (2D: [B, N]).
+        """
         if len(set(self.expert_widths)) == 1:
-            # for uniform expert sizes, just compute regular lbl loss
-            return self.num_experts * (f_i.float() @ p_i.float())
+            return self.num_experts * (f_i.float() * p_i.float()).sum(-1).mean()
 
         if self._num_valid_groups == 0:
-            return f_i.float() @ p_i.float()
+            return (f_i.float() * p_i.float()).sum(-1).mean()
 
         fi_pi = f_i.float() * p_i.float()
 
@@ -500,8 +512,8 @@ class MoEMLP(nn.Module):
         if self._all_experts_valid:
             group_sums = fi_pi @ membership
         else:
-            fi_pi_valid = fi_pi.index_select(0, self.valid_expert_indices)
-            membership_valid = membership.index_select(0, self.valid_expert_indices)
+            fi_pi_valid = fi_pi[..., self.valid_expert_indices]
+            membership_valid = membership[self.valid_expert_indices]
             group_sums = fi_pi_valid @ membership_valid
 
         group_losses = self.group_sizes.to(fi_pi.dtype) * group_sums
