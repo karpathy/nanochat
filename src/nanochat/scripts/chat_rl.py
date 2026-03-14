@@ -86,7 +86,7 @@ def main():
 
     # Init compute/precision
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+    ddp, ddp_rank, _, ddp_world_size, device = compute_init(device_type)
     master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
 
     # wandb logging init
@@ -94,7 +94,7 @@ def main():
     wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl", name=args.run, config=user_config)
 
     # Init model and tokenizer
-    model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
+    model, tokenizer, _ = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
     engine = Engine(model, tokenizer)  # for sampling rollouts
 
     # -----------------------------------------------------------------------------
@@ -193,7 +193,7 @@ def main():
             prefix_length = len(tokens)
             # Generate k samples using batched generation inside the Engine
             assert num_samples <= args.device_batch_size  # usually this is true. we can add a loop if not...
-            generated_token_sequences, masks = engine.generate_batch(
+            generated_token_sequences, _ = engine.generate_batch(
                 tokens, num_samples=num_samples, max_tokens=max_completion_tokens, temperature=temperature, top_k=top_k
             )
             # Check each sample for correctness

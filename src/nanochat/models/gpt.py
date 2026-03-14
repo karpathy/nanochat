@@ -240,7 +240,7 @@ class GPT(nn.Module):
     ) -> torch.optim.Optimizer:
         """Setup MuonAdamW optimizer with parameter groups."""
         model_dim = self.config.n_embd
-        ddp, rank, local_rank, world_size = get_dist_info()
+        ddp, _, _, _ = get_dist_info()
 
         # Separate out all parameters into groups
         matrix_params = list(self.transformer.h.parameters())
@@ -325,7 +325,7 @@ class GPT(nn.Module):
         loss_reduction: str = "mean",
     ) -> torch.Tensor:  # loss (scalar) if targets provided, else logits (B, T, vocab_size)
         """Forward pass through the model."""
-        B, T = idx.size()
+        _, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length
         assert T <= self.cos.size(1), (

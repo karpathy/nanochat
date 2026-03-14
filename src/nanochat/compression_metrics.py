@@ -73,7 +73,6 @@ class CompressionMetrics:
         log_probs = torch.log_softmax(logits, dim=-1)
 
         # Gather log probabilities of actual tokens
-        B, T = tokens.shape
         token_log_probs = log_probs.gather(
             dim=-1,
             index=tokens.unsqueeze(-1)

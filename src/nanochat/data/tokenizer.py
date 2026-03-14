@@ -385,7 +385,7 @@ class RustBPETokenizer:
         RESET = "\033[0m"
         GRAY = "\033[90m"
         tokens = []
-        for i, (token_id, mask_val) in enumerate(zip(ids, mask)):
+        for _, (token_id, mask_val) in enumerate(zip(ids, mask)):
             token_str = self.decode([token_id])
             color = GREEN if mask_val == 1 else RED
             tokens.append(f"{color}{token_str}{RESET}")
@@ -406,7 +406,7 @@ class RustBPETokenizer:
         messages.pop()  # remove the last message (of the Assistant) inplace
 
         # Now tokenize the conversation
-        ids, mask = self.render_conversation(conversation)
+        ids, _ = self.render_conversation(conversation)
 
         # Finally, to prime the Assistant for a completion, append the Assistant start token
         assistant_start = self.encode_special("<|assistant_start|>")

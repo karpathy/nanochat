@@ -75,7 +75,7 @@ class CausalSelfAttention(nn.Module):
         kv_cache: Optional[Any] = None,  # KVCache or None
     ) -> torch.Tensor:  # (B, T, C)
         """Forward pass with optional KV caching for inference."""
-        B, T, C = x.size()
+        B, T, _ = x.size()
 
         # Project the input to get queries, keys, and values
         # Shape: (B, T, H, D) - FA3's native layout, no transpose needed!

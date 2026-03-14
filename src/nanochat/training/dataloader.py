@@ -31,7 +31,7 @@ def _document_batches(split: str, resume_state_dict: dict[str, object] | None, t
     where text_batch is a list of document strings, indices track position for resumption,
     and epoch counts how many times we've cycled through the dataset (starts at 1).
     """
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
+    _, ddp_rank, _, ddp_world_size = get_dist_info()
 
     warn_on_legacy = ddp_rank == 0 and split == "train"  # rank 0 on train split will warn on legacy
     parquet_paths = list_parquet_files(warn_on_legacy=warn_on_legacy)
@@ -169,5 +169,5 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
 
 def tokenizing_distributed_data_loader_bos_bestfit(*args: object, **kwargs: object):
     """Helper that omits state_dict from yields."""
-    for inputs, targets, state_dict in tokenizing_distributed_data_loader_with_state_bos_bestfit(*args, **kwargs):
+    for inputs, targets, _ in tokenizing_distributed_data_loader_with_state_bos_bestfit(*args, **kwargs):
         yield inputs, targets

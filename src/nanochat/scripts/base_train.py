@@ -168,7 +168,7 @@ def main():
     # Compute init and wandb logging
 
     device_type = autodetect_device_type() if config.device_type == "" else config.device_type
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+    _, ddp_rank, _, ddp_world_size, device = compute_init(device_type)
     master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
     synchronize, get_max_memory = get_device_sync(device_type)
     if device_type == "cuda":

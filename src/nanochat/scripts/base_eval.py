@@ -236,7 +236,7 @@ def main():
 
     # Distributed / precision setup
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+    _, ddp_rank, _, ddp_world_size, device = compute_init(device_type)
     # Load model and tokenizer
     is_hf_model = args.hf_path is not None
     if is_hf_model:

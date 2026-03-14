@@ -36,8 +36,8 @@ def main():
 
     # Init the model and tokenizer
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
-    model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
+    _, _, _, _, device = compute_init(device_type)
+    model, tokenizer, _ = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
 
     # Special tokens for the chat state machine
     bos = tokenizer.get_bos_token_id()
@@ -98,7 +98,7 @@ def main():
         }
         response_tokens = []
         print("\nAssistant: ", end="", flush=True)
-        for token_column, token_masks in engine.generate(conversation_tokens, **generate_kwargs):
+        for token_column, _ in engine.generate(conversation_tokens, **generate_kwargs):
             token = token_column[0]  # pop the batch dimension (num_samples=1)
             response_tokens.append(token)
             token_text = tokenizer.decode([token])

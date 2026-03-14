@@ -126,7 +126,7 @@ def main():
 
     # Compute init
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+    ddp, ddp_rank, _, ddp_world_size, device = compute_init(device_type)
     master_process = ddp_rank == 0
     print0(f"COMPUTE_DTYPE: {get_compute_dtype()} ({get_compute_dtype_reason()})")
     synchronize, get_max_memory = get_device_sync(device_type)
@@ -508,7 +508,7 @@ def main():
         # evaluate the gradient
         synchronize()
         t0 = time.time()
-        for micro_step in range(grad_accum_steps):
+        for _ in range(grad_accum_steps):
             loss = model(x, y)
             train_loss = loss.detach()  # for logging
             loss = loss / grad_accum_steps  # each .backward() is a grad sum => normalize loss here

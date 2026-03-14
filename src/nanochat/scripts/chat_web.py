@@ -222,7 +222,7 @@ def main():
     logger = logging.getLogger(__name__)
 
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+    compute_init(device_type)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -277,7 +277,7 @@ def main():
         # Track the last complete UTF-8 string (without replacement characters)
         last_clean_text = ""
 
-        for token_column, token_masks in worker.engine.generate(
+        for token_column, _ in worker.engine.generate(
             tokens,
             num_samples=1,
             max_tokens=max_new_tokens,
@@ -316,7 +316,7 @@ def main():
 
         # Log incoming conversation to console
         logger.info("=" * 20)
-        for i, message in enumerate(request.messages):
+        for _, message in enumerate(request.messages):
             logger.info(f"[{message.role.upper()}]: {message.content}")
         logger.info("-" * 20)
 

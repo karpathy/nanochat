@@ -206,7 +206,7 @@ def main():
         print(f"{'':10} {'':8} {'Tokens':<7} {'Ratio':<7} {'Tokens':<7} {'Ratio':<7} {'Diff %':<12}")
         print("-" * 95)
 
-        for name, text in all_text:
+        for name, _ in all_text:
             baseline_data = baseline_results[name]
             ours_data = ours_results[name]
 

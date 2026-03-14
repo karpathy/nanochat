@@ -413,7 +413,7 @@ def get_report():
     # just for convenience, only rank 0 logs to report
     from nanochat.common import get_base_dir, get_dist_info
 
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
+    _, ddp_rank, _, _ = get_dist_info()
     if ddp_rank == 0:
         report_dir = os.path.join(get_base_dir(), "report")
         return Report(report_dir)

@@ -31,7 +31,7 @@ def run_generative_eval(
     task_object: object, tokenizer: object, model: torch.nn.Module, engine: Engine, num_samples: int, max_new_tokens: int, temperature: float, top_k: int, max_problems: int | None = None
 ):
 
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
+    ddp, ddp_rank, _, ddp_world_size = get_dist_info()
     device = model.get_device()
 
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
@@ -92,7 +92,7 @@ def run_generative_eval(
 
 def run_categorical_eval(task_object: object, tokenizer: object, model: object, batch_size: int, max_problems: int | None = None) -> float:
 
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
+    ddp, ddp_rank, _, ddp_world_size = get_dist_info()
     device = model.get_device()
     bos = tokenizer.get_bos_token_id()  # use BOS as pad token is ok, these positions are ignored
 
@@ -278,9 +278,9 @@ def main():
     args = parser.parse_args()
 
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+    _, _, _, _, device = compute_init(device_type)
 
-    model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
+    model, tokenizer, _ = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
     engine = Engine(model, tokenizer)
 
     # Get the tasks to evaluate on
