@@ -22,7 +22,7 @@ dependencies = [
     "torch==2.9.1",
     "transformers>=4.57.3",
     "uvicorn>=0.36.0",
-    "wandb>=0.21.3",
+    "wandb>=0.25.0",
     "zstandard>=0.25.0",
 ]
 
