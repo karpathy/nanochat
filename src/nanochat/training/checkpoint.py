@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+from typing import cast
 
 import torch
 
@@ -95,7 +96,7 @@ def build_model(checkpoint_dir: str, step: int, device: torch.device, phase: str
         model_data = {k: v.float() if v.dtype == torch.bfloat16 else v for k, v in model_data.items()}
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
     model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
-    model_config_kwargs = meta_data["model_config"]
+    model_config_kwargs = cast(dict[str, object], meta_data["model_config"])
     _patch_missing_config_keys(model_config_kwargs)
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)

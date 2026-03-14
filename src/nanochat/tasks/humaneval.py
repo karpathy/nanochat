@@ -5,6 +5,7 @@ It is a coding benchmark.
 """
 
 import re
+from typing import cast
 
 from datasets import load_dataset
 
@@ -82,7 +83,7 @@ class HumanEval(Task):
     def evaluate(self, conversation: dict[str, object], completion: str) -> bool:
         """Given (conversation, completion), return boolean success of the completion."""
         # the prompt will contain the imports and the function signature
-        imports = extract_imports(conversation["messages"][0]["content"])
+        imports = extract_imports(cast(list[dict[str, object]], conversation["messages"])[0]["content"])
         # the completion will usually contain the whole function
         # but not always with the needed imports, so we manually append them
         completion_code = extract_program(completion)

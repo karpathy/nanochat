@@ -3,6 +3,8 @@ The ARC dataset from Allen AI.
 https://huggingface.co/datasets/allenai/ai2_arc
 """
 
+from typing import cast
+
 from datasets import load_dataset
 
 from nanochat.tasks.base import Task, render_mc
@@ -44,5 +46,5 @@ class ARC(Task):
         assert assistant_response in conversation["letters"], (
             f"ARC answer {assistant_response} is expected to be one of {conversation['letters']}"
         )
-        assistant_message = conversation["messages"][-1]["content"]  # e.g. "A"
+        assistant_message = cast(list[dict[str, object]], conversation["messages"])[-1]["content"]  # e.g. "A"
         return assistant_response == assistant_message

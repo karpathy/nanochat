@@ -6,7 +6,7 @@ read_when:
   - Deciding what to implement next
   - Understanding scope and sequencing
 status: draft
-last_updated: "2026-03-15"
+last_updated: "2026-03-16"
 ---
 
 # nanochat Roadmap
@@ -82,27 +82,28 @@ Combine transformer efficiency with SP Theory advantages. Also the fallback path
 
 ### Refactor `common.py` into `common/` Package — ✅ [Archived](archive/refactor-common-package.md)
 
-### Remaining Pyright Errors (128)
-After completing the `reportMissingParameterType` retrofit, 128 errors remain across these categories:
+### Remaining Pyright Errors (61)
+Started at 128 after `reportMissingParameterType` retrofit. Current breakdown:
 
-| Category | Count | Notes |
-|---|---|---|
-| `reportUnusedVariable` | ~42 | Tuple unpacking (`ddp`, `ddp_local_rank`, etc.), loop vars (`i`, `B`, `T`) |
-| `reportReturnType` | ~14 | `dict` invariance (need `Mapping`), numpy `bool_`/`floating` vs Python types |
-| `reportIndexIssue` | ~14 | `object` typed params lacking `__getitem__` (meta dicts, dataset rows) |
-| `reportPossiblyUnboundVariable` | ~12 | Conditional branches (`optimizer_data`, `meta_data`, `val_bpb`, `content_len`) |
-| `reportMissingImports` | ~7 | `tasks.*` imports unresolvable (runtime `sys.path` manipulation) |
-| `reportUnusedFunction` | ~5 | FastAPI route handlers registered via decorators |
-| `reportGeneralTypeIssues` | ~4 | `Module` not iterable, `object` not iterable |
-| `reportUnnecessaryComparison` | ~3 | Defensive guards on `None` / `Literal` types |
-| `reportMissingTypeArgument` | ~3 | Generic `dict`, `set`, `Queue` without type args |
-| `reportUnnecessaryIsInstance` | ~2 | Redundant `isinstance` checks in tokenizer |
-| Other | ~6 | `reportOptionalSubscript`, `reportOptionalCall`, `reportAssignmentType` |
+| Category | Count | Status | Notes |
+|---|---|---|---|
+| `reportUnusedVariable` | 0 | ✅ Fixed | Underscore prefixes, `_` unpacking |
+| `reportPossiblyUnboundVariable` | 0 | ✅ Fixed | Initialized before conditional branches |
+| `reportUnusedFunction` | 0 | ✅ Fixed | FastAPI handlers suppressed at file level |
+| `reportIndexIssue` | ~19 | 🔜 Pending | `object` typed params lacking `__getitem__` (meta dicts, dataset rows) |
+| `reportReturnType` | ~9 | 🔜 Pending | `dict` invariance (need `Mapping`), numpy `bool_`/`floating` vs Python types |
+| `reportMissingImports` | ~7 | ⏸ Deferred | `tasks.*` unresolvable — runtime `sys.path` manipulation, likely suppress |
+| `reportUnnecessaryComparison` | 3 | 🔜 Pending | `flash_attention.py` (2), `fp8.py` (1) |
+| `reportMissingTypeArgument` | 6 | 🔜 Pending | Generic `dict`/`set`/`Queue` without type args |
+| `reportUnnecessaryIsInstance` | 2 | 🔜 Pending | Redundant `isinstance` in tokenizer |
+| Other | ~15 | 🔜 Pending | `reportGeneralTypeIssues`, `reportOptionalSubscript`, `reportOptionalCall`, `reportAssignmentType` |
 
-- [ ] Fix `reportUnusedVariable` (underscore prefixes or `_` for unpacking)
-- [ ] Fix `reportReturnType` (use `Mapping` for covariant dict returns, cast numpy types)
+- [x] Fix `reportUnusedVariable`
+- [x] Fix `reportPossiblyUnboundVariable`
+- [x] Fix `reportUnusedFunction`
+- [ ] Fix small categories: `reportUnnecessaryComparison` (3), `reportMissingTypeArgument` (6), `reportUnnecessaryIsInstance` (2)
 - [ ] Fix `reportIndexIssue` (narrow `object` params to typed dicts)
-- [ ] Fix `reportPossiblyUnboundVariable` (initialize before conditional branches)
+- [ ] Fix `reportReturnType` (use `Mapping` for covariant dict returns, cast numpy types)
 - [ ] Suppress or fix remaining minor categories
 
 ### MPS Backend Improvements — ✅ [Archived](archive/mps-backend-improvements.md)

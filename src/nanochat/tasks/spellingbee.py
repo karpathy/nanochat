@@ -28,6 +28,7 @@ python -m tasks.spellingbee
 
 import random
 import re
+from typing import cast
 
 from nanochat.common import download_file_with_lock
 from nanochat.tasks.base import Task
@@ -214,11 +215,11 @@ Then count the occurrences of '{letter}':
         """
         assert isinstance(assistant_response, str), "Assuming simple string response for now"
         # First extract the ground truth answer from the conversation
-        assistant_message = conversation["messages"][-1]
+        assistant_message = cast(list[dict[str, object]], conversation["messages"])[-1]
         assert assistant_message["role"] == "assistant", "Last message must be from the Assistant"
         assert isinstance(assistant_message["content"], list), "This is expected to be a list of parts"
         # The last text part contains the final answer with ####
-        last_text_part = assistant_message["content"][-1]["text"]
+        last_text_part = cast(list[dict[str, object]], assistant_message["content"])[-1]["text"]
         # Extract both the ground truth answer and the predicted answer
         ref_num = extract_answer(last_text_part)
         pred_num = extract_answer(assistant_response)
@@ -279,10 +280,10 @@ if __name__ == "__main__":
     for i in range(10):
         ex = task.get_example(i)
         print("=" * 100)
-        print(ex["messages"][0]["content"])
+        print(cast(list[dict[str, object]], ex["messages"])[0]["content"])
         print("-" * 100)
         # Assistant content is now a list of parts
-        assistant_parts = ex["messages"][1]["content"]
+        assistant_parts = cast(list[dict[str, object]], ex["messages"])[1]["content"]
         for part in assistant_parts:
             if part["type"] == "text":
                 print(part["text"], end="")

@@ -29,6 +29,7 @@ import shutil
 import tempfile
 import time
 import zipfile
+from typing import cast
 
 import torch
 import yaml
@@ -247,10 +248,10 @@ def main():
         model_slug = args.hf_path.replace("/", "-")
     else:
         model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=args.model_tag, step=args.step)
-        sequence_len = meta["model_config"]["sequence_len"]
+        sequence_len = cast(int, cast(dict[str, object], meta["model_config"])["sequence_len"])
         token_bytes = get_token_bytes(device=device)
-        model_name = f"base_model (step {meta['step']})"
-        model_slug = f"base_model_{meta['step']:06d}"
+        model_name = f"base_model (step {cast(int, meta['step'])})"
+        model_slug = f"base_model_{cast(int, meta['step']):06d}"
 
     print0(f"Evaluating model: {model_name}")
     print0(f"Eval modes: {', '.join(sorted(eval_modes))}")
@@ -331,9 +332,9 @@ def main():
             os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
             with open(output_csv_path, "w", encoding="utf-8", newline="") as f:
                 f.write(f"{'Task':<35}, {'Accuracy':<10}, {'Centered':<10}\n")
-                for label in core_results["results"]:
-                    acc = core_results["results"][label]
-                    centered = core_results["centered_results"][label]
+                for label in cast(dict[str, object], core_results["results"]):
+                    acc = cast(dict[str, object], core_results["results"])[label]
+                    centered = cast(dict[str, object], core_results["centered_results"])[label]
                     f.write(f"{label:<35}, {acc:<10.6f}, {centered:<10.6f}\n")
                 f.write(f"{'CORE':<35}, {'':<10}, {core_results['core_metric']:<10.6f}\n")
             print0(f"\nResults written to: {output_csv_path}")

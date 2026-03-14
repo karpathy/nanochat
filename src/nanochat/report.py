@@ -9,6 +9,7 @@ import re
 import shutil
 import socket
 import subprocess
+from typing import cast
 
 import psutil
 import torch
@@ -103,14 +104,14 @@ def estimate_cost(gpu_info: dict[str, object], runtime_hours: float | None = Non
 
     # Try to identify GPU type from name
     hourly_rate = None
-    gpu_name = gpu_info["names"][0] if gpu_info["names"] else "unknown"
+    gpu_name = cast(list[object], gpu_info["names"])[0] if gpu_info["names"] else "unknown"
     for gpu_type, rate in gpu_hourly_rates.items():
         if gpu_type in gpu_name:
-            hourly_rate = rate * gpu_info["count"]
+            hourly_rate = rate * cast(int, gpu_info["count"])
             break
 
     if hourly_rate is None:
-        hourly_rate = default_rate * gpu_info["count"]  # Default estimate
+        hourly_rate = default_rate * cast(int, gpu_info["count"])  # Default estimate
 
     return {
         "hourly_rate": hourly_rate,

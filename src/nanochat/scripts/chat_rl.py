@@ -19,6 +19,7 @@ torchrun --nproc_per_node=8 -m nanochat.scripts.chat_rl -- --run=default
 import argparse
 import itertools
 import os
+from typing import cast
 
 import torch
 import torch.distributed as dist
@@ -259,7 +260,7 @@ def main():
             )
             records = list(records_iter)  # collect all records
             for k in range(1, args.device_batch_size + 1):
-                passk[k - 1] = sum(any(o["is_correct"] for o in r["outcomes"][:k]) for r in records)
+                passk[k - 1] = sum(any(o["is_correct"] for o in cast(list[dict[str, object]], r["outcomes"])[:k]) for r in records)
             num_records = torch.tensor(len(records), dtype=torch.long, device=device)
             if ddp:
                 dist.all_reduce(num_records, op=dist.ReduceOp.SUM)

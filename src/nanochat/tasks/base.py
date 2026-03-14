@@ -8,7 +8,7 @@ Example tasks: MMLU, ARC-Easy, ARC-Challenge, GSM8K, HumanEval, SmolTalk.
 import random
 from typing import Any, List, Optional, Tuple
 
-from nanochat.tasks.types import Conversation
+from nanochat.tasks.types import Conversation  # noqa: F401  (re-exported for callers)
 
 
 class Task:
@@ -45,7 +45,7 @@ class Task:
         assert num >= 0, f"Negative number of examples???: {num}"  # prevent footguns
         return num
 
-    def __getitem__(self, index: int) -> Conversation:
+    def __getitem__(self, index: int) -> dict[str, object]:
         assert isinstance(index, int), f"Index must be an integer, got {type(index)}"
         physical_index = self.start + index * self.step
         conversation = self.get_example(physical_index)

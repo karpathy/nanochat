@@ -10,6 +10,7 @@ torchrun --nproc_per_node=8 -m nanochat.scripts.chat_eval -- -a ARC-Easy
 
 import argparse
 from functools import partial
+from typing import cast
 
 import torch
 import torch.distributed as dist
@@ -17,6 +18,7 @@ import torch.distributed as dist
 from nanochat.common import autodetect_device_type, compute_cleanup, compute_init, get_dist_info, print0
 from nanochat.evaluation.engine import Engine
 from nanochat.tasks.arc import ARC
+from nanochat.tasks.base import Task
 from nanochat.tasks.gsm8k import GSM8K
 from nanochat.tasks.humaneval import HumanEval
 from nanochat.tasks.mmlu import MMLU
@@ -28,7 +30,7 @@ from nanochat.training.checkpoint import load_model
 
 
 def run_generative_eval(
-    task_object: object, tokenizer: object, model: torch.nn.Module, engine: Engine, num_samples: int, max_new_tokens: int, temperature: float, top_k: int, max_problems: int | None = None
+    task_object: Task, tokenizer: object, model: torch.nn.Module, engine: Engine, num_samples: int, max_new_tokens: int, temperature: float, top_k: int, max_problems: int | None = None
 ):
 
     ddp, ddp_rank, _, ddp_world_size = get_dist_info()
@@ -90,7 +92,7 @@ def run_generative_eval(
 # batches at a time and just check the logits for correct answer choices.
 
 
-def run_categorical_eval(task_object: object, tokenizer: object, model: object, batch_size: int, max_problems: int | None = None) -> float:
+def run_categorical_eval(task_object: Task, tokenizer: object, model: object, batch_size: int, max_problems: int | None = None) -> float:
 
     ddp, ddp_rank, _, ddp_world_size = get_dist_info()
     device = model.get_device()
@@ -129,7 +131,7 @@ def run_categorical_eval(task_object: object, tokenizer: object, model: object, 
         # letter (e.g. A, B, C, D), but evaluations typically make the task easier in this way.
         for idx, conversation in enumerate(conversations):
             # get the token ids of all the available letters of this problem
-            letters = conversation["letters"]
+            letters = cast(list[str], conversation["letters"])
             letter_ids = []
             for letter in letters:
                 if letter not in letter_to_id_cache:
