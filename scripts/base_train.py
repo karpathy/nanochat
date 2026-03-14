@@ -32,7 +32,7 @@ from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
-from nanochat.flash_attention import HAS_FA3
+from nanochat.flash_attention import HAS_FA3, HAS_BACKLITE, set_backlite_negl_prob, get_backlite_negl_prob
 from scripts.base_eval import evaluate_core
 print_banner()
 
@@ -77,6 +77,9 @@ parser.add_argument("--sample-every", type=int, default=2000, help="sample from 
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
+# BackLite sparse backward attention
+parser.add_argument("--backlite-negl-prob", type=float, default=0.0, help="BackLite negligible-probability threshold (0.0 = disabled, use vanilla FA3)")
+parser.add_argument("--negl-prob-warmup-steps", type=int, default=0, help="keep negl_prob=0 for this many steps before enabling BackLite sparsity")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
@@ -99,7 +102,7 @@ print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
 
-# Flash Attention status
+# Flash Attention / BackLite status
 from nanochat.flash_attention import USE_FA3
 using_fa3 = USE_FA3
 if using_fa3:
@@ -115,6 +118,20 @@ else:
         print0(f"WARNING: SDPA has no support for sliding window attention (window_pattern='{args.window_pattern}'). Your GPU utilization will be terrible.")
         print0("WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.")
     print0("!" * 80)
+
+# BackLite setup: enable only after negl_prob_warmup_steps (set to 0 initially if warmup > 0)
+if args.backlite_negl_prob > 0.0 and not HAS_BACKLITE:
+    print0("WARNING: --backlite-negl-prob set but BackLite not installed; ignoring (pip install BackLite/hopper/)")
+if HAS_BACKLITE:
+    initial_negl = 0.0 if args.negl_prob_warmup_steps > 0 else args.backlite_negl_prob
+    set_backlite_negl_prob(initial_negl)
+    if args.backlite_negl_prob > 0.0:
+        if args.negl_prob_warmup_steps > 0:
+            print0(f"✓ BackLite available — negl_prob will activate at step {args.negl_prob_warmup_steps} (target={args.backlite_negl_prob})")
+        else:
+            print0(f"✓ BackLite enabled, negl_prob={args.backlite_negl_prob}")
+    else:
+        print0("BackLite available but disabled (--backlite-negl-prob=0.0)")
 
 # -----------------------------------------------------------------------------
 # Tokenizer will be useful for evaluation and also we need the vocab size to init the model
@@ -237,6 +254,18 @@ def disable_fp8(model):
         # Restore Float8Linear modules
         for parent, attr_name, fp8_module in fp8_locations:
             setattr(parent, attr_name, fp8_module)
+
+# Context manager to temporarily disable BackLite during eval (no backward pass = no benefit)
+@contextmanager
+def disable_backlite():
+    saved = get_backlite_negl_prob()
+    if saved > 0.0:
+        set_backlite_negl_prob(0.0)
+    try:
+        yield
+    finally:
+        if saved > 0.0:
+            set_backlite_negl_prob(saved)
 
 # -----------------------------------------------------------------------------
 # Compile the model
@@ -411,6 +440,17 @@ print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_l
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 
+_negl_warmup = args.negl_prob_warmup_steps
+
+# Pre-compile BackLite code path to avoid recompilation spike at warmup activation
+if not resuming and _negl_warmup > 0 and HAS_BACKLITE and args.backlite_negl_prob > 0.0:
+    set_backlite_negl_prob(args.backlite_negl_prob)
+    model.train()
+    loss = model(x, y) / grad_accum_steps
+    (scaler.scale(loss) if scaler else loss).backward()
+    model.zero_grad(set_to_none=True)
+    set_backlite_negl_prob(0.0)
+
 # Go!
 while True:
     last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
@@ -421,7 +461,7 @@ while True:
         model.eval()
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
-        with disable_fp8(model):
+        with disable_fp8(model), disable_backlite():
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
         if val_bpb < min_val_bpb:
@@ -440,7 +480,7 @@ while True:
     results = {}
     if args.core_metric_every > 0 and (last_step or (step > 0 and step % args.core_metric_every == 0)):
         model.eval()
-        with disable_fp8(orig_model):
+        with disable_fp8(orig_model), disable_backlite():
             results = evaluate_core(orig_model, tokenizer, device, max_per_task=args.core_metric_max_per_task)
         print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
         wandb_run.log({
@@ -467,7 +507,7 @@ while True:
         engine = Engine(orig_model, tokenizer) # use orig_model to avoid recompilation
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
-            with disable_fp8(orig_model):
+            with disable_fp8(orig_model), disable_backlite():
                 sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
             print0(tokenizer.decode(sample[0]))
         model.train()
@@ -581,6 +621,11 @@ while True:
     # state update
     first_step_of_run = (step == 0) or (resuming and step == args.resume_from_step)
     step += 1
+
+    # Activate negl_prob after warmup completes
+    if _negl_warmup > 0 and step == _negl_warmup and HAS_BACKLITE:
+        set_backlite_negl_prob(args.backlite_negl_prob)
+        print0(f"negl_prob warmup complete at step {step}")
 
     # The garbage collector is sadly a little bit overactive and for some poorly understood reason,
     # it spends ~500ms scanning for cycles quite frequently, just to end up cleaning up very few tiny objects each time.
