@@ -30,6 +30,7 @@ last_updated: "2026-03-15"
 | [Phase 1.5.0.2 — Code Review & Cleanup](archive/phase-1.5.0.2-code-review-cleanup.md) | 2026-03-15 | Full code review, 6 fixes, lazy USE_FA3, paths wiring, all 9 scripts wrapped |
 | [Refactor common.py into common/ Package](archive/refactor-common-package.md) | 2026-03-15 | Split monolithic common.py into 7 focused modules, absorbed paths.py, backward-compatible |
 | [Type Annotations & Pyright Compliance](archive/type-annotations-pyright-compliance.md) | 2026-03-15 | Pyright strict mode, 17 suppression rules, 323→0 reportMissingParameterType across 29 files |
+| [Apple Silicon (MPS) Documentation](archive/apple-silicon-mps-documentation.md) | 2026-03-15 | Rewrote MPS guide with accurate device detection, dtype, limitations, and batch size guidelines |
 
 ## Active Phase
 
@@ -103,12 +104,7 @@ After completing the `reportMissingParameterType` retrofit, 128 errors remain ac
 - [ ] Fix `reportPossiblyUnboundVariable` (initialize before conditional branches)
 - [ ] Suppress or fix remaining minor categories
 
-### Apple Silicon (MPS) Documentation
-The [MPS guide](m3-max-guide.md) documents how nanochat detects and uses the MPS backend on Apple Silicon, including dtype behavior, known limitations, and practical training guidelines.
-
-- [x] Document MPS backend setup and limitations
-- [x] Add hardware-specific batch size and memory guidelines
-- [x] Integrate MPS device support into training scripts (already integrated — documented existing support)
+### Apple Silicon (MPS) Documentation — ✅ [Archived](archive/apple-silicon-mps-documentation.md)
 
 ## Deferred Phases
 
