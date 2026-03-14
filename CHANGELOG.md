@@ -7,7 +7,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- Full modular architecture with src/nanochat/ layout
+- `--config` flag to load `TrainingConfig` from TOML file (CLI args override file values)
+- `--base-dir` flag to override `NANOCHAT_BASE_DIR` env var
+- TOML config save/load to `TrainingConfig` (replaces JSON)
+- Compression fields to `TrainingConfig` (`track_compression`, `compression_log_every`, `track_layer_compression`, `compression_early_stop`)
+- `base_dir` field to `TrainingConfig`
+- Auto-save `config.toml` to checkpoint directory on training start
+- `tomli` and `tomli-w` dependencies for TOML support on Python 3.10
+
+### Changed
+- `base_train.py` now uses `TrainingConfig` throughout — raw `args` usage replaced
+- `TrainingConfig.save()` / `load()` switched from JSON to TOML format
 - Console scripts for CLI commands (nanochat-train, nanochat-eval, nanochat-chat, nanochat-sft, nanochat-rl, nanochat-chat-eval, nanochat-web, nanochat-tok-train, nanochat-tok-eval)
 - Comprehensive test suite (30 tests: models, training, tasks, integration)
 - CI/CD workflow with GitHub Actions (pytest, ruff, pyright)

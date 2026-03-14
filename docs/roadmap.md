@@ -33,14 +33,15 @@ last_updated: "2026-03-14"
 **Goal**: Validate compression-based optimization on current hardware before investing in scaling infrastructure.
 
 **Sub-phases**:
-- **1.5.0**: Data layout & configuration system — 🔜 Next
-  - [ ] Wire `TrainingConfig.from_args()` into `base_train.py` — replace raw `args` usage
-  - [ ] Add `--config` flag to load config from TOML file
-  - [ ] Use TOML for config format (`tomllib` read, `tomli-w` write) — supports comments for documenting hyperparameter choices
-  - [ ] Add `--base-dir` flag (overrides `NANOCHAT_BASE_DIR` env var)
-  - [ ] Auto-save config to checkpoint dir via `TrainingConfig.save()`
-  - [ ] Add compression fields to `TrainingConfig` (`track_compression`, `compression_log_every`, `track_layer_compression`, `compression_early_stop`) — defaults must match CLI defaults
+- **1.5.0**: Data layout & configuration system — ✅ Complete (2026-03-14)
+  - [x] Wire `TrainingConfig.from_args()` into `base_train.py` — replace raw `args` usage
+  - [x] Add `--config` flag to load config from TOML file
+  - [x] Use TOML for config format (`tomllib` read, `tomli-w` write) — supports comments for documenting hyperparameter choices
+  - [x] Add `--base-dir` flag (overrides `NANOCHAT_BASE_DIR` env var)
+  - [x] Auto-save config to checkpoint dir via `TrainingConfig.save()`
+  - [x] Add compression fields to `TrainingConfig` (`track_compression`, `compression_log_every`, `track_layer_compression`, `compression_early_stop`) — defaults must match CLI defaults
   - [ ] Document data directory layout (`NANOCHAT_BASE_DIR`, data/checkpoints/tokenizer structure)
+  - [ ] Upgrade Python base version (currently 3.10 → target 3.13): torch 2.9.1 supports up to 3.14, 3.13 is locally installed — drop `tomli` dep (stdlib `tomllib` available), update `.python-version` and `pyproject.toml` `requires-python`
 - **1.5.1**: Compression metrics integration — ✅ Code complete, 🔜 validation pending — [Validation Checklist](phase-1.5.1-validation-checklist.md)
 - **1.5.2**: Dataset quality via compression
 - **1.5.3**: Compression-aware optimization
