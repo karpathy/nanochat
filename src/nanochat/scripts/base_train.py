@@ -43,6 +43,7 @@ from nanochat.data.tokenizer import get_token_bytes, get_tokenizer
 from nanochat.evaluation.engine import Engine
 from nanochat.evaluation.loss_eval import evaluate_bpb
 from nanochat.flash_attention import HAS_FA3, USE_FA3
+from nanochat.models.config import TrainingConfig
 from nanochat.models.gpt import GPT, GPTConfig, Linear
 from nanochat.scripts.base_eval import evaluate_core
 from nanochat.training.checkpoint import load_checkpoint, save_checkpoint
@@ -57,10 +58,14 @@ print_banner()
 # -----------------------------------------------------------------------------
 # CLI arguments
 parser = argparse.ArgumentParser(description="Pretrain base model")
+# Config file
+parser.add_argument("--config", type=str, default=None, help="path to TOML config file (CLI args override file values)")
 # Logging
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+# Base dir
+parser.add_argument("--base-dir", type=str, default=None, help="override NANOCHAT_BASE_DIR env var")
 # FP8 training
 parser.add_argument("--fp8", action="store_true", help="enable FP8 training (requires H100+ GPU and torchao)")
 parser.add_argument(
@@ -139,11 +144,23 @@ parser.add_argument("--compression-early-stop", action="store_true", help="stop 
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
+
+# Load config file first, then override with any CLI args that were explicitly set
+if args.config is not None:
+    config = TrainingConfig.load(Path(args.config))
+    # CLI args override file values — re-apply non-default CLI values
+    cli_overrides = {k: v for k, v in vars(args).items() if k != "config" and v is not None}
+    for k, v in cli_overrides.items():
+        if hasattr(config, k):
+            setattr(config, k, v)
+else:
+    config = TrainingConfig.from_args(args)
+
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
 # Compute init and wandb logging
 
-device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+device_type = autodetect_device_type() if config.device_type == "" else config.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
@@ -157,8 +174,8 @@ else:
 print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 
 # wandb logging init
-use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
+use_dummy_wandb = config.run == "dummy" or not master_process
+wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=config.run, config=user_config)
 
 # Flash Attention status
 
@@ -174,9 +191,9 @@ else:
     else:
         print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback")
     print0("WARNING: Training will be less efficient without FA3")
-    if args.window_pattern != "L":
+    if config.window_pattern != "L":
         print0(
-            f"WARNING: SDPA has no support for sliding window attention (window_pattern='{args.window_pattern}'). Your GPU utilization will be terrible."
+            f"WARNING: SDPA has no support for sliding window attention (window_pattern='{config.window_pattern}'). Your GPU utilization will be terrible."
         )
         print0(
             "WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns."
@@ -197,18 +214,18 @@ print0(f"Vocab size: {vocab_size:,}")
 def build_model_meta(depth):
     """Build a model on meta device for a given depth (shapes/dtypes only, no data)."""
     # Model dim is nudged up to nearest multiple of head_dim for clean division
-    # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == args.head_dim exactly)
-    base_dim = depth * args.aspect_ratio
-    model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
-    num_heads = model_dim // args.head_dim
+    # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == config.head_dim exactly)
+    base_dim = depth * config.aspect_ratio
+    model_dim = ((base_dim + config.head_dim - 1) // config.head_dim) * config.head_dim
+    num_heads = model_dim // config.head_dim
     config = GPTConfig(
-        sequence_len=args.max_seq_len,
+        sequence_len=config.max_seq_len,
         vocab_size=vocab_size,
         n_layer=depth,
         n_head=num_heads,
         n_kv_head=num_heads,
         n_embd=model_dim,
-        window_pattern=args.window_pattern,
+        window_pattern=config.window_pattern,
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -216,7 +233,7 @@ def build_model_meta(depth):
 
 
 # Build the model, move to device, init the weights
-model = build_model_meta(args.depth)  # 1) Build on meta device (only shapes/dtypes, no data)
+model = build_model_meta(config.depth)  # 1) Build on meta device (only shapes/dtypes, no data)
 model_config = model.config
 model_config_kwargs = asdict(model_config)
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
@@ -224,14 +241,16 @@ model.to_empty(device=device)  # 2) All tensors get storage on target device but
 model.init_weights()  # 3) All tensors get initialized
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
-base_dir = get_base_dir()
-output_dirname = args.model_tag if args.model_tag else f"d{args.depth}"  # e.g. d12
+base_dir = config.base_dir if config.base_dir else get_base_dir()
+output_dirname = config.model_tag if config.model_tag else f"d{config.depth}"  # e.g. d12
 checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
-resuming = args.resume_from_step != -1
+os.makedirs(checkpoint_dir, exist_ok=True)
+config.save(Path(checkpoint_dir) / "config.toml")
+resuming = config.resume_from_step != -1
 if resuming:
-    print0(f"Resuming optimization from step {args.resume_from_step}")
+    print0(f"Resuming optimization from step {config.resume_from_step}")
     model_data, optimizer_data, meta_data = load_checkpoint(
-        checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank
+        checkpoint_dir, config.resume_from_step, device, load_optimizer=True, rank=ddp_rank
     )
     model.load_state_dict(model_data, strict=True, assign=True)
     del model_data  # free up this memory after the copy
@@ -240,7 +259,7 @@ if resuming:
 # FP8 training initialization and management (this has to be done before torch.compile)
 
 # Convert Linear layers to Float8Linear if --fp8 is set
-if args.fp8:
+if config.fp8:
     if device_type != "cuda":
         print0("Warning: FP8 training requires CUDA, ignoring --fp8 flag")
     else:
@@ -260,13 +279,13 @@ if args.fp8:
                 return False
             return True
 
-        fp8_config = Float8LinearConfig.from_recipe_name(args.fp8_recipe)
+        fp8_config = Float8LinearConfig.from_recipe_name(config.fp8_recipe)
         num_linear = sum(1 for m in model.modules() if isinstance(m, nn.Linear))
         convert_to_float8_training(model, config=fp8_config, module_filter_fn=fp8_module_filter)
         num_fp8 = sum(1 for m in model.modules() if "Float8" in type(m).__name__)
         num_skipped = num_linear - num_fp8
         print0(
-            f"✓ FP8 training enabled ({args.fp8_recipe} scaling) - converted {num_fp8}/{num_linear} linear layers, skipped {num_skipped} (too small)"
+            f"✓ FP8 training enabled ({config.fp8_recipe} scaling) - converted {num_fp8}/{num_linear} linear layers, skipped {num_skipped} (too small)"
         )
 
 
@@ -348,12 +367,12 @@ def get_scaling_params(m):
 
 num_scaling_params = get_scaling_params(model)
 target_tokens = int(
-    args.target_param_data_ratio * num_scaling_params
+    config.target_param_data_ratio * num_scaling_params
 )  # optimal tokens for the model we are about to train
 
 # Our reference model is d12, this is where a lot of hyperparameters are tuned and then transfered to higher depths (muP style)
 d12_ref = build_model_meta(12)  # creates the model on meta device
-D_REF = args.target_param_data_ratio * get_scaling_params(
+D_REF = config.target_param_data_ratio * get_scaling_params(
     d12_ref
 )  # compute-optimal d12 training horizon in tokens (measured empirically)
 B_REF = 2**19  # optimal batch size at d12 ~= 524,288 tokens (measured empirically)
@@ -361,7 +380,7 @@ B_REF = 2**19  # optimal batch size at d12 ~= 524,288 tokens (measured empirical
 # 2) Now that we have the token horizon, we can calculate the optimal batch size
 # We follow the Power Lines paper (Bopt ∝ D^0.383), ref: https://arxiv.org/abs/2505.13738
 # The optimal batch size grows as approximately D^0.383, so e.g. if D doubles from d12 to d24, B should grow by 2^0.383 ≈ 1.3x.
-total_batch_size = args.total_batch_size  # user-provided override is possible
+total_batch_size = config.total_batch_size  # user-provided override is possible
 if total_batch_size == -1:
     batch_size_ratio = target_tokens / D_REF
     predicted_batch_size = B_REF * batch_size_ratio**0.383
@@ -384,19 +403,19 @@ if batch_ratio != 1.0:
 # Above, we used learning rate scaling η ∝ √(B/B_ref). So it's a matter of ~10 lines of math to derive that to keep T_epoch constant, we need:
 # λ = λ_ref · √(B/B_ref) · (D_ref/D)
 # Note that these papers study AdamW, *not* Muon. We are blindly following AdamW theory for scaling hoping it ~works for Muon too.
-weight_decay_scaled = args.weight_decay * math.sqrt(total_batch_size / B_REF) * (D_REF / target_tokens)
-if weight_decay_scaled != args.weight_decay:
-    print0(f"Scaling weight decay from {args.weight_decay:.6f} to {weight_decay_scaled:.6f} for depth {args.depth}")
+weight_decay_scaled = config.weight_decay * math.sqrt(total_batch_size / B_REF) * (D_REF / target_tokens)
+if weight_decay_scaled != config.weight_decay:
+    print0(f"Scaling weight decay from {config.weight_decay:.6f} to {weight_decay_scaled:.6f} for depth {config.depth}")
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
 optimizer = model.setup_optimizer(
     # AdamW hyperparameters
-    unembedding_lr=args.unembedding_lr * batch_lr_scale,
-    embedding_lr=args.embedding_lr * batch_lr_scale,
-    scalar_lr=args.scalar_lr * batch_lr_scale,
+    unembedding_lr=config.unembedding_lr * batch_lr_scale,
+    embedding_lr=config.embedding_lr * batch_lr_scale,
+    scalar_lr=config.scalar_lr * batch_lr_scale,
     # Muon hyperparameters
-    matrix_lr=args.matrix_lr * batch_lr_scale,
+    matrix_lr=config.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,
 )
 
@@ -415,30 +434,30 @@ if scaler is not None:
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
 train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
     tokenizer,
-    args.device_batch_size,
-    args.max_seq_len,
+    config.device_batch_size,
+    config.max_seq_len,
     split="train",
     device=device,
     resume_state_dict=dataloader_resume_state_dict,
 )
 build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(
-    tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device
+    tokenizer, config.device_batch_size, config.max_seq_len, split="val", device=device
 )
 
 # -----------------------------------------------------------------------------
 # Calculate the number of iterations we will train for and set up the various schedulers
 
 # num_iterations: either it is given, or from target flops, or from target data:param ratio (in that order)
-assert args.num_iterations > 0 or args.target_param_data_ratio > 0 or args.target_flops > 0
-if args.num_iterations > 0:
+assert config.num_iterations > 0 or config.target_param_data_ratio > 0 or config.target_flops > 0
+if config.num_iterations > 0:
     # Override num_iterations to a specific value if given
-    num_iterations = args.num_iterations
+    num_iterations = config.num_iterations
     print0(f"Using user-provided number of iterations: {num_iterations:,}")
-elif args.target_flops > 0:
+elif config.target_flops > 0:
     # Calculate the number of iterations from the target flops (used in scaling laws analysis, e.g. runs/scaling_laws.sh)
-    num_iterations = round(args.target_flops / (num_flops_per_token * total_batch_size))
+    num_iterations = round(config.target_flops / (num_flops_per_token * total_batch_size))
     print0(f"Calculated number of iterations from target FLOPs: {num_iterations:,}")
-elif args.target_param_data_ratio > 0:
+elif config.target_param_data_ratio > 0:
     # Calculate the number of iterations from the target param data ratio (the most common use case)
     num_iterations = target_tokens // total_batch_size
     print0(f"Calculated number of iterations from target data:param ratio: {num_iterations:,}")
@@ -454,15 +473,15 @@ print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # Learning rate schedule (linear warmup, constant, linear warmdown)
 def get_lr_multiplier(it):
-    warmup_iters = args.warmup_steps
-    warmdown_iters = round(args.warmdown_ratio * num_iterations)
+    warmup_iters = config.warmup_steps
+    warmdown_iters = round(config.warmdown_ratio * num_iterations)
     if it < warmup_iters:
         return (it + 1) / warmup_iters
     elif it <= num_iterations - warmdown_iters:
         return 1.0
     else:
         progress = (num_iterations - it) / warmdown_iters
-        return progress * 1.0 + (1 - progress) * args.final_lr_frac
+        return progress * 1.0 + (1 - progress) * config.final_lr_frac
 
 
 # Momentum scheduler for Muon optimizer (warms up to 0.97 over the first 400 steps)
@@ -523,7 +542,7 @@ def train_base_model(
     """
     # Initialize compression tracker if enabled
     compression_tracker = None
-    if args.track_compression:
+    if config.track_compression:
         compression_tracker = CompressionMetrics(vocab_size=vocab_size)
         print0("✓ Compression metrics tracking enabled")
     # Loop state (variables updated by the training loop)
@@ -544,11 +563,11 @@ def train_base_model(
         dataloader_state_dict = dataloader_state_dict_init
 
     # Figure out the needed gradient accumulation micro-steps to reach the desired total batch size per step
-    tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len  # tokens per iteration for a single rank
+    tokens_per_fwdbwd = config.device_batch_size * config.max_seq_len  # tokens per iteration for a single rank
     world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size  # total tokens per iteration for all ranks
     assert total_batch_size % world_tokens_per_fwdbwd == 0
     grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
-    print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
+    print0(f"Tokens / micro-batch / rank: {config.device_batch_size} x {config.max_seq_len} = {tokens_per_fwdbwd:,}")
     print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
     print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 
@@ -561,10 +580,10 @@ def train_base_model(
         flops_so_far = num_flops_per_token * total_batch_size * step
 
         # once in a while: evaluate the val bpb (all ranks participate)
-        if args.eval_every > 0 and (last_step or step % args.eval_every == 0):
+        if config.eval_every > 0 and (last_step or step % config.eval_every == 0):
             model.eval()
             val_loader = build_val_loader()
-            eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
+            eval_steps = config.eval_tokens // (config.device_batch_size * config.max_seq_len * ddp_world_size)
             with disable_fp8(model):
                 val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
             print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
@@ -584,10 +603,10 @@ def train_base_model(
         # use the original uncompiled model because the inputs keep changing shape
         # disable FP8 for evaluation to use BF16 for more consistent/accurate results
         results = {}
-        if args.core_metric_every > 0 and (last_step or (step > 0 and step % args.core_metric_every == 0)):
+        if config.core_metric_every > 0 and (last_step or (step > 0 and step % config.core_metric_every == 0)):
             model.eval()
             with disable_fp8(orig_model):
-                results = evaluate_core(orig_model, tokenizer, device, max_per_task=args.core_metric_max_per_task)
+                results = evaluate_core(orig_model, tokenizer, device, max_per_task=config.core_metric_max_per_task)
             print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
             wandb_run.log(
                 {
@@ -601,7 +620,7 @@ def train_base_model(
 
         # once in a while: sample from the model (only on master process)
         # use the original uncompiled model because the inputs keep changing shape
-        if args.sample_every > 0 and master_process and (last_step or (step > 0 and step % args.sample_every == 0)):
+        if config.sample_every > 0 and master_process and (last_step or (step > 0 and step % config.sample_every == 0)):
             model.eval()
             prompts = [
                 "The capital of France is",
@@ -622,7 +641,7 @@ def train_base_model(
 
         # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step
         if last_step or (
-            step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0
+            step > 0 and step != config.resume_from_step and config.save_every > 0 and step % config.save_every == 0
         ):
             save_checkpoint(
                 checkpoint_dir,
@@ -634,8 +653,8 @@ def train_base_model(
                     "val_bpb": val_bpb,  # loss at last step
                     "model_config": model_config_kwargs,
                     "user_config": user_config,  # inputs to the training script
-                    "device_batch_size": args.device_batch_size,
-                    "max_seq_len": args.max_seq_len,
+                    "device_batch_size": config.device_batch_size,
+                    "max_seq_len": config.max_seq_len,
                     "total_batch_size": total_batch_size,
                     "dataloader_state_dict": dataloader_state_dict,
                     "loop_state": {  # all loop state (other than step) so that we can resume training
@@ -659,7 +678,7 @@ def train_base_model(
         logits_for_compression = None  # store logits for compression tracking
         for micro_step in range(grad_accum_steps):
             # Forward pass - capture logits if tracking compression
-            if compression_tracker and step % args.compression_log_every == 0 and micro_step == 0:
+            if compression_tracker and step % config.compression_log_every == 0 and micro_step == 0:
                 with torch.amp.autocast(device_type=device_type, dtype=COMPUTE_DTYPE):
                     logits_for_compression = model(x)
                 loss = torch.nn.functional.cross_entropy(
@@ -729,7 +748,7 @@ def train_base_model(
             f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time / 60:.2f}m{eta_str}"
         )
         # Track compression metrics if enabled
-        if compression_tracker and step % args.compression_log_every == 0 and logits_for_compression is not None:
+        if compression_tracker and step % config.compression_log_every == 0 and logits_for_compression is not None:
             with torch.no_grad():
                 compression_metrics = compression_tracker.log_metrics(
                     step=step,
@@ -739,7 +758,7 @@ def train_base_model(
                 )
                 
                 # Check for overfitting if early stopping enabled
-                if args.compression_early_stop and compression_tracker.detect_overfitting():
+                if config.compression_early_stop and compression_tracker.detect_overfitting():
                     print0(f"[Step {step}] Compression plateau detected - possible overfitting")
                 
                 # Log compression metrics to wandb
@@ -766,7 +785,7 @@ def train_base_model(
             wandb_run.log(log_data)
 
         # state update
-        first_step_of_run = (step == 0) or (resuming and step == args.resume_from_step)
+        first_step_of_run = (step == 0) or (resuming and step == config.resume_from_step)
         step += 1
 
         # The garbage collector is sadly a little bit overactive and for some poorly understood reason,
@@ -799,9 +818,9 @@ def train_base_model(
                 "Number of training tokens": total_tokens,
                 "Tokens : Scaling params ratio": total_batch_size * num_iterations / num_scaling_params,
                 "DDP world size": ddp_world_size,
-                "warmup_steps": args.warmup_steps,
-                "warmdown_ratio": args.warmdown_ratio,
-                "final_lr_frac": args.final_lr_frac,
+                "warmup_steps": config.warmup_steps,
+                "warmdown_ratio": config.warmdown_ratio,
+                "final_lr_frac": config.final_lr_frac,
             },
             {  # stats about training outcomes
                 "Minimum validation bpb": min_val_bpb if val_bpb is not None else None,

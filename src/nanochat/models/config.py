@@ -2,10 +2,17 @@
 Configuration classes for GPT model and training.
 """
 
-import json
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib  # type: ignore[no-redef]
+
+import tomli_w
 
 
 @dataclass
@@ -70,21 +77,30 @@ class TrainingConfig:
     model_tag: Optional[str] = None
     run: str = "dummy"  # wandb run name
 
+    # Compression metrics
+    track_compression: bool = False
+    compression_log_every: int = 100
+    track_layer_compression: bool = False
+    compression_early_stop: bool = False
+
+    # Data / paths
+    base_dir: Optional[str] = None  # overrides NANOCHAT_BASE_DIR env var
+
     def save(self, path: Path) -> None:
-        """Save configuration to JSON file."""
-        with open(path, "w") as f:
-            json.dump(asdict(self), f, indent=2)
+        """Save configuration to TOML file."""
+        data = {k: v for k, v in asdict(self).items() if v is not None}
+        with open(path, "wb") as f:
+            tomli_w.dump(data, f)
 
     @classmethod
     def load(cls, path: Path) -> "TrainingConfig":
-        """Load configuration from JSON file."""
-        with open(path) as f:
-            return cls(**json.load(f))
+        """Load configuration from TOML file."""
+        with open(path, "rb") as f:
+            return cls(**tomllib.load(f))
 
     @classmethod
     def from_args(cls, args: Any) -> "TrainingConfig":
         """Create TrainingConfig from argparse Namespace."""
-        # Extract all fields that match TrainingConfig
         config_dict = {}
         for field_name in cls.__dataclass_fields__:
             if hasattr(args, field_name):
