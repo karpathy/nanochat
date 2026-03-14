@@ -78,7 +78,10 @@ both paths at d12, T=1024, fp16). The explicit T×T bool mask is small (1MB at T
 | Flash Attention 3             | Requires Hopper GPU                                                         |
 | bf16 compute                  | MPS supports bf16 matmuls but nanochat uses fp16 (GradScaler compatibility) |
 | DDP / multi-device            | MPS is single-device only                                                   |
-| `pin_memory` / `non_blocking` | Gated on `use_cuda` — disabled on MPS                                       |
+
+`pin_memory` and `non_blocking` are gated on `use_cuda` and disabled on MPS. This is
+correct — Apple Silicon uses unified memory (CPU and GPU share the same physical RAM),
+so there is no PCIe bus transfer to optimize. These flags have no benefit on MPS.
 
 ## Known Workarounds in Code
 
