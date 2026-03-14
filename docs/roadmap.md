@@ -41,7 +41,8 @@ last_updated: "2026-03-14"
   - [x] Auto-save config to checkpoint dir via `TrainingConfig.save()`
   - [x] Add compression fields to `TrainingConfig` (`track_compression`, `compression_log_every`, `track_layer_compression`, `compression_early_stop`) — defaults must match CLI defaults
   - [ ] Document data directory layout (`NANOCHAT_BASE_DIR`, data/checkpoints/tokenizer structure)
-  - [ ] Upgrade Python base version (currently 3.10 → target 3.13): torch 2.9.1 supports up to 3.14, 3.13 is locally installed — drop `tomli` dep (stdlib `tomllib` available), update `.python-version` and `pyproject.toml` `requires-python`
+  - [x] Upgrade Python base version (currently 3.10 → target 3.13): torch 2.9.1 supports up to 3.14, 3.13 is locally installed — drop `tomli` dep (stdlib `tomllib` available), update `.python-version` and `pyproject.toml` `requires-python`
+    - Note: 3.14 blocked by `tiktoken` (no pre-built wheel yet, requires Rust compiler to build from source)
 - **1.5.1**: Compression metrics integration — ✅ Code complete, 🔜 validation pending — [Validation Checklist](phase-1.5.1-validation-checklist.md)
 - **1.5.2**: Dataset quality via compression
 - **1.5.3**: Compression-aware optimization

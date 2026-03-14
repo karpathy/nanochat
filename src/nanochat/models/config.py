@@ -2,17 +2,11 @@
 Configuration classes for GPT model and training.
 """
 
-import sys
+import tomllib
+import tomli_w
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib  # type: ignore[no-redef]
-
-import tomli_w
 
 
 @dataclass
