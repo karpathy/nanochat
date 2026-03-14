@@ -12,6 +12,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `docs/archive/refactor-common-package.md`
 
 ### Changed
+- MPS backend now uses float16 instead of float32 (~10-30% faster, halves memory usage)
+- MPS training uses `torch.mps.synchronize()` for accurate step timing and `torch.mps.current_allocated_memory()` for memory reporting
+- MPS training calls `torch.mps.empty_cache()` between eval and training steps
+- KV cache in `evaluation/engine.py` uses `get_compute_dtype()` instead of hardcoded dtype hack
 - Rewrote `docs/m3-max-guide.md` from brainstorming notes into proper MPS backend documentation covering device detection, dtype behavior, limitations, and practical training guidelines
 - Refactored monolithic `common.py` into `common/` package with 7 focused modules (dtype, logging, distributed, io, hardware, wandb, paths)
 - Absorbed top-level `paths.py` into `common/paths.py`

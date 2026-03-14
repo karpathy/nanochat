@@ -57,8 +57,10 @@ def test_training_checkpoint_integration():
 
 def test_kv_cache_integration():
     """Test KVCache works with model forward pass."""
+    from nanochat.common import get_compute_dtype
     from nanochat.evaluation.engine import KVCache
-    
+
+    dtype = get_compute_dtype()
     config = GPTConfig(
         vocab_size=256,
         n_layer=2,
@@ -78,7 +80,7 @@ def test_kv_cache_integration():
         head_dim=config.n_embd // config.n_head,
         num_layers=config.n_layer,
         device="cpu",
-        dtype=torch.float32
+        dtype=dtype
     )
     
     # First forward pass (prefill)

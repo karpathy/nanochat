@@ -113,11 +113,11 @@ PyTorch 2.9.1 on M3 Max supports float16/bfloat16 autocast and MPS-specific APIs
 - `torch.mps.synchronize()` and `torch.mps.empty_cache()` both available
 
 **Changes**:
-- [ ] **dtype.py**: Detect MPS and return `torch.float16` instead of `torch.float32` — halves memory, enables GradScaler (already wired for fp16), ~10-30% speed gain
-- [ ] **base_train.py / chat_sft.py**: Use `torch.mps.synchronize()` for accurate step timing and `torch.mps.current_allocated_memory()` for memory reporting (currently no-ops on MPS)
-- [ ] **base_train.py / chat_sft.py**: Call `torch.mps.empty_cache()` after eval steps to reclaim memory during long runs
+- [x] **dtype.py**: Detect MPS and return `torch.float16` instead of `torch.float32` — halves memory, enables GradScaler (already wired for fp16), ~10-30% speed gain
+- [x] **base_train.py / chat_sft.py**: Use `torch.mps.synchronize()` for accurate step timing and `torch.mps.current_allocated_memory()` for memory reporting (currently no-ops on MPS)
+- [x] **base_train.py / chat_sft.py**: Call `torch.mps.empty_cache()` after eval steps to reclaim memory during long runs
 
-**Files**: `common/dtype.py`, `scripts/base_train.py`, `scripts/chat_sft.py`, `docs/m3-max-guide.md`
+**Files**: `common/dtype.py`, `scripts/base_train.py`, `scripts/chat_sft.py`, `evaluation/engine.py`, `docs/m3-max-guide.md`, `tests/test_integration/test_workflows.py`
 
 ### Apple Silicon (MPS) Documentation — ✅ [Archived](archive/apple-silicon-mps-documentation.md)
 

@@ -31,13 +31,16 @@ No `torch.set_float32_matmul_precision("high")` is applied — that's CUDA-only 
 
 ## Compute Dtype
 
-MPS always uses **float32**. The dtype detection in `common/dtype.py` returns `torch.float32`
-for any non-CUDA device (including MPS). There is no bf16 or fp16 fast path on MPS.
+MPS uses **float16** via `torch.amp.autocast`. The dtype detection in `common/dtype.py`
+detects MPS and returns `torch.float16`, giving ~10-30% faster matmuls and halved memory
+compared to fp32 (benchmarked on M3 Max, PyTorch 2.9.1).
 
 This means:
-- Training uses 2× the memory per parameter compared to bf16 on CUDA
-- No GradScaler is triggered (that's fp16-only)
+- GradScaler is active (required for fp16 to handle overflow)
+- Memory per parameter is ~2 bytes (same as bf16 on CUDA)
 - Checkpoints trained on CUDA with bf16 are converted to fp32 on load (`checkpoint.py`)
+
+Override with `NANOCHAT_DTYPE=float32` if you hit fp16 stability issues.
 
 ## Attention
 
@@ -57,6 +60,9 @@ in `flash_attention.py` — no configuration needed.
 | Checkpoint save/load | ✅ | bf16→fp32 conversion on load |
 | `torch.compile` | ⚠️ | Called unconditionally — MPS support is limited in PyTorch, may silently fall back to eager |
 | Muon optimizer | ✅ | Compiled kernels (`zeropower_via_newtonschulz5`, `muon_step`) may fall back to eager |
+| `torch.mps.synchronize()` | ✅ | Used for accurate step timing |
+| `torch.mps.empty_cache()` | ✅ | Called between eval and training steps |
+| Memory reporting | ✅ | `torch.mps.current_allocated_memory()` for peak memory stats |
 
 ## What Doesn't Work
 
@@ -64,10 +70,8 @@ in `flash_attention.py` — no configuration needed.
 |---------|--------|
 | FP8 training (`--fp8`) | Requires CUDA — flag is ignored with a warning |
 | Flash Attention 3 | Requires Hopper GPU |
-| bf16 / fp16 compute | MPS dtype detection returns fp32 |
+| bf16 compute | MPS supports bf16 matmuls but nanochat uses fp16 (GradScaler compatibility) |
 | DDP / multi-device | MPS is single-device only |
-| `torch.cuda.synchronize` | Replaced with no-op `lambda: None` |
-| `torch.cuda.max_memory_allocated` | Replaced with `lambda: 0` — no memory reporting |
 | `pin_memory` / `non_blocking` | Gated on `use_cuda` — disabled on MPS |
 
 ## Known Workarounds in Code
@@ -95,28 +99,24 @@ python -m nanochat.scripts.base_train \
 
 ### Batch Size Recommendations (128GB Unified Memory)
 
-All training uses fp32 on MPS, so memory per parameter is ~4 bytes (vs ~2 bytes for bf16).
+Training uses fp16 on MPS (~2 bytes per parameter).
 
 | Depth | Params | `--device-batch-size` | `--max-seq-len` | Notes |
 |-------|--------|-----------------------|-----------------|-------|
-| 4     | ~10M   | 16                    | 2048            | Comfortable |
-| 8     | ~42M   | 8                     | 2048            | Comfortable |
-| 12    | ~110M  | 4                     | 1024            | Good for validation |
-| 16    | ~235M  | 2                     | 1024            | Tight — reduce seq len if OOM |
-| 20    | ~400M  | 1                     | 512             | Very tight |
+| 4     | ~10M   | 32                    | 2048            | Comfortable |
+| 8     | ~42M   | 16                    | 2048            | Comfortable |
+| 12    | ~110M  | 8                     | 1024            | Good for validation |
+| 16    | ~235M  | 4                     | 1024            | Comfortable |
+| 20    | ~400M  | 2                     | 1024            | Tight — reduce seq len if OOM |
 
 Gradient accumulation via `--total-batch-size` maintains effective batch size regardless
 of `--device-batch-size`.
 
 ### Memory Management
 
-The codebase does not currently call `torch.mps.empty_cache()`. If you hit memory pressure
-during long runs with periodic evaluation, adding explicit cache clearing between eval steps
-may help:
-
-```python
-torch.mps.empty_cache()
-```
+The training scripts call `torch.mps.empty_cache()` automatically between eval and training
+steps to reclaim memory. Step timing uses `torch.mps.synchronize()` for accurate measurements,
+and peak memory is reported via `torch.mps.current_allocated_memory()`.
 
 ### Overnight Runs
 

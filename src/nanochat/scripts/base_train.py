@@ -169,8 +169,15 @@ def main():
     device_type = autodetect_device_type() if config.device_type == "" else config.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
     master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
-    synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
-    get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
+    if device_type == "cuda":
+        synchronize = torch.cuda.synchronize
+        get_max_memory = torch.cuda.max_memory_allocated
+    elif device_type == "mps":
+        synchronize = torch.mps.synchronize
+        get_max_memory = torch.mps.current_allocated_memory
+    else:
+        synchronize = lambda: None
+        get_max_memory = lambda: 0
     if device_type == "cuda":
         gpu_device_name = torch.cuda.get_device_name(0)
         gpu_peak_flops = get_peak_flops(gpu_device_name)
@@ -637,6 +644,10 @@ def main():
             # termination conditions (TODO: possibly also add loss explosions etc.)
             if last_step:
                 break
+
+            # Free eval/sample memory before training step
+            if device_type == "mps":
+                torch.mps.empty_cache()
 
             # -------------------------------------------------------------------------
             # single training step

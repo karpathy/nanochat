@@ -22,7 +22,9 @@ def _detect_compute_dtype():
             torch.float32,
             f"auto-detected: CUDA SM {capability[0]}{capability[1]} (pre-Ampere, bf16 not supported, using fp32)",
         )
-    return torch.float32, "auto-detected: no CUDA (CPU/MPS)"
+    if torch.backends.mps.is_available():
+        return torch.float16, "auto-detected: MPS (Apple Silicon, fp16)"
+    return torch.float32, "auto-detected: CPU (no CUDA, no MPS)"
 
 
 def _ensure_compute_dtype():
