@@ -252,6 +252,8 @@ def main():
     checkpoint_dir = os.path.join(base_dir, "checkpoints", "base", output_dirname)
     os.makedirs(checkpoint_dir, exist_ok=True)
     config.save(Path(checkpoint_dir) / "config.toml")
+    optimizer_data: dict | None = None
+    meta_data: dict | None = None
     resuming = config.resume_from_step != -1
     if resuming:
         print0(f"Resuming optimization from step {config.resume_from_step}")
@@ -543,6 +545,7 @@ def main():
         x, y, dataloader_state_dict = next(train_loader)
 
         # Go!
+        mfu = 0.0
         while True:
             last_step = step == num_iterations  # loop runs num_iterations+1 times so that we can eval/save at the end
             flops_so_far = num_flops_per_token * total_batch_size * step
@@ -648,6 +651,7 @@ def main():
             synchronize()
             t0 = time.time()
             logits_for_compression = None  # store logits for compression tracking
+            train_loss = torch.zeros(1, device=device)
             for micro_step in range(grad_accum_steps):
                 # Forward pass - capture logits if tracking compression
                 if compression_tracker and step % config.compression_log_every == 0 and micro_step == 0:

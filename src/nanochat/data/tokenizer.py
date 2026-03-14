@@ -248,23 +248,21 @@ class RustBPETokenizer:
     ) -> Union[List[int], List[List[int]]]:
         # text can be either a string or a list of strings
 
-        if prepend is not None:
-            prepend_id = prepend if isinstance(prepend, int) else self.encode_special(prepend)
-        if append is not None:
-            append_id = append if isinstance(append, int) else self.encode_special(append)
+        prepend_id = (prepend if isinstance(prepend, int) else self.encode_special(prepend)) if prepend is not None else None
+        append_id = (append if isinstance(append, int) else self.encode_special(append)) if append is not None else None
 
         if isinstance(text, str):
             ids = self.enc.encode_ordinary(text)
-            if prepend is not None:
+            if prepend_id is not None:
                 ids.insert(0, prepend_id)  # TODO: slightly inefficient here? :( hmm
-            if append is not None:
+            if append_id is not None:
                 ids.append(append_id)
         elif isinstance(text, list):
             ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
-            if prepend is not None:
+            if prepend_id is not None:
                 for ids_row in ids:
                     ids_row.insert(0, prepend_id)  # TODO: same
-            if append is not None:
+            if append_id is not None:
                 for ids_row in ids:
                     ids_row.append(append_id)
         else:

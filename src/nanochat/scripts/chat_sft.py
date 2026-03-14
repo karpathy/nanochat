@@ -287,6 +287,7 @@ def main():
                 row = []
                 mask_row = []
                 padded = False
+                content_len = 0
                 while len(row) < row_capacity:
                     # Ensure buffer has conversations
                     while len(conv_buffer) < buffer_size:
@@ -392,6 +393,7 @@ def main():
     # -----------------------------------------------------------------------------
     # Training loop
     x, y = next(train_loader)  # prefetch the very first batch of data
+    val_bpb: float | None = None
     min_val_bpb = float("inf")
     smooth_train_loss = 0  # EMA of training loss
     ema_beta = 0.9  # EMA decay factor
@@ -508,6 +510,7 @@ def main():
         # evaluate the gradient
         synchronize()
         t0 = time.time()
+        train_loss = torch.zeros(1, device=device)
         for _ in range(grad_accum_steps):
             loss = model(x, y)
             train_loss = loss.detach()  # for logging
