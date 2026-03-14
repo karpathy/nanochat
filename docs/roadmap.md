@@ -43,7 +43,7 @@ last_updated: "2026-03-14"
   - [x] Document data directory layout (`NANOCHAT_BASE_DIR`, data/checkpoints/tokenizer structure) — see [data-layout.md](data-layout.md)
   - [x] Upgrade Python base version (currently 3.10 → target 3.13): torch 2.9.1 supports up to 3.14, 3.13 is locally installed — drop `tomli` dep (stdlib `tomllib` available), update `.python-version` and `pyproject.toml` `requires-python`
     - Note: 3.14 blocked by `tiktoken` (no pre-built wheel yet, requires Rust compiler to build from source)
-- **1.5.0.1**: Script entry-point refactor — 🔜 Not started
+- **1.5.0.1**: Script entry-point refactor — 🔧 In progress
 - **1.5.1**: Compression metrics integration — ✅ Code complete, 🔜 validation pending — [Validation Checklist](phase-1.5.1-validation-checklist.md)
 - **1.5.2**: Dataset quality via compression
 - **1.5.3**: Compression-aware optimization
@@ -55,7 +55,7 @@ last_updated: "2026-03-14"
 Each script currently runs argparse, model init, optimizer setup, and dataloader creation at module level (~200+ lines). This prevents importing any function from these modules without triggering the full setup.
 
 **Sub-tasks**:
-- [ ] `base_train.py` (~214 lines of top-level setup, 899 total) — wrap argparse, model build, optimizer, dataloader, and training loop dispatch into `main()`
+- [x] `base_train.py` (~214 lines of top-level setup, 899 total) — wrap argparse, model build, optimizer, dataloader, and training loop dispatch into `main()`. Also fixed `config` shadowing bug in `build_model_meta()`, added missing `Path` import, converted `train_base_model` from 30-param function to closure.
 - [ ] `chat_sft.py` (~238 lines of top-level setup, 593 total) — wrap model loading, dataset setup, optimizer, and training loop into `main()`
 - [ ] `chat_rl.py` (~103 lines of top-level setup, 370 total) — wrap model loading, rollout setup, and training loop into `main()`
 - [ ] Verify all three scripts still work identically via `python -m` and `torchrun`
