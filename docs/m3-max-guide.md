@@ -50,29 +50,29 @@ in `flash_attention.py` — no configuration needed.
 
 ## What Works
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Base training (`base_train.py`) | ✅ | Full training loop works |
-| SFT training (`chat_sft.py`) | ✅ | Full fine-tuning loop works |
-| Evaluation (`chat_eval.py`) | ✅ | All eval tasks work |
-| SDPA attention | ✅ | Automatic fallback from FA3 |
-| Compression tracking | ✅ | `--track-compression` works |
-| Checkpoint save/load | ✅ | bf16→fp32 conversion on load |
-| `torch.compile` | ⚠️ | Called unconditionally — MPS support is limited in PyTorch, may silently fall back to eager |
-| Muon optimizer | ✅ | Compiled kernels (`zeropower_via_newtonschulz5`, `muon_step`) may fall back to eager |
-| `torch.mps.synchronize()` | ✅ | Used for accurate step timing |
-| `torch.mps.empty_cache()` | ✅ | Called between eval and training steps |
-| Memory reporting | ✅ | `torch.mps.current_allocated_memory()` for peak memory stats |
+| Feature                         | Status | Notes                                                                                       |
+| ------------------------------- | ------ | ------------------------------------------------------------------------------------------- |
+| Base training (`base_train.py`) | ✅      | Full training loop works                                                                    |
+| SFT training (`chat_sft.py`)    | ✅      | Full fine-tuning loop works                                                                 |
+| Evaluation (`chat_eval.py`)     | ✅      | All eval tasks work                                                                         |
+| SDPA attention                  | ✅      | Automatic fallback from FA3                                                                 |
+| Compression tracking            | ✅      | `--track-compression` works                                                                 |
+| Checkpoint save/load            | ✅      | bf16→fp32 conversion on load                                                                |
+| `torch.compile`                 | ✅      | Works on MPS (PyTorch 2.9.1) — ~17% speedup on optimizer kernels                           |
+| Muon optimizer                  | ✅      | Compiled Polar Express + variance reduction kernels work on MPS                             |
+| `torch.mps.synchronize()`       | ✅      | Used for accurate step timing                                                               |
+| `torch.mps.empty_cache()`       | ✅      | Called between eval and training steps                                                      |
+| Memory reporting                | ✅      | `torch.mps.current_allocated_memory()` for peak memory stats                                |
 
 ## What Doesn't Work
 
-| Feature | Reason |
-|---------|--------|
-| FP8 training (`--fp8`) | Requires CUDA — flag is ignored with a warning |
-| Flash Attention 3 | Requires Hopper GPU |
-| bf16 compute | MPS supports bf16 matmuls but nanochat uses fp16 (GradScaler compatibility) |
-| DDP / multi-device | MPS is single-device only |
-| `pin_memory` / `non_blocking` | Gated on `use_cuda` — disabled on MPS |
+| Feature                       | Reason                                                                      |
+| ----------------------------- | --------------------------------------------------------------------------- |
+| FP8 training (`--fp8`)        | Requires CUDA — flag is ignored with a warning                              |
+| Flash Attention 3             | Requires Hopper GPU                                                         |
+| bf16 compute                  | MPS supports bf16 matmuls but nanochat uses fp16 (GradScaler compatibility) |
+| DDP / multi-device            | MPS is single-device only                                                   |
+| `pin_memory` / `non_blocking` | Gated on `use_cuda` — disabled on MPS                                       |
 
 ## Known Workarounds in Code
 
@@ -101,12 +101,12 @@ python -m nanochat.scripts.base_train \
 
 Training uses fp16 on MPS (~2 bytes per parameter).
 
-| Depth | Params | `--device-batch-size` | `--max-seq-len` | Notes |
-|-------|--------|-----------------------|-----------------|-------|
-| 4     | ~10M   | 32                    | 2048            | Comfortable |
-| 8     | ~42M   | 16                    | 2048            | Comfortable |
-| 12    | ~110M  | 8                     | 1024            | Good for validation |
-| 16    | ~235M  | 4                     | 1024            | Comfortable |
+| Depth | Params | `--device-batch-size` | `--max-seq-len` | Notes                         |
+| ----- | ------ | --------------------- | --------------- | ----------------------------- |
+| 4     | ~10M   | 32                    | 2048            | Comfortable                   |
+| 8     | ~42M   | 16                    | 2048            | Comfortable                   |
+| 12    | ~110M  | 8                     | 1024            | Good for validation           |
+| 16    | ~235M  | 4                     | 1024            | Comfortable                   |
 | 20    | ~400M  | 2                     | 1024            | Tight — reduce seq len if OOM |
 
 Gradient accumulation via `--total-batch-size` maintains effective batch size regardless
