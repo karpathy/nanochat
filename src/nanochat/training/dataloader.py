@@ -23,7 +23,7 @@ from nanochat.common import get_dist_info
 from nanochat.data.dataset import list_parquet_files
 
 
-def _document_batches(split, resume_state_dict, tokenizer_batch_size):
+def _document_batches(split: str, resume_state_dict: dict[str, object] | None, tokenizer_batch_size: int):
     """
     Infinite iterator over document batches (list of text strings) from parquet files.
 
@@ -73,15 +73,15 @@ def _document_batches(split, resume_state_dict, tokenizer_batch_size):
 
 
 def tokenizing_distributed_data_loader_with_state_bos_bestfit(
-    tokenizer,
-    B,
-    T,
-    split,
-    tokenizer_threads=4,
-    tokenizer_batch_size=128,
-    device="cuda",
-    resume_state_dict=None,
-    buffer_size=1000,
+    tokenizer: object,
+    B: int,
+    T: int,
+    split: str,
+    tokenizer_threads: int = 4,
+    tokenizer_batch_size: int = 128,
+    device: str | torch.device = "cuda",
+    resume_state_dict: dict[str, object] | None = None,
+    buffer_size: int = 1000,
 ):
     """
     BOS-aligned dataloader with Best-Fit Cropping.
@@ -167,7 +167,7 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
         yield inputs, targets, state_dict
 
 
-def tokenizing_distributed_data_loader_bos_bestfit(*args, **kwargs):
+def tokenizing_distributed_data_loader_bos_bestfit(*args: object, **kwargs: object):
     """Helper that omits state_dict from yields."""
     for inputs, targets, state_dict in tokenizing_distributed_data_loader_with_state_bos_bestfit(*args, **kwargs):
         yield inputs, targets

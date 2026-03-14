@@ -45,7 +45,7 @@ def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> t
 class CausalSelfAttention(nn.Module):
     """Causal self-attention with rotary embeddings, QK norm, and optional value embeddings."""
 
-    def __init__(self, config, layer_idx: int):
+    def __init__(self, config: object, layer_idx: int):
         super().__init__()
         self.layer_idx: int = layer_idx
         self.n_head: int = config.n_head

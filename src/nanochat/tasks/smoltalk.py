@@ -12,7 +12,7 @@ from nanochat.tasks.base import Task
 class SmolTalk(Task):
     """smol-smoltalk dataset. train is 460K rows, test is 24K rows."""
 
-    def __init__(self, split, **kwargs):
+    def __init__(self, split: str, **kwargs: object) -> None:
         super().__init__(**kwargs)
         assert split in ["train", "test"], "SmolTalk split must be train|test"
         self.ds = load_dataset("HuggingFaceTB/smol-smoltalk", split=split).shuffle(seed=42)
@@ -21,7 +21,7 @@ class SmolTalk(Task):
     def num_examples(self):
         return self.length
 
-    def get_example(self, index):
+    def get_example(self, index: int) -> dict[str, object]:
         row = self.ds[index]
         messages = row["messages"]
         # ---------------------------------------------------------------------

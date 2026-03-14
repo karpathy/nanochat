@@ -33,7 +33,7 @@ def _get_data_dir():
 # These functions are useful utilities to other modules, can/should be imported
 
 
-def list_parquet_files(data_dir=None, warn_on_legacy=False):
+def list_parquet_files(data_dir: str | None = None, warn_on_legacy: bool = False) -> list[str]:
     """Looks into a data dir and returns full paths to all parquet files."""
     data_dir = _get_data_dir() if data_dir is None else data_dir
 
@@ -68,7 +68,7 @@ def list_parquet_files(data_dir=None, warn_on_legacy=False):
     return parquet_paths
 
 
-def parquets_iter_batched(split, start=0, step=1):
+def parquets_iter_batched(split: str, start: int = 0, step: int = 1):
     """
     Iterate through the dataset, in batches of underlying row_groups for efficiency.
     - split can be "train" or "val". the last parquet file will be val.
@@ -86,7 +86,7 @@ def parquets_iter_batched(split, start=0, step=1):
 
 
 # -----------------------------------------------------------------------------
-def download_single_file(index):
+def download_single_file(index: int) -> bool:
     """Downloads a single file index, with some backoff"""
 
     # Construct the local filepath for this file and skip if it already exists

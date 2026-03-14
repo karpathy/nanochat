@@ -16,7 +16,7 @@ class CustomJSON(Task):
     Example line: [{"role":"user","content":"Hi"},{"role":"assistant","content":"Hello"}]
     """
 
-    def __init__(self, filepath, **kwargs):
+    def __init__(self, filepath: str, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self.filepath = filepath
         self.conversations = []
@@ -64,7 +64,7 @@ class CustomJSON(Task):
     def num_examples(self):
         return self.length
 
-    def get_example(self, index):
+    def get_example(self, index: int) -> dict[str, object]:
         messages = self.conversations[index]
         conversation = {
             "messages": messages,

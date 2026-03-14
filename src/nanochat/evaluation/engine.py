@@ -26,8 +26,8 @@ from nanochat.training.checkpoint import load_model
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
 @contextmanager
-def timeout(duration, formula):
-    def timeout_handler(signum, frame):
+def timeout(duration: int, formula: str):
+    def timeout_handler(signum: int, frame: object) -> None:
         raise Exception(f"'{formula}': timed out after {duration} seconds")
 
     signal.signal(signal.SIGALRM, timeout_handler)
@@ -36,7 +36,7 @@ def timeout(duration, formula):
     signal.alarm(0)
 
 
-def eval_with_timeout(formula, max_time=3):
+def eval_with_timeout(formula: str, max_time: int = 3) -> object:
     try:
         with timeout(max_time, formula):
             with warnings.catch_warnings():
@@ -48,7 +48,7 @@ def eval_with_timeout(formula, max_time=3):
         return None
 
 
-def use_calculator(expr):
+def use_calculator(expr: str) -> object:
     """
     Evaluate a Python expression safely.
     Supports both math expressions and string operations like .count()
@@ -111,7 +111,7 @@ class KVCache:
     - Position tracked per batch element via cache_seqlens tensor
     """
 
-    def __init__(self, batch_size, num_heads, seq_len, head_dim, num_layers, device, dtype):
+    def __init__(self, batch_size: int, num_heads: int, seq_len: int, head_dim: int, num_layers: int, device: torch.device, dtype: torch.dtype) -> None:
         self.batch_size = batch_size
         self.max_seq_len = seq_len
         self.n_layers = num_layers
@@ -131,15 +131,15 @@ class KVCache:
         """Get current position (assumes all batch elements at same position)."""
         return self.cache_seqlens[0].item()
 
-    def get_layer_cache(self, layer_idx):
+    def get_layer_cache(self, layer_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Return (k_cache, v_cache) views for a specific layer."""
         return self.k_cache[layer_idx], self.v_cache[layer_idx]
 
-    def advance(self, num_tokens):
+    def advance(self, num_tokens: int) -> None:
         """Advance the cache position by num_tokens."""
         self.cache_seqlens += num_tokens
 
-    def prefill(self, other):
+    def prefill(self, other: "KVCache") -> None:
         """
         Copy cached KV from another cache into this one.
         Used when we do batch=1 prefill and then want to generate multiple samples in parallel.
@@ -155,7 +155,7 @@ class KVCache:
 
 # -----------------------------------------------------------------------------
 @torch.inference_mode()
-def sample_next_token(logits, rng, temperature=1.0, top_k=None):
+def sample_next_token(logits: torch.Tensor, rng: torch.Generator, temperature: float = 1.0, top_k: int | None = None) -> torch.Tensor:
     """Sample a single next token from given logits of shape (B, vocab_size). Returns (B, 1)."""
     assert temperature >= 0.0, "temperature must be non-negative"
     if temperature == 0.0:
@@ -178,7 +178,7 @@ def sample_next_token(logits, rng, temperature=1.0, top_k=None):
 
 class RowState:
     # Per-row state tracking during generation
-    def __init__(self, current_tokens=None):
+    def __init__(self, current_tokens: list[int] | None = None) -> None:
         self.current_tokens = current_tokens or []  # Current token sequence for this row
         self.forced_tokens = deque()  # Queue of tokens to force inject
         self.in_python_block = False  # Whether we are inside a python block
@@ -187,12 +187,12 @@ class RowState:
 
 
 class Engine:
-    def __init__(self, model, tokenizer):
+    def __init__(self, model: object, tokenizer: object) -> None:
         self.model = model
         self.tokenizer = tokenizer  # needed for tool use
 
     @torch.inference_mode()
-    def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
+    def generate(self, tokens: list[int], num_samples: int = 1, max_tokens: int | None = None, temperature: float = 1.0, top_k: int | None = None, seed: int = 42):
         """Same as generate, but does single prefill and then clones the KV cache."""
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
         device = self.model.get_device()
@@ -298,7 +298,7 @@ class Engine:
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
             logits = self.model.forward(ids, kv_cache=kv_cache_decode)[:, -1, :]  # (B, vocab_size)
 
-    def generate_batch(self, tokens, num_samples=1, **kwargs):
+    def generate_batch(self, tokens: list[int], num_samples: int = 1, **kwargs: object) -> tuple[list[list[int]], list[list[int]]]:
         """
         Non-streaming batch generation that just returns the final token sequences.
         Returns a list of token sequences (list of lists of ints).

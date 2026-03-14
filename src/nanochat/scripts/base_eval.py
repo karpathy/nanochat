@@ -55,11 +55,11 @@ from nanochat.training.dataloader import tokenizing_distributed_data_loader_bos_
 class ModelWrapper:
     """Lightweight wrapper to give HuggingFace models a nanochat-compatible interface."""
 
-    def __init__(self, model, max_seq_len=None):
+    def __init__(self, model: object, max_seq_len: int | None = None) -> None:
         self.model = model
         self.max_seq_len = max_seq_len
 
-    def __call__(self, input_ids, targets=None, loss_reduction="mean"):
+    def __call__(self, input_ids: object, targets: object = None, loss_reduction: str = "mean") -> object:
         logits = self.model(input_ids).logits
         if targets is None:
             return logits
@@ -72,7 +72,7 @@ class ModelWrapper:
         return next(self.model.parameters()).device
 
 
-def load_hf_model(hf_path: str, device):
+def load_hf_model(hf_path: str, device: object) -> tuple[object, object]:
     """Load a HuggingFace model and tokenizer."""
     print0(f"Loading HuggingFace model from: {hf_path}")
     from transformers import AutoModelForCausalLM
@@ -86,7 +86,7 @@ def load_hf_model(hf_path: str, device):
     return model, tokenizer
 
 
-def get_hf_token_bytes(tokenizer, device="cpu"):
+def get_hf_token_bytes(tokenizer: object, device: str = "cpu") -> object:
     """Compute token_bytes tensor for a HuggingFace tokenizer."""
     vocab_size = tokenizer.tokenizer.get_vocab_size()
     token_bytes = torch.zeros(vocab_size, dtype=torch.int64, device=device)
@@ -102,7 +102,7 @@ def get_hf_token_bytes(tokenizer, device="cpu"):
 EVAL_BUNDLE_URL = "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip"
 
 
-def place_eval_bundle(file_path):
+def place_eval_bundle(file_path: str) -> None:
     """Unzip eval_bundle.zip and place it in the base directory."""
     base_dir = get_base_dir()
     eval_bundle_dir = os.path.join(base_dir, "data", "eval_tasks")
@@ -114,7 +114,7 @@ def place_eval_bundle(file_path):
     print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
 
-def evaluate_core(model, tokenizer, device, max_per_task=-1):
+def evaluate_core(model: object, tokenizer: object, device: object, max_per_task: int = -1) -> dict[str, object]:
     """
     Evaluate a base model on the CORE benchmark.
     Returns dict with results, centered_results, and core_metric.
@@ -179,9 +179,9 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
 
 
 def evaluate_base_model(
-    model,
-    tokenizer,
-    device,
+    model: object,
+    tokenizer: object,
+    device: object,
     max_per_task: int = -1,
 ):
     """Evaluate base model on CORE metric.
@@ -193,13 +193,13 @@ def evaluate_base_model(
 
 
 def evaluate_validation_loss(
-    model,
-    tokenizer,
-    device,
+    model: object,
+    tokenizer: object,
+    device: object,
     device_batch_size: int,
     sequence_len: int,
     ddp_world_size: int,
-    token_bytes,
+    token_bytes: object,
     eval_tokens: int = 80 * 524288,
 ):
     """Evaluate validation bits per byte.

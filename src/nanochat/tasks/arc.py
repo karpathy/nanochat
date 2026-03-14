@@ -9,7 +9,7 @@ from nanochat.tasks.base import Task, render_mc
 
 
 class ARC(Task):
-    def __init__(self, subset, split, **kwargs):
+    def __init__(self, subset: str, split: str, **kwargs: object) -> None:
         super().__init__(**kwargs)
         assert subset in ["ARC-Easy", "ARC-Challenge"], "ARC subset must be ARC-Easy or ARC-Challenge"
         assert split in ["train", "validation", "test"], "ARC split must be train|validation|test"
@@ -22,7 +22,7 @@ class ARC(Task):
     def num_examples(self):
         return len(self.ds)
 
-    def get_example(self, index):
+    def get_example(self, index: int) -> dict[str, object]:
         row = self.ds[index]
         question = row["question"]  # the question text
         choices = row["choices"]["text"]  # the text of each choice
@@ -38,7 +38,7 @@ class ARC(Task):
         }
         return conversation
 
-    def evaluate(self, conversation, assistant_response):
+    def evaluate(self, conversation: dict[str, object], assistant_response: str) -> bool:
         # the assert here is not strictly speaking needed, but currently the way we eval, we expect this to be true
         # I'm going to leave the assert here to prevent footguns, but possibly in the future can remove it.
         assert assistant_response in conversation["letters"], (

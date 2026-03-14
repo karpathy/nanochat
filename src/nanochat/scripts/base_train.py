@@ -217,7 +217,7 @@ def main():
     # Initialize the Model
 
 
-    def build_model_meta(depth):
+    def build_model_meta(depth: int):
         """Build a model on meta device for a given depth (shapes/dtypes only, no data)."""
         # Model dim is nudged up to nearest multiple of head_dim for clean division
         # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == config.head_dim exactly)
@@ -297,7 +297,7 @@ def main():
 
     # Context manager to temporarily disable FP8 so that model evaluation remains in BF16
     @contextmanager
-    def disable_fp8(model):
+    def disable_fp8(model: torch.nn.Module):
         """Temporarily swap Float8Linear modules with nn.Linear for BF16 evaluation.
 
         CastConfig is a frozen dataclass, so we can't mutate scaling_type. Instead,
@@ -364,7 +364,7 @@ def main():
     # 1) Use scaling laws to determine the optimal training horizon in tokens
     # The compute-optimal models satisfy the Tokens:Params ratio of --target-param-data-ratio (derived experimentally via scaling laws analysis).
     # We've already initialized the model so we have Params. Optimal Tokens is now simply target-param-data-ratio * Params
-    def get_scaling_params(m):
+    def get_scaling_params(m: torch.nn.Module):
         # As for which params to use exactly, transformer matrices + lm_head gives cleanest scaling laws (see dev/LOG.md Jan 27, 2026)
         params_counts = m.num_scaling_params()
         scaling_params = params_counts["transformer_matrices"] + params_counts["lm_head"]
@@ -478,7 +478,7 @@ def main():
 
 
     # Learning rate schedule (linear warmup, constant, linear warmdown)
-    def get_lr_multiplier(it):
+    def get_lr_multiplier(it: int):
         warmup_iters = config.warmup_steps
         warmdown_iters = round(config.warmdown_ratio * num_iterations)
         if it < warmup_iters:
@@ -491,14 +491,14 @@ def main():
 
 
     # Momentum scheduler for Muon optimizer (warms up to 0.97 over the first 400 steps)
-    def get_muon_momentum(it):
+    def get_muon_momentum(it: int):
         frac = min(it / 400, 1)
         momentum = (1 - frac) * 0.85 + frac * 0.97
         return momentum
 
 
     # Weight decay scheduler for Muon optimizer (cosine decay to zero over the course of training)
-    def get_weight_decay(it):
+    def get_weight_decay(it: int):
         return weight_decay_scaled * 0.5 * (1 + math.cos(math.pi * it / num_iterations))
 
 

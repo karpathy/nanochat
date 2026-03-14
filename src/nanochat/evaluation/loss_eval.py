@@ -9,7 +9,7 @@ import torch.distributed as dist
 
 
 @torch.no_grad()
-def evaluate_bpb(model, batches, steps, token_bytes):
+def evaluate_bpb(model: object, batches: object, steps: int, token_bytes: torch.Tensor) -> float:
     """
     Instead of the naive 'mean loss', this function returns the bits per byte (bpb),
     which is a tokenization vocab size-independent metric, meaning you are still comparing

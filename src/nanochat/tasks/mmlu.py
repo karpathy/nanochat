@@ -70,7 +70,7 @@ class MMLU(Task):
         "world_religions",
     )
 
-    def __init__(self, subset, split, **kwargs):
+    def __init__(self, subset: str, split: str, **kwargs: object) -> None:
         super().__init__(**kwargs)
         assert subset in ["all", "auxiliary_train"], f"subset {subset} must be all|auxiliary_train"
         assert split in ["train", "validation", "dev", "test"], f"split {split} must be train|validation|dev|test"
@@ -90,7 +90,7 @@ class MMLU(Task):
     def num_examples(self):
         return len(self.ds)
 
-    def get_example(self, index):
+    def get_example(self, index: int) -> dict[str, object]:
         row = self.ds[index]
         question = row["question"]  # the question text
         choices = row["choices"]  # the text of each choice
@@ -108,7 +108,7 @@ class MMLU(Task):
         }
         return conversation
 
-    def evaluate(self, conversation, assistant_response):
+    def evaluate(self, conversation: dict[str, object], assistant_response: str) -> bool:
         # the assert here is not strictly speaking needed, but currently the way we eval, we expect this to be true
         # I'm going to leave the assert here to prevent footguns, but possibly in the future can remove it.
         assert assistant_response in self.letters, (

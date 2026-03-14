@@ -23,12 +23,7 @@ from nanochat.tasks.base import Task
 GSM_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
 
 
-def extract_answer(completion):
-    """
-    Extract the numerical answer after #### marker.
-    Follows official code for normalization:
-    https://github.com/openai/grade-school-math/blob/3101c7d5072418e28b9008a6636bde82a006892c/grade_school_math/dataset.py#L28
-    """
+def extract_answer(completion: str) -> str | None:
     match = GSM_RE.search(completion)
     if match:
         match_str = match.group(1).strip()
@@ -38,7 +33,7 @@ def extract_answer(completion):
 
 
 class GSM8K(Task):
-    def __init__(self, subset, split, **kwargs):
+    def __init__(self, subset: str, split: str, **kwargs: object) -> None:
         super().__init__(**kwargs)
         assert subset in ["main", "socratic"], "GSM8K subset must be main|socratic"
         assert split in ["train", "test"], "GSM8K split must be train|test"
@@ -51,8 +46,7 @@ class GSM8K(Task):
     def num_examples(self):
         return len(self.ds)
 
-    def get_example(self, index):
-        """Get a single problem from the dataset."""
+    def get_example(self, index: int) -> dict[str, object]:
         row = self.ds[index]
         question = row["question"]  # string of the question prompt
         answer = row["answer"]  # string of the full solution and the answer after #### marker
@@ -86,7 +80,7 @@ class GSM8K(Task):
         }
         return conversation
 
-    def evaluate(self, conversation, assistant_response):
+    def evaluate(self, conversation: dict[str, object], assistant_response: str) -> int:
         """
         Given (conversation, completion), return evaluation outcome (0 = wrong, 1 = correct)
         Note that:
@@ -109,7 +103,7 @@ class GSM8K(Task):
         is_correct = int(pred_num == ref_num)
         return is_correct
 
-    def reward(self, conversation, assistant_response):
+    def reward(self, conversation: dict[str, object], assistant_response: str) -> float:
         """
         Used during RL. To keep things simple, just re-use the evaluation above.
         Later this could be made more complex (e.g. format matching etc.)

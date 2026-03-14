@@ -75,7 +75,7 @@ def _use_fa3():
 # =============================================================================
 # SDPA helpers
 # =============================================================================
-def _sdpa_attention(q, k, v, window_size, enable_gqa):
+def _sdpa_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, window_size: tuple[int, int], enable_gqa: bool) -> torch.Tensor:
     """
     SDPA attention with sliding window support.
     q, k, v are (B, H, T, D) format.
@@ -114,7 +114,7 @@ def _sdpa_attention(q, k, v, window_size, enable_gqa):
 # =============================================================================
 # Public API: Same interface as FA3
 # =============================================================================
-def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
+def flash_attn_func(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool = False, window_size: tuple[int, int] = (-1, -1)) -> torch.Tensor:
     """
     Flash Attention for training (no KV cache).
 
@@ -139,8 +139,8 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
 
 
 def flash_attn_with_kvcache(
-    q, k_cache, v_cache, k=None, v=None, cache_seqlens=None, causal=False, window_size=(-1, -1)
-):
+    q: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, k: torch.Tensor | None = None, v: torch.Tensor | None = None, cache_seqlens: torch.Tensor | None = None, causal: bool = False, window_size: tuple[int, int] = (-1, -1)
+) -> torch.Tensor:
     """
     Flash Attention with KV cache for inference.
 

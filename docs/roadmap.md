@@ -28,6 +28,7 @@ last_updated: "2026-03-15"
 | [Phase 1.5.0 — Data Layout & Config](archive/phase-1.5.0-data-layout-config.md) | 2026-03-14 | Config system, centralized paths, hierarchical dirs, Python 3.13 |
 | [Phase 1.5.0.1 — Script Entry-Points](archive/phase-1.5.0.1-script-entry-points.md) | 2026-03-15 | Wrapped all scripts in main(), importable without side effects |
 | [Phase 1.5.0.2 — Code Review & Cleanup](archive/phase-1.5.0.2-code-review-cleanup.md) | 2026-03-15 | Full code review, 6 fixes, lazy USE_FA3, paths wiring, all 9 scripts wrapped |
+| [Type Annotations & Pyright Compliance](archive/type-annotations-pyright-compliance.md) | 2026-03-15 | Pyright strict mode, 17 suppression rules, 323→0 reportMissingParameterType across 29 files |
 
 ## Active Phase
 
@@ -74,14 +75,30 @@ Combine transformer efficiency with SP Theory advantages. Also the fallback path
 
 ## Improvements
 
-### Type Annotations & Pyright Compliance
-Pyright strict mode initially reported ~2600 errors. Suppressed `reportMissingTypeStubs`, all `reportUnknown*` rules, and PyTorch type-stub limitations in `pyproject.toml`, reducing to ~424 errors. Remaining are mostly `reportMissingParameterType` (323) and `reportUnusedVariable` (49) — the actual typing retrofit work.
+### Type Annotations & Pyright Compliance — ✅ [Archived](archive/type-annotations-pyright-compliance.md)
 
-- [x] Suppress `reportMissingTypeStubs` for third-party deps (`datasets`, `pyarrow`, etc.)
-- [x] Suppress `reportUnknown*` cascade noise from PyTorch partial types
-- [x] Suppress PyTorch type-stub limitations (`reportArgumentType`, `reportCallIssue`, etc.)
-- [x] Rename uppercase math variables in `optimizer.py` (`X`, `A`, `B`) to lowercase
-- [ ] Add parameter type annotations to `checkpoint.py`, `dataloader.py`, `tasks/*.py`
+### Remaining Pyright Errors (128)
+After completing the `reportMissingParameterType` retrofit, 128 errors remain across these categories:
+
+| Category | Count | Notes |
+|---|---|---|
+| `reportUnusedVariable` | ~42 | Tuple unpacking (`ddp`, `ddp_local_rank`, etc.), loop vars (`i`, `B`, `T`) |
+| `reportReturnType` | ~14 | `dict` invariance (need `Mapping`), numpy `bool_`/`floating` vs Python types |
+| `reportIndexIssue` | ~14 | `object` typed params lacking `__getitem__` (meta dicts, dataset rows) |
+| `reportPossiblyUnboundVariable` | ~12 | Conditional branches (`optimizer_data`, `meta_data`, `val_bpb`, `content_len`) |
+| `reportMissingImports` | ~7 | `tasks.*` imports unresolvable (runtime `sys.path` manipulation) |
+| `reportUnusedFunction` | ~5 | FastAPI route handlers registered via decorators |
+| `reportGeneralTypeIssues` | ~4 | `Module` not iterable, `object` not iterable |
+| `reportUnnecessaryComparison` | ~3 | Defensive guards on `None` / `Literal` types |
+| `reportMissingTypeArgument` | ~3 | Generic `dict`, `set`, `Queue` without type args |
+| `reportUnnecessaryIsInstance` | ~2 | Redundant `isinstance` checks in tokenizer |
+| Other | ~6 | `reportOptionalSubscript`, `reportOptionalCall`, `reportAssignmentType` |
+
+- [ ] Fix `reportUnusedVariable` (underscore prefixes or `_` for unpacking)
+- [ ] Fix `reportReturnType` (use `Mapping` for covariant dict returns, cast numpy types)
+- [ ] Fix `reportIndexIssue` (narrow `object` params to typed dicts)
+- [ ] Fix `reportPossiblyUnboundVariable` (initialize before conditional branches)
+- [ ] Suppress or fix remaining minor categories
 
 ### Apple Silicon (MPS) Documentation
 The [M3 Max guide](m3-max-guide.md) contains raw notes on running experiments on Apple Silicon. Needs cleanup into proper project documentation.

@@ -65,7 +65,7 @@ class ExecutionResult:
 
 @contextlib.contextmanager
 def time_limit(seconds: float):
-    def signal_handler(signum, frame):
+    def signal_handler(signum: int, frame: object) -> None:
         raise TimeoutException("Timed out!")
 
     signal.setitimer(signal.ITIMER_REAL, seconds)
@@ -102,16 +102,16 @@ class TimeoutException(Exception):
 class WriteOnlyStringIO(io.StringIO):
     """StringIO that throws an exception when it's read from"""
 
-    def read(self, *args, **kwargs):
+    def read(self, *args: object, **kwargs: object) -> None:
         raise IOError
 
-    def readline(self, *args, **kwargs):
+    def readline(self, *args: object, **kwargs: object) -> None:
         raise IOError
 
-    def readlines(self, *args, **kwargs):
+    def readlines(self, *args: object, **kwargs: object) -> None:
         raise IOError
 
-    def readable(self, *args, **kwargs):
+    def readable(self, *args: object, **kwargs: object) -> bool:
         """Returns True if the IO object can be read."""
         return False
 
@@ -121,7 +121,7 @@ class redirect_stdin(contextlib._RedirectStream):  # type: ignore
 
 
 @contextlib.contextmanager
-def chdir(root):
+def chdir(root: str):
     if root == ".":
         yield
         return
@@ -214,7 +214,7 @@ def reliability_guard(maximum_memory_bytes: Optional[int] = None):
     sys.modules["tkinter"] = None
 
 
-def _unsafe_execute(code: str, timeout: float, maximum_memory_bytes: Optional[int], result_dict):
+def _unsafe_execute(code: str, timeout: float, maximum_memory_bytes: Optional[int], result_dict: dict[str, object]) -> None:
     """Execute code in a subprocess with safety guards. Results are written to result_dict."""
     with create_tempdir():
         # These system calls are needed when cleaning up tempdir.

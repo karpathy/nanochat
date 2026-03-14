@@ -73,7 +73,7 @@ class ColoredFormatter(logging.Formatter):
     RESET = "\033[0m"
     BOLD = "\033[1m"
 
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         # Add color to the level name
         levelname = record.levelname
         if levelname in self.COLORS:
@@ -153,7 +153,7 @@ def download_file_with_lock(url: str, filename: str, postprocess_fn: Optional[Ca
     return file_path
 
 
-def print0(s: str = "", **kwargs) -> None:
+def print0(s: str = "", **kwargs: object) -> None:
     ddp_rank = int(os.environ.get("RANK", 0))
     if ddp_rank == 0:
         print(s, **kwargs)
@@ -272,7 +272,7 @@ class DummyWandb:
     def __init__(self):
         pass
 
-    def log(self, *args, **kwargs):
+    def log(self, *args: object, **kwargs: object) -> None:
         pass
 
     def finish(self):

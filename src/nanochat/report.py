@@ -14,7 +14,7 @@ import psutil
 import torch
 
 
-def run_command(cmd):
+def run_command(cmd: str) -> str | None:
     """Run a shell command and return output, or None if it fails."""
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
@@ -87,7 +87,7 @@ def get_system_info():
     return info
 
 
-def estimate_cost(gpu_info, runtime_hours=None):
+def estimate_cost(gpu_info: dict[str, object], runtime_hours: float | None = None) -> dict[str, object] | None:
     """Estimate training cost based on GPU type and runtime."""
 
     # Rough pricing, from Lambda Cloud
@@ -204,7 +204,7 @@ Generated: {timestamp}
 # -----------------------------------------------------------------------------
 
 
-def slugify(text):
+def slugify(text: str) -> str:
     """Slugify a text string."""
     return text.lower().replace(" ", "-")
 
@@ -225,7 +225,7 @@ EXPECTED_FILES = [
 chat_metrics = ["ARC-Easy", "ARC-Challenge", "MMLU", "GSM8K", "HumanEval", "ChatCORE"]
 
 
-def extract(section, keys):
+def extract(section: str, keys: str | list[str]) -> dict[str, str]:
     """simple def to extract a single key from a section"""
     if not isinstance(keys, list):
         keys = [keys]  # convenience
@@ -237,7 +237,7 @@ def extract(section, keys):
     return out
 
 
-def extract_timestamp(content, prefix):
+def extract_timestamp(content: str, prefix: str) -> datetime.datetime | None:
     """Extract timestamp from content with given prefix."""
     for line in content.split("\n"):
         if line.startswith(prefix):
@@ -252,11 +252,11 @@ def extract_timestamp(content, prefix):
 class Report:
     """Maintains a bunch of logs, generates a final markdown report."""
 
-    def __init__(self, report_dir):
+    def __init__(self, report_dir: str) -> None:
         os.makedirs(report_dir, exist_ok=True)
         self.report_dir = report_dir
 
-    def log(self, section, data):
+    def log(self, section: str, data: list[object]) -> str:
         """Log a section of data to the report."""
         slug = slugify(section)
         file_name = f"{slug}.md"
@@ -402,10 +402,10 @@ class Report:
 
 
 class DummyReport:
-    def log(self, *args, **kwargs):
+    def log(self, *args: object, **kwargs: object) -> None:
         pass
 
-    def reset(self, *args, **kwargs):
+    def reset(self, *args: object, **kwargs: object) -> None:
         pass
 
 

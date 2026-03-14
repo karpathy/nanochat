@@ -18,12 +18,12 @@ from nanochat.paths import checkpoints_dir as _checkpoints_dir
 logger = logging.getLogger(__name__)
 
 
-def log0(message):
+def log0(message: str) -> None:
     if int(os.environ.get("RANK", 0)) == 0:
         logger.info(message)
 
 
-def _patch_missing_config_keys(model_config_kwargs):
+def _patch_missing_config_keys(model_config_kwargs: dict[str, object]) -> None:
     """Add default values for new config keys missing in old checkpoints."""
     # Old models were trained with full context (no sliding window)
     if "window_pattern" not in model_config_kwargs:
@@ -31,7 +31,7 @@ def _patch_missing_config_keys(model_config_kwargs):
         log0("Patching missing window_pattern in model config to 'L'")
 
 
-def _patch_missing_keys(model_data, model_config):
+def _patch_missing_keys(model_data: dict[str, object], model_config: GPTConfig) -> None:
     """Add default values for new parameters that may be missing in old checkpoints."""
     n_layer = model_config.n_layer
     # resid_lambdas defaults to 1.0 (identity scaling)
@@ -44,7 +44,7 @@ def _patch_missing_keys(model_data, model_config):
         log0("Patching missing x0_lambdas in model data to 0.0")
 
 
-def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
+def save_checkpoint(checkpoint_dir: str, step: int, model_data: dict[str, object], optimizer_data: dict[str, object] | None, meta_data: dict[str, object], rank: int = 0) -> None:
     if rank == 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
         # Save the model state parameters
@@ -64,7 +64,7 @@ def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data,
         logger.info(f"Saved optimizer state to: {optimizer_path}")
 
 
-def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
+def load_checkpoint(checkpoint_dir: str, step: int, device: torch.device, load_optimizer: bool = False, rank: int = 0) -> tuple[dict[str, object], dict[str, object] | None, dict[str, object]]:
     # Load the model state
     model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
     model_data = torch.load(model_path, map_location=device)
@@ -80,7 +80,7 @@ def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
     return model_data, optimizer_data, meta_data
 
 
-def build_model(checkpoint_dir, step, device, phase):
+def build_model(checkpoint_dir: str, step: int, device: torch.device, phase: str) -> tuple[GPT, object, dict[str, object]]:
     """
     A bunch of repetitive code to build a model from a given checkpoint.
     Returns:
@@ -120,7 +120,7 @@ def build_model(checkpoint_dir, step, device, phase):
     return model, tokenizer, meta_data
 
 
-def find_largest_model(checkpoints_dir):
+def find_largest_model(checkpoints_dir: str) -> str:
     # attempt to guess the model tag: take the biggest model available
     model_tags = [f for f in os.listdir(checkpoints_dir) if os.path.isdir(os.path.join(checkpoints_dir, f))]
     if not model_tags:
@@ -140,7 +140,7 @@ def find_largest_model(checkpoints_dir):
     return model_tags[0]
 
 
-def find_last_step(checkpoint_dir):
+def find_last_step(checkpoint_dir: str) -> int:
     # Look into checkpoint_dir and find model_<step>.pt with the highest step
     checkpoint_files = glob.glob(os.path.join(checkpoint_dir, "model_*.pt"))
     if not checkpoint_files:
@@ -153,7 +153,7 @@ def find_last_step(checkpoint_dir):
 # convenience functions that take into account nanochat's directory structure
 
 
-def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None):
+def load_model_from_dir(checkpoints_dir: str, device: torch.device, phase: str, model_tag: str | None = None, step: int | None = None) -> tuple[GPT, object, dict[str, object]]:
     if model_tag is None:
         # guess the model tag by defaulting to the largest model
         model_tag = find_largest_model(checkpoints_dir)
@@ -169,11 +169,11 @@ def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=Non
     return model, tokenizer, meta_data
 
 
-def load_model(source, *args, **kwargs):
+def load_model(source: str, *args: object, **kwargs: object) -> tuple[GPT, object, dict[str, object]]:
     return load_model_from_dir(_checkpoints_dir(source), *args, **kwargs)
 
 
-def load_optimizer_state(source, device, rank, model_tag=None, step=None):
+def load_optimizer_state(source: str, device: torch.device, rank: int, model_tag: str | None = None, step: int | None = None) -> dict[str, object] | None:
     """Load just the optimizer shard for a given rank, without re-loading the model."""
     phase_dir = _checkpoints_dir(source)
     if model_tag is None:

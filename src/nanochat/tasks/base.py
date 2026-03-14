@@ -61,7 +61,7 @@ class TaskMixture(Task):
     Fun trick: if you wish to oversample any task, just pass it in multiple times in the list.
     """
 
-    def __init__(self, tasks: List[Task], **kwargs) -> None:
+    def __init__(self, tasks: List[Task], **kwargs: object) -> None:
         super().__init__(**kwargs)
         # tasks is a list of Task objects
         self.tasks = tasks
@@ -98,7 +98,7 @@ class TaskSequence(Task):
     This is useful for cases that require a training curriculum.
     """
 
-    def __init__(self, tasks: List[Task], **kwargs) -> None:
+    def __init__(self, tasks: List[Task], **kwargs: object) -> None:
         super().__init__(**kwargs)
         self.tasks = tasks
         self.lengths = [len(task) for task in self.tasks]

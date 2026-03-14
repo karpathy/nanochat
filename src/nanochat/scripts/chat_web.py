@@ -96,7 +96,7 @@ class Worker:
 class WorkerPool:
     """Pool of workers, each with a model replica on a different GPU."""
 
-    def __init__(self, device_type, num_gpus: Optional[int] = None):
+    def __init__(self, device_type: str, num_gpus: Optional[int] = None):
         if num_gpus is None:
             if device_type == "cuda":
                 num_gpus = torch.cuda.device_count()
@@ -262,7 +262,7 @@ def main():
         return FileResponse(logo_path, media_type="image/svg+xml")
 
     async def generate_stream(
-        worker: Worker, tokens, temperature=None, max_new_tokens=None, top_k=None
+        worker: Worker, tokens: list[int], temperature: float | None = None, max_new_tokens: int | None = None, top_k: int | None = None
     ) -> AsyncGenerator[str, None]:
         """Generate assistant response with streaming."""
         temperature = temperature if temperature is not None else args.temperature

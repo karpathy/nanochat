@@ -28,7 +28,7 @@ from nanochat.training.checkpoint import load_model
 
 
 def run_generative_eval(
-    task_object, tokenizer, model, engine, num_samples, max_new_tokens, temperature, top_k, max_problems=None
+    task_object: object, tokenizer: object, model: torch.nn.Module, engine: Engine, num_samples: int, max_new_tokens: int, temperature: float, top_k: int, max_problems: int | None = None
 ):
 
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
@@ -90,7 +90,7 @@ def run_generative_eval(
 # batches at a time and just check the logits for correct answer choices.
 
 
-def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems=None):
+def run_categorical_eval(task_object: object, tokenizer: object, model: object, batch_size: int, max_problems: int | None = None) -> float:
 
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     device = model.get_device()
@@ -166,16 +166,16 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
 
 
 def run_chat_eval(
-    task_name,
-    model,
-    tokenizer,
-    engine,
-    batch_size=1,
-    num_samples=1,
-    max_new_tokens=512,
-    temperature=0.0,
-    top_k=50,
-    max_problems=None,
+    task_name: str,
+    model: object,
+    tokenizer: object,
+    engine: object,
+    batch_size: int = 1,
+    num_samples: int = 1,
+    max_new_tokens: int = 512,
+    temperature: float = 0.0,
+    top_k: int = 50,
+    max_problems: int | None = None,
 ):
     # Create the evaluation object
     task_module = {
@@ -209,17 +209,17 @@ def run_chat_eval(
 
 # -----------------------------------------------------------------------------
 def evaluate_chat_model(
-    model,
-    tokenizer,
-    engine,
+    model: object,
+    tokenizer: object,
+    engine: object,
     task_names: list[str],
-    device,
+    device: object,
     batch_size: int = 8,
     num_samples: int = 1,
     max_new_tokens: int = 512,
     temperature: float = 0.0,
     top_k: int = 50,
-    max_problems: int = None,
+    max_problems: int | None = None,
 ):
     """Evaluate chat model on task suite.
 

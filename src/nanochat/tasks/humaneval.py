@@ -12,7 +12,7 @@ from nanochat.execution import execute_code
 from nanochat.tasks.base import Task
 
 
-def extract_imports(prompt):
+def extract_imports(prompt: str) -> str:
     """Extract import statements from the beginning of a code block."""
     imports = []
     for line in prompt.split("\n"):
@@ -25,7 +25,7 @@ def extract_imports(prompt):
     return "\n".join(imports)
 
 
-def extract_program(completion):
+def extract_program(completion: str) -> str:
     """
     Extract Python code from LLM completion.
 
@@ -50,7 +50,7 @@ def extract_program(completion):
 
 
 class HumanEval(Task):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self.ds = load_dataset("openai/openai_humaneval", split="test").shuffle(seed=42)
 
@@ -61,8 +61,7 @@ class HumanEval(Task):
     def num_examples(self):
         return len(self.ds)
 
-    def get_example(self, index):
-        """Get a single problem from the dataset."""
+    def get_example(self, index: int) -> dict[str, object]:
         row = self.ds[index]
         prompt = row["prompt"]  # prompts in HumanEval are the beginning of the program
         solution = row["canonical_solution"]  # the correct continuation of the program
@@ -80,7 +79,7 @@ class HumanEval(Task):
         }
         return conversation
 
-    def evaluate(self, conversation, completion):
+    def evaluate(self, conversation: dict[str, object], completion: str) -> bool:
         """Given (conversation, completion), return boolean success of the completion."""
         # the prompt will contain the imports and the function signature
         imports = extract_imports(conversation["messages"][0]["content"])

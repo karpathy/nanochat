@@ -243,7 +243,7 @@ def main():
     current_epoch = 1  # track epoch for logging
 
 
-    def sft_data_generator_bos_bestfit(split, buffer_size=100):
+    def sft_data_generator_bos_bestfit(split: str, buffer_size: int = 100):
         """
         BOS-aligned dataloader for SFT with bestfit-pad packing.
 
@@ -372,7 +372,7 @@ def main():
     # Learning rate schedule (linear warmup, constant, linear warmdown)
     # Same shape as base_train but uses progress (0→1) instead of absolute step counts,
     # because SFT doesn't always know num_iterations in advance (dataset-driven stopping).
-    def get_lr_multiplier(progress):
+    def get_lr_multiplier(progress: float):
         if progress < args.warmup_ratio:
             return (progress + 1e-8) / args.warmup_ratio
         elif progress <= 1.0 - args.warmdown_ratio:
@@ -383,7 +383,7 @@ def main():
 
 
     # Momentum scheduler for Muon optimizer
-    def get_muon_momentum(it):
+    def get_muon_momentum(it: int):
         frac = min(it / 300, 1)
         momentum = (1 - frac) * 0.85 + frac * 0.95
         return momentum
@@ -451,7 +451,7 @@ def main():
                 print0(f"  {task_name}: {100 * acc:.2f}%")
 
             # Compute ChatCORE metrics (mean centered accuracy, ranges from 0=random to 1=perfect)
-            def centered_mean(tasks):
+            def centered_mean(tasks: set[str]):
                 return sum(
                     (task_results[t] - baseline_accuracies[t]) / (1.0 - baseline_accuracies[t]) for t in tasks
                 ) / len(tasks)

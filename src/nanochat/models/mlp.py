@@ -12,7 +12,7 @@ from nanochat.models.attention import Linear
 class MLP(nn.Module):
     """MLP with ReLU^2 activation."""
 
-    def __init__(self, config):
+    def __init__(self, config: object) -> None:
         super().__init__()
         self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
         self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)

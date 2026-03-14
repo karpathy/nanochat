@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- Parameter type annotations across all 29 files (323→0 `reportMissingParameterType` under pyright strict mode)
+- `docs/archive/type-annotations-pyright-compliance.md`
+
 ### Changed
 - `checkpoint.py` now uses `paths.checkpoints_dir()` instead of manual `get_base_dir()` + `os.path.join()` in `load_model()` and `load_optimizer_state()`
 - `USE_FA3` in `flash_attention.py` deferred from module-level constant to lazy `_use_fa3()` with caching — no longer triggers dtype detection at import time

@@ -43,7 +43,7 @@ TEST_RANDOM_SEED_OFFSET = 10_000_000
 ANSWER_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
 
 
-def extract_answer(completion):
+def extract_answer(completion: str) -> str | None:
     """
     Extract the numerical answer after #### marker.
     """
@@ -118,7 +118,7 @@ USER_MSG_TEMPLATES = [
 
 
 class SpellingBee(Task):
-    def __init__(self, size=1000, split="train", **kwargs):
+    def __init__(self, size: int = 1000, split: str = "train", **kwargs: object) -> None:
         super().__init__(**kwargs)
         assert split in ["train", "test"], "SpellingBee split must be train|test"
         self.size = size
@@ -136,7 +136,7 @@ class SpellingBee(Task):
     def num_examples(self):
         return self.size
 
-    def get_example(self, index):
+    def get_example(self, index: int) -> dict[str, object]:
         seed = index if self.split == "train" else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
 
@@ -207,7 +207,7 @@ Then count the occurrences of '{letter}':
         }
         return conversation
 
-    def evaluate(self, conversation, assistant_response):
+    def evaluate(self, conversation: dict[str, object], assistant_response: str) -> int:
         """
         Given (conversation, completion), return evaluation outcome (0 = wrong, 1 = correct)
         Identical to gsm8k's evaluation.
@@ -226,7 +226,7 @@ Then count the occurrences of '{letter}':
         is_correct = int(pred_num == ref_num)
         return is_correct
 
-    def reward(self, conversation, assistant_response):
+    def reward(self, conversation: dict[str, object], assistant_response: str) -> float:
         """Use simple 0-1 reward just like gsm8k."""
         is_correct = self.evaluate(conversation, assistant_response)
         is_correct_float = float(is_correct)
@@ -236,7 +236,7 @@ Then count the occurrences of '{letter}':
 class SimpleSpelling(Task):
     """Much simpler task designed to get the model to just practice spelling words."""
 
-    def __init__(self, size=1000, split="train", **kwargs):
+    def __init__(self, size: int = 1000, split: str = "train", **kwargs: object) -> None:
         super().__init__(**kwargs)
         assert split in ["train", "test"], "SpellingBee split must be train|test"
         self.size = size
@@ -256,7 +256,7 @@ class SimpleSpelling(Task):
     def num_examples(self):
         return self.size
 
-    def get_example(self, index):
+    def get_example(self, index: int) -> dict[str, object]:
         seed = index if self.split == "train" else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
         # pick a random word

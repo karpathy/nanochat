@@ -64,7 +64,7 @@ class HuggingFaceTokenizer:
         return cls(tokenizer)
 
     @classmethod
-    def train_from_iterator(cls, text_iterator, vocab_size: int) -> "HuggingFaceTokenizer":
+    def train_from_iterator(cls, text_iterator: object, vocab_size: int) -> "HuggingFaceTokenizer":
         # train from an iterator of text
         # Configure the HuggingFace Tokenizer
         tokenizer = HFTokenizer(
@@ -151,7 +151,7 @@ class HuggingFaceTokenizer:
         assert bos is not None, "Failed to find BOS token in tokenizer"
         return bos
 
-    def encode(self, text: Union[str, List[str]], *args, **kwargs) -> Union[List[int], List[List[int]]]:
+    def encode(self, text: Union[str, List[str]], *args: object, **kwargs: object) -> Union[List[int], List[List[int]]]:
         if isinstance(text, str):
             return self._encode_one(text, *args, **kwargs)
         elif isinstance(text, list):
@@ -159,7 +159,7 @@ class HuggingFaceTokenizer:
         else:
             raise ValueError(f"Invalid input type: {type(text)}")
 
-    def __call__(self, *args, **kwargs) -> Union[List[int], List[List[int]]]:
+    def __call__(self, *args: object, **kwargs: object) -> Union[List[int], List[List[int]]]:
         return self.encode(*args, **kwargs)
 
     def decode(self, ids: List[int]) -> str:
@@ -185,7 +185,7 @@ class RustBPETokenizer:
         self.bos_token_id = self.encode_special(bos_token)
 
     @classmethod
-    def train_from_iterator(cls, text_iterator, vocab_size: int) -> "RustBPETokenizer":
+    def train_from_iterator(cls, text_iterator: object, vocab_size: int) -> "RustBPETokenizer":
         # 1) train using rustbpe
         tokenizer = rustbpe.Tokenizer()
         # the special tokens are inserted later in __init__, we don't train them here
@@ -272,7 +272,7 @@ class RustBPETokenizer:
 
         return ids
 
-    def __call__(self, *args, **kwargs) -> Union[List[int], List[List[int]]]:
+    def __call__(self, *args: object, **kwargs: object) -> Union[List[int], List[List[int]]]:
         return self.encode(*args, **kwargs)
 
     def decode(self, ids: List[int]) -> str:
