@@ -48,6 +48,12 @@ Flash Attention 3 requires Hopper (sm90) hardware. On MPS, nanochat automaticall
 back to PyTorch's `scaled_dot_product_attention` (SDPA). This is handled transparently
 in `flash_attention.py` — no configuration needed.
 
+The default `--window-pattern=SSSL` works fine on MPS. The training script warns about
+SDPA + sliding window being slow, but that warning targets CUDA where FA3 handles sliding
+windows natively with zero overhead. On MPS, both full-context and sliding-window paths
+use the same SDPA backend with no measurable speed difference (benchmarked: 4.08ms/call
+both paths at d12, T=1024, fp16). The explicit T×T bool mask is small (1MB at T=1024).
+
 ## What Works
 
 | Feature                         | Status | Notes                                                                                       |
