@@ -82,7 +82,13 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
     """
     Downloads a file from a URL to a local path in the base directory.
     Uses a lock file to prevent concurrent downloads among multiple ranks.
+    Only HTTPS URLs are accepted to prevent unencrypted transfers.
     """
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"Only HTTPS URLs are allowed for downloads, got: {url!r}")
+
     base_dir = get_base_dir()
     file_path = os.path.join(base_dir, filename)
     lock_path = file_path + ".lock"
