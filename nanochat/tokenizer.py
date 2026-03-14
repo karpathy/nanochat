@@ -232,15 +232,16 @@ class RustBPETokenizer:
 
         if isinstance(text, str):
             ids = self.enc.encode_ordinary(text)
+            # Use list concatenation instead of insert(0, ...) for O(1) prepend
             if prepend is not None:
-                ids.insert(0, prepend_id) # TODO: slightly inefficient here? :( hmm
+                ids = [prepend_id] + ids
             if append is not None:
                 ids.append(append_id)
         elif isinstance(text, list):
             ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
+            # Use list concatenation instead of insert(0, ...) for O(1) prepend per row
             if prepend is not None:
-                for ids_row in ids:
-                    ids_row.insert(0, prepend_id) # TODO: same
+                ids = [[prepend_id] + row for row in ids]
             if append is not None:
                 for ids_row in ids:
                     ids_row.append(append_id)
