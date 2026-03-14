@@ -104,6 +104,21 @@ After completing the `reportMissingParameterType` retrofit, 128 errors remain ac
 - [ ] Fix `reportPossiblyUnboundVariable` (initialize before conditional branches)
 - [ ] Suppress or fix remaining minor categories
 
+### MPS Backend Improvements
+PyTorch 2.9.1 on M3 Max supports float16/bfloat16 autocast and MPS-specific APIs that the codebase doesn't use. Three changes to improve MPS training performance and observability.
+
+**Measured on M3 Max (PyTorch 2.9.1)**:
+- fp16/bf16 matmuls ~10-30% faster than fp32
+- SDPA fp16 ~25% faster than fp32
+- `torch.mps.synchronize()` and `torch.mps.empty_cache()` both available
+
+**Changes**:
+- [ ] **dtype.py**: Detect MPS and return `torch.float16` instead of `torch.float32` — halves memory, enables GradScaler (already wired for fp16), ~10-30% speed gain
+- [ ] **base_train.py / chat_sft.py**: Use `torch.mps.synchronize()` for accurate step timing and `torch.mps.current_allocated_memory()` for memory reporting (currently no-ops on MPS)
+- [ ] **base_train.py / chat_sft.py**: Call `torch.mps.empty_cache()` after eval steps to reclaim memory during long runs
+
+**Files**: `common/dtype.py`, `scripts/base_train.py`, `scripts/chat_sft.py`, `docs/m3-max-guide.md`
+
 ### Apple Silicon (MPS) Documentation — ✅ [Archived](archive/apple-silicon-mps-documentation.md)
 
 ## Deferred Phases
