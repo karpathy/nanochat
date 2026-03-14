@@ -24,7 +24,7 @@ def run_command(cmd):
         if result.returncode == 0:
             return ""
         return None
-    except:
+    except Exception:
         return None
 
 
@@ -244,7 +244,7 @@ def extract_timestamp(content, prefix):
             time_str = line.split(":", 1)[1].strip()
             try:
                 return datetime.datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            except:
+            except Exception:
                 pass
     return None
 

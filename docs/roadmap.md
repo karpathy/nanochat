@@ -27,6 +27,7 @@ last_updated: "2026-03-15"
 | [Phase 1 — Architecture Experiments](archive/phase-1-architecture-experiments.md) | 2026-02-19 | SwiGLU, MoE, multi-token prediction — all negative results |
 | [Phase 1.5.0 — Data Layout & Config](archive/phase-1.5.0-data-layout-config.md) | 2026-03-14 | Config system, centralized paths, hierarchical dirs, Python 3.13 |
 | [Phase 1.5.0.1 — Script Entry-Points](archive/phase-1.5.0.1-script-entry-points.md) | 2026-03-15 | Wrapped all scripts in main(), importable without side effects |
+| [Phase 1.5.0.2 — Code Review & Cleanup](archive/phase-1.5.0.2-code-review-cleanup.md) | 2026-03-15 | Full code review, 6 fixes, lazy USE_FA3, paths wiring, all 9 scripts wrapped |
 
 ## Active Phase
 
@@ -37,27 +38,10 @@ last_updated: "2026-03-15"
 **Sub-phases**:
 - **1.5.0**: Data layout & configuration system — ✅ [Archived](archive/phase-1.5.0-data-layout-config.md)
 - **1.5.0.1**: Script entry-point refactor — ✅ [Archived](archive/phase-1.5.0.1-script-entry-points.md)
-- **1.5.0.2**: Code review & quality cleanup — 🔜 Next
+- **1.5.0.2**: Code review & quality cleanup — ✅ [Archived](archive/phase-1.5.0.2-code-review-cleanup.md)
 - **1.5.1**: Compression metrics integration — ✅ Code complete, 🔜 validation pending — [Validation Checklist](phase-1.5.1-validation-checklist.md)
 - **1.5.2**: Dataset quality via compression
 - **1.5.3**: Compression-aware optimization
-
-#### Phase 1.5.0.2 — Code Review & Quality Cleanup
-
-**Goal**: Full code quality review and address findings before moving to GPU-dependent validation work.
-
-**Sub-tasks**:
-- [x] Full code review of `src/nanochat/` (structure, quality, patterns)
-- [ ] Full code review of `tests/` (coverage gaps, test quality)
-- [ ] Fix syntax error: extra `)` in `dataset.py` `__main__` block
-- [ ] Wrap remaining 5 scripts in `main()`: `tok_train.py`, `tok_eval.py`, `chat_cli.py`, `chat_web.py`, `chat_eval.py` — console scripts in `pyproject.toml` reference `:main` that doesn't exist
-- [ ] Wire `checkpoint.py` through `paths` module — currently bypasses `paths.checkpoints_dir()` with manual `get_base_dir()` + `os.path.join()`
-- [ ] Defer `USE_FA3` in `flash_attention.py` — currently computed at import time, triggers dtype detection
-- [ ] Fix bare `except:` in `report.py` — `run_command()` and `extract_timestamp()` catch KeyboardInterrupt
-- [ ] Fix typo: "Addapted" → "Adapted" in `optimizer.py` docstring
-- [ ] Address any findings from `tests/` review
-
-**Sequencing**: No GPU required. Clean up codebase before compression validation (1.5.1+).
 
 **Exit criteria**:
 - [ ] Compression ratio correlates with val loss (R² > 0.7)
@@ -89,6 +73,15 @@ Long context, tool use, transparency, multimodal. See [tool use & transparency p
 Combine transformer efficiency with SP Theory advantages. Also the fallback path if compression approach shows <5% improvement. See [detailed plan](phase-6-hybrid-architecture.md).
 
 ## Improvements
+
+### Type Annotations & Pyright Compliance
+Pyright strict mode initially reported ~2600 errors. Suppressed `reportMissingTypeStubs`, all `reportUnknown*` rules, and PyTorch type-stub limitations in `pyproject.toml`, reducing to ~424 errors. Remaining are mostly `reportMissingParameterType` (323) and `reportUnusedVariable` (49) — the actual typing retrofit work.
+
+- [x] Suppress `reportMissingTypeStubs` for third-party deps (`datasets`, `pyarrow`, etc.)
+- [x] Suppress `reportUnknown*` cascade noise from PyTorch partial types
+- [x] Suppress PyTorch type-stub limitations (`reportArgumentType`, `reportCallIssue`, etc.)
+- [x] Rename uppercase math variables in `optimizer.py` (`X`, `A`, `B`) to lowercase
+- [ ] Add parameter type annotations to `checkpoint.py`, `dataloader.py`, `tasks/*.py`
 
 ### Apple Silicon (MPS) Documentation
 The [M3 Max guide](m3-max-guide.md) contains raw notes on running experiments on Apple Silicon. Needs cleanup into proper project documentation.

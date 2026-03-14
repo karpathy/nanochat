@@ -8,11 +8,11 @@ from nanochat.report import get_report
 
 # Random text I got from a random website this morning
 news_text = r"""
-(Washington, D.C., July 9, 2025)- Yesterday, Mexico’s National Service of Agro-Alimentary Health, Safety, and Quality (SENASICA) reported a new case of New World Screwworm (NWS) in Ixhuatlan de Madero, Veracruz in Mexico, which is approximately 160 miles northward of the current sterile fly dispersal grid, on the eastern side of the country and 370 miles south of the U.S./Mexico border. This new northward detection comes approximately two months after northern detections were reported in Oaxaca and Veracruz, less than 700 miles away from the U.S. border, which triggered the closure of our ports to Mexican cattle, bison, and horses on May 11, 2025.
+(Washington, D.C., July 9, 2025)- Yesterday, Mexico's National Service of Agro-Alimentary Health, Safety, and Quality (SENASICA) reported a new case of New World Screwworm (NWS) in Ixhuatlan de Madero, Veracruz in Mexico, which is approximately 160 miles northward of the current sterile fly dispersal grid, on the eastern side of the country and 370 miles south of the U.S./Mexico border. This new northward detection comes approximately two months after northern detections were reported in Oaxaca and Veracruz, less than 700 miles away from the U.S. border, which triggered the closure of our ports to Mexican cattle, bison, and horses on May 11, 2025.
 
-While USDA announced a risk-based phased port re-opening strategy for cattle, bison, and equine from Mexico beginning as early as July 7, 2025, this newly reported NWS case raises significant concern about the previously reported information shared by Mexican officials and severely compromises the outlined port reopening schedule of five ports from July 7-September 15. Therefore, in order to protect American livestock and our nation’s food supply, Secretary Rollins has ordered the closure of livestock trade through southern ports of entry effective immediately.
+While USDA announced a risk-based phased port re-opening strategy for cattle, bison, and equine from Mexico beginning as early as July 7, 2025, this newly reported NWS case raises significant concern about the previously reported information shared by Mexican officials and severely compromises the outlined port reopening schedule of five ports from July 7-September 15. Therefore, in order to protect American livestock and our nation's food supply, Secretary Rollins has ordered the closure of livestock trade through southern ports of entry effective immediately.
 
-“The United States has promised to be vigilant — and after detecting this new NWS case, we are pausing the planned port reopening’s to further quarantine and target this deadly pest in Mexico. We must see additional progress combatting NWS in Veracruz and other nearby Mexican states in order to reopen livestock ports along the Southern border,” said U.S. Secretary of Agriculture Brooke L. Rollins. “Thanks to the aggressive monitoring by USDA staff in the U.S. and in Mexico, we have been able to take quick and decisive action to respond to the spread of this deadly pest.”
+"The United States has promised to be vigilant — and after detecting this new NWS case, we are pausing the planned port reopening's to further quarantine and target this deadly pest in Mexico. We must see additional progress combatting NWS in Veracruz and other nearby Mexican states in order to reopen livestock ports along the Southern border," said U.S. Secretary of Agriculture Brooke L. Rollins. "Thanks to the aggressive monitoring by USDA staff in the U.S. and in Mexico, we have been able to take quick and decisive action to respond to the spread of this deadly pest."
 """.strip()
 
 # Random Korean text (to test non-English compression)
@@ -22,12 +22,12 @@ Herald Korea Times
 
 헤럴드코리아타임즈는 정치, 경제, 사회, 문화 등 한국 사회 전반의 주요 이슈를 심도 있게 다루는 종합 온라인 신문사입니다.
 
-우리는 단순히 뉴스를 전달하는 것이 아니라, 사실(Fact)에 기반한 양측의 시각을 균형 있게 조명하며, 독자 여러분이 스스로 판단할 수 있는 ‘정보의 균형’을 제공합니다.
+우리는 단순히 뉴스를 전달하는 것이 아니라, 사실(Fact)에 기반한 양측의 시각을 균형 있게 조명하며, 독자 여러분이 스스로 판단할 수 있는 '정보의 균형'을 제공합니다.
 
 한국 언론의 오랜 문제로 지적되어 온 정치적 편향, 이념적 왜곡에서 벗어나
 오직 정직함과 공정함을 원칙으로 삼는 언론을 지향합니다.
 어느 한쪽의 주장만을 확대하거나 감추지 않고,
-**모든 쟁점에 대해 ‘무엇이 쟁점인지’, ‘누가 무엇을 주장하는지’, ‘사실은 무엇인지’**를 명확히 전달하는 데 집중합니다.
+**모든 쟁점에 대해 '무엇이 쟁점인지', '누가 무엇을 주장하는지', '사실은 무엇인지'**를 명확히 전달하는 데 집중합니다.
 """.strip()
 
 # Random piece of code
@@ -134,143 +134,143 @@ solve for $\sum_{k=1}^{n}k^3$ to get
 \end{proof}
 
 \begin{remark}
-Geometrically, the identity says: ``adding up $1^3,2^3,\dots,n^3$ builds a perfect square’’—namely the square of the $n$th triangular number. This is why one sometimes calls it the \emph{sum-of-cubes is a square} phenomenon.
+Geometrically, the identity says: ``adding up $1^3,2^3,\dots,n^3$ builds a perfect square''—namely the square of the $n$th triangular number. This is why one sometimes calls it the \emph{sum-of-cubes is a square} phenomenon.
 \end{remark}
 
 \end{document}
 """.strip()
 
 science_text = r"""
-Photosynthesis is a photochemical energy transduction process in which light-harvesting pigment–protein complexes within the thylakoid membranes of oxygenic phototrophs absorb photons and initiate charge separation at the reaction center, driving the linear electron transport chain from water to NADP⁺ via photosystem II, the cytochrome b₆f complex, and photosystem I, concomitantly generating a trans-thylakoid proton motive force utilized by chloroplastic ATP synthase. The light-dependent reactions produce ATP and NADPH, which fuel the Calvin–Benson–Bassham cycle in the stroma, wherein ribulose-1,5-bisphosphate is carboxylated by ribulose-1,5-bisphosphate carboxylase/oxygenase (RuBisCO) to form 3-phosphoglycerate, subsequently reduced and regenerated through a series of enzymatic steps, enabling net assimilation of CO₂ into triose phosphates and ultimately carbohydrates. This process is tightly regulated by photoprotective mechanisms, redox feedback, and metabolite flux, representing a central biochemical pathway coupling solar energy capture to the biosphere’s primary productivity.
+Photosynthesis is a photochemical energy transduction process in which light-harvesting pigment–protein complexes within the thylakoid membranes of oxygenic phototrophs absorb photons and initiate charge separation at the reaction center, driving the linear electron transport chain from water to NADP⁺ via photosystem II, the cytochrome b₆f complex, and photosystem I, concomitantly generating a trans-thylakoid proton motive force utilized by chloroplastic ATP synthase. The light-dependent reactions produce ATP and NADPH, which fuel the Calvin–Benson–Bassham cycle in the stroma, wherein ribulose-1,5-bisphosphate is carboxylated by ribulose-1,5-bisphosphate carboxylase/oxygenase (RuBisCO) to form 3-phosphoglycerate, subsequently reduced and regenerated through a series of enzymatic steps, enabling net assimilation of CO₂ into triose phosphates and ultimately carbohydrates. This process is tightly regulated by photoprotective mechanisms, redox feedback, and metabolite flux, representing a central biochemical pathway coupling solar energy capture to the biosphere's primary productivity.
 """.strip()
 
-# The tokenizer was trained on data from earlier shards, so it has seen this data
-train_docs = next(parquets_iter_batched(split="train"))
-train_text = "\n".join(train_docs)
-val_docs = next(parquets_iter_batched(split="val"))
-val_text = "\n".join(val_docs)
 
-all_text = [
-    ("news", news_text),
-    ("korean", korean_text),
-    ("code", code_text),
-    ("math", math_text),
-    ("science", science_text),
-    ("fwe-train", train_text),
-]
-if val_text:
-    all_text.append(("fwe-val", val_text))
+def main():
+    # The tokenizer was trained on data from earlier shards, so it has seen this data
+    train_docs = next(parquets_iter_batched(split="train"))
+    train_text = "\n".join(train_docs)
+    val_docs = next(parquets_iter_batched(split="val"))
+    val_text = "\n".join(val_docs)
 
-# Try out current default compared to GPT-2 and GPT-4 tokenizers
-tokenizer_results = {}
-vocab_sizes = {}
+    all_text = [
+        ("news", news_text),
+        ("korean", korean_text),
+        ("code", code_text),
+        ("math", math_text),
+        ("science", science_text),
+        ("fwe-train", train_text),
+    ]
+    if val_text:
+        all_text.append(("fwe-val", val_text))
 
-for tokenizer_name in ["gpt2", "gpt4", "ours"]:
-    if tokenizer_name == "gpt2":
-        tokenizer = RustBPETokenizer.from_pretrained("gpt2")  # gpt-2 base model tokenizer
-    elif tokenizer_name == "gpt4":
-        tokenizer = RustBPETokenizer.from_pretrained("cl100k_base")  # gpt-4 base model tokenizer
-    else:
-        tokenizer = get_tokenizer()
+    # Try out current default compared to GPT-2 and GPT-4 tokenizers
+    tokenizer_results = {}
+    vocab_sizes = {}
 
-    vocab_sizes[tokenizer_name] = tokenizer.get_vocab_size()
-    tokenizer_results[tokenizer_name] = {}
-
-    for name, text in all_text:
-        encoded = tokenizer.encode(text)
-        decoded = tokenizer.decode(encoded)
-        assert decoded == text
-
-        encoded_bytes = text.encode("utf-8")
-        ratio = len(encoded_bytes) / len(encoded)
-        tokenizer_results[tokenizer_name][name] = {"bytes": len(encoded_bytes), "tokens": len(encoded), "ratio": ratio}
-
-# ANSI color codes
-GREEN = "\033[92m"
-RED = "\033[91m"
-RESET = "\033[0m"
-
-# Print vocab sizes
-print("\nVocab sizes:")
-print(f"GPT-2: {vocab_sizes['gpt2']}")
-print(f"GPT-4: {vocab_sizes['gpt4']}")
-print(f"Ours: {vocab_sizes['ours']}")
-
-
-def print_comparison(baseline_name, baseline_results, ours_results, all_text):
-    """Print comparison table between baseline tokenizer and ours."""
-    print(f"\nComparison with {baseline_name}:")
-    print("=" * 95)
-    print(f"{'Text Type':<10} {'Bytes':<8} {baseline_name:<15} {'Ours':<15} {'Relative':<12} {'Better':<10}")
-    print(f"{'':10} {'':8} {'Tokens':<7} {'Ratio':<7} {'Tokens':<7} {'Ratio':<7} {'Diff %':<12}")
-    print("-" * 95)
-
-    for name, text in all_text:
-        baseline_data = baseline_results[name]
-        ours_data = ours_results[name]
-
-        # Calculate relative difference (positive means ours is better, negative means worse)
-        # Using tokens: fewer tokens is better, so we calculate (baseline_tokens - ours_tokens) / baseline_tokens
-        relative_diff = ((baseline_data["tokens"] - ours_data["tokens"]) / baseline_data["tokens"]) * 100
-
-        # Determine which has better compression (higher ratio = better)
-        if baseline_data["ratio"] > ours_data["ratio"]:
-            baseline_color, ours_color = GREEN, RED
-            better = baseline_name
-            diff_color = RED
-        elif ours_data["ratio"] > baseline_data["ratio"]:
-            baseline_color, ours_color = RED, GREEN
-            better = "Ours"
-            diff_color = GREEN
+    for tokenizer_name in ["gpt2", "gpt4", "ours"]:
+        if tokenizer_name == "gpt2":
+            tokenizer = RustBPETokenizer.from_pretrained("gpt2")  # gpt-2 base model tokenizer
+        elif tokenizer_name == "gpt4":
+            tokenizer = RustBPETokenizer.from_pretrained("cl100k_base")  # gpt-4 base model tokenizer
         else:
-            baseline_color, ours_color = "", ""
-            better = "Tie"
-            diff_color = ""
+            tokenizer = get_tokenizer()
 
-        print(
-            f"{name:<10} {baseline_data['bytes']:<8} "
-            f"{baseline_color}{baseline_data['tokens']:<7}{RESET} "
-            f"{baseline_color}{baseline_data['ratio']:<7.2f}{RESET} "
-            f"{ours_color}{ours_data['tokens']:<7}{RESET} "
-            f"{ours_color}{ours_data['ratio']:<7.2f}{RESET} "
-            f"{diff_color}{relative_diff:+7.1f}%{RESET}     "
-            f"{better:<10}"
-        )
+        vocab_sizes[tokenizer_name] = tokenizer.get_vocab_size()
+        tokenizer_results[tokenizer_name] = {}
 
+        for name, text in all_text:
+            encoded = tokenizer.encode(text)
+            decoded = tokenizer.decode(encoded)
+            assert decoded == text
 
-# Print comparisons
-print_comparison("GPT-2", tokenizer_results["gpt2"], tokenizer_results["ours"], all_text)
-print_comparison("GPT-4", tokenizer_results["gpt4"], tokenizer_results["ours"], all_text)
+            encoded_bytes = text.encode("utf-8")
+            ratio = len(encoded_bytes) / len(encoded)
+            tokenizer_results[tokenizer_name][name] = {"bytes": len(encoded_bytes), "tokens": len(encoded), "ratio": ratio}
 
-# Log to report
+    # ANSI color codes
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    RESET = "\033[0m"
 
-lines = []
-for baseline_name in ["GPT-2", "GPT-4"]:
-    baseline_key = baseline_name.lower().replace("-", "")
-    baseline_results = tokenizer_results[baseline_key]
-    ours_results = tokenizer_results["ours"]
-    lines.append(f"### Comparison with {baseline_name}")
-    lines.append("")
-    lines.append(
-        "| Text Type | Bytes | "
-        + baseline_name
-        + " Tokens | "
-        + baseline_name
-        + " Ratio | Ours Tokens | Ours Ratio | Relative Diff % |"
-    )
-    lines.append("|-----------|-------|--------------|--------------|-------------|------------|-----------------|")
-    for name, text in all_text:
-        baseline_data = baseline_results[name]
-        ours_data = ours_results[name]
-        relative_diff = ((baseline_data["tokens"] - ours_data["tokens"]) / baseline_data["tokens"]) * 100
+    # Print vocab sizes
+    print("\nVocab sizes:")
+    print(f"GPT-2: {vocab_sizes['gpt2']}")
+    print(f"GPT-4: {vocab_sizes['gpt4']}")
+    print(f"Ours: {vocab_sizes['ours']}")
+
+    def print_comparison(baseline_name, baseline_results, ours_results, all_text):
+        """Print comparison table between baseline tokenizer and ours."""
+        print(f"\nComparison with {baseline_name}:")
+        print("=" * 95)
+        print(f"{'Text Type':<10} {'Bytes':<8} {baseline_name:<15} {'Ours':<15} {'Relative':<12} {'Better':<10}")
+        print(f"{'':10} {'':8} {'Tokens':<7} {'Ratio':<7} {'Tokens':<7} {'Ratio':<7} {'Diff %':<12}")
+        print("-" * 95)
+
+        for name, text in all_text:
+            baseline_data = baseline_results[name]
+            ours_data = ours_results[name]
+
+            relative_diff = ((baseline_data["tokens"] - ours_data["tokens"]) / baseline_data["tokens"]) * 100
+
+            if baseline_data["ratio"] > ours_data["ratio"]:
+                baseline_color, ours_color = GREEN, RED
+                better = baseline_name
+                diff_color = RED
+            elif ours_data["ratio"] > baseline_data["ratio"]:
+                baseline_color, ours_color = RED, GREEN
+                better = "Ours"
+                diff_color = GREEN
+            else:
+                baseline_color, ours_color = "", ""
+                better = "Tie"
+                diff_color = ""
+
+            print(
+                f"{name:<10} {baseline_data['bytes']:<8} "
+                f"{baseline_color}{baseline_data['tokens']:<7}{RESET} "
+                f"{baseline_color}{baseline_data['ratio']:<7.2f}{RESET} "
+                f"{ours_color}{ours_data['tokens']:<7}{RESET} "
+                f"{ours_color}{ours_data['ratio']:<7.2f}{RESET} "
+                f"{diff_color}{relative_diff:+7.1f}%{RESET}     "
+                f"{better:<10}"
+            )
+
+    # Print comparisons
+    print_comparison("GPT-2", tokenizer_results["gpt2"], tokenizer_results["ours"], all_text)
+    print_comparison("GPT-4", tokenizer_results["gpt4"], tokenizer_results["ours"], all_text)
+
+    # Log to report
+    lines = []
+    for baseline_name in ["GPT-2", "GPT-4"]:
+        baseline_key = baseline_name.lower().replace("-", "")
+        baseline_results = tokenizer_results[baseline_key]
+        ours_results = tokenizer_results["ours"]
+        lines.append(f"### Comparison with {baseline_name}")
+        lines.append("")
         lines.append(
-            f"| {name} | {baseline_data['bytes']} | {baseline_data['tokens']} | {baseline_data['ratio']:.2f} | {ours_data['tokens']} | {ours_data['ratio']:.2f} | {relative_diff:+.1f}% |"
+            "| Text Type | Bytes | "
+            + baseline_name
+            + " Tokens | "
+            + baseline_name
+            + " Ratio | Ours Tokens | Ours Ratio | Relative Diff % |"
         )
-    lines.append("")
-report_markdown = "\n".join(lines)
-get_report().log(
-    section="Tokenizer evaluation",
-    data=[
-        report_markdown,
-    ],
-)
+        lines.append("|-----------|-------|--------------|--------------|-------------|------------|-----------------|")
+        for name, text in all_text:
+            baseline_data = baseline_results[name]
+            ours_data = ours_results[name]
+            relative_diff = ((baseline_data["tokens"] - ours_data["tokens"]) / baseline_data["tokens"]) * 100
+            lines.append(
+                f"| {name} | {baseline_data['bytes']} | {baseline_data['tokens']} | {baseline_data['ratio']:.2f} | {ours_data['tokens']} | {ours_data['ratio']:.2f} | {relative_diff:+.1f}% |"
+            )
+        lines.append("")
+    report_markdown = "\n".join(lines)
+    get_report().log(
+        section="Tokenizer evaluation",
+        data=[
+            report_markdown,
+        ],
+    )
+
+
+if __name__ == "__main__":
+    main()

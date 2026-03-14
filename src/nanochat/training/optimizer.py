@@ -3,7 +3,7 @@ A nice and efficient mixed AdamW/Muon Combined Optimizer.
 Usually the embeddings and scalars go into AdamW, and the matrix parameters go into Muon.
 Two versions are provided (MuonAdamW, DistMuonAdamW), for single GPU and distributed.
 
-Addapted from: https://github.com/KellerJordan/modded-nanogpt
+Adapted from: https://github.com/KellerJordan/modded-nanogpt
 Further contributions from @karpathy and @chrisjmccormick.
 """
 
@@ -117,19 +117,19 @@ def muon_step_fused(
     g = stacked_grads.lerp_(momentum_buffer, momentum)
 
     # Polar express
-    X = g.bfloat16()
-    X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.01 + 1e-6)
+    x = g.bfloat16()
+    x = x / (x.norm(dim=(-2, -1), keepdim=True) * 1.01 + 1e-6)
     if g.size(-2) > g.size(-1):  # Tall matrix
         for a, b, c in polar_express_coeffs[:ns_steps]:
-            A = X.mT @ X
-            B = b * A + c * (A @ A)
-            X = a * X + X @ B
+            m = x.mT @ x
+            n = b * m + c * (m @ m)
+            x = a * x + x @ n
     else:  # Wide matrix (original math)
         for a, b, c in polar_express_coeffs[:ns_steps]:
-            A = X @ X.mT
-            B = b * A + c * (A @ A)
-            X = a * X + B @ X
-    g = X
+            m = x @ x.mT
+            n = b * m + c * (m @ m)
+            x = a * x + n @ x
+    g = x
 
     # Variance reduction
     beta2 = beta2_t.to(g.dtype)

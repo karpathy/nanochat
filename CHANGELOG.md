@@ -6,8 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- `checkpoint.py` now uses `paths.checkpoints_dir()` instead of manual `get_base_dir()` + `os.path.join()` in `load_model()` and `load_optimizer_state()`
+- `USE_FA3` in `flash_attention.py` deferred from module-level constant to lazy `_use_fa3()` with caching — no longer triggers dtype detection at import time
+- Remaining 5 scripts wrapped in `main()`: `tok_train.py`, `tok_eval.py`, `chat_cli.py`, `chat_web.py`, `chat_eval.py` — all 9 console scripts now have proper entry points
+- `WorkerPool` in `chat_web.py` accepts `device_type` parameter instead of reading module-level variable
+
+### Fixed
+- Syntax error: extra `)` in `dataset.py` `__main__` block
+- Bare `except:` → `except Exception:` in `report.py` `run_command()` and `extract_timestamp()` — no longer swallows `KeyboardInterrupt`/`SystemExit`
+- Typo "Addapted" → "Adapted" in `optimizer.py` docstring
+
 ### Added
-- `paths.py` module as single source of truth for all `NANOCHAT_BASE_DIR` paths
+- `docs/archive/phase-1.5.0.2-code-review-cleanup.md`
 - `docs/data-layout.md` documenting hierarchical directory structure
 - `tests/test_paths.py` with 8 tests covering all path functions
 - 3 new config tests: TOML round-trip, from_args mapping, base_dir default

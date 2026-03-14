@@ -28,22 +28,23 @@ import torch.distributed as dist
 import wandb
 
 from nanochat.common import (
-    get_compute_dtype,
-    get_compute_dtype_reason,
     DummyWandb,
     autodetect_device_type,
     compute_cleanup,
     compute_init,
     get_base_dir,
+    get_compute_dtype,
+    get_compute_dtype_reason,
     get_peak_flops,
     is_ddp_initialized,
     print0,
     print_banner,
 )
+from nanochat.compression_metrics import CompressionMetrics
 from nanochat.data.tokenizer import get_token_bytes, get_tokenizer
 from nanochat.evaluation.engine import Engine
 from nanochat.evaluation.loss_eval import evaluate_bpb
-from nanochat.flash_attention import HAS_FA3, USE_FA3
+from nanochat.flash_attention import HAS_FA3, _use_fa3
 from nanochat.models.config import TrainingConfig
 from nanochat.models.gpt import GPT, GPTConfig, Linear
 from nanochat.scripts.base_eval import evaluate_core
@@ -52,7 +53,6 @@ from nanochat.training.dataloader import (
     tokenizing_distributed_data_loader_bos_bestfit,
     tokenizing_distributed_data_loader_with_state_bos_bestfit,
 )
-from nanochat.compression_metrics import CompressionMetrics
 
 
 def build_parser():
@@ -185,7 +185,7 @@ def main():
 
     # Flash Attention status
 
-    using_fa3 = USE_FA3
+    using_fa3 = _use_fa3()
     if using_fa3:
         print0("✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.")
     else:
@@ -724,20 +724,20 @@ def main():
                         logits=logits_for_compression,
                         loss=train_loss_f,
                     )
-                    
+
                     # Check for overfitting if early stopping enabled
                     if config.compression_early_stop and compression_tracker.detect_overfitting():
                         print0(f"[Step {step}] Compression plateau detected - possible overfitting")
-                    
+
                     # Log compression metrics to wandb
                     if master_process:
                         compression_log = {
-                            f"compression/{k}": v 
-                            for k, v in compression_metrics.items() 
+                            f"compression/{k}": v
+                            for k, v in compression_metrics.items()
                             if k != 'step'
                         }
                         wandb_run.log(compression_log)
-            
+
             if step % 100 == 0:
                 log_data = {
                     "step": step,

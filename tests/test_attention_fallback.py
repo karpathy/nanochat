@@ -13,17 +13,18 @@ Note on test structure:
     2. TestSDPAOnly: Tests that only exercise the SDPA fallback path. These can run
        on any device (CUDA, CPU, MPS) with the appropriate dtype for that device.
 """
-import torch
 import pytest
+import torch
+
 import nanochat.flash_attention as fa_module
-from nanochat.flash_attention import flash_attn, HAS_FA3
 from nanochat.evaluation.engine import KVCache
+from nanochat.flash_attention import HAS_FA3, flash_attn
 
 
 def set_impl(impl):
-    """Set the implementation override ('fa3', 'sdpa', or None for auto) and re-resolve USE_FA3."""
+    """Set the implementation override ('fa3', 'sdpa', or None for auto) and reset cached decision."""
     fa_module._override_impl = impl
-    fa_module.USE_FA3 = fa_module._resolve_use_fa3()
+    fa_module._use_fa3_cached = None
 
 
 def run_both_impls(fn):
@@ -344,19 +345,19 @@ class TestOverrideMechanism:
     def test_override_fa3(self):
         """Test that override='fa3' uses FA3."""
         set_impl('fa3')
-        assert fa_module.USE_FA3 == True
+        assert fa_module._use_fa3() is True
         set_impl(None)
 
     def test_override_sdpa(self):
         """Test that override='sdpa' uses SDPA."""
         set_impl('sdpa')
-        assert fa_module.USE_FA3 == False
+        assert fa_module._use_fa3() is False
         set_impl(None)
 
     def test_override_auto(self):
         """Test that override=None uses auto-detection."""
         set_impl(None)
-        assert fa_module.USE_FA3 == HAS_FA3
+        assert fa_module._use_fa3() == HAS_FA3
 
 
 if __name__ == "__main__":

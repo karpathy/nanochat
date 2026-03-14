@@ -10,10 +10,10 @@ import re
 
 import torch
 
-from nanochat.common import get_base_dir
 from nanochat.data.tokenizer import get_tokenizer
 from nanochat.models.config import GPTConfig
 from nanochat.models.gpt import GPT
+from nanochat.paths import checkpoints_dir as _checkpoints_dir
 
 logger = logging.getLogger(__name__)
 
@@ -170,28 +170,15 @@ def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=Non
 
 
 def load_model(source, *args, **kwargs):
-    model_dir = {
-        "base": "base",
-        "sft": "sft",
-        "rl": "rl",
-    }[source]
-    base_dir = get_base_dir()
-    checkpoints_dir = os.path.join(base_dir, "checkpoints", model_dir)
-    return load_model_from_dir(checkpoints_dir, *args, **kwargs)
+    return load_model_from_dir(_checkpoints_dir(source), *args, **kwargs)
 
 
 def load_optimizer_state(source, device, rank, model_tag=None, step=None):
     """Load just the optimizer shard for a given rank, without re-loading the model."""
-    model_dir = {
-        "base": "base",
-        "sft": "sft",
-        "rl": "rl",
-    }[source]
-    base_dir = get_base_dir()
-    checkpoints_dir = os.path.join(base_dir, "checkpoints", model_dir)
+    phase_dir = _checkpoints_dir(source)
     if model_tag is None:
-        model_tag = find_largest_model(checkpoints_dir)
-    checkpoint_dir = os.path.join(checkpoints_dir, model_tag)
+        model_tag = find_largest_model(phase_dir)
+    checkpoint_dir = os.path.join(phase_dir, model_tag)
     if step is None:
         step = find_last_step(checkpoint_dir)
     optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")

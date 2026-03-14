@@ -159,7 +159,7 @@ if __name__ == "__main__":
 
     # Download the shards
     print(f"Downloading {len(ids_to_download)} shards using {args.num_workers} workers...")
-    print(f"Target directory: {_get_data_dir()}"))
+    print(f"Target directory: {_get_data_dir()}")
     print()
     with Pool(processes=args.num_workers) as pool:
         results = pool.map(download_single_file, ids_to_download)

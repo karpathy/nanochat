@@ -50,24 +50,26 @@ HAS_FA3 = _fa3 is not None
 _override_impl = None
 
 
-def _resolve_use_fa3():
-    """Decide once whether to use FA3, based on availability, override, and dtype."""
+_use_fa3_cached = None
+
+
+def _use_fa3():
+    """Decide once (lazily) whether to use FA3, based on availability, override, and dtype."""
+    global _use_fa3_cached
+    if _use_fa3_cached is not None:
+        return _use_fa3_cached
     if _override_impl == "fa3":
         assert HAS_FA3, "Cannot override to FA3: not available on this hardware"
-        return True
-    if _override_impl == "sdpa":
-        return False
-    if HAS_FA3:
+        _use_fa3_cached = True
+    elif _override_impl == "sdpa":
+        _use_fa3_cached = False
+    elif HAS_FA3:
         # FA3 Hopper kernels only support bf16 and fp8; fp16/fp32 must use SDPA fallback
         from nanochat.common import get_compute_dtype
-
-        if get_compute_dtype() == torch.bfloat16:
-            return True
-        return False
-    return False
-
-
-USE_FA3 = _resolve_use_fa3()
+        _use_fa3_cached = get_compute_dtype() == torch.bfloat16
+    else:
+        _use_fa3_cached = False
+    return _use_fa3_cached
 
 
 # =============================================================================
@@ -124,7 +126,7 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
     Returns:
         Output tensor of shape (B, T, H, D)
     """
-    if USE_FA3:
+    if _use_fa3():
         return _fa3.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
 
     # SDPA fallback: transpose (B, T, H, D) -> (B, H, T, D)
@@ -155,7 +157,7 @@ def flash_attn_with_kvcache(
     Returns:
         Output tensor of shape (B, T_new, H, D)
     """
-    if USE_FA3:
+    if _use_fa3():
         return _fa3.flash_attn_with_kvcache(
             q, k_cache, v_cache, k=k, v=v, cache_seqlens=cache_seqlens, causal=causal, window_size=window_size
         )

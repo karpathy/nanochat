@@ -3,10 +3,11 @@ Configuration classes for GPT model and training.
 """
 
 import tomllib
-import tomli_w
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+import tomli_w
 
 
 @dataclass

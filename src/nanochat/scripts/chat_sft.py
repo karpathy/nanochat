@@ -28,13 +28,13 @@ from tasks.smoltalk import SmolTalk
 from tasks.spellingbee import SimpleSpelling, SpellingBee
 
 from nanochat.common import (
-    get_compute_dtype,
-    get_compute_dtype_reason,
     DummyWandb,
     autodetect_device_type,
     compute_cleanup,
     compute_init,
     get_base_dir,
+    get_compute_dtype,
+    get_compute_dtype_reason,
     get_peak_flops,
     is_ddp_initialized,
     print0,
@@ -46,6 +46,7 @@ from nanochat.flash_attention import HAS_FA3
 from nanochat.report import get_report
 from nanochat.scripts.chat_eval import run_chat_eval
 from nanochat.training.checkpoint import load_model, load_optimizer_state, save_checkpoint
+
 
 def build_parser():
     # -----------------------------------------------------------------------------
@@ -426,7 +427,6 @@ def main():
 
         # once in a while: estimate the ChatCORE metric (all ranks participate)
         # use the original uncompiled model because the inputs keep changing shape
-        chatcore_results = {}
         if args.chatcore_every > 0 and (last_step or (step > 0 and step % args.chatcore_every == 0)):
             model.eval()
             engine = Engine(orig_model, tokenizer)

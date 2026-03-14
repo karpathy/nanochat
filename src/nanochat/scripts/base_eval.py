@@ -224,26 +224,7 @@ def evaluate_validation_loss(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Base model evaluation")
-    parser.add_argument(
-        "--eval",
-        type=str,
-        default="core,bpb,sample",
-        help="Comma-separated evaluations to run: core,bpb,sample (default: all)",
-    )
-    parser.add_argument(
-        "--hf-path", type=str, default=None, help="HuggingFace model path (e.g. openai-community/gpt2-xl)"
-    )
-    parser.add_argument(
-        "--model-tag", type=str, default=None, help="nanochat model tag to identify the checkpoint directory"
-    )
-    parser.add_argument("--step", type=int, default=None, help="Model step to load (default = last)")
-    parser.add_argument("--max-per-task", type=int, default=-1, help="Max examples per CORE task (-1 = all)")
-    parser.add_argument("--device-batch-size", type=int, default=32, help="Per-device batch size for BPB evaluation")
-    parser.add_argument(
-        "--split-tokens", type=int, default=40 * 524288, help="Number of tokens to evaluate per split for BPB"
-    )
-    parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+    parser = build_parser()
     args = parser.parse_args()
 
     # Parse evaluation modes
@@ -379,6 +360,29 @@ def main():
     get_report().log(section="Base model evaluation", data=report_data)
 
     compute_cleanup()
+
+def build_parser():
+    parser = argparse.ArgumentParser(description="Base model evaluation")
+    parser.add_argument(
+        "--eval",
+        type=str,
+        default="core,bpb,sample",
+        help="Comma-separated evaluations to run: core,bpb,sample (default: all)",
+    )
+    parser.add_argument(
+        "--hf-path", type=str, default=None, help="HuggingFace model path (e.g. openai-community/gpt2-xl)"
+    )
+    parser.add_argument(
+        "--model-tag", type=str, default=None, help="nanochat model tag to identify the checkpoint directory"
+    )
+    parser.add_argument("--step", type=int, default=None, help="Model step to load (default = last)")
+    parser.add_argument("--max-per-task", type=int, default=-1, help="Max examples per CORE task (-1 = all)")
+    parser.add_argument("--device-batch-size", type=int, default=32, help="Per-device batch size for BPB evaluation")
+    parser.add_argument(
+        "--split-tokens", type=int, default=40 * 524288, help="Number of tokens to evaluate per split for BPB"
+    )
+    parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
+    return parser
 
 
 if __name__ == "__main__":

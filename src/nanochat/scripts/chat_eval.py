@@ -245,8 +245,7 @@ def evaluate_chat_model(
     return results
 
 
-if __name__ == "__main__":
-    # Parse command-line arguments
+def build_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--source", type=str, required=True, help="Source of the model: sft|rl")
     parser.add_argument(
@@ -271,6 +270,11 @@ if __name__ == "__main__":
         choices=["cuda", "cpu", "mps"],
         help="Device type for evaluation: cuda|cpu|mps. empty => autodetect",
     )
+
+    return parser
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
@@ -331,3 +335,7 @@ if __name__ == "__main__":
     )
 
     compute_cleanup()
+
+
+if __name__ == "__main__":
+    main()
