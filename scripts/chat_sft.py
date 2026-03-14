@@ -166,7 +166,7 @@ train_tasks = [
     SmolTalk(split="train"), # 460K rows of general conversations
     CustomJSON(filepath=identity_conversations_filepath), # 1000 rows of synthetic identity conversations
     CustomJSON(filepath=identity_conversations_filepath), # 2 epochs of these
-    *[MMLU(subset="auxiliary_train", split="train") for _ in range(args.mmlu_epochs)], # 100K rows per epoch
+    *[MMLU(subset="all", split="auxiliary_train") for _ in range(args.mmlu_epochs)], # 100K rows per epoch
     *[GSM8K(subset="main", split="train") for _ in range(args.gsm8k_epochs)], # 8K rows per epoch
     SimpleSpelling(size=200000, split="train"), # 200K rows of Simple Spelling (e.g. spell the word 'apple')
     SpellingBee(size=80000, split="train"), # 80K rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
