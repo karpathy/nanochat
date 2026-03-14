@@ -56,3 +56,12 @@ def get_peak_flops(device_name: str) -> float:
 
     logger.warning(f"Peak flops undefined for: {device_name}, MFU will show as 0%")
     return float("inf")
+
+
+def get_device_sync(device_type: str) -> tuple[object, object]:
+    """Return (synchronize, get_max_memory) callables for the given device type."""
+    if device_type == "cuda":
+        return torch.cuda.synchronize, torch.cuda.max_memory_allocated
+    if device_type == "mps":
+        return torch.mps.synchronize, torch.mps.current_allocated_memory
+    return lambda: None, lambda: 0

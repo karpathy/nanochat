@@ -35,6 +35,7 @@ from nanochat.common import (
     get_base_dir,
     get_compute_dtype,
     get_compute_dtype_reason,
+    get_device_sync,
     get_peak_flops,
     is_ddp_initialized,
     print0,
@@ -128,15 +129,7 @@ def main():
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
     master_process = ddp_rank == 0
     print0(f"COMPUTE_DTYPE: {get_compute_dtype()} ({get_compute_dtype_reason()})")
-    if device_type == "cuda":
-        synchronize = torch.cuda.synchronize
-        get_max_memory = torch.cuda.max_memory_allocated
-    elif device_type == "mps":
-        synchronize = torch.mps.synchronize
-        get_max_memory = torch.mps.current_allocated_memory
-    else:
-        synchronize = lambda: None
-        get_max_memory = lambda: 0
+    synchronize, get_max_memory = get_device_sync(device_type)
     if device_type == "cuda":
         gpu_device_name = torch.cuda.get_device_name(0)
         gpu_peak_flops = get_peak_flops(gpu_device_name)
