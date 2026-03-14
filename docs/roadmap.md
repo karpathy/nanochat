@@ -47,10 +47,15 @@ last_updated: "2026-03-15"
 **Goal**: Full code quality review and address findings before moving to GPU-dependent validation work.
 
 **Sub-tasks**:
-- [ ] Full code review of `src/nanochat/` (structure, quality, patterns)
+- [x] Full code review of `src/nanochat/` (structure, quality, patterns)
 - [ ] Full code review of `tests/` (coverage gaps, test quality)
-- [ ] Address findings — refactor improvements surfaced by review
-- [ ] Remaining cleanup: `base_eval.py` global state, `tok_train.py` top-level code (leftover from 1.5.0.1 scope)
+- [ ] Fix syntax error: extra `)` in `dataset.py` `__main__` block
+- [ ] Wrap remaining 5 scripts in `main()`: `tok_train.py`, `tok_eval.py`, `chat_cli.py`, `chat_web.py`, `chat_eval.py` — console scripts in `pyproject.toml` reference `:main` that doesn't exist
+- [ ] Wire `checkpoint.py` through `paths` module — currently bypasses `paths.checkpoints_dir()` with manual `get_base_dir()` + `os.path.join()`
+- [ ] Defer `USE_FA3` in `flash_attention.py` — currently computed at import time, triggers dtype detection
+- [ ] Fix bare `except:` in `report.py` — `run_command()` and `extract_timestamp()` catch KeyboardInterrupt
+- [ ] Fix typo: "Addapted" → "Adapted" in `optimizer.py` docstring
+- [ ] Address any findings from `tests/` review
 
 **Sequencing**: No GPU required. Clean up codebase before compression validation (1.5.1+).
 
