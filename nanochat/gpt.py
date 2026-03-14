@@ -401,7 +401,9 @@ class GPT(nn.Module):
             emb_lr_scale = 1.0        # Embeddings: NO width scaling (standard muP)
             hidden_lr_scale = width_ratio ** muon_lr_exponent  # Hidden (Muon): default 0 = no scaling
             output_lr_scale = 1.0     # Output (AdamW): NO LR scaling (logit scaling in forward suffices)
-            self.config.mup_base_width = base_width  # enables output logit scaling in forward()
+            assert self.config.mup_base_width == base_width, \
+                f"mup_base_width mismatch: GPTConfig has {self.config.mup_base_width}, but setup_optimizer got base_width={base_width}. " \
+                f"Set mup_base_width={base_width} in GPTConfig at construction time."
             print0(f"muP scaling: base_width={base_width}, model_dim={model_dim}, width_ratio={width_ratio:.6f}, muon_lr_exp={muon_lr_exponent}")
         else:
             # Standard (SP): scale AdamW params by 1/√dmodel (tuned for 768 dim model)

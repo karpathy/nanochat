@@ -56,10 +56,10 @@ class TransferCheckConfig:
     seed: int = 42
     use_mup: bool = False
     base_width: int = 128
-    # Base learning rates (tuned at base_width)
-    matrix_lr: float = 0.02
-    embedding_lr: float = 0.2
-    unembedding_lr: float = 0.004
+    # Base learning rates (tuned at base_width=128)
+    matrix_lr: float = 0.12
+    embedding_lr: float = 6.0
+    unembedding_lr: float = 0.12
     # Multi-HP sweeps
     sweep_init_scale: bool = False
     sweep_output_mult: bool = False
@@ -134,10 +134,6 @@ def create_model(width: int, config: TransferCheckConfig, device: torch.device,
         with torch.no_grad():
             for p in model.parameters():
                 p.mul_(init_scale)
-
-    # Apply output_mult: scale the output logit multiplier
-    # We store it as an attribute that forward() checks
-    model._transfer_check_output_mult = output_mult
 
     return model, gpt_config
 
@@ -272,6 +268,7 @@ def plot_lr_sweep(results: Dict, config: TransferCheckConfig, title: str = "", s
         ax.plot(opt_mult, opt_loss, '*', color=colors[i], markersize=15, zorder=5)
 
     ax.set_xscale('log', base=2)
+    ax.set_yscale('log')
     ax.set_xlabel('LR Multiplier')
     ax.set_ylabel('Final Loss')
     ax.set_title(f'LR Sweep{" - " + title if title else ""}')
@@ -309,7 +306,7 @@ def plot_comparison(results_sp: Dict, results_mup: Dict, config: TransferCheckCo
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
     colors = plt.cm.viridis(np.linspace(0, 0.85, len(widths)))
 
-    # Top row: LR sweep curves
+    # Top row: LR sweep curves (log scale for loss detail)
     for col, (results, label) in enumerate([(results_sp, 'SP'), (results_mup, 'muP')]):
         ax = axes[0, col]
         for i, w in enumerate(widths):
@@ -319,6 +316,7 @@ def plot_comparison(results_sp: Dict, results_mup: Dict, config: TransferCheckCo
             opt_loss = results['final_losses'][w][opt_mult]
             ax.plot(opt_mult, opt_loss, '*', color=colors[i], markersize=15, zorder=5)
         ax.set_xscale('log', base=2)
+        ax.set_yscale('log')
         ax.set_xlabel('LR Multiplier')
         ax.set_ylabel('Final Loss')
         ax.set_title(f'{label}: Final Loss vs LR Multiplier')
@@ -326,14 +324,9 @@ def plot_comparison(results_sp: Dict, results_mup: Dict, config: TransferCheckCo
         ax.grid(True, alpha=0.3)
 
     # Shared y-axis for top row
-    y_min = min(
-        min(results_sp['final_losses'][w][m] for m in lr_mults for w in widths),
-        min(results_mup['final_losses'][w][m] for m in lr_mults for w in widths),
-    ) * 0.98
-    y_max = max(
-        max(results_sp['final_losses'][w][m] for m in lr_mults for w in widths),
-        max(results_mup['final_losses'][w][m] for m in lr_mults for w in widths),
-    ) * 1.02
+    all_losses_flat = [results_sp['final_losses'][w][m] for m in lr_mults for w in widths] + \
+                      [results_mup['final_losses'][w][m] for m in lr_mults for w in widths]
+    y_min, y_max = min(all_losses_flat) * 0.9, max(all_losses_flat) * 1.1
     axes[0, 0].set_ylim(y_min, y_max)
     axes[0, 1].set_ylim(y_min, y_max)
 
@@ -393,6 +386,7 @@ def plot_hp_sweep(results: Dict, config: TransferCheckConfig, title: str = "", s
         opt_v = min(final_losses[w], key=final_losses[w].get)
         ax.plot(opt_v, final_losses[w][opt_v], '*', color=colors[i], markersize=15, zorder=5)
     ax.set_xscale('log', base=2)
+    ax.set_yscale('log')
     ax.set_xlabel(hp_name)
     ax.set_ylabel('Final Loss')
     ax.set_title(f'{hp_name} Sweep{" - " + title if title else ""}')
@@ -430,6 +424,7 @@ def plot_loss_curves_at_optimal(results: Dict, config: TransferCheckConfig, titl
         losses = results['losses'][(w, opt_mult)]
         ax.plot(losses, color=colors[i], linewidth=2, label=f'w={w} (lr_mult={opt_mult})')
 
+    ax.set_yscale('log')
     ax.set_xlabel('Step')
     ax.set_ylabel('Loss')
     ax.set_title(f'Loss Curves at Optimal LR{" - " + title if title else ""}')

@@ -139,6 +139,7 @@ def build_model_meta(depth):
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        mup_base_width=args.base_width if args.use_mup else 0,
     )
     with torch.device("meta"):
         model_meta = GPT(config)

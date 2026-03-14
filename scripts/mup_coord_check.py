@@ -67,10 +67,10 @@ class CoordCheckConfig:
     seed: int = 42
     use_mup: bool = False
     base_width: int = 128
-    # Learning rates (tuned at base_width)
-    matrix_lr: float = 0.02
-    embedding_lr: float = 0.2
-    unembedding_lr: float = 0.004
+    # Learning rates (tuned at base_width=128)
+    matrix_lr: float = 0.12
+    embedding_lr: float = 6.0
+    unembedding_lr: float = 0.12
     # Detailed diagnostics
     detailed: bool = False
     # Muon LR exponent: 1.0 = base/width (standard muP), 0.5 = sqrt(base/width)
@@ -165,8 +165,16 @@ class ActivationRecorder:
                 h2 = block.attn.c_k.register_forward_hook(k_hook)
                 self.hooks.extend([h1, h2])
 
-        # LM head
-        h = model.lm_head.register_forward_hook(self._make_hook('output logits'))
+        # Output logits: hook on lm_head, but apply muP scaling to match what forward() does
+        mup_base = model.config.mup_base_width
+        n_embd = model.config.n_embd
+        def logit_hook(module, input, output):
+            if output is not None and isinstance(output, torch.Tensor):
+                scaled = output
+                if mup_base > 0:
+                    scaled = output * (mup_base / n_embd)
+                self.stats['output logits'].append(self._get_stat(scaled))
+        h = model.lm_head.register_forward_hook(logit_hook)
         self.hooks.append(h)
 
     def remove_hooks(self) -> None:
@@ -387,6 +395,7 @@ def plot_loss_curves(results: Dict, config: CoordCheckConfig, title: str = "", s
     for i, w in enumerate(widths):
         ax.plot(steps, losses[w], label=f'width={w}', color=colors[i], linewidth=2)
 
+    ax.set_yscale('log')
     ax.set_xlabel('Step')
     ax.set_ylabel('Loss')
     ax.set_title(f'Loss Curves Across Widths{" - " + title if title else ""}')
@@ -445,14 +454,15 @@ def plot_comparison(results_sp: Dict, results_mup: Dict, config: CoordCheckConfi
 
     axes[0, 0].legend(fontsize=7, loc='best')
 
-    # Loss curves row
+    # Loss curves row (log scale so low-loss detail is visible)
     all_losses = [v for r in (results_sp, results_mup) for w in widths for v in r['losses'][w]]
-    loss_min, loss_max = min(all_losses) * 0.95, max(all_losses) * 1.05
+    loss_min, loss_max = min(all_losses) * 0.9, max(all_losses) * 1.1
 
     for col, (results, label) in enumerate([(results_sp, 'SP'), (results_mup, 'muP')]):
         ax = axes[n_layers, col]
         for j, w in enumerate(widths):
             ax.plot(steps, results['losses'][w], label=f'w={w}', color=width_colors[j], linewidth=2)
+        ax.set_yscale('log')
         ax.set_ylim(loss_min, loss_max)
         ax.set_xlabel('Step')
         ax.set_ylabel('Loss')
