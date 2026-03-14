@@ -55,10 +55,8 @@ from nanochat.training.dataloader import (
 from nanochat.compression_metrics import CompressionMetrics
 
 
-def main():
-    print_banner()
-
-    # -------------------------------------------------------------------------
+def build_parser():
+# -------------------------------------------------------------------------
     # CLI arguments
     parser = argparse.ArgumentParser(description="Pretrain base model")
     # Config file
@@ -146,6 +144,11 @@ def main():
     parser.add_argument("--compression-early-stop", action="store_true", help="stop training when compression plateaus")
     # Output
     parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
+
+def main():
+    print_banner()
+
+    parser = build_parser()
     args = parser.parse_args()
 
     # Load config file first, then override with any CLI args that were explicitly set
