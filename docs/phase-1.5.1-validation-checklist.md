@@ -28,11 +28,11 @@ uv run python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}'); pri
 
 ### 2. Data
 
-Data lives in `~/.cache/nanochat/base_data_climbmix/` by default (override with `NANOCHAT_BASE_DIR` env var or `--base-dir` flag once 1.5.0 lands).
+Data lives in `$NANOCHAT_BASE_DIR/data/climbmix/` (default: `~/.cache/nanochat/data/climbmix/`). See [data-layout.md](data-layout.md) for full directory structure.
 
 ```bash
 # Check if data exists
-ls ~/.cache/nanochat/base_data_climbmix/shard_00000.parquet 2>/dev/null || echo "❌ No data"
+ls ~/.cache/nanochat/data/climbmix/shard_00000.parquet 2>/dev/null || echo "❌ No data"
 
 # Download (8 shards minimum for d12 quick test)
 uv run python -m nanochat.data.dataset -n 8
@@ -44,10 +44,10 @@ Filenames are `shard_NNNNN.parquet`. Last shard is always validation.
 
 ```bash
 # Check if tokenizer exists
-ls ~/.cache/nanochat/tok32768.model 2>/dev/null || echo "❌ No tokenizer"
+ls ~/.cache/nanochat/tokenizer/tokenizer.pkl 2>/dev/null || echo "❌ No tokenizer"
 
 # Train if missing
-uv run python -m nanochat.scripts.tok_train --max-chars=2000000000 --vocab-size=32768
+uv run python -m nanochat.scripts.tok_train
 ```
 
 ### 4. Code
@@ -61,7 +61,7 @@ uv run python -m nanochat.scripts.base_train --help | grep compression
 
 # Run tests
 uv run pytest tests/ -v
-# Expected: 45 passed, 10 skipped
+# Expected: 56 passed, 10 skipped
 ```
 
 ## Validation Experiments

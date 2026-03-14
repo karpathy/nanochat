@@ -27,8 +27,8 @@ import torch.distributed as dist
 import wandb
 
 from nanochat.common import (
-    COMPUTE_DTYPE,
-    COMPUTE_DTYPE_REASON,
+    get_compute_dtype,
+    get_compute_dtype_reason,
     DummyWandb,
     autodetect_device_type,
     compute_cleanup,
@@ -171,7 +171,7 @@ if device_type == "cuda":
     print0(f"GPU: {gpu_device_name} | Peak FLOPS (BF16): {gpu_peak_flops:.2e}")
 else:
     gpu_peak_flops = float("inf")  # MFU not meaningful for CPU/MPS
-print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
+print0(f"COMPUTE_DTYPE: {get_compute_dtype()} ({get_compute_dtype_reason()})")
 
 # wandb logging init
 use_dummy_wandb = config.run == "dummy" or not master_process
@@ -184,9 +184,9 @@ if using_fa3:
     print0("✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.")
 else:
     print0("!" * 80)
-    if HAS_FA3 and COMPUTE_DTYPE != torch.bfloat16:
+    if HAS_FA3 and get_compute_dtype() != torch.bfloat16:
         print0(
-            f"WARNING: Flash Attention 3 only supports bf16, but COMPUTE_DTYPE={COMPUTE_DTYPE}. Using PyTorch SDPA fallback"
+            f"WARNING: Flash Attention 3 only supports bf16, but COMPUTE_DTYPE={get_compute_dtype()}. Using PyTorch SDPA fallback"
         )
     else:
         print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback")
@@ -243,7 +243,7 @@ model.init_weights()  # 3) All tensors get initialized
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 base_dir = config.base_dir if config.base_dir else get_base_dir()
 output_dirname = config.model_tag if config.model_tag else f"d{config.depth}"  # e.g. d12
-checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
+checkpoint_dir = os.path.join(base_dir, "checkpoints", "base", output_dirname)
 os.makedirs(checkpoint_dir, exist_ok=True)
 config.save(Path(checkpoint_dir) / "config.toml")
 resuming = config.resume_from_step != -1
@@ -425,7 +425,7 @@ if resuming:
 
 # -----------------------------------------------------------------------------
 # GradScaler for fp16 training (bf16/fp32 don't need it — bf16 has the same exponent range as fp32)
-scaler = torch.amp.GradScaler() if COMPUTE_DTYPE == torch.float16 else None
+scaler = torch.amp.GradScaler() if get_compute_dtype() == torch.float16 else None
 if scaler is not None:
     print0("GradScaler enabled for fp16 training")
 
@@ -679,7 +679,7 @@ def train_base_model(
         for micro_step in range(grad_accum_steps):
             # Forward pass - capture logits if tracking compression
             if compression_tracker and step % config.compression_log_every == 0 and micro_step == 0:
-                with torch.amp.autocast(device_type=device_type, dtype=COMPUTE_DTYPE):
+                with torch.amp.autocast(device_type=device_type, dtype=get_compute_dtype()):
                     logits_for_compression = model(x)
                 loss = torch.nn.functional.cross_entropy(
                     logits_for_compression.view(-1, logits_for_compression.size(-1)),

@@ -28,8 +28,8 @@ from tasks.smoltalk import SmolTalk
 from tasks.spellingbee import SimpleSpelling, SpellingBee
 
 from nanochat.common import (
-    COMPUTE_DTYPE,
-    COMPUTE_DTYPE_REASON,
+    get_compute_dtype,
+    get_compute_dtype_reason,
     DummyWandb,
     autodetect_device_type,
     compute_cleanup,
@@ -119,7 +119,7 @@ user_config = vars(args).copy()
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0
-print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
+print0(f"COMPUTE_DTYPE: {get_compute_dtype()} ({get_compute_dtype_reason()})")
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 if device_type == "cuda":
@@ -198,7 +198,7 @@ if args.load_optimizer:
         print0("WARNING: optimizer checkpoint not found, starting with fresh optimizer (slightly worse)")
 
 # GradScaler for fp16 training (bf16/fp32 don't need it)
-scaler = torch.amp.GradScaler() if COMPUTE_DTYPE == torch.float16 else None
+scaler = torch.amp.GradScaler() if get_compute_dtype() == torch.float16 else None
 if scaler is not None:
     print0("GradScaler enabled for fp16 training")
 
@@ -208,7 +208,7 @@ for group in optimizer.param_groups:
     group["initial_lr"] = group["lr"]
 
 # SFT data mixture and DataLoader
-identity_conversations_filepath = os.path.join(base_dir, "identity_conversations.jsonl")
+identity_conversations_filepath = os.path.join(base_dir, "identity.jsonl")
 train_tasks = [
     SmolTalk(split="train"),  # 460K rows of general conversations
     CustomJSON(filepath=identity_conversations_filepath),  # 1000 rows of synthetic identity conversations
@@ -466,7 +466,7 @@ while True:
     # save checkpoint at the end of the run (all ranks participate so each saves its optimizer shard)
     if last_step:
         output_dirname = args.model_tag if args.model_tag else f"d{depth}"  # e.g. d12
-        checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
+        checkpoint_dir = os.path.join(base_dir, "checkpoints", "sft", output_dirname)
         save_checkpoint(
             checkpoint_dir,
             step,

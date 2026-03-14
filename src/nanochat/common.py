@@ -37,7 +37,26 @@ def _detect_compute_dtype():
     return torch.float32, "auto-detected: no CUDA (CPU/MPS)"
 
 
-COMPUTE_DTYPE, COMPUTE_DTYPE_REASON = _detect_compute_dtype()
+_COMPUTE_DTYPE = None
+_COMPUTE_DTYPE_REASON = None
+
+
+def _ensure_compute_dtype():
+    global _COMPUTE_DTYPE, _COMPUTE_DTYPE_REASON
+    if _COMPUTE_DTYPE is None:
+        _COMPUTE_DTYPE, _COMPUTE_DTYPE_REASON = _detect_compute_dtype()
+
+
+def get_compute_dtype():
+    _ensure_compute_dtype()
+    return _COMPUTE_DTYPE
+
+
+def get_compute_dtype_reason():
+    _ensure_compute_dtype()
+    return _COMPUTE_DTYPE_REASON
+
+
 
 
 class ColoredFormatter(logging.Formatter):
@@ -69,13 +88,19 @@ class ColoredFormatter(logging.Formatter):
         return message
 
 
+_logging_initialized = False
+
+
 def setup_default_logging():
+    global _logging_initialized
+    if _logging_initialized:
+        return
     handler = logging.StreamHandler()
     handler.setFormatter(ColoredFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=[handler])
+    _logging_initialized = True
 
 
-setup_default_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -192,6 +217,7 @@ def autodetect_device_type() -> str:
 
 def compute_init(device_type: str = "cuda") -> Tuple[bool, int, int, int, torch.device]:
     """Basic initialization that we keep doing over and over, so make common."""
+    setup_default_logging()
 
     assert device_type in ["cuda", "mps", "cpu"], "Invalid device type atm"
     if device_type == "cuda":

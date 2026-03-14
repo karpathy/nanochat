@@ -72,7 +72,7 @@ generates a different graph. Numerics are bitwise identical in eager mode.
 import torch
 import torch.nn as nn
 
-from nanochat.common import COMPUTE_DTYPE
+from nanochat.common import get_compute_dtype
 
 # Avoid division by zero when computing scale from an all-zeros tensor
 EPS = 1e-12
@@ -202,7 +202,7 @@ class Float8Linear(nn.Linear):
     def forward(self, input):
         # Cast input to COMPUTE_DTYPE (typically bf16) since _scaled_mm expects
         # reduced precision input, and we no longer rely on autocast to do this.
-        input = input.to(COMPUTE_DTYPE)
+        input = input.to(get_compute_dtype())
         # _scaled_mm only works on 2D tensors, so flatten batch dimensions
         orig_shape = input.shape
         input_2d = input.reshape(-1, orig_shape[-1])

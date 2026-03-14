@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from nanochat.common import COMPUTE_DTYPE, get_dist_info, print0
+from nanochat.common import get_compute_dtype, get_dist_info, print0
 from nanochat.models.attention import CausalSelfAttention, Linear, has_ve, norm
 from nanochat.models.config import GPTConfig
 from nanochat.models.mlp import MLP
@@ -135,10 +135,10 @@ class GPT(nn.Module):
         self.cos, self.sin = cos, sin
 
         # Cast embeddings to COMPUTE_DTYPE (except fp16 which needs fp32)
-        if COMPUTE_DTYPE != torch.float16:
-            self.transformer.wte.to(dtype=COMPUTE_DTYPE)
+        if get_compute_dtype() != torch.float16:
+            self.transformer.wte.to(dtype=get_compute_dtype())
             for ve in self.value_embeds.values():
-                ve.to(dtype=COMPUTE_DTYPE)
+                ve.to(dtype=get_compute_dtype())
 
     def _precompute_rotary_embeddings(
         self,
@@ -156,7 +156,7 @@ class GPT(nn.Module):
         t = torch.arange(seq_len, dtype=torch.float32, device=device)
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.to(COMPUTE_DTYPE), sin.to(COMPUTE_DTYPE)
+        cos, sin = cos.to(get_compute_dtype()), sin.to(get_compute_dtype())
         cos, sin = cos[None, :, None, :], sin[None, :, None, :]  # add batch and head dims
         return cos, sin
 
@@ -332,7 +332,7 @@ class GPT(nn.Module):
             f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         )
         assert idx.device == self.cos.device, "Rotary embeddings and idx are on different devices"
-        assert self.cos.dtype == COMPUTE_DTYPE, f"Rotary embeddings must be in {COMPUTE_DTYPE}, got {self.cos.dtype}"
+        assert self.cos.dtype == get_compute_dtype(), f"Rotary embeddings must be in {get_compute_dtype()}, got {self.cos.dtype}"
 
         # Offset rotary embeddings if using KV cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
@@ -340,7 +340,7 @@ class GPT(nn.Module):
 
         # Forward the trunk of the Transformer
         x = self.transformer.wte(idx)
-        x = x.to(COMPUTE_DTYPE)
+        x = x.to(get_compute_dtype())
         x = norm(x)
         x0 = x  # save initial normalized embedding for x0 residual
 

@@ -105,7 +105,7 @@ EVAL_BUNDLE_URL = "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundl
 def place_eval_bundle(file_path):
     """Unzip eval_bundle.zip and place it in the base directory."""
     base_dir = get_base_dir()
-    eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
+    eval_bundle_dir = os.path.join(base_dir, "data", "eval_tasks")
     with tempfile.TemporaryDirectory() as tmpdir:
         with zipfile.ZipFile(file_path, "r") as zip_ref:
             zip_ref.extractall(tmpdir)
@@ -120,8 +120,7 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
     Returns dict with results, centered_results, and core_metric.
     """
     base_dir = get_base_dir()
-    eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
-    # Download the eval bundle if needed
+    eval_bundle_dir = os.path.join(base_dir, "data", "eval_tasks")
     if not os.path.exists(eval_bundle_dir):
         download_file_with_lock(EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=place_eval_bundle)
 
@@ -347,7 +346,7 @@ def main():
         # Write CSV output
         if ddp_rank == 0:
             base_dir = get_base_dir()
-            output_csv_path = os.path.join(base_dir, "base_eval", f"{model_slug}.csv")
+            output_csv_path = os.path.join(base_dir, "eval", f"{model_slug}.csv")
             os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
             with open(output_csv_path, "w", encoding="utf-8", newline="") as f:
                 f.write(f"{'Task':<35}, {'Accuracy':<10}, {'Centered':<10}\n")

@@ -9,7 +9,7 @@ import time
 
 import torch
 
-from nanochat.common import get_base_dir
+from nanochat.paths import tokenizer_dir as get_tokenizer_dir
 from nanochat.data.dataset import parquets_iter_batched
 from nanochat.data.tokenizer import RustBPETokenizer
 from nanochat.report import get_report
@@ -62,9 +62,8 @@ print(f"Training time: {train_time:.2f}s")
 
 # -----------------------------------------------------------------------------
 # Save the tokenizer to disk
-base_dir = get_base_dir()
-tokenizer_dir = os.path.join(base_dir, "tokenizer")
-tokenizer.save(tokenizer_dir)
+tok_dir = get_tokenizer_dir()
+tokenizer.save(tok_dir)
 
 # -----------------------------------------------------------------------------
 # Quick inline sanity check
@@ -94,7 +93,7 @@ for token_id in range(vocab_size):
         id_bytes = len(token_str.encode("utf-8"))  # number of bytes that make up this token
         token_bytes.append(id_bytes)
 token_bytes = torch.tensor(token_bytes, dtype=torch.int32, device="cpu")
-token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
+token_bytes_path = os.path.join(tok_dir, "token_bytes.pt")
 with open(token_bytes_path, "wb") as f:
     torch.save(token_bytes, f)
 print(f"Saved token_bytes to {token_bytes_path}")

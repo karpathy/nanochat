@@ -59,9 +59,9 @@ def _resolve_use_fa3():
         return False
     if HAS_FA3:
         # FA3 Hopper kernels only support bf16 and fp8; fp16/fp32 must use SDPA fallback
-        from nanochat.common import COMPUTE_DTYPE
+        from nanochat.common import get_compute_dtype
 
-        if COMPUTE_DTYPE == torch.bfloat16:
+        if get_compute_dtype() == torch.bfloat16:
             return True
         return False
     return False
