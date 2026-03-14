@@ -23,7 +23,7 @@ import requests
 BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
 MAX_SHARD = 6542  # the last datashard is shard_06542.parquet
 index_to_filename = lambda index: f"shard_{index:05d}.parquet"  # format of the filenames
-from nanochat.paths import data_dir as _data_dir, legacy_data_dir as _legacy_data_dir
+from nanochat.common.paths import data_dir as _data_dir, legacy_data_dir as _legacy_data_dir
 
 
 def _get_data_dir():

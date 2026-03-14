@@ -7,7 +7,7 @@ constructing os.path.join(base_dir, ...) inline.
 
 import os
 
-from nanochat.common import get_base_dir
+from nanochat.common.io import get_base_dir
 
 
 def _dir(base: str, *parts: str) -> str:

@@ -9,9 +9,9 @@ import time
 
 import torch
 
+from nanochat.common.paths import tokenizer_dir as get_tokenizer_dir
 from nanochat.data.dataset import parquets_iter_batched
 from nanochat.data.tokenizer import RustBPETokenizer
-from nanochat.paths import tokenizer_dir as get_tokenizer_dir
 from nanochat.report import get_report
 
 

@@ -1,7 +1,7 @@
 """Test paths module."""
 
 import os
-from nanochat.paths import (
+from nanochat.common.paths import (
     checkpoint_dir,
     checkpoints_dir,
     data_dir,

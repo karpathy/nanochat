@@ -10,10 +10,10 @@ import re
 
 import torch
 
+from nanochat.common.paths import checkpoints_dir as _checkpoints_dir
 from nanochat.data.tokenizer import get_tokenizer
 from nanochat.models.config import GPTConfig
 from nanochat.models.gpt import GPT
-from nanochat.paths import checkpoints_dir as _checkpoints_dir
 
 logger = logging.getLogger(__name__)
 

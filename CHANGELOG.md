@@ -9,6 +9,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 - Parameter type annotations across all 29 files (323→0 `reportMissingParameterType` under pyright strict mode)
 - `docs/archive/type-annotations-pyright-compliance.md`
+- `docs/archive/refactor-common-package.md`
+
+### Changed
+- Refactored monolithic `common.py` into `common/` package with 7 focused modules (dtype, logging, distributed, io, hardware, wandb, paths)
+- Absorbed top-level `paths.py` into `common/paths.py`
+- `__init__.py` re-exports all public names — 16 consumer files required zero import changes
+- Updated 5 files importing from `nanochat.paths` → `nanochat.common.paths`
 
 ### Changed
 - `checkpoint.py` now uses `paths.checkpoints_dir()` instead of manual `get_base_dir()` + `os.path.join()` in `load_model()` and `load_optimizer_state()`

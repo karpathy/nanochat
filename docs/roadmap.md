@@ -28,6 +28,7 @@ last_updated: "2026-03-15"
 | [Phase 1.5.0 — Data Layout & Config](archive/phase-1.5.0-data-layout-config.md) | 2026-03-14 | Config system, centralized paths, hierarchical dirs, Python 3.13 |
 | [Phase 1.5.0.1 — Script Entry-Points](archive/phase-1.5.0.1-script-entry-points.md) | 2026-03-15 | Wrapped all scripts in main(), importable without side effects |
 | [Phase 1.5.0.2 — Code Review & Cleanup](archive/phase-1.5.0.2-code-review-cleanup.md) | 2026-03-15 | Full code review, 6 fixes, lazy USE_FA3, paths wiring, all 9 scripts wrapped |
+| [Refactor common.py into common/ Package](archive/refactor-common-package.md) | 2026-03-15 | Split monolithic common.py into 7 focused modules, absorbed paths.py, backward-compatible |
 | [Type Annotations & Pyright Compliance](archive/type-annotations-pyright-compliance.md) | 2026-03-15 | Pyright strict mode, 17 suppression rules, 323→0 reportMissingParameterType across 29 files |
 
 ## Active Phase
@@ -76,6 +77,8 @@ Combine transformer efficiency with SP Theory advantages. Also the fallback path
 ## Improvements
 
 ### Type Annotations & Pyright Compliance — ✅ [Archived](archive/type-annotations-pyright-compliance.md)
+
+### Refactor `common.py` into `common/` Package — ✅ [Archived](archive/refactor-common-package.md)
 
 ### Remaining Pyright Errors (128)
 After completing the `reportMissingParameterType` retrofit, 128 errors remain across these categories:

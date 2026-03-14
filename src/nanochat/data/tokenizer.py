@@ -419,7 +419,7 @@ class RustBPETokenizer:
 
 
 def get_tokenizer() -> RustBPETokenizer:
-    from nanochat.paths import tokenizer_dir
+    from nanochat.common.paths import tokenizer_dir
 
     return RustBPETokenizer.from_directory(tokenizer_dir())
 
@@ -427,7 +427,7 @@ def get_tokenizer() -> RustBPETokenizer:
 def get_token_bytes(device: str = "cpu"):
     import torch
 
-    from nanochat.paths import tokenizer_dir
+    from nanochat.common.paths import tokenizer_dir
 
     tok_dir = tokenizer_dir()
     token_bytes_path = os.path.join(tok_dir, "token_bytes.pt")
