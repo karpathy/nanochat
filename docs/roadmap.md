@@ -31,6 +31,7 @@ last_updated: "2026-03-15"
 | [Refactor common.py into common/ Package](archive/refactor-common-package.md) | 2026-03-15 | Split monolithic common.py into 7 focused modules, absorbed paths.py, backward-compatible |
 | [Type Annotations & Pyright Compliance](archive/type-annotations-pyright-compliance.md) | 2026-03-15 | Pyright strict mode, 17 suppression rules, 323→0 reportMissingParameterType across 29 files |
 | [Apple Silicon (MPS) Documentation](archive/apple-silicon-mps-documentation.md) | 2026-03-15 | Rewrote MPS guide with accurate device detection, dtype, limitations, and batch size guidelines |
+| [MPS Backend Improvements](archive/mps-backend-improvements.md) | 2026-03-15 | fp16 dtype, torch.mps.synchronize/memory, empty_cache, get_device_sync refactor |
 
 ## Active Phase
 
@@ -104,20 +105,7 @@ After completing the `reportMissingParameterType` retrofit, 128 errors remain ac
 - [ ] Fix `reportPossiblyUnboundVariable` (initialize before conditional branches)
 - [ ] Suppress or fix remaining minor categories
 
-### MPS Backend Improvements
-PyTorch 2.9.1 on M3 Max supports float16/bfloat16 autocast and MPS-specific APIs that the codebase doesn't use. Three changes to improve MPS training performance and observability.
-
-**Measured on M3 Max (PyTorch 2.9.1)**:
-- fp16/bf16 matmuls ~10-30% faster than fp32
-- SDPA fp16 ~25% faster than fp32
-- `torch.mps.synchronize()` and `torch.mps.empty_cache()` both available
-
-**Changes**:
-- [x] **dtype.py**: Detect MPS and return `torch.float16` instead of `torch.float32` — halves memory, enables GradScaler (already wired for fp16), ~10-30% speed gain
-- [x] **base_train.py / chat_sft.py**: Use `torch.mps.synchronize()` for accurate step timing and `torch.mps.current_allocated_memory()` for memory reporting (currently no-ops on MPS)
-- [x] **base_train.py / chat_sft.py**: Call `torch.mps.empty_cache()` after eval steps to reclaim memory during long runs
-
-**Files**: `common/dtype.py`, `scripts/base_train.py`, `scripts/chat_sft.py`, `evaluation/engine.py`, `docs/m3-max-guide.md`, `tests/test_integration/test_workflows.py`
+### MPS Backend Improvements — ✅ [Archived](archive/mps-backend-improvements.md)
 
 ### Apple Silicon (MPS) Documentation — ✅ [Archived](archive/apple-silicon-mps-documentation.md)
 
