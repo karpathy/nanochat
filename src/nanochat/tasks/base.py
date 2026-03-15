@@ -8,8 +8,7 @@ Example tasks: MMLU, ARC-Easy, ARC-Challenge, GSM8K, HumanEval, SmolTalk.
 import random
 from typing import Any, List, Mapping, Optional, Tuple
 
-from nanochat.tasks.types import Conversation  # noqa: F401  (re-exported for callers)
-
+from nanochat.tasks.types import Conversation  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 class Task:
     """

@@ -283,7 +283,7 @@ if __name__ == "__main__":
         print(cast(list[dict[str, object]], ex["messages"])[0]["content"])
         print("-" * 100)
         # Assistant content is now a list of parts
-        assistant_parts = cast(list[dict[str, object]], ex["messages"])[1]["content"]
+        assistant_parts = cast(list[dict[str, object]], cast(list[dict[str, object]], ex["messages"])[1]["content"])
         for part in assistant_parts:
             if part["type"] == "text":
                 print(part["text"], end="")

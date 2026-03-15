@@ -164,7 +164,7 @@ def flash_attn_with_kvcache(
 
     # SDPA fallback: manually manage KV cache
     _, T_new, _, _ = q.shape
-    pos = cache_seqlens[0].item()  # assume uniform position across batch
+    pos = cache_seqlens[0].item() if cache_seqlens is not None else 0  # assume uniform position across batch
 
     # Insert new k, v into cache (in-place, matching FA3 behavior)
     if k is not None and v is not None:

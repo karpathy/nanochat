@@ -7,6 +7,7 @@ TODOs:
 """
 
 import random
+from typing import cast
 
 import torch
 import torch.distributed as dist
@@ -27,7 +28,7 @@ def render_prompts_mc(item: dict[str, object], continuation_delimiter: str, fews
     template = Template(template_str)
     fewshot_examples = fewshot_examples or []
     context = {"fewshot_examples": fewshot_examples, "continuation_delimiter": continuation_delimiter, "item": item}
-    prompts = [template.render(choice=choice, **context) for choice in item["choices"]]
+    prompts = [template.render(choice=choice, **context) for choice in cast(list[object], item["choices"])]
     return prompts
 
 
@@ -42,7 +43,7 @@ def render_prompts_schema(item: dict[str, object], continuation_delimiter: str, 
     template = Template(template_str)
     fewshot_examples = fewshot_examples or []
     context = {"fewshot_examples": fewshot_examples, "continuation_delimiter": continuation_delimiter, "item": item}
-    prompts = [template.render(context=context_option, **context) for context_option in item["context_options"]]
+    prompts = [template.render(context=context_option, **context) for context_option in cast(list[object], item["context_options"])]
     return prompts
 
 

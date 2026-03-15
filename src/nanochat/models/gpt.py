@@ -108,7 +108,7 @@ class GPT(nn.Module):
         # Transformer blocks: uniform init with bound = sqrt(3) * std
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5
-        for block in self.transformer.h:
+        for block in cast(nn.ModuleList, self.transformer.h):
             torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
@@ -125,7 +125,7 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(ve.weight, -s, s)
 
         # Gate weights
-        for block in self.transformer.h:
+        for block in cast(nn.ModuleList, self.transformer.h):
             if block.attn.ve_gate is not None:
                 torch.nn.init.uniform_(block.attn.ve_gate.weight, 0.0, 0.02)
 
@@ -149,7 +149,7 @@ class GPT(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Precompute rotary embeddings (cos, sin) for all positions."""
         if device is None:
-            device = self.transformer.wte.weight.device
+            device = cast(torch.device, self.transformer.wte.weight.device)
 
         channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
         inv_freq = 1.0 / (base ** (channel_range / head_dim))

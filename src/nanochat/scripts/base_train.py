@@ -21,6 +21,7 @@ import math
 import time
 from contextlib import contextmanager
 from dataclasses import asdict
+from typing import cast
 from pathlib import Path
 
 import torch
@@ -439,7 +440,10 @@ def main():
 
     # -----------------------------------------------------------------------------
     # Initialize the DataLoaders for train/val
-    dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
+    dataloader_resume_state_dict = None
+    if resuming:
+        assert meta_data is not None
+        dataloader_resume_state_dict = meta_data["dataloader_state_dict"]
     train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
         tokenizer,
         config.device_batch_size,
@@ -524,8 +528,9 @@ def main():
             total_training_time = 0  # total wall-clock time of training
             dataloader_state_dict = dataloader_resume_state_dict
         else:
+            assert meta_data is not None
             step = meta_data["step"]
-            loop_state = meta_data["loop_state"]
+            loop_state = cast(dict[str, object], meta_data["loop_state"])
             val_bpb = meta_data["val_bpb"]
             min_val_bpb = loop_state["min_val_bpb"]
             smooth_train_loss = loop_state["smooth_train_loss"]
