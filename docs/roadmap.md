@@ -33,6 +33,7 @@ last_updated: "2026-03-16"
 | [Apple Silicon (MPS) Documentation](archive/apple-silicon-mps-documentation.md)         | 2026-03-15 | Rewrote MPS guide with accurate device detection, dtype, limitations, and batch size guidelines |
 | [MPS Backend Improvements](archive/mps-backend-improvements.md)                         | 2026-03-15 | fp16 dtype, torch.mps.synchronize/memory, empty_cache, get_device_sync refactor                 |
 | [Pyright Strict Compliance](archive/pyright-strict-compliance.md)                       | 2026-03-16 | 128→0 pyright errors across 10 categories under strict mode                                     |
+| [Phase 1.5.1 Bugfixes & Tooling](archive/phase-1.5.1-bugfixes-tooling.md)               | 2026-03-15 | --config/--base-dir plumbing, argparse SUPPRESS fix, compression console output, LocalWandb     |
 
 ## Active Phase
 
@@ -85,8 +86,4 @@ None currently.
 
 ### `nanochat.data.dataset` and `tok_train` — `--config` / `--base-dir` flag support
 
-`nanochat.data.dataset` currently accepts `--base-dir` to override `NANOCHAT_BASE_DIR`, but does not support `--config` like the training scripts do. `nanochat.scripts.tok_train` has neither flag. Add `--base-dir` to `tok_train` and `--config` to both so the full pre-flight pipeline can be driven from a single TOML config file, consistent with the training scripts.
-
-### `base_train` — CLI args must not override TOML config with default values
-
-When `--config` is used, argparse default values were silently overwriting TOML config fields (e.g. `depth=20` default clobbering `depth=12` from TOML). Fixed by re-parsing with `argparse.SUPPRESS` defaults so only explicitly passed CLI args override the config.
+`--base-dir` has been added to both scripts. `--config` support (load full TOML config) is still missing from both — add it so the full pre-flight pipeline can be driven from a single TOML file, consistent with `base_train`.
