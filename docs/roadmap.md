@@ -87,3 +87,46 @@ None currently.
 ### Unified CLI with consistent `--config` / `--base-dir` support
 
 Only `base_train` has full `--config` + CLI override support. 8 of 10 entry points lack `--config`, and 2 lack `--base-dir`. See [unified-cli.md](unified-cli.md) for the full design: a single `nanochat` CLI with subcommands, global `--config`/`--base-dir` flags, and a shared config/override helper.
+
+### CLI flag audit and wandb consolidation
+
+Review and standardize flags across all 3 training entry points (`base_train`, `chat_sft`, `chat_rl`):
+
+**Current inconsistencies**:
+- `--run` is used in all 3 to name the wandb run, with `"dummy"` as the magic value to disable wandb. This is implicit and unintuitive.
+- `chat_sft` and `chat_rl` use `DummyWandb` when `run=="dummy"` but don't use `LocalWandb` like `base_train` does — offline runs silently drop all metrics.
+- `WANDB_MODE=disabled` env var is only checked in `base_train`, not in `chat_sft` or `chat_rl`.
+- wandb project names are hardcoded and inconsistent: `"nanochat"`, `"nanochat-rl"`, `"nanochat-sft"`.
+
+**Proposed changes**:
+- Replace `--run="dummy"` magic value with an explicit `--wandb` flag: `online` (default) / `local` / `disabled`
+- Add a `wandb_project` field to `TrainingConfig` (default: `"nanochat"`)
+- Centralize wandb init logic into a shared helper in `nanochat/common/wandb.py`
+- Apply `LocalWandb` consistently across all training scripts when `--wandb=local` or `WANDB_MODE=disabled`
+- Add `--wandb` and `wandb_project` to TOML config so offline runs can be configured without env vars
+
+### Full CLI flag audit across all entry points
+
+A full review of all flags across all 10 entry points to identify inconsistencies, missing flags, and opportunities for shared config. Current state:
+
+| Flag | `base_train` | `chat_sft` | `chat_rl` | `base_eval` | `chat_eval` | `tok_train` | `tok_eval` | `chat_cli` | `chat_web` | `data download` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `--config` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `--base-dir` | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| `--device-type` | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `--run` (wandb) | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `--model-tag` | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| `--step` | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| `--device-batch-size` | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `--eval-every` | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `--save-every` | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| short flags (`-g`, `-s`, `-t`) | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
+
+**Key issues**:
+- `--base-dir` and `--config` missing from 7+ entry points
+- `--device-type` missing from inference/eval scripts
+- `--save-every` inconsistent between `chat_sft` and `chat_rl`
+- Short flags (`-g`, `-s`, `-t`) only on interactive scripts — inconsistent style
+- `--source` (sft|rl) used in eval/chat scripts but named differently from `--model-tag`
+
+This audit should be done as part of the unified CLI work.
