@@ -84,6 +84,6 @@ None currently.
 
 ## Improvements
 
-### `nanochat.data.dataset` and `tok_train` — `--config` / `--base-dir` flag support
+### Unified CLI with consistent `--config` / `--base-dir` support
 
-`--base-dir` has been added to both scripts. `--config` support (load full TOML config) is still missing from both — add it so the full pre-flight pipeline can be driven from a single TOML file, consistent with `base_train`.
+Only `base_train` has full `--config` + CLI override support. 8 of 10 entry points lack `--config`, and 2 lack `--base-dir`. See [unified-cli.md](unified-cli.md) for the full design: a single `nanochat` CLI with subcommands, global `--config`/`--base-dir` flags, and a shared config/override helper.
