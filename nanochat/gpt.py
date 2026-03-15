@@ -254,6 +254,45 @@ class MoEMLP(nn.Module):
                 persistent=False,
             )
 
+    def _init_buffers(self):
+        """Reinitialize non-persistent buffers after to_empty from meta device."""
+        device = self.w1.device
+
+        self.expert_size_blocks.copy_(torch.tensor(
+            [s // self.block_size for s in self.expert_widths], dtype=torch.int32, device=device
+        ))
+        self.expert_block_offsets.copy_(torch.tensor(
+            [o // self.block_size for o in self.expert_offsets], dtype=torch.int32, device=device
+        ))
+
+        mean_expert_width = sum(self.expert_widths) / self.num_experts
+        self.expert_widths_normalized.copy_(torch.tensor(
+            [w / mean_expert_width for w in self.expert_widths], dtype=torch.float32, device=device
+        ))
+
+        if self._num_valid_groups > 0:
+            expert_to_group = []
+            valid_group_idx = 0
+            for count, _ in self.config.expert_sizes:
+                for _ in range(count):
+                    expert_to_group.append(valid_group_idx if count > 1 else -1)
+                if count > 1:
+                    valid_group_idx += 1
+
+            group_membership = torch.zeros(
+                self.num_experts, self._num_valid_groups, device=device
+            )
+            for i, g in enumerate(expert_to_group):
+                if g >= 0:
+                    group_membership[i, g] = 1.0
+            self.group_membership.copy_(group_membership)
+
+            group_sizes = [count for count, _ in self.config.expert_sizes if count > 1]
+            self.group_sizes.copy_(torch.tensor(group_sizes, dtype=torch.float32, device=device))
+
+            valid_indices = [i for i, g in enumerate(expert_to_group) if g >= 0]
+            self.valid_expert_indices.copy_(torch.tensor(valid_indices, dtype=torch.long, device=device))
+
     # Disable torch.compile tracing for MoE - triton kernels (stk.ops.row_indices etc)
     # can't handle FakeTensors used during compile tracing
     @torch.compiler.disable
@@ -599,9 +638,19 @@ class GPT(nn.Module):
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
-        # Cast the embeddings from fp32 to compute dtype: optim can tolerate it and it saves memory
+        # Reinitialize MoE buffers lost during meta device -> to_empty
+        for block in self.transformer.h:
+            if hasattr(block.mlp, "_init_buffers"):
+                block.mlp._init_buffers()
+        # Cast all floating-point params to compute dtype (bf16 on Ampere+)
+        # Integer buffers (expert_block_counts etc.) are unaffected
         if self.transformer.wte.weight.device.type == "cuda":
-            self.transformer.wte.to(dtype=COMPUTE_DTYPE)
+            self.to(dtype=COMPUTE_DTYPE)
+            # Keep expert_bias in float32 — bias_update_speed (0.001) is below
+            # bf16's ULP at typical bias magnitudes, causing updates to vanish
+            for block in self.transformer.h:
+                if hasattr(block.mlp, "expert_bias"):
+                    block.mlp.expert_bias.data = block.mlp.expert_bias.data.float()
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):

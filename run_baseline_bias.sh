@@ -35,12 +35,12 @@ python -m scripts.tok_train --max_chars=500000000
 
 torchrun --standalone --nproc_per_node=3 -m scripts.base_train -- \
     --run=uniform-baseline-64x384-top4 \
-    --depth=12 --model_dim=768 --num_heads=6 --max_seq_len=1024 \
-    --expert_sizes='[[64,384]]' --num_active_experts=4 \
-    --use_bias_balancing \
-    --bias_update_speed=0.001 \
-    --load_balance_loss_weight=0.001 \
-    --router_z_loss_weight=0.001 \
-    --compute_loss_weight=0.0 \
-    --device_batch_size=10 --total_batch_size=552960 --num_iterations=4521 \
-    --eval_every=250 --core_metric_every=-1 --sample_every=2000 --save_every=1000
+    --depth=12 --model-dim=768 --num-heads=6 --max-seq-len=1024 \
+    --expert-sizes='[[64,384]]' --num-active-experts=4 \
+    --use-bias-balancing \
+    --bias-update-speed=0.001 \
+    --load-balance-loss-weight=0.001 \
+    --router-z-loss-weight=0.001 \
+    --compute-loss-weight=0.0 \
+    --device-batch-size=10 --total-batch-size=552960 --num-iterations=4521 \
+    --eval-every=250 --core-metric-every=-1 --sample-every=2000 --save-every=1000
