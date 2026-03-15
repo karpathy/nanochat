@@ -226,7 +226,7 @@ class RustBPETokenizer:
     def get_vocab_size(self) -> int:
         return self.enc.n_vocab
 
-    def get_special_tokens(self) -> set:
+    def get_special_tokens(self) -> set[str]:
         return self.enc.special_tokens_set
 
     def id_to_token(self, id: int) -> str:

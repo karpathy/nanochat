@@ -542,7 +542,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
         world_size = dist.get_world_size()
 
         # Phase 1: launch all async reduce ops
-        reduce_infos: list[dict] = []
+        reduce_infos: list[dict[str, object]] = []
         for group in self.param_groups:
             if group["kind"] == "adamw":
                 reduce_infos.append(self._reduce_adamw(group, world_size))
@@ -552,7 +552,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
                 raise ValueError(f"Unknown optimizer kind: {group['kind']}")
 
         # Phase 2: wait for reduces, compute updates, launch gathers
-        gather_list: list[dict] = []
+        gather_list: list[dict[str, object]] = []
         for group, info in zip(self.param_groups, reduce_infos):
             if group["kind"] == "adamw":
                 self._compute_adamw(group, info, gather_list, rank, world_size)

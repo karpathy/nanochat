@@ -105,7 +105,7 @@ class WorkerPool:
         self.device_type = device_type
         self.num_gpus = num_gpus
         self.workers: List[Worker] = []
-        self.available_workers: asyncio.Queue = asyncio.Queue()
+        self.available_workers: asyncio.Queue[Worker] = asyncio.Queue()
 
     async def initialize(self, source: str, model_tag: Optional[str] = None, step: Optional[int] = None):
         """Load model on each GPU."""

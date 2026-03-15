@@ -252,8 +252,8 @@ def main():
     checkpoint_dir = os.path.join(base_dir, "checkpoints", "base", output_dirname)
     os.makedirs(checkpoint_dir, exist_ok=True)
     config.save(Path(checkpoint_dir) / "config.toml")
-    optimizer_data: dict | None = None
-    meta_data: dict | None = None
+    optimizer_data: dict[str, object] | None = None
+    meta_data: dict[str, object] | None = None
     resuming = config.resume_from_step != -1
     if resuming:
         print0(f"Resuming optimization from step {config.resume_from_step}")
