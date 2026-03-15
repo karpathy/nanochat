@@ -24,7 +24,7 @@ from typing import cast
 import torch
 import torch.distributed as dist
 import wandb
-from tasks.gsm8k import GSM8K
+from nanochat.tasks.gsm8k import GSM8K
 
 from nanochat.common import (
     DummyWandb,

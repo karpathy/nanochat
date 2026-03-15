@@ -20,12 +20,12 @@ import time
 import torch
 import torch.distributed as dist
 import wandb
-from tasks.common import TaskMixture
-from tasks.customjson import CustomJSON
-from tasks.gsm8k import GSM8K
-from tasks.mmlu import MMLU
-from tasks.smoltalk import SmolTalk
-from tasks.spellingbee import SimpleSpelling, SpellingBee
+from nanochat.tasks.base import TaskMixture
+from nanochat.tasks.customjson import CustomJSON
+from nanochat.tasks.gsm8k import GSM8K
+from nanochat.tasks.mmlu import MMLU
+from nanochat.tasks.smoltalk import SmolTalk
+from nanochat.tasks.spellingbee import SimpleSpelling, SpellingBee
 
 from nanochat.common import (
     DummyWandb,
