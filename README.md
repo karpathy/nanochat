@@ -92,7 +92,8 @@ nanochat does not use `torch.amp.autocast`. Instead, precision is managed explic
 |----------|--------------|-----|
 | CUDA SM 80+ (A100, H100, ...) | `bfloat16` | Native bf16 tensor cores |
 | CUDA SM < 80 (V100, T4, ...) | `float32` | No bf16; fp16 available via `NANOCHAT_DTYPE=float16` (uses GradScaler) |
-| CPU / MPS | `float32` | No reduced-precision tensor cores |
+| MPS (Apple Silicon) | `float16` | fp16 tensor cores; GradScaler enabled automatically |
+| CPU | `float32` | No reduced-precision tensor cores |
 
 You can override the default with the `NANOCHAT_DTYPE` environment variable:
 
@@ -104,6 +105,13 @@ NANOCHAT_DTYPE=bfloat16 torchrun --nproc_per_node=8 -m nanochat.scripts.base_tra
 How it works: model weights are stored in fp32 (for optimizer precision), but our custom `Linear` layer casts them to `COMPUTE_DTYPE` during the forward pass. Embeddings are stored directly in `COMPUTE_DTYPE` to save memory. This gives us the same mixed-precision benefit as autocast but with full explicit control over what runs in which precision.
 
 Note: `float16` training automatically enables a `GradScaler` in `base_train.py` to prevent gradient underflow. SFT suppors this too but RL currently does not. Inference in fp16 works fine everywhere.
+
+## Docs
+
+- [docs/m3-max-guide.md](docs/m3-max-guide.md) — Apple Silicon (MPS) training guide
+- [docs/data-layout.md](docs/data-layout.md) — where nanochat stores data, tokenizers, and checkpoints
+- [docs/roadmap.md](docs/roadmap.md) — development roadmap and completed phases
+- [CONTRIBUTING.md](CONTRIBUTING.md) — setup, testing, code quality, and commit conventions
 
 ## Guides
 
@@ -184,6 +192,8 @@ I've published a number of guides that might contain helpful information, most r
 ```
 
 ## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, code quality checks, and commit conventions.
 
 The goal of nanochat is to improve the state of the art in micro models that are accessible to work with end to end on budgets of < $1000 dollars. Accessibility is about overall cost but also about cognitive complexity - nanochat is not an exhaustively configurable LLM "framework"; there are no giant configuration objects, model factories, or if-then-else monsters in the code base. It is a single, cohesive, minimal, readable, hackable, maximally-forkable "strong baseline" codebase designed to run start to end and produce a ChatGPT model you can talk to. Currently, the most interesting part personally is speeding up the latency to GPT-2 (i.e. getting a CORE score above 0.256525). Currently this takes ~3 hours, but by improving the pretraining stage we can improve this further.
 
