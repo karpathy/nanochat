@@ -58,7 +58,7 @@ A few more notes:
 
 ## Research
 
-If you are a researcher and wish to help improve nanochat, two scripts of interest are [runs/scaling_laws.sh](runs/scaling_laws.sh) and [runs/miniseries.sh](runs/miniseries.sh). See [Jan 7 miniseries v1](https://github.com/karpathy/nanochat/discussions/420) for related documentation. For quick experimentation (~5 min pretraining runs) my favorite scale is to train a 12-layer model (GPT-1 sized), e.g. like this:
+If you are a researcher and wish to help improve nanochat, two scripts of interest are [runs/scaling_laws.sh](runs/scaling_laws.sh) and [runs/miniseries.sh](runs/miniseries.sh). See [Jan 7 miniseries v1](docs/guides/miniseries-v1.md) for related documentation. For quick experimentation (~5 min pretraining runs) my favorite scale is to train a 12-layer model (GPT-1 sized), e.g. like this:
 
 ```
 OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.base_train -- \
@@ -117,11 +117,11 @@ Note: `float16` training automatically enables a `GradScaler` in `base_train.py`
 
 I've published a number of guides that might contain helpful information, most recent to least recent:
 
-- [Feb 1 2026: Beating GPT-2 for <<$100: the nanochat journey](https://github.com/karpathy/nanochat/discussions/481)
-- [Jan 7 miniseries v1](https://github.com/karpathy/nanochat/discussions/420) documents the first nanochat miniseries of models.
-- To add new abilities to nanochat, see [Guide: counting r in strawberry (and how to add abilities generally)](https://github.com/karpathy/nanochat/discussions/164).
-- To customize your nanochat, see [Guide: infusing identity to your nanochat](https://github.com/karpathy/nanochat/discussions/139) in Discussions, which describes how you can tune your nanochat's personality through synthetic data generation and mixing that data into the SFT stage.
-- [Oct 13 2025: original nanochat post](https://github.com/karpathy/nanochat/discussions/1) introducing nanochat, though now it contains some deprecated information and the model is a lot older (with worse results) than current master.
+- [Feb 1 2026: Beating GPT-2 for <<$100: the nanochat journey](docs/guides/beating-gpt2-nanochat-journey.md)
+- [Jan 7 miniseries v1](docs/guides/miniseries-v1.md) documents the first nanochat miniseries of models.
+- To add new abilities to nanochat, see [Guide: counting r in strawberry (and how to add abilities generally)](docs/guides/counting-letters-adding-abilities.md).
+- To customize your nanochat, see [Guide: infusing identity to your nanochat](docs/guides/infusing-identity.md), which describes how you can tune your nanochat's personality through synthetic data generation and mixing that data into the SFT stage.
+- [Oct 13 2025: original nanochat post](docs/guides/introducing-nanochat.md) introducing nanochat, though now it contains some deprecated information and the model is a lot older (with worse results) than current master.
 
 ## File structure
 
