@@ -12,7 +12,7 @@ from nanochat.common.dtype import get_compute_dtype, get_compute_dtype_reason
 from nanochat.common.hardware import get_device_sync, get_peak_flops
 from nanochat.common.io import download_file_with_lock, get_base_dir, print0, print_banner
 from nanochat.common.logging import ColoredFormatter, setup_default_logging
-from nanochat.common.wandb import DummyWandb
+from nanochat.common.wandb import DummyWandb, LocalWandb
 
 __all__ = [
     # dtype
@@ -38,4 +38,5 @@ __all__ = [
     "get_peak_flops",
     # wandb
     "DummyWandb",
+    "LocalWandb",
 ]

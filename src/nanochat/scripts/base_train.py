@@ -30,6 +30,7 @@ import wandb
 
 from nanochat.common import (
     DummyWandb,
+    LocalWandb,
     autodetect_device_type,
     compute_cleanup,
     compute_init,
@@ -185,8 +186,14 @@ def main():
     print0(f"COMPUTE_DTYPE: {get_compute_dtype()} ({get_compute_dtype_reason()})")
 
     # wandb logging init
-    use_dummy_wandb = config.run == "dummy" or not master_process
-    wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=config.run, config=user_config)
+    use_dummy_wandb = not master_process
+    use_local_wandb = master_process and (config.run == "dummy" or os.environ.get("WANDB_MODE") == "disabled")
+    if not master_process:
+        wandb_run = DummyWandb()
+    elif use_local_wandb:
+        wandb_run = LocalWandb(config.run, base_dir=config.base_dir)
+    else:
+        wandb_run = wandb.init(project="nanochat", name=config.run, config=user_config)
 
     # Flash Attention status
 
