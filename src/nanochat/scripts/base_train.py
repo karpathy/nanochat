@@ -214,7 +214,7 @@ def main():
     # -----------------------------------------------------------------------------
     # Tokenizer will be useful for evaluation and also we need the vocab size to init the model
     tokenizer = get_tokenizer(base_dir=config.base_dir)
-    token_bytes = get_token_bytes(device=device)
+    token_bytes = get_token_bytes(device=device, base_dir=config.base_dir)
     vocab_size = tokenizer.get_vocab_size()
     print0(f"Vocab size: {vocab_size:,}")
 
