@@ -26,6 +26,8 @@ from einops import rearrange
 from megablocks import ops
 from megablocks.layers.relu_squared import relu_squared
 
+from cut_cross_entropy import linear_cross_entropy
+
 from nanochat.adamw import DistAdamW
 from nanochat.common import get_dist_info, print0, COMPUTE_DTYPE
 from nanochat.muon import DistMuon, Muon
@@ -838,13 +840,10 @@ class GPT(nn.Module):
         softcap = 15
         if targets is not None:
             # training mode: compute and return the loss
-            # TODO: experiment with Liger Kernels / chunked cross-entropy etc.
-            logits = self.lm_head(x)
-            logits = softcap * torch.tanh(logits / softcap)  # logits softcap
-            logits = logits.float()  # use tf32/fp32 for logits
-            ce_loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                targets.view(-1),
+            # CCE fuses lm_head + softcap + cross_entropy without materializing logits
+            ce_loss = linear_cross_entropy(
+                x, self.lm_head.weight, targets,
+                softcap=float(softcap),
                 ignore_index=-1,
                 reduction=loss_reduction,
             )
@@ -858,7 +857,7 @@ class GPT(nn.Module):
                     loss = loss + self.config.compute_loss_weight * combined_aux_loss["compute_loss"]
                 combined_aux_loss["ce_loss"] = ce_loss
 
-            return logits, loss, combined_aux_loss
+            return None, loss, combined_aux_loss
         else:
             # inference mode: compute and return the logits
             logits = self.lm_head(x)
