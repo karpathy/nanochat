@@ -25,7 +25,7 @@ from nanochat.common.config import (
     add_sft_args,
     add_training_args,
 )
-from nanochat.common.wandb import DummyWandb, LocalWandb
+from nanochat.common.wandb import DummyWandb, LocalWandb, init_wandb
 
 __all__ = [
     # dtype
@@ -52,6 +52,7 @@ __all__ = [
     # wandb
     "DummyWandb",
     "LocalWandb",
+    "init_wandb",
     # config
     "CommonConfig",
     "TrainingConfig",

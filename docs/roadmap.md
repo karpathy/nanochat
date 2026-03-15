@@ -122,7 +122,7 @@ See [unified-cli.md](unified-cli.md) for the full design. Summary:
   - `chat_rl`: builder replaced ✅ — `main()` still reads `args.run == "dummy"` directly
   - `chat_sft`: **not touched** — `--load-optimizer` is `type=int` (0/1) vs `SFTConfig.load_optimizer: bool`; `--run="dummy"` magic in `main()`; no `--config`/`--base-dir`
   - `base_eval`: **not touched** — `--eval` flag name vs `EvaluationConfig.modes` field name; `main()` reads `args.eval` directly; no `--config`/`--base-dir`/`--wandb`
-- [ ] Step 3 — Wandb consolidation (`init_wandb`)
+- [x] Step 3 — Wandb consolidation (`init_wandb`) ✅
 - [ ] Step 4 — Wire `Config` into existing scripts (resolves all step 2 deferred items)
 - [ ] Step 5 — Add `--config` / `--base-dir` to remaining entry points
 - [ ] Step 6 — `nanochat/__main__.py`
