@@ -746,6 +746,14 @@ def main():
                     if config.compression_early_stop and compression_tracker.detect_overfitting():
                         print0(f"[Step {step}] Compression plateau detected - possible overfitting")
 
+                    # Print compression metrics to console
+                    print0(
+                        f"[compression] step {step:05d} | entropy: {compression_metrics['entropy']:.4f} | "
+                        f"ratio: {compression_metrics['compression_ratio']:.4f} | "
+                        f"gzip: {compression_metrics['gzip_compression']:.4f} | "
+                        f"efficiency: {compression_metrics['compression_efficiency']:.4f}"
+                    )
+
                     # Log compression metrics to wandb
                     if master_process:
                         compression_log = {
