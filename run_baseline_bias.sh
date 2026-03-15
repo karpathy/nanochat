@@ -33,7 +33,7 @@ python -m nanochat.dataset -n 50
 # train tokenizer if not already present
 python -m scripts.tok_train --max_chars=500000000
 
-torchrun --standalone --nproc_per_node=3 -m scripts.base_train -- \
+uv run python -m scripts.base_train \
     --run=uniform-baseline-64x384-top4 \
     --depth=12 --model-dim=768 --num-heads=6 --max-seq-len=1024 \
     --expert-sizes='[[64,384]]' --num-active-experts=4 \
@@ -42,5 +42,5 @@ torchrun --standalone --nproc_per_node=3 -m scripts.base_train -- \
     --load-balance-loss-weight=0.001 \
     --router-z-loss-weight=0.001 \
     --compute-loss-weight=0.0 \
-    --device-batch-size=10 --total-batch-size=552960 --num-iterations=4521 \
+    --device-batch-size=36 --total-batch-size=552960 --num-iterations=4521 \
     --eval-every=250 --core-metric-every=-1 --sample-every=2000 --save-every=1000

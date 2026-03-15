@@ -5,6 +5,7 @@ description = "the minimal full-stack ChatGPT clone"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "cut-cross-entropy",
     "datasets>=4.0.0",
     "einops>=0.8.0",
     "fastapi>=0.117.1",
@@ -59,6 +60,7 @@ torch = [
     { index = "pytorch-cpu", extra = "cpu" },  
     { index = "pytorch-cu128", extra = "gpu" },  
 ]
+cut-cross-entropy = { git = "https://github.com/apple/ml-cross-entropy.git" }
 
 [[tool.uv.index]]  
 name = "pytorch-cpu"  

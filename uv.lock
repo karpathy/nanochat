@@ -627,6 +627,18 @@ toml = [
 ]
 
 [[package]]
+name = "cut-cross-entropy"
+version = "25.9.3"
+source = { git = "https://github.com/apple/ml-cross-entropy.git#b7a02791b234e187b524fb1dba6a812d521b203a" }
+dependencies = [
+    { name = "torch", version = "2.9.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-8-nanochat-cpu') or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "torch", version = "2.9.1", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu') or (extra != 'extra-8-nanochat-cpu' and extra != 'extra-8-nanochat-gpu')" },
+    { name = "torch", version = "2.9.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-8-nanochat-cpu') or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+    { name = "torch", version = "2.9.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-nanochat-gpu'" },
+    { name = "triton", marker = "sys_platform != 'darwin' or (extra == 'extra-8-nanochat-cpu' and extra == 'extra-8-nanochat-gpu')" },
+]
+
+[[package]]
 name = "cycler"
 version = "0.12.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1613,6 +1625,7 @@ name = "nanochat"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cut-cross-entropy" },
     { name = "datasets" },
     { name = "einops" },
     { name = "fastapi" },
@@ -1657,6 +1670,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cut-cross-entropy", git = "https://github.com/apple/ml-cross-entropy.git" },
     { name = "datasets", specifier = ">=4.0.0" },
     { name = "einops", specifier = ">=0.8.0" },
     { name = "fastapi", specifier = ">=0.117.1" },
