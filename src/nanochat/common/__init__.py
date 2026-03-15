@@ -15,15 +15,11 @@ from nanochat.common.logging import ColoredFormatter, setup_default_logging
 from nanochat.common.config import (
     CommonConfig,
     Config,
+    ConfigLoader,
     EvaluationConfig,
     RLConfig,
     SFTConfig,
     TrainingConfig,
-    add_common_args,
-    add_evaluation_args,
-    add_rl_args,
-    add_sft_args,
-    add_training_args,
 )
 from nanochat.common.wandb import DummyWandb, LocalWandb, init_wandb
 
@@ -60,9 +56,5 @@ __all__ = [
     "RLConfig",
     "EvaluationConfig",
     "Config",
-    "add_common_args",
-    "add_training_args",
-    "add_sft_args",
-    "add_rl_args",
-    "add_evaluation_args",
+    "ConfigLoader",
 ]

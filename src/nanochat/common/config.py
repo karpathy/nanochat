@@ -2,23 +2,27 @@
 Unified configuration dataclasses and argparse builders for nanochat.
 
 Layout:
-  CommonConfig          — fields shared by all entry points
-  TrainingConfig        — base model pretraining (inherits CommonConfig)
-  SFTConfig             — supervised fine-tuning (inherits CommonConfig)
-  RLConfig              — reinforcement learning (inherits CommonConfig)
-  EvaluationConfig      — base model evaluation (inherits CommonConfig)
-  Config                — root object; owns load/save/from_args/apply_args/generate_default
+  CommonConfig          — shared fields (base_dir, device_type, run, wandb)
+  TrainingConfig        — base model pretraining
+  SFTConfig             — supervised fine-tuning
+  RLConfig              — reinforcement learning
+  EvaluationConfig      — evaluation
+  Config                — root object owning all sections; save() and generate_default()
+  ConfigLoader          — builds argparse parser and resolves Config from TOML + CLI
 
 Config resolution order (later overrides earlier):
-  1. Defaults in dataclasses
-  2. [common] section of TOML file
-  3. Per-section TOML values
-  4. Explicit CLI args (via apply_args with SUPPRESS pattern)
+  1. Dataclass field defaults
+  2. TOML file values (per section)
+  3. Explicit CLI args (argparse.SUPPRESS ensures only provided args override)
+
+Usage:
+  cfg = ConfigLoader().add_training().parse()
 """
 
+from __future__ import annotations
+
 import argparse
-import tomllib
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -38,9 +42,108 @@ class CommonConfig:
     wandb: str = "local"          # online | local | disabled
     wandb_project: str = "nanochat"
 
+    @classmethod
+    def update_parser(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--config", type=str, default=argparse.SUPPRESS, help="path to TOML config file (CLI args override file values)")
+        parser.add_argument("--base-dir", type=str, default=argparse.SUPPRESS, help="override NANOCHAT_BASE_DIR env var")
+        parser.add_argument("--device-type", type=str, default=argparse.SUPPRESS, help="cuda|cpu|mps (empty = autodetect)")
+        parser.add_argument("--run", type=str, default=argparse.SUPPRESS, help="wandb run name")
+        parser.add_argument("--wandb", type=str, default=argparse.SUPPRESS, choices=["online", "local", "disabled"], help="wandb mode: online | local | disabled")
+        parser.add_argument("--wandb-project", type=str, default=argparse.SUPPRESS, help="wandb project name")
+
+    @classmethod
+    def generate_default(cls) -> str:
+        return (
+            'base_dir = ""              # override NANOCHAT_BASE_DIR env var (empty = use env var)\n'
+            'device_type = ""           # cuda | cpu | mps (empty = autodetect)\n'
+            'run = "unnamed"            # wandb run name\n'
+            'wandb = "local"            # online | local | disabled\n'
+            'wandb_project = "nanochat"\n'
+        )
+
 
 @dataclass
-class TrainingConfig(CommonConfig):
+class TrainingConfig:
+    @classmethod
+    def update_parser(cls, parser: argparse.ArgumentParser) -> None:
+        # Model architecture
+        parser.add_argument("--depth", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--aspect-ratio", type=int, default=argparse.SUPPRESS, help="model_dim = depth * aspect_ratio")
+        parser.add_argument("--head-dim", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--max-seq-len", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--window-pattern", type=str, default=argparse.SUPPRESS, help="L=full, S=half context, tiled")
+        # Training horizon
+        parser.add_argument("--num-iterations", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
+        parser.add_argument("--target-flops", type=float, default=argparse.SUPPRESS, help="-1 = disabled")
+        parser.add_argument("--target-param-data-ratio", type=float, default=argparse.SUPPRESS)
+        # Batch
+        parser.add_argument("--device-batch-size", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--total-batch-size", type=int, default=argparse.SUPPRESS, help="-1 = auto")
+        # Optimizer
+        parser.add_argument("--embedding-lr", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--unembedding-lr", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--matrix-lr", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--scalar-lr", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--weight-decay", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--warmup-steps", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--warmdown-ratio", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--final-lr-frac", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--resume-from-step", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
+        # Evaluation
+        parser.add_argument("--eval-every", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
+        parser.add_argument("--eval-tokens", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--core-metric-every", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
+        parser.add_argument("--core-metric-max-per-task", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--sample-every", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
+        parser.add_argument("--save-every", type=int, default=argparse.SUPPRESS, help="-1 = only at end")
+        # FP8
+        parser.add_argument("--fp8", action="store_true", default=argparse.SUPPRESS)
+        parser.add_argument("--fp8-recipe", type=str, default=argparse.SUPPRESS, choices=["tensorwise", "rowwise"])
+        # Output
+        parser.add_argument("--model-tag", type=str, default=argparse.SUPPRESS)
+        # Compression
+        parser.add_argument("--track-compression", action="store_true", default=argparse.SUPPRESS)
+        parser.add_argument("--compression-log-every", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--track-layer-compression", action="store_true", default=argparse.SUPPRESS)
+        parser.add_argument("--compression-early-stop", action="store_true", default=argparse.SUPPRESS)
+
+    @classmethod
+    def generate_default(cls) -> str:
+        return (
+            "depth = 20\n"
+            "aspect_ratio = 64          # model_dim = depth * aspect_ratio\n"
+            "head_dim = 128\n"
+            "max_seq_len = 2048\n"
+            'window_pattern = "SSSL"    # L=full context, S=half context, tiled across layers\n'
+            "num_iterations = -1        # explicit step count (-1 = disabled)\n"
+            "target_flops = -1.0        # compute budget in FLOPs (-1 = disabled)\n"
+            "target_param_data_ratio = 10.5  # tokens:params ratio (Chinchilla=20)\n"
+            "device_batch_size = 32\n"
+            "total_batch_size = -1      # -1 = auto-compute optimal\n"
+            "embedding_lr = 0.3\n"
+            "unembedding_lr = 0.008\n"
+            "matrix_lr = 0.02\n"
+            "scalar_lr = 0.5\n"
+            "weight_decay = 0.28\n"
+            "warmup_steps = 40\n"
+            "warmdown_ratio = 0.65\n"
+            "final_lr_frac = 0.05\n"
+            "resume_from_step = -1      # -1 = disabled\n"
+            "eval_every = 250           # -1 = disabled\n"
+            f"eval_tokens = {80 * 524288}       # 80 * 524288\n"
+            "core_metric_every = 2000   # -1 = disabled\n"
+            "core_metric_max_per_task = 500\n"
+            "sample_every = 2000        # -1 = disabled\n"
+            "save_every = -1            # -1 = only at end\n"
+            "fp8 = false\n"
+            'fp8_recipe = "tensorwise"  # tensorwise | rowwise\n'
+            '# model_tag = ""           # empty = auto (e.g. "d20")\n'
+            "track_compression = false\n"
+            "compression_log_every = 100\n"
+            "track_layer_compression = false\n"
+            "compression_early_stop = false\n"
+        )
+
     # Model architecture
     depth: int = 20
     aspect_ratio: int = 64
@@ -84,7 +187,57 @@ class TrainingConfig(CommonConfig):
 
 
 @dataclass
-class SFTConfig(CommonConfig):
+class SFTConfig:
+    @classmethod
+    def update_parser(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--model-tag", type=str, default=argparse.SUPPRESS)
+        parser.add_argument("--model-step", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--load-optimizer", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS)
+        parser.add_argument("--num-iterations", type=int, default=argparse.SUPPRESS, help="-1 = full epoch")
+        parser.add_argument("--max-seq-len", type=int, default=argparse.SUPPRESS, help="None = inherit from pretrain")
+        parser.add_argument("--device-batch-size", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--total-batch-size", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--embedding-lr", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--unembedding-lr", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--matrix-lr", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--init-lr-frac", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--warmup-ratio", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--warmdown-ratio", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--final-lr-frac", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--eval-every", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
+        parser.add_argument("--eval-tokens", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--chatcore-every", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
+        parser.add_argument("--chatcore-max-cat", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--chatcore-max-sample", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--mmlu-epochs", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--gsm8k-epochs", type=int, default=argparse.SUPPRESS)
+
+    @classmethod
+    def generate_default(cls) -> str:
+        return (
+            '# model_tag = ""           # empty = auto\n'
+            "# model_step = -1          # -1 = last checkpoint\n"
+            "load_optimizer = true\n"
+            "num_iterations = -1        # -1 = full epoch\n"
+            "# max_seq_len = -1         # -1 = inherit from pretrain\n"
+            "# device_batch_size = -1   # -1 = inherit from pretrain\n"
+            "# total_batch_size = -1    # -1 = inherit from pretrain\n"
+            "# embedding_lr = -1.0      # -1 = inherit from pretrain\n"
+            "# unembedding_lr = -1.0    # -1 = inherit from pretrain\n"
+            "# matrix_lr = -1.0        # -1 = inherit from pretrain\n"
+            "init_lr_frac = 0.8\n"
+            "warmup_ratio = 0.0\n"
+            "warmdown_ratio = 0.5\n"
+            "final_lr_frac = 0.0\n"
+            "eval_every = 200\n"
+            f"eval_tokens = {40 * 524288}       # 40 * 524288\n"
+            "chatcore_every = 200\n"
+            "chatcore_max_cat = -1      # -1 = no limit\n"
+            "chatcore_max_sample = 24\n"
+            "mmlu_epochs = 3\n"
+            "gsm8k_epochs = 4\n"
+        )
+
     model_tag: Optional[str] = None
     model_step: Optional[int] = None
     load_optimizer: bool = True
@@ -109,7 +262,49 @@ class SFTConfig(CommonConfig):
 
 
 @dataclass
-class RLConfig(CommonConfig):
+class RLConfig:
+    @classmethod
+    def update_parser(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--model-tag", type=str, default=argparse.SUPPRESS)
+        parser.add_argument("--model-step", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--num-epochs", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--device-batch-size", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--examples-per-step", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--num-samples", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--max-new-tokens", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--temperature", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--top-k", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--embedding-lr", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--unembedding-lr", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--matrix-lr", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--weight-decay", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--init-lr-frac", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--eval-every", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--eval-examples", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--save-every", type=int, default=argparse.SUPPRESS)
+
+    @classmethod
+    def generate_default(cls) -> str:
+        return (
+            '# model_tag = ""           # empty = auto\n'
+            "# model_step = -1          # -1 = last checkpoint\n"
+            "num_epochs = 1\n"
+            "device_batch_size = 8\n"
+            "examples_per_step = 16\n"
+            "num_samples = 16\n"
+            "max_new_tokens = 256\n"
+            "temperature = 1.0\n"
+            "top_k = 50\n"
+            "embedding_lr = 0.2\n"
+            "unembedding_lr = 0.004\n"
+            "matrix_lr = 0.02\n"
+            "weight_decay = 0.0\n"
+            "init_lr_frac = 0.05\n"
+            "eval_every = 60\n"
+            "eval_examples = 400\n"
+            "save_every = 60\n"
+        )
+
     model_tag: Optional[str] = None
     model_step: Optional[int] = None
     num_epochs: int = 1
@@ -130,7 +325,29 @@ class RLConfig(CommonConfig):
 
 
 @dataclass
-class EvaluationConfig(CommonConfig):
+class EvaluationConfig:
+    @classmethod
+    def update_parser(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--modes", type=str, default=argparse.SUPPRESS, help="comma-separated: core,bpb,sample")
+        parser.add_argument("--hf-path", type=str, default=argparse.SUPPRESS)
+        parser.add_argument("--model-tag", type=str, default=argparse.SUPPRESS)
+        parser.add_argument("--step", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--max-per-task", type=int, default=argparse.SUPPRESS, help="-1 = all")
+        parser.add_argument("--device-batch-size", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--split-tokens", type=int, default=argparse.SUPPRESS)
+
+    @classmethod
+    def generate_default(cls) -> str:
+        return (
+            'modes = "core,bpb,sample"  # comma-separated: core | bpb | sample\n'
+            '# hf_path = ""             # HuggingFace model path (empty = use nanochat checkpoint)\n'
+            '# model_tag = ""           # empty = auto\n'
+            "# step = -1                # -1 = last checkpoint\n"
+            "max_per_task = -1          # -1 = all examples\n"
+            "device_batch_size = 32\n"
+            f"split_tokens = {40 * 524288}       # 40 * 524288\n"
+        )
+
     modes: str = "core,bpb,sample"
     hf_path: Optional[str] = None
     model_tag: Optional[str] = None
@@ -144,14 +361,14 @@ class EvaluationConfig(CommonConfig):
 # Root Config
 # ---------------------------------------------------------------------------
 
-_SECTION_MAP: dict[str, type] = {
+
+_SECTION_CLS: dict[str, type] = {
+    "common": CommonConfig,
     "training": TrainingConfig,
     "sft": SFTConfig,
     "rl": RLConfig,
     "evaluation": EvaluationConfig,
 }
-
-_COMMON_KEYS: frozenset[str] = frozenset(f.name for f in fields(CommonConfig))
 
 
 @dataclass
@@ -162,293 +379,86 @@ class Config:
     rl: RLConfig = field(default_factory=RLConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
 
-    @classmethod
-    def load(cls, path: Path) -> "Config":
-        """Load from a TOML file. [common] fields seed each section; section keys override."""
-        with open(path, "rb") as f:
-            data = tomllib.load(f)
-        common_data = data.get("common", {})
-        common = CommonConfig(**common_data)
-        common_dict = asdict(common)
-
-        def make(section_cls: type, key: str) -> object:
-            section_data = data.get(key, {})
-            # common fields are the base; section-specific keys override
-            merged = {**common_dict, **section_data}
-            # only pass keys that the dataclass actually accepts
-            valid = {f.name for f in fields(section_cls)}
-            return section_cls(**{k: v for k, v in merged.items() if k in valid})
-
-        return cls(
-            common=common,
-            training=make(TrainingConfig, "training"),  # type: ignore[arg-type]
-            sft=make(SFTConfig, "sft"),                 # type: ignore[arg-type]
-            rl=make(RLConfig, "rl"),                    # type: ignore[arg-type]
-            evaluation=make(EvaluationConfig, "evaluation"),  # type: ignore[arg-type]
-        )
-
     def save(self, path: Path) -> None:
-        """Save to TOML. Common fields go in [common]; sub-sections omit them."""
-        def _common_section() -> dict:
-            return {k: v for k, v in asdict(self.common).items() if v is not None}
-
-        def _sub_section(section: object) -> dict:
-            return {
-                k: v for k, v in asdict(section).items()  # type: ignore[call-overload]
-                if k not in _COMMON_KEYS and v is not None
-            }
-
-        data: dict[str, dict] = {}
-        common_d = _common_section()
-        if common_d:
-            data["common"] = common_d
-        for key, section in [
-            ("training", self.training),
-            ("sft", self.sft),
-            ("rl", self.rl),
-            ("evaluation", self.evaluation),
-        ]:
-            sub = _sub_section(section)
-            if sub:
-                data[key] = sub
-
+        """Save to TOML."""
+        data = {k: {fk: fv for fk, fv in v.items() if fv is not None} for k, v in asdict(self).items()}
         with open(path, "wb") as f:
             tomli_w.dump(data, f)
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace, section: str) -> "Config":
-        """Build a Config purely from a parsed argparse Namespace (no TOML file)."""
-        config = cls()
-        for f in fields(config.common):
-            if hasattr(args, f.name):
-                setattr(config.common, f.name, getattr(args, f.name))
-        section_obj = getattr(config, section)
-        for f in fields(section_obj):
-            if hasattr(args, f.name):
-                setattr(section_obj, f.name, getattr(args, f.name))
-        return config
-
-    def apply_args(self, args: argparse.Namespace, section: str) -> None:
-        """Override config fields with explicitly-passed CLI args (SUPPRESS pattern).
-
-        Only keys present in vars(args) are applied — with SUPPRESS defaults,
-        this means only args the user actually typed on the command line.
-        """
-        section_obj = getattr(self, section)
-        for k, v in vars(args).items():
-            if k in _COMMON_KEYS:
-                setattr(self.common, k, v)
-            elif hasattr(section_obj, k):
-                setattr(section_obj, k, v)
+    def load(cls, path: Path) -> Config:
+        """Load from TOML, populating only the sections present in the file."""
+        import tomllib
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        cfg = cls()
+        for section, values in data.items():
+            section_cls = _SECTION_CLS.get(section)
+            if section_cls is None:
+                raise ValueError(f"Unknown config section: {section!r}")
+            setattr(cfg, section, section_cls(**values))
+        return cfg
 
     @classmethod
-    def generate_default(cls, path: Path) -> None:
-        """Write a fully-commented config.toml with all sections and default values."""
-        lines = [
-            "[common]",
-            'base_dir = ""              # override NANOCHAT_BASE_DIR env var (empty = use env var)',
-            'device_type = ""           # cuda | cpu | mps (empty = autodetect)',
-            'run = "unnamed"            # wandb run name',
-            'wandb = "local"            # online | local | disabled',
-            'wandb_project = "nanochat"',
-            "",
-            "[training]",
-            "depth = 20",
-            "aspect_ratio = 64          # model_dim = depth * aspect_ratio",
-            "head_dim = 128",
-            "max_seq_len = 2048",
-            'window_pattern = "SSSL"    # L=full context, S=half context, tiled across layers',
-            "num_iterations = -1        # explicit step count (-1 = disabled)",
-            "target_flops = -1.0        # compute budget in FLOPs (-1 = disabled)",
-            "target_param_data_ratio = 10.5  # tokens:params ratio (Chinchilla=20)",
-            "device_batch_size = 32",
-            "total_batch_size = -1      # -1 = auto-compute optimal",
-            "embedding_lr = 0.3",
-            "unembedding_lr = 0.008",
-            "matrix_lr = 0.02",
-            "scalar_lr = 0.5",
-            "weight_decay = 0.28",
-            "warmup_steps = 40",
-            "warmdown_ratio = 0.65",
-            "final_lr_frac = 0.05",
-            "resume_from_step = -1      # -1 = disabled",
-            "eval_every = 250           # -1 = disabled",
-            f"eval_tokens = {80 * 524288}       # 80 * 524288",
-            "core_metric_every = 2000   # -1 = disabled",
-            "core_metric_max_per_task = 500",
-            "sample_every = 2000        # -1 = disabled",
-            "save_every = -1            # -1 = only at end",
-            "fp8 = false",
-            'fp8_recipe = "tensorwise"  # tensorwise | rowwise',
-            '# model_tag = ""           # empty = auto (e.g. "d20")',
-            "track_compression = false",
-            "compression_log_every = 100",
-            "track_layer_compression = false",
-            "compression_early_stop = false",
-            "",
-            "[sft]",
-            '# model_tag = ""           # empty = auto',
-            "# model_step = -1          # -1 = last checkpoint",
-            "load_optimizer = true",
-            "num_iterations = -1        # -1 = full epoch",
-            "# max_seq_len = -1         # -1 = inherit from pretrain",
-            "# device_batch_size = -1   # -1 = inherit from pretrain",
-            "# total_batch_size = -1    # -1 = inherit from pretrain",
-            "# embedding_lr = -1.0      # -1 = inherit from pretrain",
-            "# unembedding_lr = -1.0    # -1 = inherit from pretrain",
-            "# matrix_lr = -1.0        # -1 = inherit from pretrain",
-            "init_lr_frac = 0.8",
-            "warmup_ratio = 0.0",
-            "warmdown_ratio = 0.5",
-            "final_lr_frac = 0.0",
-            "eval_every = 200",
-            f"eval_tokens = {40 * 524288}       # 40 * 524288",
-            "chatcore_every = 200",
-            "chatcore_max_cat = -1      # -1 = no limit",
-            "chatcore_max_sample = 24",
-            "mmlu_epochs = 3",
-            "gsm8k_epochs = 4",
-            "",
-            "[rl]",
-            '# model_tag = ""           # empty = auto',
-            "# model_step = -1          # -1 = last checkpoint",
-            "num_epochs = 1",
-            "device_batch_size = 8",
-            "examples_per_step = 16",
-            "num_samples = 16",
-            "max_new_tokens = 256",
-            "temperature = 1.0",
-            "top_k = 50",
-            "embedding_lr = 0.2",
-            "unembedding_lr = 0.004",
-            "matrix_lr = 0.02",
-            "weight_decay = 0.0",
-            "init_lr_frac = 0.05",
-            "eval_every = 60",
-            "eval_examples = 400",
-            "save_every = 60",
-            "",
-            "[evaluation]",
-            'modes = "core,bpb,sample"  # comma-separated: core | bpb | sample',
-            '# hf_path = ""             # HuggingFace model path (empty = use nanochat checkpoint)',
-            '# model_tag = ""           # empty = auto',
-            "# step = -1                # -1 = last checkpoint",
-            "max_per_task = -1          # -1 = all examples",
-            "device_batch_size = 32",
-            f"split_tokens = {40 * 524288}       # 40 * 524288",
-        ]
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    def generate_default(cls) -> str:
+        return (
+            "[common]\n" + CommonConfig.generate_default() + "\n"
+            "[training]\n" + TrainingConfig.generate_default() + "\n"
+            "[sft]\n" + SFTConfig.generate_default() + "\n"
+            "[rl]\n" + RLConfig.generate_default() + "\n"
+            "[evaluation]\n" + EvaluationConfig.generate_default()
+        )
 
 
-# ---------------------------------------------------------------------------
-# Argparse builders
-# ---------------------------------------------------------------------------
+class ConfigLoader:
 
+    def __init__(self) -> None:
+        self._parser = argparse.ArgumentParser()
+        self._config = Config()
+        self._sections: set[str] = {"common"}
+        CommonConfig.update_parser(self._parser)
 
-def add_common_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--base-dir", type=str, default=argparse.SUPPRESS, help="override NANOCHAT_BASE_DIR env var")
-    parser.add_argument("--device-type", type=str, default=argparse.SUPPRESS, help="cuda|cpu|mps (empty = autodetect)")
-    parser.add_argument("--run", type=str, default=argparse.SUPPRESS, help="wandb run name")
-    parser.add_argument(
-        "--wandb", type=str, default=argparse.SUPPRESS,
-        choices=["online", "local", "disabled"],
-        help="wandb mode: online | local | disabled",
-    )
-    parser.add_argument("--wandb-project", type=str, default=argparse.SUPPRESS, help="wandb project name")
+    def _add_section(self, name: str, cls: type) -> ConfigLoader:
+        if self._sections - {"common"}:
+            raise RuntimeError("ConfigLoader only supports one section per instance")
+        self._sections.add(name)
+        cls.update_parser(self._parser)
+        return self
 
+    def add_training(self) -> ConfigLoader:
+        return self._add_section("training", TrainingConfig)
 
-def add_training_args(parser: argparse.ArgumentParser) -> None:
-    # Model architecture
-    parser.add_argument("--depth", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--aspect-ratio", type=int, default=argparse.SUPPRESS, help="model_dim = depth * aspect_ratio")
-    parser.add_argument("--head-dim", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--max-seq-len", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--window-pattern", type=str, default=argparse.SUPPRESS, help="L=full, S=half context, tiled")
-    # Training horizon
-    parser.add_argument("--num-iterations", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
-    parser.add_argument("--target-flops", type=float, default=argparse.SUPPRESS, help="-1 = disabled")
-    parser.add_argument("--target-param-data-ratio", type=float, default=argparse.SUPPRESS)
-    # Batch
-    parser.add_argument("--device-batch-size", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--total-batch-size", type=int, default=argparse.SUPPRESS, help="-1 = auto")
-    # Optimizer
-    parser.add_argument("--embedding-lr", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--unembedding-lr", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--matrix-lr", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--scalar-lr", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--weight-decay", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--warmup-steps", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--warmdown-ratio", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--final-lr-frac", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--resume-from-step", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
-    # Evaluation
-    parser.add_argument("--eval-every", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
-    parser.add_argument("--eval-tokens", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--core-metric-every", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
-    parser.add_argument("--core-metric-max-per-task", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--sample-every", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
-    parser.add_argument("--save-every", type=int, default=argparse.SUPPRESS, help="-1 = only at end")
-    # FP8
-    parser.add_argument("--fp8", action="store_true", default=argparse.SUPPRESS)
-    parser.add_argument("--fp8-recipe", type=str, default=argparse.SUPPRESS, choices=["tensorwise", "rowwise"])
-    # Output
-    parser.add_argument("--model-tag", type=str, default=argparse.SUPPRESS)
-    # Compression
-    parser.add_argument("--track-compression", action="store_true", default=argparse.SUPPRESS)
-    parser.add_argument("--compression-log-every", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--track-layer-compression", action="store_true", default=argparse.SUPPRESS)
-    parser.add_argument("--compression-early-stop", action="store_true", default=argparse.SUPPRESS)
+    def add_sft(self) -> ConfigLoader:
+        return self._add_section("sft", SFTConfig)
 
+    def add_rl(self) -> ConfigLoader:
+        return self._add_section("rl", RLConfig)
 
-def add_sft_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--model-tag", type=str, default=argparse.SUPPRESS)
-    parser.add_argument("--model-step", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--load-optimizer", type=int, default=argparse.SUPPRESS, help="0=no, 1=yes")
-    parser.add_argument("--num-iterations", type=int, default=argparse.SUPPRESS, help="-1 = full epoch")
-    parser.add_argument("--max-seq-len", type=int, default=argparse.SUPPRESS, help="None = inherit from pretrain")
-    parser.add_argument("--device-batch-size", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--total-batch-size", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--embedding-lr", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--unembedding-lr", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--matrix-lr", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--init-lr-frac", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--warmup-ratio", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--warmdown-ratio", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--final-lr-frac", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--eval-every", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
-    parser.add_argument("--eval-tokens", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--chatcore-every", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
-    parser.add_argument("--chatcore-max-cat", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--chatcore-max-sample", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--mmlu-epochs", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--gsm8k-epochs", type=int, default=argparse.SUPPRESS)
+    def add_evaluation(self) -> ConfigLoader:
+        return self._add_section("evaluation", EvaluationConfig)
 
+    def parse(self, args: list[str] | None = None) -> Config:
+        import tomllib
+        ns = self._parser.parse_args(args)
+        cli = vars(ns)
 
-def add_rl_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--model-tag", type=str, default=argparse.SUPPRESS)
-    parser.add_argument("--model-step", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--num-epochs", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--device-batch-size", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--examples-per-step", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--num-samples", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--max-new-tokens", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--temperature", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--top-k", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--embedding-lr", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--unembedding-lr", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--matrix-lr", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--weight-decay", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--init-lr-frac", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--eval-every", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--eval-examples", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--save-every", type=int, default=argparse.SUPPRESS)
+        toml_path: Path | None = None
+        if "base_dir" in cli and cli["base_dir"] is not None:
+            candidate = Path(cli["base_dir"]) / "config.toml"
+            if candidate.exists():
+                toml_path = candidate
+        if "config" in cli and cli["config"] is not None:
+            toml_path = Path(cli["config"])
 
+        toml_data: dict = {}
+        if toml_path is not None:
+            with open(toml_path, "rb") as f:
+                toml_data = tomllib.load(f)
 
-def add_evaluation_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--modes", type=str, default=argparse.SUPPRESS, help="comma-separated: core,bpb,sample")
-    parser.add_argument("--hf-path", type=str, default=argparse.SUPPRESS)
-    parser.add_argument("--model-tag", type=str, default=argparse.SUPPRESS)
-    parser.add_argument("--step", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--max-per-task", type=int, default=argparse.SUPPRESS, help="-1 = all")
-    parser.add_argument("--device-batch-size", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--split-tokens", type=int, default=argparse.SUPPRESS)
+        for section in self._sections:
+            cls = _SECTION_CLS[section]
+            valid = cls.__dataclass_fields__
+            merged = {**toml_data.get(section, {}), **{k: v for k, v in cli.items() if k in valid}}
+            setattr(self._config, section, cls(**merged))
+
+        return self._config
