@@ -82,28 +82,38 @@ Combine transformer efficiency with SP Theory advantages. Also the fallback path
 
 None currently.
 
+## Open Questions
+
+### MPS fp16 gradient stability
+
+`get_compute_dtype()` returns `torch.float16` on MPS (MPS has no bf16 support). `GradScaler` is CUDA-only and silently disables itself on MPS, producing a warning:
+
+```
+UserWarning: torch.cuda.amp.GradScaler is enabled, but CUDA is not available. Disabling.
+```
+
+This means fp16 training on MPS runs **without gradient scaling**. Whether this is safe is unknown:
+
+- **If MPS handles fp16 gradient stability internally** → gate scaler on `device_type == "cuda"`, suppress the warning, no further action needed
+- **If MPS fp16 is unstable without scaling** → need an alternative: either force bf16 on MPS (if a future PyTorch version adds support), use fp32, or implement a device-agnostic scaler
+
+**Required experiment**: run two d8 training runs on MPS to completion and compare loss curves:
+1. Current behavior (no scaler, fp16)
+2. Forced fp32 (`--device-type` override or `COMPUTE_DTYPE=fp32`) as a stable baseline
+
+If curves match → fp16 on MPS is stable, fix is just gating the scaler on CUDA. If fp16 diverges → escalate to a proper fix before any long MPS runs.
+
 ## Improvements
 
-### Unified CLI with consistent `--config` / `--base-dir` support
+### Unified CLI, sectioned TOML config, and wandb consolidation
 
-Only `base_train` has full `--config` + CLI override support. 8 of 10 entry points lack `--config`, and 2 lack `--base-dir`. See [unified-cli.md](unified-cli.md) for the full design: a single `nanochat` CLI with subcommands, global `--config`/`--base-dir` flags, and a shared config/override helper.
+See [unified-cli.md](unified-cli.md) for the full design. Summary:
 
-### CLI flag audit and wandb consolidation
-
-Review and standardize flags across all 3 training entry points (`base_train`, `chat_sft`, `chat_rl`):
-
-**Current inconsistencies**:
-- `--run` is used in all 3 to name the wandb run, with `"dummy"` as the magic value to disable wandb. This is implicit and unintuitive.
-- `chat_sft` and `chat_rl` use `DummyWandb` when `run=="dummy"` but don't use `LocalWandb` like `base_train` does — offline runs silently drop all metrics.
-- `WANDB_MODE=disabled` env var is only checked in `base_train`, not in `chat_sft` or `chat_rl`.
-- wandb project names are hardcoded and inconsistent: `"nanochat"`, `"nanochat-rl"`, `"nanochat-sft"`.
-
-**Proposed changes**:
-- Replace `--run="dummy"` magic value with an explicit `--wandb` flag: `online` (default) / `local` / `disabled`
-- Add a `wandb_project` field to `TrainingConfig` (default: `"nanochat"`)
-- Centralize wandb init logic into a shared helper in `nanochat/common/wandb.py`
-- Apply `LocalWandb` consistently across all training scripts when `--wandb=local` or `WANDB_MODE=disabled`
-- Add `--wandb` and `wandb_project` to TOML config so offline runs can be configured without env vars
+- Sectioned TOML (`[common]`, `[training]`, `[sft]`, ...) with matching dataclasses (`CommonConfig`, `TrainingConfig(CommonConfig)`, `SFTConfig(CommonConfig)`)
+- `CommonConfig.wandb: online | local | disabled` replaces `--run="dummy"` magic and `WANDB_MODE` env var
+- Shared `load_config()` and `init_wandb()` helpers eliminate duplication across all entry points
+- Single `nanochat` CLI with subcommands; global `--config` / `--base-dir` on all entry points
+- CLI args always override TOML values
 
 ### Full CLI flag audit across all entry points
 
