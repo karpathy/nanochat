@@ -154,10 +154,8 @@ class HuggingFaceTokenizer:
     def encode(self, text: Union[str, List[str]], *args: object, **kwargs: object) -> Union[List[int], List[List[int]]]:
         if isinstance(text, str):
             return self._encode_one(text, *args, **kwargs)
-        elif isinstance(text, list):
-            return [self._encode_one(t, *args, **kwargs) for t in text]
         else:
-            raise ValueError(f"Invalid input type: {type(text)}")
+            return [self._encode_one(t, *args, **kwargs) for t in text]
 
     def __call__(self, *args: object, **kwargs: object) -> Union[List[int], List[List[int]]]:
         return self.encode(*args, **kwargs)
@@ -257,7 +255,7 @@ class RustBPETokenizer:
                 ids.insert(0, prepend_id)  # TODO: slightly inefficient here? :( hmm
             if append_id is not None:
                 ids.append(append_id)
-        elif isinstance(text, list):
+        else:
             ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
             if prepend_id is not None:
                 for ids_row in ids:
@@ -265,8 +263,6 @@ class RustBPETokenizer:
             if append_id is not None:
                 for ids_row in ids:
                     ids_row.append(append_id)
-        else:
-            raise ValueError(f"Invalid input type: {type(text)}")
 
         return ids
 
