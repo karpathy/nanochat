@@ -136,7 +136,7 @@ class HuggingFaceTokenizer:
             ids.append(append_id)
         return ids
 
-    def encode_special(self, text: str) -> int:
+    def encode_special(self, text: str) -> int | None:
         # encode a single special token via exact match
         return self.tokenizer.token_to_id(text)
 

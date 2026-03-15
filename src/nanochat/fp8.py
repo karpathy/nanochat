@@ -208,7 +208,7 @@ class Float8Linear(nn.Linear):
         input_2d = input.reshape(-1, orig_shape[-1])
         output = _Float8Matmul.apply(input_2d, self.weight)
         output = output.reshape(*orig_shape[:-1], output.shape[-1])
-        if self.bias is not None:
+        if self.bias is not None:  # pyright: ignore[reportUnnecessaryComparison]
             output = output + self.bias.to(output.dtype)
         return output
 
