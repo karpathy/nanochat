@@ -21,8 +21,8 @@ import math
 import time
 from contextlib import contextmanager
 from dataclasses import asdict
-from typing import cast
 from pathlib import Path
+from typing import cast
 
 import torch
 import torch.distributed as dist

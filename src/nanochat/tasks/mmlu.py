@@ -3,7 +3,7 @@ The MMLU dataset.
 https://huggingface.co/datasets/cais/mmlu
 """
 
-from typing import cast, Mapping
+from typing import Mapping, cast
 
 from datasets import load_dataset
 

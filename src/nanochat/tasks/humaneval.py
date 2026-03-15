@@ -5,7 +5,7 @@ It is a coding benchmark.
 """
 
 import re
-from typing import cast, Mapping
+from typing import Mapping, cast
 
 from datasets import load_dataset
 

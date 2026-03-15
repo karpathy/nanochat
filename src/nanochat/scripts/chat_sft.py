@@ -20,12 +20,6 @@ import time
 import torch
 import torch.distributed as dist
 import wandb
-from nanochat.tasks.base import TaskMixture
-from nanochat.tasks.customjson import CustomJSON
-from nanochat.tasks.gsm8k import GSM8K
-from nanochat.tasks.mmlu import MMLU
-from nanochat.tasks.smoltalk import SmolTalk
-from nanochat.tasks.spellingbee import SimpleSpelling, SpellingBee
 
 from nanochat.common import (
     DummyWandb,
@@ -46,6 +40,12 @@ from nanochat.evaluation.loss_eval import evaluate_bpb
 from nanochat.flash_attention import HAS_FA3
 from nanochat.report import get_report
 from nanochat.scripts.chat_eval import run_chat_eval
+from nanochat.tasks.base import TaskMixture
+from nanochat.tasks.customjson import CustomJSON
+from nanochat.tasks.gsm8k import GSM8K
+from nanochat.tasks.mmlu import MMLU
+from nanochat.tasks.smoltalk import SmolTalk
+from nanochat.tasks.spellingbee import SimpleSpelling, SpellingBee
 from nanochat.training.checkpoint import load_model, load_optimizer_state, save_checkpoint
 
 

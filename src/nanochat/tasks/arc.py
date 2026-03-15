@@ -3,7 +3,7 @@ The ARC dataset from Allen AI.
 https://huggingface.co/datasets/allenai/ai2_arc
 """
 
-from typing import cast, Mapping
+from typing import Mapping, cast
 
 from datasets import load_dataset
 

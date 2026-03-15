@@ -10,6 +10,7 @@ from typing import Any, List, Mapping, Optional, Tuple
 
 from nanochat.tasks.types import Conversation  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
+
 class Task:
     """
     Base class of a Task. Allows for lightweight slicing of the underlying dataset.

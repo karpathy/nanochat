@@ -15,7 +15,7 @@ Notice that GSM8K uses tool calls inside << >> tags.
 """
 
 import re
-from typing import cast, Mapping
+from typing import Mapping, cast
 
 from datasets import load_dataset
 

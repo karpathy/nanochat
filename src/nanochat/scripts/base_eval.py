@@ -29,7 +29,7 @@ import shutil
 import tempfile
 import time
 import zipfile
-from typing import cast, Mapping
+from typing import Mapping, cast
 
 import torch
 import yaml

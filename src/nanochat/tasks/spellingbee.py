@@ -28,7 +28,7 @@ python -m tasks.spellingbee
 
 import random
 import re
-from typing import cast, Mapping
+from typing import Mapping, cast
 
 from nanochat.common import download_file_with_lock
 from nanochat.tasks.base import Task

@@ -24,7 +24,6 @@ from typing import cast
 import torch
 import torch.distributed as dist
 import wandb
-from nanochat.tasks.gsm8k import GSM8K
 
 from nanochat.common import (
     DummyWandb,
@@ -36,6 +35,7 @@ from nanochat.common import (
 )
 from nanochat.evaluation.engine import Engine
 from nanochat.report import get_report
+from nanochat.tasks.gsm8k import GSM8K
 from nanochat.training.checkpoint import load_model, save_checkpoint
 
 
