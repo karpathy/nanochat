@@ -48,6 +48,7 @@ from nanochat.data.tokenizer import get_token_bytes, get_tokenizer
 from nanochat.evaluation.engine import Engine
 from nanochat.evaluation.loss_eval import evaluate_bpb
 from nanochat.flash_attention import HAS_FA3, _use_fa3
+from nanochat.common.config import add_common_args, add_training_args
 from nanochat.models.config import TrainingConfig
 from nanochat.models.gpt import GPT, GPTConfig, Linear
 from nanochat.scripts.base_eval import evaluate_core
@@ -58,95 +59,11 @@ from nanochat.training.dataloader import (
 )
 
 
-def build_parser():
-# -------------------------------------------------------------------------
-    # CLI arguments
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pretrain base model")
-    # Config file
     parser.add_argument("--config", type=str, default=None, help="path to TOML config file (CLI args override file values)")
-    # Logging
-    parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
-    # Runtime
-    parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
-    # Base dir
-    parser.add_argument("--base-dir", type=str, default=None, help="override NANOCHAT_BASE_DIR env var")
-    # FP8 training
-    parser.add_argument("--fp8", action="store_true", help="enable FP8 training (requires H100+ GPU and torchao)")
-    parser.add_argument(
-        "--fp8-recipe",
-        type=str,
-        default="tensorwise",
-        choices=["rowwise", "tensorwise"],
-        help="FP8 scaling recipe: tensorwise (faster, recommended) or rowwise (more accurate but slower)",
-    )
-    # Model architecture
-    parser.add_argument("--depth", type=int, default=20, help="depth of the Transformer model")
-    parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
-    parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
-    parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
-    parser.add_argument(
-        "--window-pattern",
-        type=str,
-        default="SSSL",
-        help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')",
-    )
-    # Training horizon (only one used, in order of precedence)
-    parser.add_argument(
-        "--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)"
-    )
-    parser.add_argument(
-        "--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)"
-    )
-    parser.add_argument(
-        "--target-param-data-ratio",
-        type=float,
-        default=10.5,
-        help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)",
-    )
-    # Optimization
-    parser.add_argument(
-        "--device-batch-size",
-        type=int,
-        default=32,
-        help="per-device batch size. good number to reduce to 16,8,4,... if you OOM on VRAM.",
-    )
-    parser.add_argument(
-        "--total-batch-size",
-        type=int,
-        default=-1,
-        help="total batch size in tokens. decent numbers are e.g. 524288. (-1 = auto-compute optimal)",
-    )
-    parser.add_argument("--embedding-lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
-    parser.add_argument(
-        "--unembedding-lr", type=float, default=0.008, help="learning rate for unembedding parameters (Adam)"
-    )
-    parser.add_argument(
-        "--weight-decay", type=float, default=0.28, help="cautious weight decay for the Muon optimizer (for weights)"
-    )
-    parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
-    parser.add_argument(
-        "--scalar-lr", type=float, default=0.5, help="learning rate for scalars (resid_lambdas, x0_lambdas)"
-    )
-    parser.add_argument("--warmup-steps", type=int, default=40, help="number of steps for LR warmup")
-    parser.add_argument("--warmdown-ratio", type=float, default=0.65, help="ratio of iterations for LR warmdown")
-    parser.add_argument("--final-lr-frac", type=float, default=0.05, help="final LR as fraction of initial LR")
-    parser.add_argument("--resume-from-step", type=int, default=-1, help="resume training from this step (-1 = disable)")
-    # Evaluation
-    parser.add_argument("--eval-every", type=int, default=250, help="evaluate val bpb every N steps (-1 = disable)")
-    parser.add_argument("--eval-tokens", type=int, default=80 * 524288, help="number of tokens to evaluate val loss on")
-    parser.add_argument(
-        "--core-metric-every", type=int, default=2000, help="evaluate CORE metric every N steps (-1 = disable)"
-    )
-    parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
-    parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
-    parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
-    # Compression metrics
-    parser.add_argument("--track-compression", action="store_true", help="enable compression metrics tracking")
-    parser.add_argument("--compression-log-every", type=int, default=100, help="log compression metrics every N steps")
-    parser.add_argument("--track-layer-compression", action="store_true", help="track per-layer compression (slower)")
-    parser.add_argument("--compression-early-stop", action="store_true", help="stop training when compression plateaus")
-    # Output
-    parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
+    add_common_args(parser)
+    add_training_args(parser)
     return parser
 
 def main():

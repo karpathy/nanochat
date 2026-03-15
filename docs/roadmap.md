@@ -105,7 +105,7 @@ If curves match → fp16 on MPS is stable, fix is just gating the scaler on CUDA
 
 ## Improvements
 
-### Unified CLI, sectioned TOML config, and wandb consolidation
+### Unified CLI, sectioned TOML config, and wandb consolidation — 🔨 In progress (`feat/unified-cli`)
 
 See [unified-cli.md](unified-cli.md) for the full design. Summary:
 
@@ -114,6 +114,24 @@ See [unified-cli.md](unified-cli.md) for the full design. Summary:
 - Shared `load_config()` and `init_wandb()` helpers eliminate duplication across all entry points
 - Single `nanochat` CLI with subcommands; global `--config` / `--base-dir` on all entry points
 - CLI args always override TOML values
+
+**Progress**:
+- [x] Step 1 — `Config` + dataclasses (`nanochat/common/config.py`) ✅
+- [x] Step 2 — Per-section argparse builders wired into existing scripts ⚠️ partial
+  - `base_train`: builder replaced ✅ — `main()` still reads `args.*` directly, old SUPPRESS re-parse block still present
+  - `chat_rl`: builder replaced ✅ — `main()` still reads `args.run == "dummy"` directly
+  - `chat_sft`: **not touched** — `--load-optimizer` is `type=int` (0/1) vs `SFTConfig.load_optimizer: bool`; `--run="dummy"` magic in `main()`; no `--config`/`--base-dir`
+  - `base_eval`: **not touched** — `--eval` flag name vs `EvaluationConfig.modes` field name; `main()` reads `args.eval` directly; no `--config`/`--base-dir`/`--wandb`
+- [ ] Step 3 — Wandb consolidation (`init_wandb`)
+- [ ] Step 4 — Wire `Config` into existing scripts (resolves all step 2 deferred items)
+- [ ] Step 5 — Add `--config` / `--base-dir` to remaining entry points
+- [ ] Step 6 — `nanochat/__main__.py`
+- [ ] Step 7 — `nanochat/cli.py` + `pyproject.toml` registration
+- [ ] Step 8 — Restructure `nanochat/scripts/` into `train/`, `eval/`, `chat/`
+- [ ] Step 9 — Unit tests
+- [ ] Step 10 — Config reference doc
+- [ ] Step 11 — CLI reference doc
+- [ ] Step 12 — Update existing docs
 
 ### Full CLI flag audit across all entry points
 
