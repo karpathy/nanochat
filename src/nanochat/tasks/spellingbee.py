@@ -28,7 +28,7 @@ python -m tasks.spellingbee
 
 import random
 import re
-from typing import cast
+from typing import cast, Mapping
 
 from nanochat.common import download_file_with_lock
 from nanochat.tasks.base import Task
@@ -137,7 +137,7 @@ class SpellingBee(Task):
     def num_examples(self):
         return self.size
 
-    def get_example(self, index: int) -> dict[str, object]:
+    def get_example(self, index: int) -> Mapping[str, object]:
         seed = index if self.split == "train" else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
 
@@ -257,7 +257,7 @@ class SimpleSpelling(Task):
     def num_examples(self):
         return self.size
 
-    def get_example(self, index: int) -> dict[str, object]:
+    def get_example(self, index: int) -> Mapping[str, object]:
         seed = index if self.split == "train" else TEST_RANDOM_SEED_OFFSET + index
         rng = random.Random(seed)
         # pick a random word

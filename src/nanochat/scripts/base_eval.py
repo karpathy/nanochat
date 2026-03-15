@@ -29,7 +29,7 @@ import shutil
 import tempfile
 import time
 import zipfile
-from typing import cast
+from typing import cast, Mapping
 
 import torch
 import yaml
@@ -115,7 +115,7 @@ def place_eval_bundle(file_path: str) -> None:
     print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
 
-def evaluate_core(model: object, tokenizer: object, device: object, max_per_task: int = -1) -> dict[str, object]:
+def evaluate_core(model: object, tokenizer: object, device: object, max_per_task: int = -1) -> Mapping[str, object]:
     """
     Evaluate a base model on the CORE benchmark.
     Returns dict with results, centered_results, and core_metric.

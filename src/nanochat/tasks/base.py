@@ -6,7 +6,7 @@ Example tasks: MMLU, ARC-Easy, ARC-Challenge, GSM8K, HumanEval, SmolTalk.
 """
 
 import random
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Tuple
 
 from nanochat.tasks.types import Conversation  # noqa: F401  (re-exported for callers)
 
@@ -33,7 +33,7 @@ class Task:
     def num_examples(self) -> int:
         raise NotImplementedError
 
-    def get_example(self, index: int) -> Conversation:
+    def get_example(self, index: int) -> Mapping[str, object]:
         raise NotImplementedError
 
     def __len__(self) -> int:
@@ -45,7 +45,7 @@ class Task:
         assert num >= 0, f"Negative number of examples???: {num}"  # prevent footguns
         return num
 
-    def __getitem__(self, index: int) -> dict[str, object]:
+    def __getitem__(self, index: int) -> Mapping[str, object]:
         assert isinstance(index, int), f"Index must be an integer, got {type(index)}"
         physical_index = self.start + index * self.step
         conversation = self.get_example(physical_index)
@@ -80,7 +80,7 @@ class TaskMixture(Task):
     def num_examples(self) -> int:
         return self.num_conversations
 
-    def get_example(self, index: int) -> Conversation:
+    def get_example(self, index: int) -> Mapping[str, object]:
         """
         Access conversations according to a deterministic shuffle of all examples.
         This ensures tasks are mixed throughout training, regardless of dataset size.
@@ -107,7 +107,7 @@ class TaskSequence(Task):
     def num_examples(self) -> int:
         return self.num_conversations
 
-    def get_example(self, index: int) -> Conversation:
+    def get_example(self, index: int) -> Mapping[str, object]:
         assert 0 <= index < self.num_conversations, (
             f"Index {index} out of range for sequence with {self.num_conversations} conversations"
         )

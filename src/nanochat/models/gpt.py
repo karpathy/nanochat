@@ -13,7 +13,7 @@ Notable features:
 - Flash Attention 3 integration
 """
 
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Tuple, cast
 
 import torch
 import torch.nn as nn
@@ -183,7 +183,7 @@ class GPT(nn.Module):
 
     def get_device(self) -> torch.device:
         """Get the device the model is on."""
-        return self.transformer.wte.weight.device
+        return cast(torch.device, self.transformer.wte.weight.device)
 
     def estimate_flops(self) -> int:
         """Return the estimated FLOPs per token for the model (forward + backward)."""
@@ -405,4 +405,4 @@ class GPT(nn.Module):
 
             ids = torch.cat((ids, next_ids), dim=1)
             token = next_ids.item()
-            yield token
+            yield int(token)

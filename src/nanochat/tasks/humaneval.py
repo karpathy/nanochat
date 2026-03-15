@@ -5,7 +5,7 @@ It is a coding benchmark.
 """
 
 import re
-from typing import cast
+from typing import cast, Mapping
 
 from datasets import load_dataset
 
@@ -62,7 +62,7 @@ class HumanEval(Task):
     def num_examples(self):
         return len(self.ds)
 
-    def get_example(self, index: int) -> dict[str, object]:
+    def get_example(self, index: int) -> Mapping[str, object]:
         row = self.ds[index]
         prompt = row["prompt"]  # prompts in HumanEval are the beginning of the program
         solution = row["canonical_solution"]  # the correct continuation of the program

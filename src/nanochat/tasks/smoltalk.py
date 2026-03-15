@@ -4,6 +4,8 @@ https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk
 We use the "smol" version, which is more appropriate for smaller models.
 """
 
+from typing import Mapping
+
 from datasets import load_dataset
 
 from nanochat.tasks.base import Task
@@ -21,7 +23,7 @@ class SmolTalk(Task):
     def num_examples(self):
         return self.length
 
-    def get_example(self, index: int) -> dict[str, object]:
+    def get_example(self, index: int) -> Mapping[str, object]:
         row = self.ds[index]
         messages = row["messages"]
         # ---------------------------------------------------------------------

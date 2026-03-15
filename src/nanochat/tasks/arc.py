@@ -3,7 +3,7 @@ The ARC dataset from Allen AI.
 https://huggingface.co/datasets/allenai/ai2_arc
 """
 
-from typing import cast
+from typing import cast, Mapping
 
 from datasets import load_dataset
 
@@ -24,7 +24,7 @@ class ARC(Task):
     def num_examples(self):
         return len(self.ds)
 
-    def get_example(self, index: int) -> dict[str, object]:
+    def get_example(self, index: int) -> Mapping[str, object]:
         row = self.ds[index]
         question = row["question"]  # the question text
         choices = row["choices"]["text"]  # the text of each choice

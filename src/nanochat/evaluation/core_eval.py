@@ -221,7 +221,7 @@ def evaluate_example(idx: int, model: object, tokenizer: object, data: list[dict
     else:
         raise ValueError(f"Unsupported task type: {task_type}")
 
-    return is_correct
+    return bool(is_correct)
 
 
 def evaluate_task(model: object, tokenizer: object, data: list[dict[str, object]], device: torch.device, task_meta: dict[str, object]) -> float:

@@ -227,9 +227,9 @@ class CompressionMetrics:
         improvement = (recent_mean - previous_mean) / previous_mean
 
         # Overfitting if compression improvement < 1%
-        return improvement < 0.01
+        return bool(improvement < 0.01)
 
-    def get_summary(self) -> Dict[str, float]:
+    def get_summary(self) -> Dict[str, object]:
         """
         Get summary statistics of compression metrics.
 

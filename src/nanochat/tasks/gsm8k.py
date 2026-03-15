@@ -15,7 +15,7 @@ Notice that GSM8K uses tool calls inside << >> tags.
 """
 
 import re
-from typing import cast
+from typing import cast, Mapping
 
 from datasets import load_dataset
 
@@ -47,7 +47,7 @@ class GSM8K(Task):
     def num_examples(self):
         return len(self.ds)
 
-    def get_example(self, index: int) -> dict[str, object]:
+    def get_example(self, index: int) -> Mapping[str, object]:
         row = self.ds[index]
         question = row["question"]  # string of the question prompt
         answer = row["answer"]  # string of the full solution and the answer after #### marker

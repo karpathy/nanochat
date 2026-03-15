@@ -9,7 +9,7 @@ from filelock import FileLock
 
 def get_base_dir() -> str:
     if os.environ.get("NANOCHAT_BASE_DIR"):
-        nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR")
+        nanochat_dir = os.environ["NANOCHAT_BASE_DIR"]
     else:
         home_dir = os.path.expanduser("~")
         cache_dir = os.path.join(home_dir, ".cache")
