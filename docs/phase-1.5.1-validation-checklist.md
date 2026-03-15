@@ -3,7 +3,7 @@ title: "Phase 1.5.1 Validation Checklist"
 summary: "Step-by-step checklist for running compression metrics validation experiments"
 read_when: "Ready to validate compression metrics implementation with actual training runs"
 status: draft
-last_updated: 2026-03-14
+last_updated: 2026-03-15
 ---
 
 # Phase 1.5.1 Validation Checklist
@@ -11,7 +11,7 @@ last_updated: 2026-03-14
 ## Status
 
 **Implementation**: ✅ CompressionMetrics class + training loop integration complete
-**Next Step**: Run validation experiments to test correlation between compression metrics and model performance
+**Next Step**: Run Experiment 2 (short validation, d12, 2000 iterations)
 
 ## Pre-Flight Checklist
 
@@ -76,7 +76,9 @@ uv run pytest tests/ -v
 
 Run in order. Each builds confidence before committing more compute.
 
-### Experiment 1: Smoke Test (d8, ~10 min)
+### Experiment 1: Smoke Test (d8, ~17 min)
+
+**Actual**: ✅ 17 min on MPS (M3 Max). ~10.2s/iter.
 
 Verify compression tracking works without errors.
 
@@ -91,12 +93,12 @@ WANDB_MODE=disabled uv run python -m nanochat.scripts.base_train \
 ```
 
 **Check**:
-- [ ] No errors
-- [ ] Compression metrics in console every 10 steps
+- [x] No errors
+- [x] Compression metrics in console every 10 steps
 - [ ] WandB shows `compression/` metrics (entropy, compression_ratio, gzip_compression, compression_efficiency)
 - [ ] MFU similar to baseline (no significant slowdown)
 
-### Experiment 2: Short Validation (d12, ~1-2 hours)
+### Experiment 2: Short Validation (d12, ~6h on MPS / ~1-2h on GPU)
 
 Collect enough data to analyze correlation.
 
@@ -115,7 +117,7 @@ uv run python -m nanochat.scripts.base_train \
 - [ ] Multiple val checkpoints (every 250 steps)
 - [ ] Can plot compression_ratio vs val_bpb over time
 
-### Experiment 3: Medium Scale (d16, ~4-6 hours)
+### Experiment 3: Medium Scale (d16, ~4-6h on GPU / not feasible on MPS)
 
 Validate at larger scale. Use multi-GPU if available.
 
@@ -132,7 +134,7 @@ torchrun --nproc_per_node=8 -m nanochat.scripts.base_train \
 # Single GPU: same command with `uv run python -m` instead of torchrun
 ```
 
-### Experiment 4: Full Scale (d24, ~8-12 hours)
+### Experiment 4: Full Scale (d24, ~8-12h on GPU)
 
 Final validation at production scale.
 
