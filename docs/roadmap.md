@@ -32,6 +32,7 @@ last_updated: "2026-03-16"
 | [Type Annotations & Pyright Compliance](archive/type-annotations-pyright-compliance.md) | 2026-03-15 | Pyright strict mode, 17 suppression rules, 323→0 reportMissingParameterType across 29 files |
 | [Apple Silicon (MPS) Documentation](archive/apple-silicon-mps-documentation.md) | 2026-03-15 | Rewrote MPS guide with accurate device detection, dtype, limitations, and batch size guidelines |
 | [MPS Backend Improvements](archive/mps-backend-improvements.md) | 2026-03-15 | fp16 dtype, torch.mps.synchronize/memory, empty_cache, get_device_sync refactor |
+| [Pyright Strict Compliance](archive/pyright-strict-compliance.md) | 2026-03-16 | 128→0 pyright errors across 10 categories under strict mode |
 
 ## Active Phase
 
@@ -82,29 +83,7 @@ Combine transformer efficiency with SP Theory advantages. Also the fallback path
 
 ### Refactor `common.py` into `common/` Package — ✅ [Archived](archive/refactor-common-package.md)
 
-### Remaining Pyright Errors (61)
-Started at 128 after `reportMissingParameterType` retrofit. Current breakdown:
-
-| Category | Count | Status | Notes |
-|---|---|---|---|
-| `reportUnusedVariable` | 0 | ✅ Fixed | Underscore prefixes, `_` unpacking |
-| `reportPossiblyUnboundVariable` | 0 | ✅ Fixed | Initialized before conditional branches |
-| `reportUnusedFunction` | 0 | ✅ Fixed | FastAPI handlers suppressed at file level |
-| `reportIndexIssue` | ~19 | 🔜 Pending | `object` typed params lacking `__getitem__` (meta dicts, dataset rows) |
-| `reportReturnType` | ~9 | 🔜 Pending | `dict` invariance (need `Mapping`), numpy `bool_`/`floating` vs Python types |
-| `reportMissingImports` | ~7 | ⏸ Deferred | `tasks.*` unresolvable — runtime `sys.path` manipulation, likely suppress |
-| `reportUnnecessaryComparison` | 3 | 🔜 Pending | `flash_attention.py` (2), `fp8.py` (1) |
-| `reportMissingTypeArgument` | 6 | 🔜 Pending | Generic `dict`/`set`/`Queue` without type args |
-| `reportUnnecessaryIsInstance` | 2 | 🔜 Pending | Redundant `isinstance` in tokenizer |
-| Other | ~15 | 🔜 Pending | `reportGeneralTypeIssues`, `reportOptionalSubscript`, `reportOptionalCall`, `reportAssignmentType` |
-
-- [x] Fix `reportUnusedVariable`
-- [x] Fix `reportPossiblyUnboundVariable`
-- [x] Fix `reportUnusedFunction`
-- [ ] Fix small categories: `reportUnnecessaryComparison` (3), `reportMissingTypeArgument` (6), `reportUnnecessaryIsInstance` (2)
-- [ ] Fix `reportIndexIssue` (narrow `object` params to typed dicts)
-- [ ] Fix `reportReturnType` (use `Mapping` for covariant dict returns, cast numpy types)
-- [ ] Suppress or fix remaining minor categories
+### Pyright Strict Compliance — ✅ [Archived](archive/pyright-strict-compliance.md)
 
 ### MPS Backend Improvements — ✅ [Archived](archive/mps-backend-improvements.md)
 

@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- Resolved all 128 remaining pyright strict-mode errors (128→0) across 10 categories: `reportUnusedVariable`, `reportPossiblyUnboundVariable`, `reportUnusedFunction`, `reportIndexIssue`, `reportReturnType`, `reportMissingImports`, `reportUnnecessaryComparison`, `reportMissingTypeArgument`, `reportUnnecessaryIsInstance`, and general type issues
+- `tasks/base.py`: `get_example`/`__getitem__` return `Mapping[str, object]`; all task subclasses updated
+- `tasks/*.py`: bare `tasks.*` imports replaced with `nanochat.tasks.*`; `tasks.common` → `tasks.base`
+- `flash_attention.py`: `_override_impl: str | None = None` annotation; guard `cache_seqlens` before subscript
+- `tokenizer.py`: `encode_special` → `int | None`; redundant `isinstance` branches replaced with `else`
+- `gpt.py`: cast `get_device()` and `device` assignments; `yield int(token)` in `generate()`
+- `compression_metrics.py`: `bool(...)` wrapping for numpy `bool_` returns; `get_summary` → `Dict[str, object]`
+- `io.py`: `os.environ[]` instead of `.get()` in `get_base_dir()` to return `str` not `str | None`
+- `attention.py`: `assert self.ve_gate is not None` before calling it
+- `base_train.py`: `assert meta_data is not None` at usage sites; cast `loop_state`
+
+### Added
+- `docs/archive/pyright-strict-compliance.md`
+
 ### Added
 - Parameter type annotations across all 29 files (323→0 `reportMissingParameterType` under pyright strict mode)
 - `docs/archive/type-annotations-pyright-compliance.md`
