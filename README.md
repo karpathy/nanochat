@@ -108,8 +108,9 @@ Note: `float16` training automatically enables a `GradScaler` in `base_train.py`
 
 ## Docs
 
-- [docs/m3-max-guide.md](docs/m3-max-guide.md) — Apple Silicon (MPS) training guide
+- [docs/configuration.md](docs/configuration.md) — TrainingConfig fields and TOML config files
 - [docs/data-layout.md](docs/data-layout.md) — where nanochat stores data, tokenizers, and checkpoints
+- [docs/m3-max-guide.md](docs/m3-max-guide.md) — Apple Silicon (MPS) training guide
 - [docs/roadmap.md](docs/roadmap.md) — development roadmap and completed phases
 - [CONTRIBUTING.md](CONTRIBUTING.md) — setup, testing, code quality, and commit conventions
 

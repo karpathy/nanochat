@@ -22,12 +22,16 @@ def build_parser():
     )
     parser.add_argument("--doc-cap", type=int, default=10_000, help="Maximum characters per document (default: 10,000)")
     parser.add_argument("--vocab-size", type=int, default=32768, help="Vocabulary size (default: 32768 = 2^15)")
+    parser.add_argument("--base-dir", type=str, default=None, help="override NANOCHAT_BASE_DIR env var")
     return parser
 
 
 def main():
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.base_dir is not None:
+        os.environ["NANOCHAT_BASE_DIR"] = args.base_dir
     print(f"max_chars: {args.max_chars:,}")
     print(f"doc_cap: {args.doc_cap:,}")
     print(f"vocab_size: {args.vocab_size:,}")

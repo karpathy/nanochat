@@ -146,6 +146,7 @@ def build_parser():
     parser.add_argument("--compression-early-stop", action="store_true", help="stop training when compression plateaus")
     # Output
     parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
+    return parser
 
 def main():
     print_banner()
@@ -156,10 +157,13 @@ def main():
     # Load config file first, then override with any CLI args that were explicitly set
     if args.config is not None:
         config = TrainingConfig.load(Path(args.config))
-        # CLI args override file values — re-apply non-default CLI values
-        cli_overrides = {k: v for k, v in vars(args).items() if k != "config" and v is not None}
-        for k, v in cli_overrides.items():
-            if hasattr(config, k):
+        # Parse again with SUPPRESS defaults so only explicitly passed args appear
+        parser_no_defaults = build_parser()
+        for action in parser_no_defaults._actions:
+            action.default = argparse.SUPPRESS
+        explicit = vars(parser_no_defaults.parse_args())
+        for k, v in explicit.items():
+            if k != "config" and hasattr(config, k):
                 setattr(config, k, v)
     else:
         config = TrainingConfig.from_args(args)
@@ -209,7 +213,7 @@ def main():
 
     # -----------------------------------------------------------------------------
     # Tokenizer will be useful for evaluation and also we need the vocab size to init the model
-    tokenizer = get_tokenizer()
+    tokenizer = get_tokenizer(base_dir=config.base_dir)
     token_bytes = get_token_bytes(device=device)
     vocab_size = tokenizer.get_vocab_size()
     print0(f"Vocab size: {vocab_size:,}")

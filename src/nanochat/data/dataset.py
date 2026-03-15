@@ -146,7 +146,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "-w", "--num-workers", type=int, default=4, help="Number of parallel download workers (default: 4)"
     )
+    parser.add_argument(
+        "--base-dir", type=str, default=None, help="override NANOCHAT_BASE_DIR env var"
+    )
     args = parser.parse_args()
+
+    # Apply base-dir override before any path resolution
+    if args.base_dir is not None:
+        os.environ["NANOCHAT_BASE_DIR"] = args.base_dir
 
     # Prepare the output directory
     os.makedirs(_get_data_dir(), exist_ok=True)

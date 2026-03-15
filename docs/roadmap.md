@@ -20,19 +20,19 @@ last_updated: "2026-03-16"
 
 ## Completed Phases
 
-| Phase | Completed | Summary |
-|-------|-----------|--------|
-| [Phase 0 — Optimizations](archive/phase-0-optimizations.md) | 2026-03-05 | FA3, FP8, ClimbMix (27% speedup), Muon, sliding window, auto batch |
-| [Phase 0.5 — Refactor](archive/phase-0.5-refactor.md) | 2026-03-13 | Modular src/nanochat/ layout, 44 files, 30 tests, CI/CD |
-| [Phase 1 — Architecture Experiments](archive/phase-1-architecture-experiments.md) | 2026-02-19 | SwiGLU, MoE, multi-token prediction — all negative results |
-| [Phase 1.5.0 — Data Layout & Config](archive/phase-1.5.0-data-layout-config.md) | 2026-03-14 | Config system, centralized paths, hierarchical dirs, Python 3.13 |
-| [Phase 1.5.0.1 — Script Entry-Points](archive/phase-1.5.0.1-script-entry-points.md) | 2026-03-15 | Wrapped all scripts in main(), importable without side effects |
-| [Phase 1.5.0.2 — Code Review & Cleanup](archive/phase-1.5.0.2-code-review-cleanup.md) | 2026-03-15 | Full code review, 6 fixes, lazy USE_FA3, paths wiring, all 9 scripts wrapped |
-| [Refactor common.py into common/ Package](archive/refactor-common-package.md) | 2026-03-15 | Split monolithic common.py into 7 focused modules, absorbed paths.py, backward-compatible |
-| [Type Annotations & Pyright Compliance](archive/type-annotations-pyright-compliance.md) | 2026-03-15 | Pyright strict mode, 17 suppression rules, 323→0 reportMissingParameterType across 29 files |
-| [Apple Silicon (MPS) Documentation](archive/apple-silicon-mps-documentation.md) | 2026-03-15 | Rewrote MPS guide with accurate device detection, dtype, limitations, and batch size guidelines |
-| [MPS Backend Improvements](archive/mps-backend-improvements.md) | 2026-03-15 | fp16 dtype, torch.mps.synchronize/memory, empty_cache, get_device_sync refactor |
-| [Pyright Strict Compliance](archive/pyright-strict-compliance.md) | 2026-03-16 | 128→0 pyright errors across 10 categories under strict mode |
+| Phase                                                                                   | Completed  | Summary                                                                                         |
+| --------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------- |
+| [Phase 0 — Optimizations](archive/phase-0-optimizations.md)                             | 2026-03-05 | FA3, FP8, ClimbMix (27% speedup), Muon, sliding window, auto batch                              |
+| [Phase 0.5 — Refactor](archive/phase-0.5-refactor.md)                                   | 2026-03-13 | Modular src/nanochat/ layout, 44 files, 30 tests, CI/CD                                         |
+| [Phase 1 — Architecture Experiments](archive/phase-1-architecture-experiments.md)       | 2026-02-19 | SwiGLU, MoE, multi-token prediction — all negative results                                      |
+| [Phase 1.5.0 — Data Layout & Config](archive/phase-1.5.0-data-layout-config.md)         | 2026-03-14 | Config system, centralized paths, hierarchical dirs, Python 3.13                                |
+| [Phase 1.5.0.1 — Script Entry-Points](archive/phase-1.5.0.1-script-entry-points.md)     | 2026-03-15 | Wrapped all scripts in main(), importable without side effects                                  |
+| [Phase 1.5.0.2 — Code Review & Cleanup](archive/phase-1.5.0.2-code-review-cleanup.md)   | 2026-03-15 | Full code review, 6 fixes, lazy USE_FA3, paths wiring, all 9 scripts wrapped                    |
+| [Refactor common.py into common/ Package](archive/refactor-common-package.md)           | 2026-03-15 | Split monolithic common.py into 7 focused modules, absorbed paths.py, backward-compatible       |
+| [Type Annotations & Pyright Compliance](archive/type-annotations-pyright-compliance.md) | 2026-03-15 | Pyright strict mode, 17 suppression rules, 323→0 reportMissingParameterType across 29 files     |
+| [Apple Silicon (MPS) Documentation](archive/apple-silicon-mps-documentation.md)         | 2026-03-15 | Rewrote MPS guide with accurate device detection, dtype, limitations, and batch size guidelines |
+| [MPS Backend Improvements](archive/mps-backend-improvements.md)                         | 2026-03-15 | fp16 dtype, torch.mps.synchronize/memory, empty_cache, get_device_sync refactor                 |
+| [Pyright Strict Compliance](archive/pyright-strict-compliance.md)                       | 2026-03-16 | 128→0 pyright errors across 10 categories under strict mode                                     |
 
 ## Active Phase
 
@@ -77,18 +77,16 @@ Long context, tool use, transparency, multimodal. See [tool use & transparency p
 ### Phase 6 — SP-Transformer Hybrid (Research)
 Combine transformer efficiency with SP Theory advantages. Also the fallback path if compression approach shows <5% improvement. See [detailed plan](phase-6-hybrid-architecture.md).
 
-## Improvements
-
-### Type Annotations & Pyright Compliance — ✅ [Archived](archive/type-annotations-pyright-compliance.md)
-
-### Refactor `common.py` into `common/` Package — ✅ [Archived](archive/refactor-common-package.md)
-
-### Pyright Strict Compliance — ✅ [Archived](archive/pyright-strict-compliance.md)
-
-### MPS Backend Improvements — ✅ [Archived](archive/mps-backend-improvements.md)
-
-### Apple Silicon (MPS) Documentation — ✅ [Archived](archive/apple-silicon-mps-documentation.md)
-
 ## Deferred Phases
 
 None currently.
+
+## Improvements
+
+### `nanochat.data.dataset` and `tok_train` — `--config` / `--base-dir` flag support
+
+`nanochat.data.dataset` currently accepts `--base-dir` to override `NANOCHAT_BASE_DIR`, but does not support `--config` like the training scripts do. `nanochat.scripts.tok_train` has neither flag. Add `--base-dir` to `tok_train` and `--config` to both so the full pre-flight pipeline can be driven from a single TOML config file, consistent with the training scripts.
+
+### `base_train` — CLI args must not override TOML config with default values
+
+When `--config` is used, argparse default values were silently overwriting TOML config fields (e.g. `depth=20` default clobbering `depth=12` from TOML). Fixed by re-parsing with `argparse.SUPPRESS` defaults so only explicitly passed CLI args override the config.

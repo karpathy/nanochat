@@ -412,18 +412,18 @@ class RustBPETokenizer:
 # nanochat-specific convenience functions
 
 
-def get_tokenizer() -> RustBPETokenizer:
+def get_tokenizer(base_dir: str | None = None) -> RustBPETokenizer:
     from nanochat.common.paths import tokenizer_dir
 
-    return RustBPETokenizer.from_directory(tokenizer_dir())
+    return RustBPETokenizer.from_directory(tokenizer_dir(base_dir))
 
 
-def get_token_bytes(device: str = "cpu"):
+def get_token_bytes(device: str = "cpu", base_dir: str | None = None):
     import torch
 
     from nanochat.common.paths import tokenizer_dir
 
-    tok_dir = tokenizer_dir()
+    tok_dir = tokenizer_dir(base_dir)
     token_bytes_path = os.path.join(tok_dir, "token_bytes.pt")
     assert os.path.exists(token_bytes_path), (
         f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"

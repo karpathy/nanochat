@@ -26,17 +26,21 @@ uv run python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}'); pri
 # Neither → cannot run validation
 ```
 
+**Result**: MPS ✅ — Apple Silicon (M3 Max). CUDA not available. Running at limited scale with `device_type = "mps"` in config.
+
 ### 2. Data
 
 Data lives in `$NANOCHAT_BASE_DIR/data/climbmix/` (default: `~/.cache/nanochat/data/climbmix/`). See [data-layout.md](data-layout.md) for full directory structure.
 
 ```bash
 # Check if data exists
-ls ~/.cache/nanochat/data/climbmix/shard_00000.parquet 2>/dev/null || echo "❌ No data"
+ls /Users/geronimo/build/sp_theory/experiments/nanochat/data/climbmix/shard_00000.parquet 2>/dev/null || echo "❌ No data"
 
 # Download (8 shards minimum for d12 quick test)
-uv run python -m nanochat.data.dataset -n 8
+uv run python -m nanochat.data.dataset -n 8 --base-dir /Users/geronimo/build/sp_theory/experiments/nanochat
 ```
+
+**Result**: ✅ 9/9 shards downloaded (8 train + validation shard `shard_06542`) to `experiments/nanochat/data/climbmix/`.
 
 Filenames are `shard_NNNNN.parquet`. Last shard is always validation.
 
@@ -44,11 +48,13 @@ Filenames are `shard_NNNNN.parquet`. Last shard is always validation.
 
 ```bash
 # Check if tokenizer exists
-ls ~/.cache/nanochat/tokenizer/tokenizer.pkl 2>/dev/null || echo "❌ No tokenizer"
+ls /Users/geronimo/build/sp_theory/experiments/nanochat/tokenizer/tokenizer.pkl 2>/dev/null || echo "❌ No tokenizer"
 
 # Train if missing
-uv run python -m nanochat.scripts.tok_train
+uv run python -m nanochat.scripts.tok_train --base-dir /Users/geronimo/build/sp_theory/experiments/nanochat
 ```
+
+**Result**: ✅ Trained in 43s. Saved `tokenizer.pkl` and `token_bytes.pt` to `experiments/nanochat/tokenizer/`.
 
 ### 4. Code
 
@@ -64,21 +70,24 @@ uv run pytest tests/ -v
 # Expected: 56 passed, 10 skipped
 ```
 
+**Result**: ✅ `CompressionMetrics` imports cleanly. ✅ Compression flags present. ✅ 56 passed, 10 skipped. Also fixed missing `return parser` in `build_parser()`.
+
 ## Validation Experiments
 
 Run in order. Each builds confidence before committing more compute.
 
-### Experiment 1: Smoke Test (d12, ~10 min)
+### Experiment 1: Smoke Test (d8, ~10 min)
 
 Verify compression tracking works without errors.
 
 ```bash
-uv run python -m nanochat.scripts.base_train \
-    --depth=12 --num-iterations=100 \
+WANDB_MODE=disabled uv run python -m nanochat.scripts.base_train \
+    --config /Users/geronimo/build/sp_theory/experiments/nanochat/nanochat.toml \
+    --depth=8 --num-iterations=100 \
     --track-compression --compression-log-every=10 \
     --eval-every=50 --core-metric-every=-1 \
     --sample-every=-1 --save-every=-1 \
-    --run=compression-smoke-d12
+    --run=compression-smoke-d8
 ```
 
 **Check**:
@@ -93,7 +102,8 @@ Collect enough data to analyze correlation.
 
 ```bash
 uv run python -m nanochat.scripts.base_train \
-    --depth=12 --num-iterations=2000 \
+    --config /Users/geronimo/build/sp_theory/experiments/nanochat/nanochat.toml \
+    --num-iterations=2000 \
     --track-compression --compression-log-every=50 \
     --eval-every=250 --core-metric-every=-1 \
     --sample-every=-1 --save-every=-1 \
@@ -112,6 +122,7 @@ Validate at larger scale. Use multi-GPU if available.
 ```bash
 # Multi-GPU
 torchrun --nproc_per_node=8 -m nanochat.scripts.base_train \
+    --config /Users/geronimo/build/sp_theory/experiments/nanochat/nanochat.toml \
     --depth=16 --num-iterations=5000 \
     --track-compression --compression-log-every=100 \
     --eval-every=500 --core-metric-every=-1 \
@@ -127,6 +138,7 @@ Final validation at production scale.
 
 ```bash
 torchrun --nproc_per_node=8 -m nanochat.scripts.base_train \
+    --config /Users/geronimo/build/sp_theory/experiments/nanochat/nanochat.toml \
     --depth=24 \
     --track-compression --compression-log-every=100 \
     --eval-every=500 \
