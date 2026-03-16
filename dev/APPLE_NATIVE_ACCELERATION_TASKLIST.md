@@ -35,21 +35,21 @@ The planning phase should be completed first.
 
 ### Throughput Profiling
 
-- [ ] Profile the current PyTorch + MPS training step on the reference workload.
-- [ ] Measure how much time is spent in forward pass, backward pass, and optimizer step.
-- [ ] Identify whether attention, optimizer, or runtime overhead is the dominant throughput bottleneck.
+- [x] Profile the current PyTorch + MPS training step on the reference workload. See [APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md](APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md).
+- [x] Measure how much time is spent in forward pass, backward pass, and optimizer step. See [APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md](APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md).
+- [x] Identify whether attention, optimizer, or runtime overhead is the dominant throughput bottleneck. See [APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md](APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md).
 
 ### Memory Profiling
 
-- [ ] Measure current MPS driver memory and recommended memory fraction on the reference workload.
-- [ ] Identify the largest contributors to memory pressure.
-- [ ] Determine whether the main limit is activations, optimizer state, parameters, or framework behavior.
+- [x] Measure current MPS driver memory and recommended memory fraction on the reference workload. See [APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md](APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md).
+- [x] Identify the largest contributors to memory pressure. See [APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md](APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md).
+- [x] Determine whether the main limit is activations, optimizer state, parameters, or framework behavior. See [APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md](APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md).
 
 ### Profiling Deliverables
 
-- [ ] Write the profiling memo.
-- [ ] Produce a ranked bottleneck list.
-- [ ] Mark which bottlenecks are likely framework-specific versus model-specific.
+- [x] Write the profiling memo. See [APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md](APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md).
+- [x] Produce a ranked bottleneck list. See [APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md](APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md).
+- [x] Mark which bottlenecks are likely framework-specific versus model-specific. See [APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md](APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md).
 
 ## Phase 2: Framework Evaluation
 
@@ -121,16 +121,16 @@ The planning phase should be completed first.
 
 ### Recommendation
 
-- [ ] Synthesize profiling, research, and prototype-planning outputs into one recommendation.
-- [ ] Decide whether the project should proceed with an Apple-native prototype.
-- [ ] Decide whether the recommended first implementation track is MLX, hybrid acceleration, inference-only native work, or no new backend.
+- [x] Synthesize profiling, research, and prototype-planning outputs into one recommendation. See [APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md](APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md).
+- [x] Decide whether the project should proceed with an Apple-native prototype. See [APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md](APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md).
+- [x] Decide whether the recommended first implementation track is MLX, hybrid acceleration, inference-only native work, or no new backend. See [APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md](APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md).
 
 ### Decision Deliverables
 
-- [ ] Write the final recommendation memo.
-- [ ] Record the go or no-go decision.
+- [x] Write the final recommendation memo. See [APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md](APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md).
+- [x] Record the go or no-go decision. See [APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md](APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md).
 - [ ] If no-go, define the PyTorch + MPS continuation plan.
-- [ ] If go, approve the implementation-phase task list below.
+- [x] If go, approve the implementation-phase task list below. See [APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md](APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md).
 
 ## Implementation Phase: MLX Prototype
 
@@ -203,11 +203,11 @@ Only start this section after a go decision and only if inference-native work is
 ## Completion Criteria
 
 - [x] Baseline is frozen.
-- [ ] Profiling is complete.
+- [x] Profiling is complete.
 - [x] Framework comparison is complete.
 - [x] Prototype path is selected.
 - [x] Integration planning is complete.
-- [ ] Final recommendation is documented.
+- [x] Final recommendation is documented.
 
 ## Related Documents
 
@@ -216,6 +216,8 @@ Only start this section after a go decision and only if inference-native work is
 - [APPLE_NATIVE_ACCELERATION_EXECUTION_PLAN.md](APPLE_NATIVE_ACCELERATION_EXECUTION_PLAN.md)
 - [APPLE_NATIVE_ACCELERATION_MACHINE_PROFILE.md](APPLE_NATIVE_ACCELERATION_MACHINE_PROFILE.md)
 - [APPLE_NATIVE_ACCELERATION_BASELINE_BENCHMARK.md](APPLE_NATIVE_ACCELERATION_BASELINE_BENCHMARK.md)
+- [APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md](APPLE_NATIVE_ACCELERATION_PROFILING_MEMO.md)
 - [APPLE_NATIVE_ACCELERATION_FRAMEWORK_COMPARISON.md](APPLE_NATIVE_ACCELERATION_FRAMEWORK_COMPARISON.md)
 - [APPLE_NATIVE_ACCELERATION_PROTOTYPE_SCOPE.md](APPLE_NATIVE_ACCELERATION_PROTOTYPE_SCOPE.md)
 - [APPLE_NATIVE_ACCELERATION_INTEGRATION_STRATEGY.md](APPLE_NATIVE_ACCELERATION_INTEGRATION_STRATEGY.md)
+- [APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md](APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md)
