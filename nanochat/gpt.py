@@ -911,6 +911,7 @@ class GPT(nn.Module):
                 softcap=float(softcap),
                 ignore_index=-1,
                 reduction=loss_reduction,
+                impl="cce_kahan_full_c",
             )
             loss = ce_loss
             if combined_aux_loss is not None:
