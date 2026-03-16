@@ -31,6 +31,8 @@ Usage:
 """
 
 import argparse
+import os
+os.environ["NANOCHAT_DTYPE"] = "float32"
 import torch
 import torch._dynamo
 torch._dynamo.config.disable = True
@@ -173,7 +175,7 @@ def train_model(width: int, lr_mult: float, config: TransferCheckConfig,
 
     for step in range(config.num_steps):
         x, y = batches[step % num_batches]
-        with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=(device.type == 'cuda')):
+        with torch.amp.autocast(device_type='cuda', dtype=torch.float32, enabled=False):
             loss = model(x, y)
 
         losses.append(loss.item())

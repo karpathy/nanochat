@@ -219,11 +219,8 @@ class GPT(nn.Module):
 
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=0.8)
-        lm_head_std = 0.001
-        if self.config.mup_base_width > 0:
-            # muP: scale lm_head init by 1/sqrt(m_d) so raw logit magnitude is O(1) across widths.
-            # Without this, |logit| ~ 0.001 * sqrt(n_embd) grows as sqrt(width).
-            lm_head_std *= (self.config.mup_base_width / self.config.n_embd) ** 0.5
+        # muP uses 0.02 for stronger initial logit signal; forward-pass scaling handles width independence
+        lm_head_std = 0.02 if self.config.mup_base_width > 0 else 0.001
         torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=lm_head_std)
 
         # Transformer blocks: uniform init with bound = sqrt(3) * std (same standard deviation as normal)

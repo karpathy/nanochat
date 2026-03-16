@@ -17,6 +17,8 @@ Usage:
 """
 
 import argparse
+import os
+os.environ["NANOCHAT_DTYPE"] = "float32"
 import torch
 import torch._dynamo
 torch._dynamo.config.disable = True
@@ -299,7 +301,7 @@ def run_coord_check(config: CoordCheckConfig, device: torch.device,
         model.train()
 
         for step in range(config.num_steps):
-            with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=(device.type == 'cuda')):
+            with torch.amp.autocast(device_type='cuda', dtype=torch.float32, enabled=False):
                 loss = model(x, y)
 
             results['losses'][actual_width].append(loss.item())
