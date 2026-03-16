@@ -34,10 +34,10 @@ from nanochat.common import (
     is_ddp_initialized,
     print0,
 )
-from nanochat.data.tokenizer import get_token_bytes
+from nanochat.tokenizer import get_token_bytes
 from nanochat.evaluation.engine import Engine
 from nanochat.evaluation.loss_eval import evaluate_bpb
-from nanochat.flash_attention import HAS_FA3
+from nanochat.common.flash_attention import HAS_FA3
 from nanochat.report import get_report
 from nanochat.scripts.chat_eval import run_chat_eval
 from nanochat.tasks.base import TaskMixture

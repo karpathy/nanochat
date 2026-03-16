@@ -1,64 +1,102 @@
 ---
 title: "Configuration Reference"
-summary: "TrainingConfig fields, TOML config files, and base directory resolution."
+summary: "Sectioned TOML config files, CLI overrides, and ConfigLoader usage."
 read_when:
-  - Setting up a training run
+  - Setting up a training, SFT, RL, or evaluation run
   - Creating or editing a TOML config file
-  - Understanding what each TrainingConfig field does
+  - Understanding config resolution order
 status: active
-last_updated: "2026-03-16"
+last_updated: "2026-06-10"
 ---
 
 # Configuration Reference
 
-Training is configured via `TrainingConfig` — a dataclass defined in `src/nanochat/models/config.py`. Values can be set in a TOML file and selectively overridden per-run via CLI flags.
+Configuration is defined in `src/nanochat/common/config.py` as independent dataclasses — one per entry point. Values are loaded from a sectioned TOML file and selectively overridden via CLI flags.
+
+## Resolution Order
+
+Later values override earlier ones:
+
+1. Dataclass field defaults
+2. TOML file values (per section)
+3. Explicit CLI flags
 
 ## TOML Config Files
 
-Save any subset of `TrainingConfig` fields to a `.toml` file:
+Config files use TOML sections matching the entry point:
 
 ```toml
-depth = 12
+[common]
 base_dir = "/path/to/experiments/nanochat"
 run = "my-experiment"
-track_compression = true
+wandb = "online"
+
+[training]
+depth = 12
+num_iterations = 10000
+device_batch_size = 32
 ```
 
-Load it with `--config`:
+Pass the file with `--config`:
 
 ```bash
-uv run python -m nanochat.scripts.base_train --config path/to/nanochat.toml
+uv run python -m nanochat.scripts.base_train --config path/to/config.toml
 ```
 
-CLI flags override file values — the file sets the baseline, flags patch on top.
+CLI flags override file values for that run:
 
-A copy of the resolved config is auto-saved to `checkpoints/base/<model_tag>/config.toml` at the start of each run.
+```bash
+uv run python -m nanochat.scripts.base_train --config config.toml --depth 6 --run quick-test
+```
+
+A copy of the resolved config is auto-saved to `checkpoints/<section>/<model_tag>/config.toml` at the start of each run.
+
+Generate a default config with all fields and inline comments:
+
+```bash
+uv run python -m nanochat.scripts.base_train --generate-config > config.toml
+```
 
 ## Base Directory
 
-All runtime data (data, tokenizer, checkpoints, eval results) lives under a single root resolved in this order:
+All runtime data (datasets, tokenizer, checkpoints, eval results) lives under a single root resolved in this order:
 
-1. `base_dir` field in the TOML config
-2. `NANOCHAT_BASE_DIR` environment variable
-3. Default: `~/.cache/nanochat/`
+1. `base_dir` in `[common]` section of the TOML file
+2. `--base-dir` CLI flag
+3. `NANOCHAT_BASE_DIR` environment variable
+4. Default: `~/.cache/nanochat/`
 
 See [data-layout.md](data-layout.md) for the full directory structure.
 
-## TrainingConfig Fields
+## [common] Fields
+
+Shared across all entry points.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `base_dir` | `null` | Override `NANOCHAT_BASE_DIR` for this run |
+| `device_type` | `""` | `cuda`, `cpu`, or `mps` (empty = autodetect) |
+| `run` | `"unnamed"` | WandB run name |
+| `wandb` | `"local"` | WandB mode: `online`, `local`, or `disabled` |
+| `wandb_project` | `"nanochat"` | WandB project name |
+
+## [training] Fields
+
+Base model pretraining (`nanochat.scripts.base_train`).
 
 ### Model Architecture
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `depth` | *(required)* | Number of transformer layers |
+| `depth` | `20` | Number of transformer layers |
 | `aspect_ratio` | `64` | `model_dim = depth × aspect_ratio` |
 | `head_dim` | `128` | Target attention head dimension |
 | `max_seq_len` | `2048` | Maximum context length |
-| `window_pattern` | `"SSSL"` | Sliding window pattern tiled across layers (`L`=full context, `S`=half context) |
+| `window_pattern` | `"SSSL"` | Sliding window pattern tiled across layers (`L`=full, `S`=half) |
 
 ### Training Horizon
 
-Exactly one of these should be active (checked in order of precedence):
+Exactly one should be active (checked in order of precedence):
 
 | Field | Default | Description |
 |-------|---------|-------------|
@@ -71,106 +109,102 @@ Exactly one of these should be active (checked in order of precedence):
 | Field | Default | Description |
 |-------|---------|-------------|
 | `device_batch_size` | `32` | Per-device batch size in sequences |
-| `total_batch_size` | `-1` | Total batch size in tokens (`-1` = auto-compute optimal) |
+| `total_batch_size` | `-1` | Total batch size in tokens (`-1` = auto) |
 | `embedding_lr` | `0.3` | AdamW LR for embedding parameters |
 | `unembedding_lr` | `0.008` | AdamW LR for unembedding parameters |
-| `matrix_lr` | `0.02` | Muon LR for matrix parameters |
-| `scalar_lr` | `0.5` | LR for scalar parameters (`resid_lambdas`, `x0_lambdas`) |
-| `weight_decay` | `0.28` | Cautious weight decay for Muon (scaled automatically by batch size and depth) |
-| `warmup_steps` | `40` | Steps for LR linear warmup |
-| `warmdown_ratio` | `0.65` | Fraction of total iterations for LR warmdown |
+| `matrix_lr` | `0.02` | Muon LR for weight matrices |
+| `scalar_lr` | `0.5` | LR for scalar parameters |
+| `weight_decay` | `0.28` | Weight decay (auto-scaled by batch size and depth) |
+| `warmup_steps` | `40` | Linear LR warmup steps |
+| `warmdown_ratio` | `0.65` | Fraction of total steps for LR warmdown |
 | `final_lr_frac` | `0.05` | Final LR as fraction of peak LR |
-| `resume_from_step` | `-1` | Resume training from this checkpoint step (`-1` = disabled) |
+| `resume_from_step` | `-1` | Resume from checkpoint at this step (`-1` = disabled) |
 
-### Evaluation
+### Evaluation & Checkpointing
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `eval_every` | `250` | Evaluate validation bpb every N steps (`-1` = disabled) |
-| `eval_tokens` | `41943040` | Number of tokens used for validation loss evaluation |
-| `core_metric_every` | `2000` | Evaluate CORE metric every N steps (`-1` = disabled) |
-| `core_metric_max_per_task` | `500` | Max examples per task for CORE evaluation |
+| `eval_every` | `250` | Validate bpb every N steps (`-1` = disabled) |
+| `eval_tokens` | `41943040` | Tokens used for validation loss (80 × 524288) |
+| `core_metric_every` | `2000` | CORE score every N steps (`-1` = disabled) |
+| `core_metric_max_per_task` | `500` | Max examples per task for CORE |
 | `sample_every` | `2000` | Sample from model every N steps (`-1` = disabled) |
-| `save_every` | `-1` | Save checkpoints every N steps (`-1` = only at end) |
+| `save_every` | `-1` | Checkpoint every N steps (`-1` = only at end) |
 
-### Runtime
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `device_type` | `""` | `cuda`, `cpu`, or `mps` (empty = autodetect) |
-| `fp8` | `false` | Enable FP8 training (H100+ only, requires `torchao`) |
-| `fp8_recipe` | `"tensorwise"` | FP8 scaling recipe: `tensorwise` or `rowwise` |
-
-### Compression Metrics
+### FP8 & Compression
 
 | Field | Default | Description |
 |-------|---------|-------------|
+| `fp8` | `false` | Enable FP8 training (H100+ only) |
+| `fp8_recipe` | `"tensorwise"` | `tensorwise` or `rowwise` |
 | `track_compression` | `false` | Enable compression metrics tracking |
 | `compression_log_every` | `100` | Log compression metrics every N steps |
 | `track_layer_compression` | `false` | Track per-layer compression (slower) |
-| `compression_early_stop` | `false` | Stop training when compression plateaus |
+| `compression_early_stop` | `false` | Stop when compression plateaus |
+| `model_tag` | `null` | Checkpoint directory name (default: `d<depth>`) |
 
-### Output
+## [sft] Fields
+
+Supervised fine-tuning (`nanochat.scripts.sft_train`).
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `model_tag` | `null` | Checkpoint directory name (default: `d<depth>`) |
-| `run` | `"dummy"` | WandB run name (`"dummy"` disables WandB logging) |
-| `base_dir` | `null` | Override `NANOCHAT_BASE_DIR` for this run |
+| `model_tag` | `null` | Pretrained model to load (default: auto) |
+| `model_step` | `null` | Checkpoint step to load (`null` = last) |
+| `load_optimizer` | `true` | Resume optimizer state |
+| `num_iterations` | `-1` | Steps (`-1` = full epoch) |
+| `max_seq_len` | `null` | Override pretrain sequence length |
+| `device_batch_size` | `null` | Override pretrain batch size |
+| `total_batch_size` | `null` | Override pretrain total batch size |
+| `embedding_lr` | `null` | Override pretrain embedding LR |
+| `unembedding_lr` | `null` | Override pretrain unembedding LR |
+| `matrix_lr` | `null` | Override pretrain matrix LR |
+| `init_lr_frac` | `0.8` | Initial LR as fraction of peak |
+| `warmup_ratio` | `0.0` | Warmup as fraction of total steps |
+| `warmdown_ratio` | `0.5` | Warmdown as fraction of total steps |
+| `final_lr_frac` | `0.0` | Final LR as fraction of peak |
+| `eval_every` | `200` | Validate every N steps (`-1` = disabled) |
+| `eval_tokens` | `20971520` | Tokens for validation (40 × 524288) |
+| `chatcore_every` | `200` | ChatCORE eval every N steps (`-1` = disabled) |
+| `chatcore_max_cat` | `-1` | Max categories (`-1` = no limit) |
+| `chatcore_max_sample` | `24` | Max samples per category |
+| `mmlu_epochs` | `3` | MMLU evaluation epochs |
+| `gsm8k_epochs` | `4` | GSM8K evaluation epochs |
 
-## Full Config Example
+## [rl] Fields
 
-All fields with their defaults and inline comments:
+Reinforcement learning (`nanochat.scripts.rl_train`).
 
-```toml
-# ── Paths ─────────────────────────────────────────────────────────────────────
-base_dir = "/path/to/experiments/nanochat"  # omit to use NANOCHAT_BASE_DIR or ~/.cache/nanochat/
+| Field | Default | Description |
+|-------|---------|-------------|
+| `model_tag` | `null` | Model to load (default: auto) |
+| `model_step` | `null` | Checkpoint step (`null` = last) |
+| `num_epochs` | `1` | Training epochs |
+| `device_batch_size` | `8` | Per-device batch size |
+| `examples_per_step` | `16` | Examples per RL step |
+| `num_samples` | `16` | Samples per example |
+| `max_new_tokens` | `256` | Max tokens to generate |
+| `temperature` | `1.0` | Sampling temperature |
+| `top_k` | `50` | Top-k sampling |
+| `embedding_lr` | `0.2` | Embedding LR |
+| `unembedding_lr` | `0.004` | Unembedding LR |
+| `matrix_lr` | `0.02` | Matrix LR |
+| `weight_decay` | `0.0` | Weight decay |
+| `init_lr_frac` | `0.05` | Initial LR fraction |
+| `eval_every` | `60` | Evaluate every N steps |
+| `eval_examples` | `400` | Examples for evaluation |
+| `save_every` | `60` | Checkpoint every N steps |
 
-# ── Output ────────────────────────────────────────────────────────────────────
-run = "dummy"          # wandb run name; "dummy" disables wandb
-model_tag = "d12"      # checkpoint subdir name; omit to default to d<depth>
+## [evaluation] Fields
 
-# ── Model Architecture ────────────────────────────────────────────────────────
-depth = 12             # number of transformer layers (required)
-aspect_ratio = 64      # model_dim = depth × aspect_ratio
-head_dim = 128         # target attention head dimension
-max_seq_len = 2048     # maximum context length
-window_pattern = "SSSL" # L=full context, S=half context, tiled across layers
+Standalone evaluation (`nanochat.scripts.evaluate`).
 
-# ── Training Horizon (first active wins) ──────────────────────────────────────
-num_iterations = -1              # explicit step count (-1 = disabled)
-target_flops = -1.0              # derive steps from FLOPs budget (-1 = disabled)
-target_param_data_ratio = 10.5   # compute-optimal D:N ratio (Chinchilla=20)
-
-# ── Optimization ──────────────────────────────────────────────────────────────
-device_batch_size = 32     # per-device batch size in sequences; reduce if OOM
-total_batch_size = -1      # total tokens per step (-1 = auto-compute optimal)
-embedding_lr = 0.3         # AdamW LR for embeddings
-unembedding_lr = 0.008     # AdamW LR for unembedding
-matrix_lr = 0.02           # Muon LR for weight matrices
-scalar_lr = 0.5            # LR for resid_lambdas / x0_lambdas
-weight_decay = 0.28        # Muon weight decay (auto-scaled by batch size and depth)
-warmup_steps = 40          # linear LR warmup steps
-warmdown_ratio = 0.65      # fraction of total steps for LR warmdown
-final_lr_frac = 0.05       # final LR as fraction of peak LR
-resume_from_step = -1      # resume from checkpoint at this step (-1 = disabled)
-
-# ── Evaluation ────────────────────────────────────────────────────────────────
-eval_every = 250                  # validate bpb every N steps (-1 = disabled)
-eval_tokens = 41943040            # tokens used for validation loss (80 × 524288)
-core_metric_every = 2000          # CORE score every N steps (-1 = disabled)
-core_metric_max_per_task = 500    # max examples per task for CORE
-sample_every = 2000               # sample from model every N steps (-1 = disabled)
-save_every = -1                   # checkpoint every N steps (-1 = only at end)
-
-# ── Runtime ───────────────────────────────────────────────────────────────────
-device_type = ""           # "cuda" | "cpu" | "mps" | "" (autodetect)
-fp8 = false                # FP8 training (H100+ only, requires torchao)
-fp8_recipe = "tensorwise"  # "tensorwise" (faster) or "rowwise" (more accurate)
-
-# ── Compression Metrics ───────────────────────────────────────────────────────
-track_compression = false       # enable compression tracking
-compression_log_every = 100     # log compression metrics every N steps
-track_layer_compression = false # per-layer compression (slower)
-compression_early_stop = false  # stop when compression plateaus
-```
+| Field | Default | Description |
+|-------|---------|-------------|
+| `modes` | `"core,bpb,sample"` | Comma-separated: `core`, `bpb`, `sample` |
+| `hf_path` | `null` | HuggingFace model path (empty = use nanochat checkpoint) |
+| `model_tag` | `null` | Model to evaluate (default: auto) |
+| `step` | `null` | Checkpoint step (`null` = last) |
+| `max_per_task` | `-1` | Max examples per task (`-1` = all) |
+| `device_batch_size` | `32` | Per-device batch size |
+| `split_tokens` | `20971520` | Tokens per evaluation split (40 × 524288) |

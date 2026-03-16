@@ -42,7 +42,7 @@ from nanochat.common import (
     get_base_dir,
     print0,
 )
-from nanochat.data.tokenizer import HuggingFaceTokenizer, get_token_bytes
+from nanochat.tokenizer import HuggingFaceTokenizer, get_token_bytes
 from nanochat.evaluation.core_eval import evaluate_task
 from nanochat.evaluation.engine import Engine
 from nanochat.evaluation.loss_eval import evaluate_bpb

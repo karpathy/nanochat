@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from nanochat.common.config import (
+from nanochat.config import (
     CommonConfig,
     Config,
     ConfigLoader,
@@ -122,9 +122,6 @@ def test_config_load_unknown_section_raises(tmp_path):
     p.write_text("[bogus]\nfoo = 1\n", encoding="utf-8")
     with pytest.raises(ValueError, match="bogus"):
         Config.load(p)
-
-
-
 
 def test_save_roundtrip(tmp_path):
     cfg = Config()

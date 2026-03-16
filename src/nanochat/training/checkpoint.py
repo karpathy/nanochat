@@ -12,7 +12,7 @@ from typing import cast
 import torch
 
 from nanochat.common.paths import checkpoints_dir as _checkpoints_dir
-from nanochat.data.tokenizer import get_tokenizer
+from nanochat.tokenizer import get_tokenizer
 from nanochat.models.config import GPTConfig
 from nanochat.models.gpt import GPT
 

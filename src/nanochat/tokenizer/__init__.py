@@ -1,6 +1,5 @@
-"""Data loading and tokenization utilities."""
 
-from nanochat.data.tokenizer import (
+from nanochat.tokenizer import (
     SPECIAL_TOKENS,
     SPLIT_PATTERN,
     HuggingFaceTokenizer,

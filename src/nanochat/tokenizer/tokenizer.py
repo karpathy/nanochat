@@ -19,6 +19,8 @@ from tokenizers import Tokenizer as HFTokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
 
+from nanochat.common import tokenizer_dir
+
 SPECIAL_TOKENS = [
     # every document begins with the Beginning of Sequence (BOS) token that delimits documents
     "<|bos|>",
@@ -412,17 +414,12 @@ class RustBPETokenizer:
 # nanochat-specific convenience functions
 
 
-def get_tokenizer(base_dir: str | None = None) -> RustBPETokenizer:
-    from nanochat.common.paths import tokenizer_dir
-
+def get_tokenizer(base_dir: str) -> RustBPETokenizer:
     return RustBPETokenizer.from_directory(tokenizer_dir(base_dir))
 
 
-def get_token_bytes(device: str = "cpu", base_dir: str | None = None):
+def get_token_bytes(device: str = "cpu", base_dir: str):
     import torch
-
-    from nanochat.common.paths import tokenizer_dir
-
     tok_dir = tokenizer_dir(base_dir)
     token_bytes_path = os.path.join(tok_dir, "token_bytes.pt")
     assert os.path.exists(token_bytes_path), (

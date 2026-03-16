@@ -3,7 +3,7 @@
 import pytest
 import torch
 from nanochat.models.gpt import GPT, GPTConfig
-from nanochat.data.tokenizer import HuggingFaceTokenizer
+from nanochat.tokenizer.tokenizer import HuggingFaceTokenizer
 
 
 def test_tokenizer_model_integration():

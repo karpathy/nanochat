@@ -43,12 +43,12 @@ from nanochat.common import (
     print0,
     print_banner,
 )
-from nanochat.compression_metrics import CompressionMetrics
-from nanochat.data.tokenizer import get_token_bytes, get_tokenizer
+from nanochat.training.compression_metrics import CompressionMetrics
+from nanochat.tokenizer import get_token_bytes, get_tokenizer
 from nanochat.evaluation.engine import Engine
 from nanochat.evaluation.loss_eval import evaluate_bpb
-from nanochat.flash_attention import HAS_FA3, _use_fa3
-from nanochat.common.config import add_common_args, add_training_args
+from nanochat.common.flash_attention import HAS_FA3, _use_fa3
+from nanochat.config import add_common_args, add_training_args
 from nanochat.models.config import TrainingConfig
 from nanochat.models.gpt import GPT, GPTConfig, Linear
 from nanochat.scripts.base_eval import evaluate_core
@@ -61,7 +61,6 @@ from nanochat.training.dataloader import (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pretrain base model")
-    parser.add_argument("--config", type=str, default=None, help="path to TOML config file (CLI args override file values)")
     add_common_args(parser)
     add_training_args(parser)
     return parser
@@ -204,7 +203,7 @@ def main():
             # from torchao.float8 import Float8LinearConfig, convert_to_float8_training
             import torch.nn as nn
 
-            from nanochat.fp8 import Float8LinearConfig, convert_to_float8_training
+            from nanochat.models.fp8 import Float8LinearConfig, convert_to_float8_training
 
             # Filter: dims must be divisible by 16 (FP8 hardware requirement) large enough
             def fp8_module_filter(mod: nn.Module, fqn: str) -> bool:

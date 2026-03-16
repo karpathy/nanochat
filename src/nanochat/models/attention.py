@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from nanochat.flash_attention import flash_attn
+from nanochat.common.flash_attention import flash_attn
 
 
 def norm(x: torch.Tensor) -> torch.Tensor:

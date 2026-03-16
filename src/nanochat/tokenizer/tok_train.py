@@ -8,12 +8,15 @@ import os
 import time
 
 import torch
-
-from nanochat.common.paths import tokenizer_dir as get_tokenizer_dir
-from nanochat.data.dataset import parquets_iter_batched
-from nanochat.data.tokenizer import RustBPETokenizer
+from nanochat.config import Config
+from nanochat.common import tokenizer_dir as get_tokenizer_dir
+from nanochat.dataset import parquets_iter_batched
+from nanochat.tokenizer.tokenizer import RustBPETokenizer
 from nanochat.report import get_report
 
+
+def tokenizer_train(config: Config):
+    ...
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Train a BPE tokenizer")

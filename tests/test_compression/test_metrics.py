@@ -3,7 +3,7 @@
 import torch
 import pytest
 import numpy as np
-from nanochat.compression_metrics import CompressionMetrics
+from nanochat.training.compression_metrics import CompressionMetrics
 
 
 @pytest.fixture
