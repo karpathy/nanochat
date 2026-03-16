@@ -52,6 +52,9 @@ parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = de
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+parser.add_argument("--residual-mode", type=str, default="baseline", choices=["baseline", "attnres_block"], help="residual stream implementation")
+parser.add_argument("--attnres-block-size", type=int, default=0, help="AttnRes block size in transformer blocks (0 = auto, roughly 8 blocks total)")
+parser.add_argument("--attnres-query-lr-mult", type=float, default=1.0, help="LR multiplier for AttnRes pseudo-query vectors")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -136,7 +139,8 @@ def build_model_meta(depth):
     config = GPTConfig(
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
-        window_pattern=args.window_pattern,
+        window_pattern=args.window_pattern, residual_mode=args.residual_mode,
+        attnres_block_size=args.attnres_block_size,
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -309,6 +313,7 @@ optimizer = model.setup_optimizer(
     unembedding_lr=args.unembedding_lr * batch_lr_scale,
     embedding_lr=args.embedding_lr * batch_lr_scale,
     scalar_lr=args.scalar_lr * batch_lr_scale,
+    attnres_query_lr_mult=args.attnres_query_lr_mult,
     # Muon hyperparameters
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,

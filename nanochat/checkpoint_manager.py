@@ -38,6 +38,12 @@ def _patch_missing_keys(model_data, model_config):
     if "x0_lambdas" not in model_data:
         model_data["x0_lambdas"] = torch.zeros(n_layer)
         log0(f"Patching missing x0_lambdas in model data to 0.0")
+    if model_config.residual_mode == "attnres_block" and "attnres_queries" not in model_data:
+        model_data["attnres_queries"] = torch.zeros(n_layer, model_config.n_embd)
+        log0(f"Patching missing attnres_queries in model data to 0.0")
+    if model_config.residual_mode == "attnres_block" and "attnres_alphas" not in model_data:
+        model_data["attnres_alphas"] = torch.zeros(n_layer)
+        log0(f"Patching missing attnres_alphas in model data to 0.0")
 
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
     if rank == 0:
