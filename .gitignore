@@ -10,5 +10,9 @@ wandb/
 # Secrets
 .env
 
+# Logs and data exports
+*.csv
+*.log
+
 # Local setup
 CLAUDE.md
