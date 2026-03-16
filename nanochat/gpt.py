@@ -60,7 +60,9 @@ class GPTConfig:
     router_z_loss_weight: float = 0.001
     compute_loss_weight: float = 0.004
     use_bias_balancing: bool = False
-    bias_update_speed: float = 0.001
+    bias_update_speed: float = 0.0005  # λ in SMEBU
+    bias_momentum: float = 0.5  # β in SMEBU — smooths updates over time
+    bias_kappa: float = 2.0  # κ in SMEBU — tanh saturation speed
 
 
 def norm(x):
@@ -168,8 +170,12 @@ class MoEMLP(nn.Module):
 
         self.use_bias_balancing = config.use_bias_balancing
         self.bias_update_speed = config.bias_update_speed
+        self.bias_momentum = config.bias_momentum
+        self.bias_kappa = config.bias_kappa
         if self.use_bias_balancing:
             self.register_buffer("expert_bias", torch.zeros(self.num_experts))
+            # SMEBU momentum buffer — smooths bias updates over time
+            self.register_buffer("expert_bias_momentum", torch.zeros(self.num_experts))
 
         # compute normalized expert widths for aux losses
         mean_expert_width = sum(self.expert_widths) / self.num_experts
@@ -340,11 +346,34 @@ class MoEMLP(nn.Module):
 
         if self.use_bias_balancing and self.training:
             with torch.no_grad():
-                avg_tokens = tokens_per_expert.float().mean()
-                self.expert_bias -= self.bias_update_speed * (
-                    (tokens_per_expert.float() > avg_tokens).float()
-                    - (tokens_per_expert.float() < avg_tokens).float()
+                # SMEBU: Soft-clamped Momentum Expert Bias Updates (Trinity, 2025)
+                n = tokens_per_expert.float()
+                n_bar = n.mean()
+
+                # 1. Normalized violation: how far each expert is from balanced
+                #    v_i = (n_bar - n_i) / n_bar
+                #    Positive = underloaded (needs more tokens), negative = overloaded
+                v = (n_bar - n) / n_bar
+
+                # 2. Soft clamp with tanh: near-balanced experts get tiny updates,
+                #    far-from-balanced get updates approaching ±1 (not the full ±1 hammer)
+                v_clamped = torch.tanh(self.bias_kappa * v)
+
+                # 3. Scale by learning rate
+                delta = self.bias_update_speed * v_clamped
+
+                # 4. Zero-center: subtract mean so updates sum to zero across experts.
+                #    This prevents the monotonic drift we were seeing — biases can only
+                #    move relative to each other, never all grow together.
+                delta = delta - delta.mean()
+
+                # 5. Momentum: smooth out noisy updates over time (like momentum SGD)
+                self.expert_bias_momentum.mul_(self.bias_momentum).add_(
+                    delta, alpha=1 - self.bias_momentum
                 )
+
+                # 6. Apply
+                self.expert_bias += self.expert_bias_momentum
 
         # Compute bins for gather/scatter
         bins = ops.inclusive_cumsum(tokens_per_expert, 0).contiguous()
@@ -648,11 +677,12 @@ class GPT(nn.Module):
         # Integer buffers (expert_block_counts etc.) are unaffected
         if self.transformer.wte.weight.device.type == "cuda":
             self.to(dtype=COMPUTE_DTYPE)
-            # Keep expert_bias in float32 — bias_update_speed (0.001) is below
-            # bf16's ULP at typical bias magnitudes, causing updates to vanish
+            # Keep expert_bias and momentum in float32 for precise updates
             for block in self.transformer.h:
                 if hasattr(block.mlp, "expert_bias"):
                     block.mlp.expert_bias.data = block.mlp.expert_bias.data.float()
+                if hasattr(block.mlp, "expert_bias_momentum"):
+                    block.mlp.expert_bias_momentum.data = block.mlp.expert_bias_momentum.data.float()
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):

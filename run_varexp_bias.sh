@@ -39,7 +39,7 @@ uv run python -m scripts.base_train \
     --depth=12 --model-dim=768 --num-heads=6 --max-seq-len=1024 \
     --expert-sizes='[[32,128],[32,640]]' --num-active-experts=4 \
     --use-bias-balancing \
-    --bias-update-speed=0.001 \
+    --bias-update-speed=0.0005 --bias-momentum=0.5 --bias-kappa=2.0 \
     --load-balance-loss-weight=0.001 \
     --router-z-loss-weight=0.001 \
     --compute-loss-weight=0.0 \

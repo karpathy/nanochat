@@ -65,7 +65,9 @@ parser.add_argument("--load-balance-loss-weight", type=float, default=0.08, help
 parser.add_argument("--router-z-loss-weight", type=float, default=0.001, help="router z-loss weight")
 parser.add_argument("--compute-loss-weight", type=float, default=0.004, help="compute loss weight")
 parser.add_argument("--use-bias-balancing", action="store_true", help="enable bias balancing for expert routing")
-parser.add_argument("--bias-update-speed", type=float, default=0.001, help="bias update speed for bias balancing")
+parser.add_argument("--bias-update-speed", type=float, default=0.0005, help="SMEBU learning rate (lambda)")
+parser.add_argument("--bias-momentum", type=float, default=0.5, help="SMEBU momentum factor (beta)")
+parser.add_argument("--bias-kappa", type=float, default=2.0, help="SMEBU tanh saturation speed (kappa)")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -173,6 +175,8 @@ model_config_kwargs = dict(
     compute_loss_weight=args.compute_loss_weight,
     use_bias_balancing=args.use_bias_balancing,
     bias_update_speed=args.bias_update_speed,
+    bias_momentum=args.bias_momentum,
+    bias_kappa=args.bias_kappa,
 )
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
