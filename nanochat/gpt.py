@@ -22,17 +22,16 @@ import stk.ops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from cut_cross_entropy import linear_cross_entropy
 from einops import rearrange
 from megablocks import ops
 from megablocks.layers.relu_squared import relu_squared
 
-from cut_cross_entropy import linear_cross_entropy
-
 from nanochat.adamw import DistAdamW
-from nanochat.common import get_dist_info, print0, COMPUTE_DTYPE
+from nanochat.common import COMPUTE_DTYPE, get_dist_info, print0
+from nanochat.flash_attention import flash_attn
 from nanochat.muon import DistMuon, Muon
 from nanochat.topology_var import topology_var
-from nanochat.flash_attention import flash_attn
 
 # Keys in aux_loss that should be aggregated with max across layers, not mean
 _MAX_AGGREGATE_KEYS = frozenset({"router_logits_abs_max", "expert_bias_abs_max"})
@@ -114,13 +113,18 @@ class CausalSelfAttention(nn.Module):
         # window_size is (left, right) tuple: (N, 0) for sliding window, (-1, 0) for full context
         if kv_cache is None:
             # Training: causal attention with optional sliding window
-            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+            y = flash_attn.flash_attn_func(
+                q, k, v, causal=True, window_size=window_size
+            )
         else:
             # Inference: use flash_attn_with_kvcache which handles cache management
             k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
             y = flash_attn.flash_attn_with_kvcache(
-                q, k_cache, v_cache,
-                k=k, v=v,
+                q,
+                k_cache,
+                v_cache,
+                k=k,
+                v=v,
                 cache_seqlens=kv_cache.cache_seqlens,
                 causal=True,
                 window_size=window_size,
@@ -266,17 +270,29 @@ class MoEMLP(nn.Module):
         """Reinitialize non-persistent buffers after to_empty from meta device."""
         device = self.w1.device
 
-        self.expert_size_blocks.copy_(torch.tensor(
-            [s // self.block_size for s in self.expert_widths], dtype=torch.int32, device=device
-        ))
-        self.expert_block_offsets.copy_(torch.tensor(
-            [o // self.block_size for o in self.expert_offsets], dtype=torch.int32, device=device
-        ))
+        self.expert_size_blocks.copy_(
+            torch.tensor(
+                [s // self.block_size for s in self.expert_widths],
+                dtype=torch.int32,
+                device=device,
+            )
+        )
+        self.expert_block_offsets.copy_(
+            torch.tensor(
+                [o // self.block_size for o in self.expert_offsets],
+                dtype=torch.int32,
+                device=device,
+            )
+        )
 
         mean_expert_width = sum(self.expert_widths) / self.num_experts
-        self.expert_widths_normalized.copy_(torch.tensor(
-            [w / mean_expert_width for w in self.expert_widths], dtype=torch.float32, device=device
-        ))
+        self.expert_widths_normalized.copy_(
+            torch.tensor(
+                [w / mean_expert_width for w in self.expert_widths],
+                dtype=torch.float32,
+                device=device,
+            )
+        )
 
         if self._num_valid_groups > 0:
             expert_to_group = []
@@ -296,10 +312,14 @@ class MoEMLP(nn.Module):
             self.group_membership.copy_(group_membership)
 
             group_sizes = [count for count, _ in self.config.expert_sizes if count > 1]
-            self.group_sizes.copy_(torch.tensor(group_sizes, dtype=torch.float32, device=device))
+            self.group_sizes.copy_(
+                torch.tensor(group_sizes, dtype=torch.float32, device=device)
+            )
 
             valid_indices = [i for i, g in enumerate(expert_to_group) if g >= 0]
-            self.valid_expert_indices.copy_(torch.tensor(valid_indices, dtype=torch.long, device=device))
+            self.valid_expert_indices.copy_(
+                torch.tensor(valid_indices, dtype=torch.long, device=device)
+            )
 
     # Disable torch.compile tracing for MoE - triton kernels (stk.ops.row_indices etc)
     # can't handle FakeTensors used during compile tracing
@@ -346,7 +366,7 @@ class MoEMLP(nn.Module):
 
         if self.use_bias_balancing and self.training:
             with torch.no_grad():
-                # SMEBU: Soft-clamped Momentum Expert Bias Updates (Trinity, 2025)
+                # SMEBU: Soft-clamped Momentum Expert Bias Updates (Arcee: Trinity, 2025)
                 n = tokens_per_expert.float()
                 n_bar = n.mean()
 
@@ -410,12 +430,21 @@ class MoEMLP(nn.Module):
 
         # Load balance loss: sequence-level when bias balancing, batch-level otherwise
         if self.use_bias_balancing:
-            selected_per_seq = selected_experts.view(batch_size, seq_len * self.num_active_experts)
-            f_i_seq = torch.zeros(batch_size, self.num_experts, device=x.device, dtype=torch.float32)
-            f_i_seq.scatter_add_(1, selected_per_seq.long(),
-                                 torch.ones_like(selected_per_seq, dtype=torch.float32))
+            selected_per_seq = selected_experts.view(
+                batch_size, seq_len * self.num_active_experts
+            )
+            f_i_seq = torch.zeros(
+                batch_size, self.num_experts, device=x.device, dtype=torch.float32
+            )
+            f_i_seq.scatter_add_(
+                1,
+                selected_per_seq.long(),
+                torch.ones_like(selected_per_seq, dtype=torch.float32),
+            )
             f_i_seq = f_i_seq / (seq_len * self.num_active_experts)
-            p_i_seq = router_probs.view(batch_size, seq_len, self.num_experts).mean(dim=1)
+            p_i_seq = router_probs.view(batch_size, seq_len, self.num_experts).mean(
+                dim=1
+            )
             load_balance_loss = self._compute_load_balance_loss(f_i_seq, p_i_seq)
         else:
             p_i = router_probs.mean(dim=0)
@@ -644,8 +673,8 @@ class GPT(nn.Module):
         pattern = config.window_pattern.upper()
         half_ctx = config.sequence_len // 2
         window_map = {
-            'L': (-1, 0),    # full context
-            'S': (half_ctx, 0),  # half context sliding window
+            "L": (-1, 0),  # full context
+            "S": (half_ctx, 0),  # half context sliding window
         }
         sizes = []
         for i in range(config.n_layer):
@@ -682,7 +711,9 @@ class GPT(nn.Module):
                 if hasattr(block.mlp, "expert_bias"):
                     block.mlp.expert_bias.data = block.mlp.expert_bias.data.float()
                 if hasattr(block.mlp, "expert_bias_momentum"):
-                    block.mlp.expert_bias_momentum.data = block.mlp.expert_bias_momentum.data.float()
+                    block.mlp.expert_bias_momentum.data = (
+                        block.mlp.expert_bias_momentum.data.float()
+                    )
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -798,7 +829,9 @@ class GPT(nn.Module):
         assert idx.device == self.cos.device, (
             f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
         )
-        assert self.cos.dtype == COMPUTE_DTYPE, f"Rotary embeddings must be in {COMPUTE_DTYPE}"
+        assert self.cos.dtype == COMPUTE_DTYPE, (
+            f"Rotary embeddings must be in {COMPUTE_DTYPE}"
+        )
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = (
@@ -872,7 +905,9 @@ class GPT(nn.Module):
             # training mode: compute and return the loss
             # CCE fuses lm_head + softcap + cross_entropy without materializing logits
             ce_loss = linear_cross_entropy(
-                x, self.lm_head.weight, targets,
+                x,
+                self.lm_head.weight,
+                targets,
                 softcap=float(softcap),
                 ignore_index=-1,
                 reduction=loss_reduction,
@@ -880,11 +915,26 @@ class GPT(nn.Module):
             loss = ce_loss
             if combined_aux_loss is not None:
                 if self.config.load_balance_loss_weight > 0:
-                    loss = loss + self.config.load_balance_loss_weight * combined_aux_loss["load_balance_loss"]
+                    loss = (
+                        loss
+                        + self.config.load_balance_loss_weight
+                        * combined_aux_loss["load_balance_loss"]
+                    )
                 if self.config.router_z_loss_weight > 0:
-                    loss = loss + self.config.router_z_loss_weight * combined_aux_loss["router_z_loss"]
-                if self.config.compute_loss_weight > 0 and "compute_loss" in combined_aux_loss:
-                    loss = loss + self.config.compute_loss_weight * combined_aux_loss["compute_loss"]
+                    loss = (
+                        loss
+                        + self.config.router_z_loss_weight
+                        * combined_aux_loss["router_z_loss"]
+                    )
+                if (
+                    self.config.compute_loss_weight > 0
+                    and "compute_loss" in combined_aux_loss
+                ):
+                    loss = (
+                        loss
+                        + self.config.compute_loss_weight
+                        * combined_aux_loss["compute_loss"]
+                    )
                 combined_aux_loss["ce_loss"] = ce_loss
 
             return None, loss, combined_aux_loss
