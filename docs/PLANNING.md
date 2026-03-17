@@ -85,33 +85,82 @@ The decision requires:
 
 This is the main open technical question: nanochat uses a MuonAdamW split optimizer. The MLX prototype uses grouped AdamW because the Muon-like path is too slow. Understanding where the Muon overhead comes from and whether it can be reduced determines how closely the MLX trainer can match nanochat's optimizer behavior.
 
+The leading hypothesis is that the Polar Express / Newton-Schulz orthogonalization loop (5 rounds of GEMMs dispatched as separate MLX kernels) is the primary bottleneck — not the algorithmic GEMM count itself, but the repeated kernel launch and intermediate buffer allocation between iterations. This is the most targeted intervention available: a fused Metal compute shader or `MPSGraph` subgraph for the full Polar Express loop would keep intermediate values in GPU SRAM across iterations and allow the GPU compiler to see the full dependency chain.
+
 **Steps:**
 
 1. Profile the Muon-style MLX path to identify the dominant overhead source
-   - Is it the matrix orthogonalization (Newton-Schulz / SVD)?
+   - Use Metal GPU Frame Capture to distinguish dispatch overhead from compute time
+   - Is it the matrix orthogonalization (Polar Express / Newton-Schulz) kernel dispatch cost?
    - Is it the separate parameter-group iteration?
    - Is it framework overhead from the extra operations?
-2. Test focused improvements:
+2. If dispatch overhead dominates: implement a fused Metal compute shader (or `MPSGraph` subgraph) for the Polar Express orthogonalization loop
+   - Target: eliminate 5 rounds of separate kernel dispatch; keep intermediates in SRAM
+   - This is the single most targeted intervention for closing the 3.5x gap
+3. If the gap is algorithmic rather than dispatch: test focused Python-level improvements
    - Reduce Newton-Schulz iterations or precision
-   - Explore whether MLX has efficient SVD or matrix operations that could replace the current path
    - Test partial Muon (apply only to the largest weight matrices) to find the cost/benefit frontier
-3. Benchmark partial-Muon paths against both pure AdamW and pure Muon
+4. Benchmark partial-Muon paths against both pure AdamW and pure Muon
 
 **Success criteria:**
 
-- Identify the specific bottleneck in the Muon path
-- Find a partial-Muon configuration that is no more than ~50% slower than AdamW but closer to nanochat's optimizer behavior
+- Identify via profiling whether the bottleneck is dispatch overhead or algorithmic compute
+- If dispatch: fused Metal kernel reduces Muon path to within ~50% of AdamW throughput
+- If algorithmic: find a partial-Muon configuration no more than ~50% slower than AdamW but closer to nanochat's optimizer behavior
 - OR determine conclusively that the performance gap is fundamental and AdamW is the right MLX choice
 
-**Evidence produced:** a clear optimizer recommendation for the MLX backend
+**Evidence produced:** a clear optimizer recommendation for the MLX backend, with profiling data to support it
 
-### 4. Compiled MLX Training Exploration
+### 4. Incremental Swift Integration
+
+**Priority: medium** (after items 1–2 are validated)
+
+**Status:** not started. Analysis of the execution model shows that Python overhead is only meaningfully visible in specific hot paths; the training loop itself is GPU-bound and Swift translation there would add marginal value.
+
+MLX's lazy-and-fused execution model means Python builds the computation DAG and `mx.eval()` triggers asynchronous GPU execution. Between evals, the actual tensor math runs in MLX's C++ runtime. A naive Python→Swift translation of the training loop buys little. Swift helps only where the Python runtime is actually visible.
+
+Three components have genuine Python-visibility exposure:
+
+**4a. Swift inference engine** (highest user-visible impact)
+
+The per-token generation loop in `engine.py` calls the model once per token and then runs a Python state machine (`RowState`, `forced_tokens`, calculator parsing). At 2.8B params the GPU work per token is O(10–30ms); Python per-token overhead is O(1–5ms), serialised through the GIL even under batch generation. Replacing `engine.py` with a Swift binary using `mlx-swift` eliminates per-token Python overhead and GIL serialisation. The tokenizer encode/decode boundary is already C-backed (tiktoken), making the interface clean.
+
+**4b. Data pipeline prefetch** (prerequisite for real-data training throughput)
+
+The `build_dataset_backed_batch()` function does parquet read → BPE encode → BOS-pack in a single Python thread. At ~900 tok/s, the data pipeline has a narrow window to stay ahead of the GPU. A Swift worker using Foundation's structured concurrency and true parallelism (no GIL) could prefetch the next batch while the current one is on the GPU. The tokenizer encode calls are already multi-threaded in C; the Python glue in `_fill_row_from_docs` and the iteration loop is the bottleneck.
+
+**4c. Training session orchestration** (low priority — monitor MLX-Swift compiled training support)
+
+The outer training loop (`mlx_training_session.py`) is already GPU-bound. Swift translation here adds marginal value until MLX resolves compiled stateful training. If upstream MLX adds compiled stateful optimizer updates, `mlx-swift` would get that capability and rewriting the training session in Swift would become worthwhile.
+
+**Steps (in order):**
+
+1. Validate item 1 (dataset-backed training) before starting 4b
+2. Build Swift inference engine using `mlx-swift`, with the checkpoint `.safetensors` file as the boundary with the Python training path
+3. Build Swift data prefetch worker; connect to the MLX training loop via a shared memory or pipe boundary
+4. Monitor MLX releases for compiled stateful training support before investing in 4c
+
+**Explicit non-patterns to avoid:**
+
+- Do not attempt a hybrid graph where Swift owns part of the MLX computation and Python owns the rest — integration overhead exceeds the gain
+- Do not port the model definition to Swift prematurely — graph construction is fast relative to evaluation
+- Do not abstract a general Swift backend — the seam is the `.safetensors` checkpoint file
+
+**Success criteria:**
+
+- Swift inference engine reduces per-token latency measurably versus the Python loop
+- Swift data pipeline prefetch keeps GPU utilisation at ≥95% on real-data training runs
+- No regressions on training throughput or loss trajectory
+
+**Evidence produced:** user-visible latency improvement in inference; data pipeline no longer the bottleneck for real-data training
+
+### 5. Compiled MLX Training Exploration
 
 **Priority: low**
 
 **Status:** compiled single-step works but stateful optimizer updates across repeated calls do not advance correctly.
 
-This is worth revisiting only if MLX surfaces a supported pattern for it. Do not invest substantial time here until items 1-3 are resolved.
+This is worth revisiting only if MLX surfaces a supported pattern for it. Do not invest substantial time here until items 1-3 are resolved. Note: if the Swift training path (item 4c) is pursued, it would benefit from this resolution automatically — monitor both together.
 
 **Steps:**
 
@@ -155,17 +204,19 @@ After items 1-3, the project should be able to answer:
 Do not pursue these during this phase:
 
 - General cross-platform backend abstraction
-- Hybrid Python + native hotspot replacement
+- Hybrid Python + MLX graph co-ownership (integration overhead exceeds any gain)
 - Inference-only packaging (Core ML, ONNX)
 - Deployment, serving, or UI work
 - Large refactors to the existing PyTorch path
-- Swift-native Metal rewrites
+- Premature full Swift rewrite of the training loop (GPU-bound; translation adds marginal value until compiled stateful training is available upstream)
+- Blanket avoidance of Swift — targeted Swift components (inference engine, data pipeline) are in-scope once items 1-2 are validated
 
 ## Timeline Dependencies
 
 - Item 1 (dataset validation) is blocked on local parquet data availability
 - Item 2 (checkpoint validation) is blocked on having a trained checkpoint
-- Item 3 (optimizer parity) can start independently
-- Item 4 (compiled training) depends on upstream MLX progress
+- Item 3 (optimizer parity) can start independently; Metal kernel work within item 3 can start as soon as profiling identifies the bottleneck
+- Item 4 (Swift integration) depends on item 1 being validated before component 4b; 4a (inference engine) can start independently once a checkpoint exists
+- Item 5 (compiled training) depends on upstream MLX progress; monitor alongside item 4c
 
-Recommended execution order: **1 → 2 → 3**, with 3 starting as soon as 1 is underway.
+Recommended execution order: **1 → 2 → 3**, with 3 starting as soon as 1 is underway, and 4a starting in parallel once item 2 produces a checkpoint.
