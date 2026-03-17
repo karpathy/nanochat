@@ -16,7 +16,6 @@ import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import gc
 import json
-import math
 import time
 from contextlib import contextmanager
 from dataclasses import asdict
@@ -52,6 +51,34 @@ from nanochat.training.dataloader import (
     tokenizing_distributed_data_loader_with_state_bos_bestfit,
 )
 from nanochat.report import get_report
+from nanochat.training.scaling import B_REF, compute_training_hyperparams, get_scaling_params
+from nanochat.training.schedulers import create_lr_scheduler, create_muon_momentum_scheduler, create_weight_decay_scheduler
+
+
+def build_model_meta(
+    depth: int,
+    aspect_ratio: int,
+    head_dim: int,
+    max_seq_len: int,
+    window_pattern: str,
+    vocab_size: int,
+) -> GPT:
+    """Build a GPT model on meta device for a given depth (shapes/dtypes only, no data)."""
+    base_dim = depth * aspect_ratio
+    model_dim = ((base_dim + head_dim - 1) // head_dim) * head_dim
+    num_heads = model_dim // head_dim
+    gpt_config = GPTConfig(
+        sequence_len=max_seq_len,
+        vocab_size=vocab_size,
+        n_layer=depth,
+        n_head=num_heads,
+        n_kv_head=num_heads,
+        n_embd=model_dim,
+        window_pattern=window_pattern,
+    )
+    with torch.device("meta"):
+        return GPT(gpt_config)
+
 
 def base_train(config: Config):
     print_banner()
@@ -79,9 +106,7 @@ def base_train(config: Config):
 
 
     # Flash Attention status
-
-    using_fa3 = _use_fa3()
-    if using_fa3:
+    if _use_fa3():
         print0("✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.")
     else:
         print0("!" * 80)
@@ -112,31 +137,9 @@ def base_train(config: Config):
     # Initialize the Model
 
 
-    def build_model_meta(depth: int):
-        """Build a model on meta device for a given depth (shapes/dtypes only, no data)."""
-        # Model dim is nudged up to nearest multiple of head_dim for clean division
-        # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == config.head_dim exactly)
-        base_dim = depth * config.training.aspect_ratio
-        model_dim = ((base_dim + config.training.head_dim - 1) // config.training.head_dim) * config.training.head_dim
-        num_heads = model_dim // config.training.head_dim
-        gpt_config = GPTConfig(
-            sequence_len=config.training.max_seq_len,
-            vocab_size=vocab_size,
-            n_layer=depth,
-            n_head=num_heads,
-            n_kv_head=num_heads,
-            n_embd=model_dim,
-            window_pattern=config.training.window_pattern,
-        )
-        with torch.device("meta"):
-            model_meta = GPT(gpt_config)
-        return model_meta
-
-
     # Build the model, move to device, init the weights
-    model = build_model_meta(config.training.depth)  # 1) Build on meta device (only shapes/dtypes, no data)
-    model_config = model.config
-    model_config_kwargs = asdict(model_config)
+    model = build_model_meta(config.training.depth, config.training.aspect_ratio, config.training.head_dim, config.training.max_seq_len, config.training.window_pattern, vocab_size)  # 1) Build on meta device (only shapes/dtypes, no data)
+    model_config_kwargs = asdict(model.config)
     print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
     model.to_empty(device=device)  # 2) All tensors get storage on target device but with uninitialized (garbage) data
     model.init_weights()  # 3) All tensors get initialized
@@ -258,55 +261,25 @@ def base_train(config: Config):
     print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
 
-    # 1) Use scaling laws to determine the optimal training horizon in tokens
-    # The compute-optimal models satisfy the Tokens:Params ratio of --target-param-data-ratio (derived experimentally via scaling laws analysis).
-    # We've already initialized the model so we have Params. Optimal Tokens is now simply target-param-data-ratio * Params
-    def get_scaling_params(m: torch.nn.Module):
-        # As for which params to use exactly, transformer matrices + lm_head gives cleanest scaling laws (see dev/LOG.md Jan 27, 2026)
-        params_counts = m.num_scaling_params()
-        scaling_params = params_counts["transformer_matrices"] + params_counts["lm_head"]
-        return scaling_params
-
-
-    num_scaling_params = get_scaling_params(model)
-    target_tokens = int(
-        config.training.target_param_data_ratio * num_scaling_params
-    )  # optimal tokens for the model we are about to train
-
-    # Our reference model is d12, this is where a lot of hyperparameters are tuned and then transfered to higher depths (muP style)
-    d12_ref = build_model_meta(12)  # creates the model on meta device
-    D_REF = config.training.target_param_data_ratio * get_scaling_params(
-        d12_ref
-    )  # compute-optimal d12 training horizon in tokens (measured empirically)
-    B_REF = 2**19  # optimal batch size at d12 ~= 524,288 tokens (measured empirically)
-
-    # 2) Now that we have the token horizon, we can calculate the optimal batch size
-    # We follow the Power Lines paper (Bopt ∝ D^0.383), ref: https://arxiv.org/abs/2505.13738
-    # The optimal batch size grows as approximately D^0.383, so e.g. if D doubles from d12 to d24, B should grow by 2^0.383 ≈ 1.3x.
-    total_batch_size = config.training.total_batch_size  # user-provided override is possible
-    if total_batch_size == -1:
-        batch_size_ratio = target_tokens / D_REF
-        predicted_batch_size = B_REF * batch_size_ratio**0.383
-        total_batch_size = 2 ** round(math.log2(predicted_batch_size))  # clamp to nearest power of 2 for efficiency
+    # Scaling law computations: optimal tokens, batch size, LR scale, weight decay
+    # ref: Power Lines paper https://arxiv.org/abs/2505.13738, T_epoch framework https://arxiv.org/abs/2405.13698
+    d12_ref = build_model_meta(12, config.training.aspect_ratio, config.training.head_dim, config.training.max_seq_len, config.training.window_pattern, vocab_size)
+    hp = compute_training_hyperparams(
+        target_param_data_ratio=config.training.target_param_data_ratio,
+        total_batch_size_override=config.training.total_batch_size,
+        weight_decay=config.training.weight_decay,
+        num_scaling_params=get_scaling_params(model),
+        d12_scaling_params=get_scaling_params(d12_ref),
+    )
+    num_scaling_params = hp.num_scaling_params
+    target_tokens = hp.target_tokens
+    total_batch_size = hp.total_batch_size
+    batch_lr_scale = hp.batch_lr_scale
+    weight_decay_scaled = hp.weight_decay_scaled
+    if config.training.total_batch_size == -1:
         print0(f"Auto-computed optimal batch size: {total_batch_size:,} tokens")
-
-    # 3) Knowing the batch size, we can now calculate a learning rate correction (bigger batch size allows higher learning rates)
-    batch_lr_scale = 1.0
-    batch_ratio = total_batch_size / B_REF  # B/B_ref
-    if batch_ratio != 1.0:
-        # SGD: linear scaling with batch size is standard (not used in nanochat)
-        # AdamW: sqrt scaling is standard: η ∝ √(B/B_ref)
-        # Muon: we will use the same scaling for Muon as for AdamW: η ∝ √(B/B_ref) (not studied carefully, assumption!)
-        batch_lr_scale = batch_ratio**0.5  # η ∝ √(B/B_ref)
+    if batch_lr_scale != 1.0:
         print0(f"Scaling LRs by {batch_lr_scale:.4f} for batch size {total_batch_size:,} (reference: {B_REF:,})")
-
-    # 4) Knowing the batch size and the token horizon, we can now calculate the appropriate weight decay scaling
-    # We adopt the T_epoch framework from https://arxiv.org/abs/2405.13698
-    # Central idea of the paper is that T_epoch = B/(η·λ·D) should remain constant.
-    # Above, we used learning rate scaling η ∝ √(B/B_ref). So it's a matter of ~10 lines of math to derive that to keep T_epoch constant, we need:
-    # λ = λ_ref · √(B/B_ref) · (D_ref/D)
-    # Note that these papers study AdamW, *not* Muon. We are blindly following AdamW theory for scaling hoping it ~works for Muon too.
-    weight_decay_scaled = config.training.weight_decay * math.sqrt(total_batch_size / B_REF) * (D_REF / target_tokens)
     if weight_decay_scaled != config.training.weight_decay:
         print0(f"Scaling weight decay from {config.training.weight_decay:.6f} to {weight_decay_scaled:.6f} for depth {config.training.depth}")
 
@@ -377,29 +350,10 @@ def base_train(config: Config):
     print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 
-    # Learning rate schedule (linear warmup, constant, linear warmdown)
-    def get_lr_multiplier(it: int):
-        warmup_iters = config.training.warmup_steps
-        warmdown_iters = round(config.training.warmdown_ratio * num_iterations)
-        if it < warmup_iters:
-            return (it + 1) / warmup_iters
-        elif it <= num_iterations - warmdown_iters:
-            return 1.0
-        else:
-            progress = (num_iterations - it) / warmdown_iters
-            return progress * 1.0 + (1 - progress) * config.training.final_lr_frac
-
-
-    # Momentum scheduler for Muon optimizer (warms up to 0.97 over the first 400 steps)
-    def get_muon_momentum(it: int):
-        frac = min(it / 400, 1)
-        momentum = (1 - frac) * 0.85 + frac * 0.97
-        return momentum
-
-
-    # Weight decay scheduler for Muon optimizer (cosine decay to zero over the course of training)
-    def get_weight_decay(it: int):
-        return weight_decay_scaled * 0.5 * (1 + math.cos(math.pi * it / num_iterations))
+    # Learning rate and optimizer schedulers
+    get_lr_multiplier = create_lr_scheduler(num_iterations, config.training.warmup_steps, config.training.warmdown_ratio, config.training.final_lr_frac)
+    get_muon_momentum = create_muon_momentum_scheduler()
+    get_weight_decay = create_weight_decay_scheduler(weight_decay_scaled, num_iterations)
 
 
     # -----------------------------------------------------------------------------
