@@ -37,6 +37,7 @@ from nanochat.tokenizer import tokenizer_train, tokenizer_eval
 from nanochat.chat import chat_cli, chat_web_server
 from nanochat.evaluation import base_eval
 from nanochat.evaluation import chat_eval
+from nanochat.training import train_base, train_rl, train_sft
 
 
 def main() -> None:
@@ -100,15 +101,15 @@ def main() -> None:
 
     p = train_sub.add_parser("base", help="pretrain base model")
     TrainingConfig.update_parser(p)
-    p.set_defaults(func=lambda args: ConfigLoader().add_training().resolve(args))
+    p.set_defaults(func=lambda args: train_base(ConfigLoader().add_training().resolve(args)))
 
     p = train_sub.add_parser("sft", help="supervised fine-tuning")
     SFTConfig.update_parser(p)
-    p.set_defaults(func=lambda args: ConfigLoader().add_sft().resolve(args))
+    p.set_defaults(func=lambda args: train_sft(ConfigLoader().add_sft().resolve(args)))
 
     p = train_sub.add_parser("rl", help="reinforcement learning on GSM8K")
     RLConfig.update_parser(p)
-    p.set_defaults(func=lambda args: ConfigLoader().add_rl().resolve(args))
+    p.set_defaults(func=lambda args: train_rl(ConfigLoader().add_rl().resolve(args)))
 
     # --- eval ---
     eval_p = sub.add_parser("eval", help="evaluation commands")

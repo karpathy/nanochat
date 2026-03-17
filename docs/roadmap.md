@@ -80,7 +80,9 @@ Combine transformer efficiency with SP Theory advantages. Also the fallback path
 
 ## Deferred Phases
 
-None currently.
+### TrainingState Refactor
+
+Extract mutable training loop variables into a `TrainingState` dataclass, eliminating the `train_base_model` closure in `base_train.py`. See [plan](training-state-refactor.md).
 
 ## Open Questions
 

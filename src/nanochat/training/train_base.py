@@ -80,7 +80,7 @@ def build_model_meta(
         return GPT(gpt_config)
 
 
-def base_train(config: Config):
+def train_base(config: Config):
     print_banner()
 
     # -----------------------------------------------------------------------------

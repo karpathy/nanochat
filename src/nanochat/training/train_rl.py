@@ -49,7 +49,7 @@ def train_rl(config: Config):
 
     # wandb logging init
     master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
-    wandb_run = init_wandb(config,user_config={},master_process=master_process, project_suffix="rl", user_config=user_config)
+    wandb_run = init_wandb(config,master_process=master_process, project_suffix="rl", user_config=user_config)
 
     # Init model and tokenizer
     model, tokenizer, _ = load_model_from_dir(base_dir=config.common.base_dir, phase="sft", device=device, model_tag=config.rl.model_tag, step=config.rl.model_step)  # note: we load the model in eval mode, but we will switch to train mode later. this is because we want to make sure to load the model with the right dtype and device, but we don't want to accidentally mess with any dropout or other train/eval specific behavior until we're ready to start training.
