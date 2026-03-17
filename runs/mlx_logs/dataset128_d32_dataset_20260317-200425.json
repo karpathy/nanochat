@@ -1,0 +1,3265 @@
+{
+  "config": {
+    "depth": 32,
+    "device_batch_size": 2,
+    "max_seq_len": 1024,
+    "model_dim": 2048,
+    "heads": 16,
+    "vocab_size": 32768,
+    "params_total": 2818575424,
+    "optimizer": "grouped_optimizer",
+    "matrix_optimizer": "adamw",
+    "weight_decay": 0.28,
+    "execution_mode": "eager_mlx"
+  },
+  "initialization": {
+    "source": "pytorch-random-reference",
+    "model_config": {
+      "sequence_len": 1024,
+      "vocab_size": 32768,
+      "n_layer": 32,
+      "n_head": 16,
+      "n_kv_head": 16,
+      "n_embd": 2048,
+      "window_pattern": "L"
+    }
+  },
+  "tokenizer": {
+    "shared_vocab_used": true,
+    "bos_token_id": 32759
+  },
+  "input_batch": {
+    "mode": "dataset",
+    "split": "train",
+    "fresh_batch_each_call": true,
+    "documents_touched": 6,
+    "documents_loaded": 1024,
+    "documents_completed": 4,
+    "documents_loaded_total": 1024,
+    "documents_completed_total": 4,
+    "parquet_batches_loaded": 1,
+    "parquet_batches_loaded_total": 1,
+    "buffered_documents": 1020,
+    "rows_emitted_total": 2
+  },
+  "session": {
+    "steps": 128,
+    "warmup_steps": 2,
+    "bootstrap_loss": 10.397228240966797,
+    "wall_elapsed_s": 289.6842116670159,
+    "initial_loss": 12.775308609008789,
+    "final_loss": 9.683553695678711,
+    "min_loss": 9.582345962524414,
+    "loss_drop_pct": 24.20101938789846,
+    "mean_step_time_s": 2.263040280913401,
+    "mean_tokens_per_s": 905.1051005520482,
+    "max_peak_memory_gb": 49.004980605095625,
+    "final_active_memory_gb": 31.500042770057917
+  },
+  "per_step": [
+    {
+      "step": 1,
+      "loss": 12.775308609008789,
+      "step_time_s": 2.2853597089997493,
+      "tokens_per_s": 896.1390156372205,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 8,
+        "documents_loaded": 0,
+        "documents_completed": 6,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 15,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 1009,
+        "rows_emitted_total": 6
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980601370335,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 2,
+      "loss": 15.126424789428711,
+      "step_time_s": 2.2630829169938806,
+      "tokens_per_s": 904.9602136188711,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 19,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 1005,
+        "rows_emitted_total": 8
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 3,
+      "loss": 15.727215766906738,
+      "step_time_s": 2.3027945829962846,
+      "tokens_per_s": 889.3541851810515,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 24,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 1000,
+        "rows_emitted_total": 10
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 4,
+      "loss": 16.312095642089844,
+      "step_time_s": 2.2640713340078946,
+      "tokens_per_s": 904.5651385791799,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 27,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 997,
+        "rows_emitted_total": 12
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 5,
+      "loss": 13.46874713897705,
+      "step_time_s": 2.2729180000023916,
+      "tokens_per_s": 901.0443843543168,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 32,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 992,
+        "rows_emitted_total": 14
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 6,
+      "loss": 14.464189529418945,
+      "step_time_s": 2.2621093330089934,
+      "tokens_per_s": 905.3496973445615,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 35,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 989,
+        "rows_emitted_total": 16
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 7,
+      "loss": 13.081262588500977,
+      "step_time_s": 2.294033833022695,
+      "tokens_per_s": 892.7505647558334,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 39,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 985,
+        "rows_emitted_total": 18
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 8,
+      "loss": 13.211791038513184,
+      "step_time_s": 2.238542666018475,
+      "tokens_per_s": 914.880931728061,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 41,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 983,
+        "rows_emitted_total": 20
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 9,
+      "loss": 11.792905807495117,
+      "step_time_s": 2.289971499994863,
+      "tokens_per_s": 894.3342744678675,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 44,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 980,
+        "rows_emitted_total": 22
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 10,
+      "loss": 12.2377347946167,
+      "step_time_s": 2.2662314170156606,
+      "tokens_per_s": 903.7029425251532,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 8,
+        "documents_loaded": 0,
+        "documents_completed": 6,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 50,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 974,
+        "rows_emitted_total": 24
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 11,
+      "loss": 11.382329940795898,
+      "step_time_s": 2.2490829169983044,
+      "tokens_per_s": 910.5933732017867,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 53,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 971,
+        "rows_emitted_total": 26
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 12,
+      "loss": 11.25320816040039,
+      "step_time_s": 2.255193707998842,
+      "tokens_per_s": 908.1259816999506,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 57,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 967,
+        "rows_emitted_total": 28
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 13,
+      "loss": 10.989156723022461,
+      "step_time_s": 2.2642775409913156,
+      "tokens_per_s": 904.4827601405136,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 2,
+        "documents_loaded": 0,
+        "documents_completed": 0,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 57,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 967,
+        "rows_emitted_total": 30
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 14,
+      "loss": 11.356107711791992,
+      "step_time_s": 2.2267914169933647,
+      "tokens_per_s": 919.7089517999083,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 61,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 963,
+        "rows_emitted_total": 32
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 15,
+      "loss": 11.069028854370117,
+      "step_time_s": 2.2912512920156587,
+      "tokens_per_s": 893.8347387458904,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 63,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 961,
+        "rows_emitted_total": 34
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 16,
+      "loss": 10.603426933288574,
+      "step_time_s": 2.3044142079888843,
+      "tokens_per_s": 888.7291151478089,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 66,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 958,
+        "rows_emitted_total": 36
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 17,
+      "loss": 10.802804946899414,
+      "step_time_s": 2.2957675000070594,
+      "tokens_per_s": 892.0763971062847,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 69,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 955,
+        "rows_emitted_total": 38
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 18,
+      "loss": 10.905245780944824,
+      "step_time_s": 2.262489334010752,
+      "tokens_per_s": 905.1976374931576,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 72,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 952,
+        "rows_emitted_total": 40
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 19,
+      "loss": 10.73061466217041,
+      "step_time_s": 2.257091125007719,
+      "tokens_per_s": 907.3625682671524,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 74,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 950,
+        "rows_emitted_total": 42
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 20,
+      "loss": 10.961821556091309,
+      "step_time_s": 2.2449667079781648,
+      "tokens_per_s": 912.2629715272907,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 78,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 946,
+        "rows_emitted_total": 44
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 21,
+      "loss": 10.60589599609375,
+      "step_time_s": 2.254818499990506,
+      "tokens_per_s": 908.2770963643518,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 81,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 943,
+        "rows_emitted_total": 46
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 22,
+      "loss": 10.175162315368652,
+      "step_time_s": 2.242422333016293,
+      "tokens_per_s": 913.2980749639722,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 84,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 940,
+        "rows_emitted_total": 48
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 23,
+      "loss": 10.207420349121094,
+      "step_time_s": 2.259732125006849,
+      "tokens_per_s": 906.3021131293572,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 88,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 936,
+        "rows_emitted_total": 50
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 24,
+      "loss": 10.3939847946167,
+      "step_time_s": 2.278762292000465,
+      "tokens_per_s": 898.7334954547256,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 92,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 932,
+        "rows_emitted_total": 52
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 25,
+      "loss": 10.317349433898926,
+      "step_time_s": 2.2283531250141095,
+      "tokens_per_s": 919.0643875113072,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 95,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 929,
+        "rows_emitted_total": 54
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 26,
+      "loss": 10.475165367126465,
+      "step_time_s": 2.2793555830139667,
+      "tokens_per_s": 898.4995650796847,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 8,
+        "documents_loaded": 0,
+        "documents_completed": 6,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 101,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 923,
+        "rows_emitted_total": 56
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 27,
+      "loss": 10.52046012878418,
+      "step_time_s": 2.2718382089806255,
+      "tokens_per_s": 901.4726453249232,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 106,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 918,
+        "rows_emitted_total": 58
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 28,
+      "loss": 10.128802299499512,
+      "step_time_s": 2.2391802500060294,
+      "tokens_per_s": 914.6204286119822,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 108,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 916,
+        "rows_emitted_total": 60
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 29,
+      "loss": 10.25345230102539,
+      "step_time_s": 2.2695067090098746,
+      "tokens_per_s": 902.3987423652463,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 112,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 912,
+        "rows_emitted_total": 62
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 30,
+      "loss": 10.577903747558594,
+      "step_time_s": 2.25651312500122,
+      "tokens_per_s": 907.5949868445338,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 115,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 909,
+        "rows_emitted_total": 64
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 31,
+      "loss": 10.582845687866211,
+      "step_time_s": 2.26697774999775,
+      "tokens_per_s": 903.4054260135692,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 3,
+        "documents_loaded": 0,
+        "documents_completed": 1,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 116,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 908,
+        "rows_emitted_total": 66
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 32,
+      "loss": 9.99931812286377,
+      "step_time_s": 2.29751341699739,
+      "tokens_per_s": 891.3984940625601,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 119,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 905,
+        "rows_emitted_total": 68
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 33,
+      "loss": 10.492105484008789,
+      "step_time_s": 2.293115709006088,
+      "tokens_per_s": 893.1080066987422,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 123,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 901,
+        "rows_emitted_total": 70
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 34,
+      "loss": 10.46508502960205,
+      "step_time_s": 2.2953523750184104,
+      "tokens_per_s": 892.2377332079889,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 125,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 899,
+        "rows_emitted_total": 72
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 35,
+      "loss": 10.421331405639648,
+      "step_time_s": 2.297913290996803,
+      "tokens_per_s": 891.2433763380193,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 130,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 894,
+        "rows_emitted_total": 74
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 36,
+      "loss": 10.36233139038086,
+      "step_time_s": 2.255417792010121,
+      "tokens_per_s": 908.0357560604052,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 134,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 890,
+        "rows_emitted_total": 76
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 37,
+      "loss": 10.439909934997559,
+      "step_time_s": 2.2676285830093548,
+      "tokens_per_s": 903.1461392509495,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 137,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 887,
+        "rows_emitted_total": 78
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 38,
+      "loss": 10.85347843170166,
+      "step_time_s": 2.254270416975487,
+      "tokens_per_s": 908.497926680759,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 139,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 885,
+        "rows_emitted_total": 80
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 39,
+      "loss": 10.464790344238281,
+      "step_time_s": 2.2697393340058625,
+      "tokens_per_s": 902.3062557520582,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 2,
+        "documents_loaded": 0,
+        "documents_completed": 0,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 139,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 885,
+        "rows_emitted_total": 82
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 40,
+      "loss": 9.959461212158203,
+      "step_time_s": 2.2956627499952447,
+      "tokens_per_s": 892.1171021328121,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 141,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 883,
+        "rows_emitted_total": 84
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 41,
+      "loss": 11.628901481628418,
+      "step_time_s": 2.226569666992873,
+      "tokens_per_s": 919.8005480627772,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 146,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 878,
+        "rows_emitted_total": 86
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 42,
+      "loss": 10.481277465820312,
+      "step_time_s": 2.2593535410123877,
+      "tokens_per_s": 906.4539758050956,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 149,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 875,
+        "rows_emitted_total": 88
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 43,
+      "loss": 10.397050857543945,
+      "step_time_s": 2.231965167011367,
+      "tokens_per_s": 917.5770438847399,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 154,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 870,
+        "rows_emitted_total": 90
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 44,
+      "loss": 10.61351490020752,
+      "step_time_s": 2.232966707990272,
+      "tokens_per_s": 917.1654878111699,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 158,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 866,
+        "rows_emitted_total": 92
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 45,
+      "loss": 10.191582679748535,
+      "step_time_s": 2.266078207991086,
+      "tokens_per_s": 903.7640416725001,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 160,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 864,
+        "rows_emitted_total": 94
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 46,
+      "loss": 10.238454818725586,
+      "step_time_s": 2.2544401249906514,
+      "tokens_per_s": 908.4295374704141,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 3,
+        "documents_loaded": 0,
+        "documents_completed": 1,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 161,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 863,
+        "rows_emitted_total": 96
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 47,
+      "loss": 10.623613357543945,
+      "step_time_s": 2.2814960409887135,
+      "tokens_per_s": 897.6566091749494,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 165,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 859,
+        "rows_emitted_total": 98
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 48,
+      "loss": 10.467849731445312,
+      "step_time_s": 2.151384041993879,
+      "tokens_per_s": 951.9453338056446,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 169,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 855,
+        "rows_emitted_total": 100
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 49,
+      "loss": 10.604493141174316,
+      "step_time_s": 2.2841606669826433,
+      "tokens_per_s": 896.6094327792582,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 172,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 852,
+        "rows_emitted_total": 102
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 50,
+      "loss": 10.86616325378418,
+      "step_time_s": 2.2655706660007127,
+      "tokens_per_s": 903.9665064234001,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 8,
+        "documents_loaded": 0,
+        "documents_completed": 6,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 178,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 846,
+        "rows_emitted_total": 104
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 51,
+      "loss": 10.648823738098145,
+      "step_time_s": 2.274415666004643,
+      "tokens_per_s": 900.4510611719553,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 3,
+        "documents_loaded": 0,
+        "documents_completed": 1,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 179,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 845,
+        "rows_emitted_total": 106
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 52,
+      "loss": 10.553915023803711,
+      "step_time_s": 2.2554480000108015,
+      "tokens_per_s": 908.0235944212378,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 183,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 841,
+        "rows_emitted_total": 108
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 53,
+      "loss": 10.310786247253418,
+      "step_time_s": 2.293230624985881,
+      "tokens_per_s": 893.0632522023855,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 188,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 836,
+        "rows_emitted_total": 110
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 54,
+      "loss": 10.60687255859375,
+      "step_time_s": 2.206163374998141,
+      "tokens_per_s": 928.3084032712336,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 191,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 833,
+        "rows_emitted_total": 112
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 55,
+      "loss": 10.764958381652832,
+      "step_time_s": 2.222489540989045,
+      "tokens_per_s": 921.4891508954439,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 195,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 829,
+        "rows_emitted_total": 114
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 56,
+      "loss": 10.449075698852539,
+      "step_time_s": 2.2420359590032604,
+      "tokens_per_s": 913.4554652328044,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 198,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 826,
+        "rows_emitted_total": 116
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 57,
+      "loss": 10.55441951751709,
+      "step_time_s": 2.239858875022037,
+      "tokens_per_s": 914.3433199468207,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 202,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 822,
+        "rows_emitted_total": 118
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 58,
+      "loss": 10.448921203613281,
+      "step_time_s": 2.290191749983933,
+      "tokens_per_s": 894.2482654626488,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 205,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 819,
+        "rows_emitted_total": 120
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 59,
+      "loss": 10.647838592529297,
+      "step_time_s": 2.2688674590026494,
+      "tokens_per_s": 902.6529918588817,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 209,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 815,
+        "rows_emitted_total": 122
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 60,
+      "loss": 10.621009826660156,
+      "step_time_s": 2.2822675830102526,
+      "tokens_per_s": 897.3531479156096,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 211,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 813,
+        "rows_emitted_total": 124
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 61,
+      "loss": 10.787528991699219,
+      "step_time_s": 2.2730736660014372,
+      "tokens_per_s": 900.9826784904142,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 216,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 808,
+        "rows_emitted_total": 126
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 62,
+      "loss": 10.705097198486328,
+      "step_time_s": 2.2498991249885876,
+      "tokens_per_s": 910.2630323527898,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 221,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 803,
+        "rows_emitted_total": 128
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 63,
+      "loss": 10.763504981994629,
+      "step_time_s": 2.2646844999981113,
+      "tokens_per_s": 904.320226504711,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 223,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 801,
+        "rows_emitted_total": 130
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 64,
+      "loss": 10.430269241333008,
+      "step_time_s": 2.261936708004214,
+      "tokens_per_s": 905.4187912300262,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 2,
+        "documents_loaded": 0,
+        "documents_completed": 0,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 223,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 801,
+        "rows_emitted_total": 132
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 65,
+      "loss": 10.704914093017578,
+      "step_time_s": 2.2676863750093617,
+      "tokens_per_s": 903.1231225665168,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 225,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 799,
+        "rows_emitted_total": 134
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 66,
+      "loss": 10.403617858886719,
+      "step_time_s": 2.2757255419855937,
+      "tokens_per_s": 899.9327740607504,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 3,
+        "documents_loaded": 0,
+        "documents_completed": 1,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 226,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 798,
+        "rows_emitted_total": 136
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 67,
+      "loss": 10.287567138671875,
+      "step_time_s": 2.291620417003287,
+      "tokens_per_s": 893.6907634459527,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 229,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 795,
+        "rows_emitted_total": 138
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 68,
+      "loss": 10.7672700881958,
+      "step_time_s": 2.301420167001197,
+      "tokens_per_s": 889.8853105422252,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 233,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 791,
+        "rows_emitted_total": 140
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 69,
+      "loss": 10.56748104095459,
+      "step_time_s": 2.2824781249801163,
+      "tokens_per_s": 897.2703736285933,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 238,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 786,
+        "rows_emitted_total": 142
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 70,
+      "loss": 10.502883911132812,
+      "step_time_s": 2.301106290979078,
+      "tokens_per_s": 890.0066928801511,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 8,
+        "documents_loaded": 0,
+        "documents_completed": 6,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 244,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 780,
+        "rows_emitted_total": 144
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 71,
+      "loss": 10.562539100646973,
+      "step_time_s": 2.239243250020081,
+      "tokens_per_s": 914.5946962133899,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 249,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 775,
+        "rows_emitted_total": 146
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 72,
+      "loss": 10.585005760192871,
+      "step_time_s": 2.2422480410023127,
+      "tokens_per_s": 913.3690664680071,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 251,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 773,
+        "rows_emitted_total": 148
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 73,
+      "loss": 10.475092887878418,
+      "step_time_s": 2.288274708989775,
+      "tokens_per_s": 894.997437132078,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 255,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 769,
+        "rows_emitted_total": 150
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 74,
+      "loss": 10.737712860107422,
+      "step_time_s": 2.2350192090088967,
+      "tokens_per_s": 916.3232207333783,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 8,
+        "documents_loaded": 0,
+        "documents_completed": 6,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 261,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 763,
+        "rows_emitted_total": 152
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 75,
+      "loss": 10.965335845947266,
+      "step_time_s": 2.2552841659926344,
+      "tokens_per_s": 908.0895573523433,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 266,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 758,
+        "rows_emitted_total": 154
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 76,
+      "loss": 10.396413803100586,
+      "step_time_s": 2.2121671669883654,
+      "tokens_per_s": 925.7889867284027,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 271,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 753,
+        "rows_emitted_total": 156
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 77,
+      "loss": 10.666946411132812,
+      "step_time_s": 2.2230292909953278,
+      "tokens_per_s": 921.2654139536951,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 273,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 751,
+        "rows_emitted_total": 158
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 78,
+      "loss": 10.447481155395508,
+      "step_time_s": 2.1787638340028934,
+      "tokens_per_s": 939.9825570986048,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 3,
+        "documents_loaded": 0,
+        "documents_completed": 1,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 274,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 750,
+        "rows_emitted_total": 160
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 79,
+      "loss": 10.459848403930664,
+      "step_time_s": 2.2947258340136614,
+      "tokens_per_s": 892.4813455461397,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 3,
+        "documents_loaded": 0,
+        "documents_completed": 1,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 275,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 749,
+        "rows_emitted_total": 162
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 80,
+      "loss": 10.520392417907715,
+      "step_time_s": 2.215587415994378,
+      "tokens_per_s": 924.3598267508831,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 279,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 745,
+        "rows_emitted_total": 164
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 81,
+      "loss": 10.576001167297363,
+      "step_time_s": 2.269051541981753,
+      "tokens_per_s": 902.579761679327,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 283,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 741,
+        "rows_emitted_total": 166
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 82,
+      "loss": 10.67036247253418,
+      "step_time_s": 2.276017290976597,
+      "tokens_per_s": 899.8174170817662,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 288,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 736,
+        "rows_emitted_total": 168
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 83,
+      "loss": 10.79426383972168,
+      "step_time_s": 2.3093332499847747,
+      "tokens_per_s": 886.8360597213513,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 291,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 733,
+        "rows_emitted_total": 170
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 84,
+      "loss": 10.53770637512207,
+      "step_time_s": 2.197544583992567,
+      "tokens_per_s": 931.9492377620527,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 295,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 729,
+        "rows_emitted_total": 172
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 85,
+      "loss": 10.531505584716797,
+      "step_time_s": 2.2653694580076262,
+      "tokens_per_s": 904.0467958816745,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 298,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 726,
+        "rows_emitted_total": 174
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 86,
+      "loss": 10.370553016662598,
+      "step_time_s": 2.2565439169993624,
+      "tokens_per_s": 907.5826021251678,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 300,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 724,
+        "rows_emitted_total": 176
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 87,
+      "loss": 10.186635971069336,
+      "step_time_s": 2.2566922919941135,
+      "tokens_per_s": 907.5229295839426,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 302,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 722,
+        "rows_emitted_total": 178
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 88,
+      "loss": 10.224536895751953,
+      "step_time_s": 2.270247374981409,
+      "tokens_per_s": 902.1043356637605,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 307,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 717,
+        "rows_emitted_total": 180
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 89,
+      "loss": 10.271753311157227,
+      "step_time_s": 2.2542385840206407,
+      "tokens_per_s": 908.5107559232727,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 312,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 712,
+        "rows_emitted_total": 182
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 90,
+      "loss": 10.756196022033691,
+      "step_time_s": 2.2552737919904757,
+      "tokens_per_s": 908.0937344607111,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 3,
+        "documents_loaded": 0,
+        "documents_completed": 1,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 313,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 711,
+        "rows_emitted_total": 184
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 91,
+      "loss": 10.775303840637207,
+      "step_time_s": 2.2383257080218755,
+      "tokens_per_s": 914.969609945607,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 316,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 708,
+        "rows_emitted_total": 186
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 92,
+      "loss": 10.328847885131836,
+      "step_time_s": 2.2462494999927003,
+      "tokens_per_s": 911.7419948258888,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 2,
+        "documents_loaded": 0,
+        "documents_completed": 0,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 316,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 708,
+        "rows_emitted_total": 188
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 93,
+      "loss": 10.363250732421875,
+      "step_time_s": 2.2817343329952564,
+      "tokens_per_s": 897.5628627683263,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 2,
+        "documents_loaded": 0,
+        "documents_completed": 0,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 316,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 708,
+        "rows_emitted_total": 190
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 94,
+      "loss": 10.239204406738281,
+      "step_time_s": 2.260686875000829,
+      "tokens_per_s": 905.9193569207806,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 318,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 706,
+        "rows_emitted_total": 192
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 95,
+      "loss": 10.34780502319336,
+      "step_time_s": 2.2763889999769162,
+      "tokens_per_s": 899.670486907452,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 323,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 701,
+        "rows_emitted_total": 194
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 96,
+      "loss": 10.558603286743164,
+      "step_time_s": 2.2846315420174506,
+      "tokens_per_s": 896.4246366797106,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 326,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 698,
+        "rows_emitted_total": 196
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 97,
+      "loss": 10.33863639831543,
+      "step_time_s": 2.277822167001432,
+      "tokens_per_s": 899.1044295156834,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 329,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 695,
+        "rows_emitted_total": 198
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 98,
+      "loss": 10.269058227539062,
+      "step_time_s": 2.2817859999777284,
+      "tokens_per_s": 897.5425390549287,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 333,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 691,
+        "rows_emitted_total": 200
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 99,
+      "loss": 10.470869064331055,
+      "step_time_s": 2.2676615409727674,
+      "tokens_per_s": 903.1330130163348,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 337,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 687,
+        "rows_emitted_total": 202
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 100,
+      "loss": 10.266730308532715,
+      "step_time_s": 2.2493057910178322,
+      "tokens_per_s": 910.5031464277965,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 342,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 682,
+        "rows_emitted_total": 204
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 101,
+      "loss": 10.415708541870117,
+      "step_time_s": 2.2826477920170873,
+      "tokens_per_s": 897.2036803760521,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 346,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 678,
+        "rows_emitted_total": 206
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 102,
+      "loss": 10.556184768676758,
+      "step_time_s": 2.2773302079876885,
+      "tokens_per_s": 899.2986580587577,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 351,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 673,
+        "rows_emitted_total": 208
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 103,
+      "loss": 10.292118072509766,
+      "step_time_s": 2.277189125015866,
+      "tokens_per_s": 899.3543739963762,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 356,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 668,
+        "rows_emitted_total": 210
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 104,
+      "loss": 10.43238639831543,
+      "step_time_s": 2.262855875014793,
+      "tokens_per_s": 905.0510121359856,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 361,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 663,
+        "rows_emitted_total": 212
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 105,
+      "loss": 10.731159210205078,
+      "step_time_s": 2.274265584012028,
+      "tokens_per_s": 900.5104832071225,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 9,
+        "documents_loaded": 0,
+        "documents_completed": 7,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 368,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 656,
+        "rows_emitted_total": 214
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 106,
+      "loss": 10.65077018737793,
+      "step_time_s": 2.259536625002511,
+      "tokens_per_s": 906.3805283517917,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 372,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 652,
+        "rows_emitted_total": 216
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 107,
+      "loss": 10.35456657409668,
+      "step_time_s": 2.2685519169899635,
+      "tokens_per_s": 902.7785454949588,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 375,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 649,
+        "rows_emitted_total": 218
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 108,
+      "loss": 10.688526153564453,
+      "step_time_s": 2.19780358299613,
+      "tokens_per_s": 931.8394126958734,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 380,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 644,
+        "rows_emitted_total": 220
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 109,
+      "loss": 10.453323364257812,
+      "step_time_s": 2.2467394999985117,
+      "tokens_per_s": 911.543149529065,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 384,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 640,
+        "rows_emitted_total": 222
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 110,
+      "loss": 10.768174171447754,
+      "step_time_s": 2.300343499984592,
+      "tokens_per_s": 890.3018179735842,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 8,
+        "documents_loaded": 0,
+        "documents_completed": 6,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 390,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 634,
+        "rows_emitted_total": 224
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 111,
+      "loss": 10.508907318115234,
+      "step_time_s": 2.264118708000751,
+      "tokens_per_s": 904.546211628812,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 393,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 631,
+        "rows_emitted_total": 226
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 112,
+      "loss": 10.485136032104492,
+      "step_time_s": 2.3243388749833684,
+      "tokens_per_s": 881.1107631690127,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 396,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 628,
+        "rows_emitted_total": 228
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 113,
+      "loss": 10.267035484313965,
+      "step_time_s": 2.2522628330043517,
+      "tokens_per_s": 909.3077282051136,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 10,
+        "documents_loaded": 0,
+        "documents_completed": 8,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 404,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 620,
+        "rows_emitted_total": 230
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 114,
+      "loss": 10.050268173217773,
+      "step_time_s": 2.24024970800383,
+      "tokens_per_s": 914.1838040121278,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 4,
+        "documents_loaded": 0,
+        "documents_completed": 2,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 406,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 618,
+        "rows_emitted_total": 232
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 115,
+      "loss": 10.10223388671875,
+      "step_time_s": 2.280761417001486,
+      "tokens_per_s": 897.945740722194,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 411,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 613,
+        "rows_emitted_total": 234
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 116,
+      "loss": 10.387192726135254,
+      "step_time_s": 2.2896990409935825,
+      "tokens_per_s": 894.4406943155723,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 416,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 608,
+        "rows_emitted_total": 236
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 117,
+      "loss": 10.33487606048584,
+      "step_time_s": 2.2248298339836765,
+      "tokens_per_s": 920.5198387388336,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 421,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 603,
+        "rows_emitted_total": 238
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 118,
+      "loss": 10.33517074584961,
+      "step_time_s": 2.2621829159907065,
+      "tokens_per_s": 905.3202486515522,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 425,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 599,
+        "rows_emitted_total": 240
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 119,
+      "loss": 10.174599647521973,
+      "step_time_s": 2.274356915993849,
+      "tokens_per_s": 900.4743211577522,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 428,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 596,
+        "rows_emitted_total": 242
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 120,
+      "loss": 10.014676094055176,
+      "step_time_s": 2.2925798749784008,
+      "tokens_per_s": 893.3167486778601,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 433,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 591,
+        "rows_emitted_total": 244
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 121,
+      "loss": 11.183486938476562,
+      "step_time_s": 2.220975417003501,
+      "tokens_per_s": 922.1173653345176,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 6,
+        "documents_loaded": 0,
+        "documents_completed": 4,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 437,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 587,
+        "rows_emitted_total": 246
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 122,
+      "loss": 9.963111877441406,
+      "step_time_s": 2.274508083006367,
+      "tokens_per_s": 900.4144743653861,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 442,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 582,
+        "rows_emitted_total": 248
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 123,
+      "loss": 9.77656078338623,
+      "step_time_s": 2.255720957997255,
+      "tokens_per_s": 907.9137172260524,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 445,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 579,
+        "rows_emitted_total": 250
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 124,
+      "loss": 10.224943161010742,
+      "step_time_s": 2.2607163329957984,
+      "tokens_per_s": 905.9075524464777,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 450,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 574,
+        "rows_emitted_total": 252
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 125,
+      "loss": 10.080772399902344,
+      "step_time_s": 2.267514208011562,
+      "tokens_per_s": 903.1916945719784,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 8,
+        "documents_loaded": 0,
+        "documents_completed": 6,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 456,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 568,
+        "rows_emitted_total": 254
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 126,
+      "loss": 10.097103118896484,
+      "step_time_s": 2.278886166983284,
+      "tokens_per_s": 898.6846423799554,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 7,
+        "documents_loaded": 0,
+        "documents_completed": 5,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 461,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 563,
+        "rows_emitted_total": 256
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 127,
+      "loss": 9.582345962524414,
+      "step_time_s": 2.2716256250278093,
+      "tokens_per_s": 901.557007209288,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 464,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 560,
+        "rows_emitted_total": 258
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    },
+    {
+      "step": 128,
+      "loss": 9.683553695678711,
+      "step_time_s": 2.264218583004549,
+      "tokens_per_s": 904.5063119667388,
+      "input_batch": {
+        "mode": "dataset",
+        "split": "train",
+        "fresh_batch_each_call": true,
+        "documents_touched": 5,
+        "documents_loaded": 0,
+        "documents_completed": 3,
+        "documents_loaded_total": 1024,
+        "documents_completed_total": 467,
+        "parquet_batches_loaded": 0,
+        "parquet_batches_loaded_total": 1,
+        "buffered_documents": 557,
+        "rows_emitted_total": 260
+      },
+      "memory": {
+        "active_gb": 31.500042770057917,
+        "peak_gb": 49.004980605095625,
+        "cache_gb": 26.372826486825943
+      }
+    }
+  ],
+  "logging": {
+    "log_dir": "runs/mlx_logs",
+    "log_path": "/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/dataset128_d32_dataset_20260317-200425.json"
+  }
+}
