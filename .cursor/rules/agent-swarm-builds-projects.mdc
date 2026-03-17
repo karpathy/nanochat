@@ -1,0 +1,38 @@
+---
+description: Launch an Agent Swarm when building, scaffolding, or training models
+alwaysApply: true
+---
+
+# Agent Swarm for Project Building
+
+When the user asks to **build**, **scaffold**, **create** a project, or **train models** (or a substantial feature set), launch an **Agent Swarm** instead of handling everything in a single turn.
+
+## When to Swarm
+
+- "Build me a …" / "Create a project that …" / "Scaffold …"
+- "Train a model …" / "Run SFT …" / "Fine-tune …" / training runs, configs, and data prep
+- Multi-step builds: new app, full feature (e.g. auth + API + UI), or "build this from scratch"
+- Tasks that benefit from parallel work: exploration + implementation + tooling/setup
+
+## How to Swarm
+
+Use the task/subagent system to run multiple agents:
+
+1. **Explore** – When the codebase or domain is unfamiliar, launch an `explore` agent (quick/medium/very thorough) to map structure, patterns, and constraints.
+2. **Parallel execution** – Launch up to 4 agents concurrently where tasks are independent (e.g. one agent on backend, one on frontend, one on config/tooling).
+3. **Shell** – Use a `shell` agent for git, installs, and file-system operations so the main agent can focus on code and design.
+4. **General purpose** – Use a `generalPurpose` agent for research, multi-step implementation, or when the work doesn’t fit explore/shell.
+
+## Examples
+
+**Build:** "Build a small Next.js app with auth and a dashboard."
+- Launch **explore** (medium) on the repo; launch **generalPurpose** or **shell** to scaffold and install deps; then implement auth and dashboard from discovered context.
+
+**Train:** "Train a model on our SFT data" / "Run the SFT pipeline with new config."
+- Launch **explore** to find training scripts, config, and data layout; launch **shell** or **generalPurpose** for env/GPU/deps and to run or adapt the training pipeline.
+
+## When Not to Swarm
+
+- Single-file or single-concern edits (one function, one component, one script).
+- Answering questions or explaining code (no build/train requested).
+- Narrow bug fixes or refactors that don’t amount to building a project or running training.

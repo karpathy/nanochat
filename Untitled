@@ -1,0 +1,1 @@
+python -m scripts.tok_train --use-llama-tokenizer

@@ -1,0 +1,4 @@
+{"sessionId": "25bf98", "location": "chat_sft.py", "message": "script_start", "data": {"argv_len": 15, "argv_tail": ["8192", "--matrix-lr", "0.00002", "--run", "dummy"]}, "timestamp": 1773752542473, "hypothesisId": "start"}
+{"sessionId": "25bf98", "location": "chat_sft.py", "message": "parse_args_ok", "data": {}, "timestamp": 1773752542473, "hypothesisId": "A"}
+{"sessionId": "25bf98", "location": "chat_sft.py", "message": "script_start", "data": {"argv_len": 13, "argv_tail": ["1024", "--total-batch-size", "1024", "--run", "dummy"]}, "timestamp": 1773775349433, "hypothesisId": "start"}
+{"sessionId": "25bf98", "location": "chat_sft.py", "message": "parse_args_ok", "data": {}, "timestamp": 1773775349434, "hypothesisId": "A"}

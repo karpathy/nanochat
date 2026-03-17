@@ -32,26 +32,21 @@ COMPUTE_DTYPE, COMPUTE_DTYPE_REASON = _detect_compute_dtype()
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
-    # ANSI color codes
     COLORS = {
-        'DEBUG': '\033[36m',    # Cyan
-        'INFO': '\033[32m',     # Green
-        'WARNING': '\033[33m',  # Yellow
-        'ERROR': '\033[31m',    # Red
-        'CRITICAL': '\033[35m', # Magenta
+        'DEBUG': '\033[36m',
+        'INFO': '\033[32m',
+        'WARNING': '\033[33m',
+        'ERROR': '\033[31m',
+        'CRITICAL': '\033[35m',
     }
     RESET = '\033[0m'
     BOLD = '\033[1m'
     def format(self, record):
-        # Add color to the level name
         levelname = record.levelname
         if levelname in self.COLORS:
             record.levelname = f"{self.COLORS[levelname]}{self.BOLD}{levelname}{self.RESET}"
-        # Format the message
         message = super().format(record)
-        # Add color to specific parts of the message
         if levelname == 'INFO':
-            # Highlight numbers and percentages
             message = re.sub(r'(\d+\.?\d*\s*(?:GB|MB|%|docs))', rf'{self.BOLD}\1{self.RESET}', message)
             message = re.sub(r'(Shard \d+)', rf'{self.COLORS["INFO"]}{self.BOLD}\1{self.RESET}', message)
         return message
@@ -68,7 +63,6 @@ setup_default_logging()
 logger = logging.getLogger(__name__)
 
 def get_base_dir():
-    # co-locate nanochat intermediates with other cached data in ~/.cache (by default)
     if os.environ.get("NANOCHAT_BASE_DIR"):
         nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR")
     else:
@@ -78,201 +72,135 @@ def get_base_dir():
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
-def download_file_with_lock(url, filename, postprocess_fn=None):
-    """
-    Downloads a file from a URL to a local path in the base directory.
-    Uses a lock file to prevent concurrent downloads among multiple ranks.
-    """
+
+def get_checkpoint_base_dir():
+    """Base directory for checkpoints (base_checkpoints/, chatsft_checkpoints/, etc.). Defaults to get_base_dir(); override with NANOBOT_BASE_DIR or NANOCHAT_BASE_DIR."""
+    env_dir = os.environ.get("NANOBOT_BASE_DIR") or os.environ.get("NANOCHAT_BASE_DIR")
+    return os.path.expanduser(env_dir) if env_dir else get_base_dir()
+
+
+def download_file_with_lock(url: str, filename: str, postprocess_fn=None) -> str:
     base_dir = get_base_dir()
-    file_path = os.path.join(base_dir, filename)
-    lock_path = file_path + ".lock"
-
-    if os.path.exists(file_path):
-        return file_path
-
+    path = os.path.join(base_dir, filename)
+    lock_path = path + ".lock"
     with FileLock(lock_path):
-        # Only a single rank can acquire this lock
-        # All other ranks block until it is released
-
-        # Recheck after acquiring lock
-        if os.path.exists(file_path):
-            return file_path
-
-        # Download the content as bytes
-        print(f"Downloading {url}...")
-        with urllib.request.urlopen(url) as response:
-            content = response.read() # bytes
-
-        # Write to local file
-        with open(file_path, 'wb') as f:
-            f.write(content)
-        print(f"Downloaded to {file_path}")
-
-        # Run the postprocess function if provided
+        if not os.path.exists(path):
+            urllib.request.urlretrieve(url, path)
         if postprocess_fn is not None:
-            postprocess_fn(file_path)
+            postprocess_fn(path)
+    return path
 
-    return file_path
-
-def print0(s="",**kwargs):
-    ddp_rank = int(os.environ.get('RANK', 0))
-    if ddp_rank == 0:
-        print(s, **kwargs)
-
-def print_banner():
-    # Cool DOS Rebel font ASCII banner made with https://manytools.org/hacker-tools/ascii-banner/
-    banner = """
-                                                       █████                █████
-                                                      ░░███                ░░███
-     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
-    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
-     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
-     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
-     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
-    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
-    """
-    print0(banner)
-
-def is_ddp_requested() -> bool:
-    """
-    True if launched by torchrun (env present), even before init.
-    Used to decide whether we *should* initialize a PG.
-    """
-    return all(k in os.environ for k in ("RANK", "LOCAL_RANK", "WORLD_SIZE"))
-
-def is_ddp_initialized() -> bool:
-    """
-    True if torch.distributed is available and the process group is initialized.
-    Used at cleanup to avoid destroying a non-existent PG.
-    """
-    return dist.is_available() and dist.is_initialized()
 
 def get_dist_info():
-    if is_ddp_requested():
-        # We rely on torchrun's env to decide if we SHOULD init.
-        # (Initialization itself happens in compute init.)
-        assert all(var in os.environ for var in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE'])
-        ddp_rank = int(os.environ['RANK'])
-        ddp_local_rank = int(os.environ['LOCAL_RANK'])
-        ddp_world_size = int(os.environ['WORLD_SIZE'])
-        return True, ddp_rank, ddp_local_rank, ddp_world_size
-    else:
-        return False, 0, 0, 1
+    if dist.is_initialized():
+        return True, dist.get_rank(), int(os.environ.get("LOCAL_RANK", 0)), dist.get_world_size()
+    return False, 0, 0, 1
+
+def print0(*args, **kwargs):
+    if not dist.is_initialized() or dist.get_rank() == 0:
+        print(*args, **kwargs)
+
+
+def print_banner():
+    if dist.is_initialized() and dist.get_rank() != 0:
+        return
+    print("=" * 60)
+    print("nanochat base_train")
+    print("=" * 60)
 
 def autodetect_device_type():
-    # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
     if torch.cuda.is_available():
-        device_type = "cuda"
-    elif torch.backends.mps.is_available():
-        device_type = "mps"
-    else:
-        device_type = "cpu"
-    print0(f"Autodetected device type: {device_type}")
-    return device_type
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
-def compute_init(device_type="cuda"): # cuda|cpu|mps
-    """Basic initialization that we keep doing over and over, so make common."""
 
-    assert device_type in ["cuda", "mps", "cpu"], "Invalid device type atm"
-    if device_type == "cuda":
-        assert torch.cuda.is_available(), "Your PyTorch installation is not configured for CUDA but device_type is 'cuda'"
-    if device_type == "mps":
-        assert torch.backends.mps.is_available(), "Your PyTorch installation is not configured for MPS but device_type is 'mps'"
+def get_peak_flops(name: str) -> float:
+    flops_map = {
+        "H100": 1.98e15,
+        "A100": 3.12e14,
+        "A10": 1.25e14,
+        "RTX 4090": 8.2e13,
+    }
+    for key, flops in flops_map.items():
+        if key in name:
+            return flops
+    return 1e14
 
-    # Reproducibility
-    # Note that we set the global seeds here, but most of the code uses explicit rng objects.
-    # The only place where global rng might be used is nn.Module initialization of the model weights.
-    torch.manual_seed(42)
-    if device_type == "cuda":
-        torch.cuda.manual_seed(42)
-    # skipping full reproducibility for now, possibly investigate slowdown later
-    # torch.use_deterministic_algorithms(True)
+def is_ddp_initialized():
+    return dist.is_initialized()
 
-    # Precision
-    if device_type == "cuda":
-        torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls, see https://docs.pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html
+def compute_init(device_type: str):
+    if device_type == "cuda" and torch.cuda.is_available():
+        if dist.is_initialized():
+            rank = dist.get_rank()
+            local_rank = int(os.environ.get("LOCAL_RANK", rank))
+            device = torch.device("cuda", local_rank)
+            return True, rank, local_rank, dist.get_world_size(), device
+        return False, 0, 0, 1, torch.device("cuda", 0)
+    if device_type == "mps" and getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return False, 0, 0, 1, torch.device("mps")
+    return False, 0, 0, 1, torch.device("cpu")
 
-    # Distributed setup: Distributed Data Parallel (DDP), optional, and requires CUDA
-    is_ddp_requested, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
-    if is_ddp_requested and device_type == "cuda":
-        device = torch.device("cuda", ddp_local_rank)
-        torch.cuda.set_device(device)  # make "cuda" default to this device
-        dist.init_process_group(backend="nccl", device_id=device)
-        dist.barrier()
-    else:
-        device = torch.device(device_type) # mps|cpu
+def estimate_model_vram(n_layer, n_embd, n_head, vocab_size, seq_len, batch_size, dtype=torch.float32, training=True):
+    """
+    Estimate VRAM usage (in GB) for a given GPT configuration.
+    This is a rough heuristic that includes weights, gradients, optimizer states, and activations.
+    """
+    # Bytes per element
+    bpe = 2 if dtype in [torch.float16, torch.bfloat16] else 4
 
-    if ddp_rank == 0:
-        logger.info(f"Distributed world size: {ddp_world_size}")
+    # 1. Parameter memory (weights)
+    # roughly 12 * n_layer * n_embd^2
+    n_params = 12 * n_layer * n_embd**2 + vocab_size * n_embd
+    param_mem = n_params * bpe
 
-    return is_ddp_requested, ddp_rank, ddp_local_rank, ddp_world_size, device
+    if not training:
+        # For inference, we only need weights and KV cache
+        # KV cache: 2 * n_layer * batch_size * seq_len * n_embd * bpe
+        kv_cache_mem = 2 * n_layer * batch_size * seq_len * n_embd * bpe
+        return (param_mem + kv_cache_mem) / 1024**3
+
+    # 2. Gradient memory (same as parameters)
+    grad_mem = n_params * bpe
+
+    # 3. Optimizer memory (AdamW stores 2 states per parameter in FP32)
+    opt_mem = n_params * 2 * 4
+
+    # 4. Activation memory (Roughly batch * seq * n_layer * n_embd * bytes)
+    # This varies a lot with implementation (checkpointing, flash attention)
+    act_mem = batch_size * seq_len * n_layer * n_embd * bpe * 4
+
+    total_bytes = param_mem + grad_mem + opt_mem + act_mem
+    return total_bytes / 1024**3
+
+def recommend_config(vram_gb, training=True, device_type="cuda"):
+    """Recommend model hyperparameters that should fit in the given VRAM."""
+    # Start with some base configs and scale down until they fit
+    # Note: n_embd should be divisible by n_head (default 6 or 8)
+    configs = [
+        {"depth": 20, "n_embd": 1280}, # ~1.5B (1280 % 8 == 0)
+        {"depth": 16, "n_embd": 1024}, # ~500M (1024 % 8 == 0)
+        {"depth": 12, "n_embd": 768},  # ~125M (768 % 8 == 0)
+        {"depth": 8, "n_embd": 512},   # ~40M (512 % 8 == 0)
+        {"depth": 4, "n_embd": 256},   # ~10M (256 % 8 == 0)
+    ]
+
+    for cfg in configs:
+        # assume batch_size=1, seq_len=512 for estimation
+        est = estimate_model_vram(cfg["depth"], cfg["n_embd"], 8, 32768, 512, 1,
+                                  dtype=torch.float16 if device_type=="cuda" else torch.float32,
+                                  training=training)
+        if est < vram_gb * 0.8: # leave 20% headroom
+            return cfg
+
+    return configs[-1] # fallback to smallest
 
 def compute_cleanup():
-    """Companion function to compute_init, to clean things up before script exit"""
-    if is_ddp_initialized():
+    if dist.is_initialized():
         dist.destroy_process_group()
 
 class DummyWandb:
-    """Useful if we wish to not use wandb but have all the same signatures"""
-    def __init__(self):
-        pass
-    def log(self, *args, **kwargs):
-        pass
-    def finish(self):
-        pass
-
-# hardcoded BF16 peak flops for various GPUs
-# inspired by torchtitan: https://github.com/pytorch/torchtitan/blob/main/torchtitan/tools/utils.py
-# and PR: https://github.com/karpathy/nanochat/pull/147
-def get_peak_flops(device_name: str) -> float:
-    name = device_name.lower()
-
-    # Table order matters: more specific patterns first.
-    _PEAK_FLOPS_TABLE = (
-        # NVIDIA Blackwell
-        (["gb200"], 2.5e15),
-        (["grace blackwell"], 2.5e15),
-        (["b200"], 2.25e15),
-        (["b100"], 1.8e15),
-        # NVIDIA Hopper
-        (["h200", "nvl"], 836e12),
-        (["h200", "pcie"], 836e12),
-        (["h200"], 989e12),
-        (["h100", "nvl"], 835e12),
-        (["h100", "pcie"], 756e12),
-        (["h100"], 989e12),
-        (["h800", "nvl"], 989e12),
-        (["h800"], 756e12),
-        # NVIDIA Ampere data center
-        (["a100"], 312e12),
-        (["a800"], 312e12),
-        (["a40"], 149.7e12),
-        (["a30"], 165e12),
-        # NVIDIA Ada data center
-        (["l40s"], 362e12),
-        (["l40-s"], 362e12),
-        (["l40 s"], 362e12),
-        (["l4"], 121e12),
-        # AMD CDNA accelerators
-        (["mi355"], 2.5e15),
-        (["mi325"], 1.3074e15),
-        (["mi300x"], 1.3074e15),
-        (["mi300a"], 980.6e12),
-        (["mi250x"], 383e12),
-        (["mi250"], 362.1e12),
-        # Consumer RTX
-        (["5090"], 209.5e12),
-        (["4090"], 165.2e12),
-        (["3090"], 71e12),
-    )
-    for patterns, flops in _PEAK_FLOPS_TABLE:
-        if all(p in name for p in patterns):
-            return flops
-    if "data center gpu max 1550" in name:
-        # Ponte Vecchio (PVC) - dynamic based on compute units
-        max_comp_units = torch.xpu.get_device_properties("xpu").max_compute_units
-        return 512 * max_comp_units * 1300 * 10**6
-
-    # Unknown GPU - return inf so MFU shows as 0% rather than a wrong guess
-    logger.warning(f"Peak flops undefined for: {device_name}, MFU will show as 0%")
-    return float('inf')
+    def log(self, d): pass
+    def finish(self): pass

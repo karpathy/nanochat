@@ -44,6 +44,11 @@ from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, AsyncGenerator
 from dataclasses import dataclass
+
+# RAG Imports
+from langchain_chroma import Chroma
+from langchain_ollama import OllamaEmbeddings
+
 from nanochat.common import compute_init, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
@@ -70,6 +75,8 @@ parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
 parser.add_argument('-p', '--port', type=int, default=8000, help='Port to run the server on')
 parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
 parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind the server to')
+parser.add_argument('--rag', action='store_true', help='Enable Basecamp RAG')
+parser.add_argument('--rag-db', type=str, default='../chroma_db_basecamp', help='Path to ChromaDB directory')
 args = parser.parse_args()
 
 # Configure logging for conversation traffic
@@ -183,7 +190,7 @@ def validate_chat_request(request: ChatRequest):
 
     # Validate role values
     for i, message in enumerate(request.messages):
-        if message.role not in ["user", "assistant"]:
+        if message.role not in ["user", "assistant", "system"]:
             raise HTTPException(
                 status_code=400,
                 detail=f"Message {i} has invalid role. Must be 'user', 'assistant', or 'system'"
@@ -219,6 +226,23 @@ async def lifespan(app: FastAPI):
     print("Loading nanochat models across GPUs...")
     app.state.worker_pool = WorkerPool(num_gpus=args.num_gpus)
     await app.state.worker_pool.initialize(args.source, model_tag=args.model_tag, step=args.step)
+
+    # Initialize RAG if enabled
+    app.state.rag_db = None
+    if args.rag:
+        print(f"Initializing RAG from {args.rag_db}...")
+        try:
+            embeddings = OllamaEmbeddings(model="nomic-embed-text")
+            # Resolve relative path to absolute
+            db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), args.rag_db))
+            if os.path.exists(db_path):
+                app.state.rag_db = Chroma(persist_directory=db_path, embedding_function=embeddings)
+                print(f"RAG initialized with {app.state.rag_db._collection.count()} documents.")
+            else:
+                print(f"RAG Warning: Database path {db_path} does not exist. RAG disabled.")
+        except Exception as e:
+            print(f"RAG Warning: Failed to initialize RAG: {e}")
+
     print(f"Server ready at http://localhost:{args.port}")
     yield
 
@@ -320,6 +344,19 @@ async def chat_completions(request: ChatRequest):
     worker = await worker_pool.acquire_worker()
 
     try:
+        # RAG Context Retrieval
+        rag_context = ""
+        if app.state.rag_db is not None and len(request.messages) > 0:
+            last_user_message = next((m.content for m in reversed(request.messages) if m.role == "user"), "")
+            if last_user_message:
+                print(f"RAG: Retrieving context for query: '{last_user_message[:50]}...'")
+                results = app.state.rag_db.similarity_search(last_user_message, k=3)
+                if results:
+                    rag_context = "Relevant context from Basecamp:\n"
+                    for doc in results:
+                        rag_context += f"- {doc.page_content}\n"
+                    print(f"RAG: Found {len(results)} context snippets.")
+
         # Build conversation tokens
         bos = worker.tokenizer.get_bos_token_id()
         user_start = worker.tokenizer.encode_special("<|user_start|>")
@@ -328,15 +365,37 @@ async def chat_completions(request: ChatRequest):
         assistant_end = worker.tokenizer.encode_special("<|assistant_end|>")
 
         conversation_tokens = [bos]
+
+        # Prepend RAG context if found
+        if rag_context:
+            conversation_tokens.append(user_start)
+            conversation_tokens.extend(worker.tokenizer.encode("Use this context to answer the following question: " + rag_context))
+            conversation_tokens.append(user_end)
+            conversation_tokens.append(assistant_start)
+            conversation_tokens.extend(worker.tokenizer.encode("Understood. I will use the provided Basecamp context."))
+            conversation_tokens.append(assistant_end)
+
+        system_parts = []
         for message in request.messages:
-            if message.role == "user":
+            if message.role == "system":
+                system_parts.append(message.content)
+            elif message.role == "user":
+                user_content = message.content
+                if system_parts:
+                    user_content = "\n\n".join(system_parts) + "\n\n" + user_content
+                    system_parts = []
                 conversation_tokens.append(user_start)
-                conversation_tokens.extend(worker.tokenizer.encode(message.content))
+                conversation_tokens.extend(worker.tokenizer.encode(user_content))
                 conversation_tokens.append(user_end)
             elif message.role == "assistant":
                 conversation_tokens.append(assistant_start)
                 conversation_tokens.extend(worker.tokenizer.encode(message.content))
                 conversation_tokens.append(assistant_end)
+
+        if system_parts:
+            conversation_tokens.append(user_start)
+            conversation_tokens.extend(worker.tokenizer.encode("\n\n".join(system_parts)))
+            conversation_tokens.append(user_end)
 
         conversation_tokens.append(assistant_start)
 

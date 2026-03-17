@@ -1,0 +1,240 @@
+2026-03-16 22:57:30,775 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+2026-03-16 22:57:30,775 - nanochat.common - [33m[1mWARNING[0m - Peak flops undefined for: NVIDIA GeForce GTX 1660 SUPER, MFU will show as 0%
+2026-03-16 22:57:30,775 - nanochat.checkpoint_manager - [32m[1mINFO[0m - No model tag provided, guessing model tag: d2
+2026-03-16 22:57:30,775 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Loading model from /home/keef/.cache/nanochat/base_checkpoints/d2 with step 10
+2026-03-16 22:57:30,922 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Building model with config: {'sequence_len': 128, 'vocab_size': 32768, 'n_layer': 2, 'n_head': 1, 'n_kv_head': 1, 'n_embd': 128, 'window_pattern': 'SSSL'}
+2026-03-16 22:57:31,380 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Loading optimizer state from /home/keef/.cache/nanochat/base_checkpoints/d2/optim_000010_rank0.pt
+2026-03-16 22:57:31,552 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-03-16 22:57:31,577 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/HuggingFaceTB/smol-smoltalk/f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc/README.md "HTTP/1.1 200 OK"
+2026-03-16 22:57:31,647 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk/resolve/f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc/smol-smoltalk.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:31,846 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/HuggingFaceTB/smol-smoltalk/HuggingFaceTB/smol-smoltalk.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:31,932 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/datasets/HuggingFaceTB/smol-smoltalk/revision/f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc "HTTP/1.1 200 OK"
+2026-03-16 22:57:32,011 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk/resolve/f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:32,156 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=HuggingFaceTB/smol-smoltalk "HTTP/1.1 200 OK"
+2026-03-16 22:57:32,236 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/datasets/HuggingFaceTB/smol-smoltalk/tree/f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc/data?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-03-16 22:57:32,312 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/datasets/HuggingFaceTB/smol-smoltalk/tree/f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-03-16 22:57:32,396 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk/resolve/f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc/dataset_infos.json "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:32,540 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-03-16 22:57:32,565 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/cais/mmlu/c30699e8356da336a370243923dbaf21066bb9fe/README.md "HTTP/1.1 200 OK"
+2026-03-16 22:57:32,640 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/c30699e8356da336a370243923dbaf21066bb9fe/mmlu.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:32,700 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/cais/mmlu/cais/mmlu.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:32,839 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/datasets/cais/mmlu/revision/c30699e8356da336a370243923dbaf21066bb9fe "HTTP/1.1 200 OK"
+2026-03-16 22:57:32,918 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/c30699e8356da336a370243923dbaf21066bb9fe/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:33,021 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=cais/mmlu "HTTP/1.1 200 OK"
+2026-03-16 22:57:33,116 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/datasets/cais/mmlu/tree/c30699e8356da336a370243923dbaf21066bb9fe/abstract_algebra?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-03-16 22:57:33,198 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/datasets/cais/mmlu/tree/c30699e8356da336a370243923dbaf21066bb9fe?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-03-16 22:57:33,297 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/datasets/cais/mmlu/tree/c30699e8356da336a370243923dbaf21066bb9fe/auxiliary_train?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-03-16 22:57:33,391 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-03-16 22:57:33,415 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/cais/mmlu/c30699e8356da336a370243923dbaf21066bb9fe/README.md "HTTP/1.1 200 OK"
+2026-03-16 22:57:33,493 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/c30699e8356da336a370243923dbaf21066bb9fe/mmlu.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:33,551 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/cais/mmlu/cais/mmlu.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:33,701 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/c30699e8356da336a370243923dbaf21066bb9fe/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:33,808 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=cais/mmlu "HTTP/1.1 200 OK"
+2026-03-16 22:57:33,906 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-03-16 22:57:33,935 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/cais/mmlu/c30699e8356da336a370243923dbaf21066bb9fe/README.md "HTTP/1.1 200 OK"
+2026-03-16 22:57:34,014 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/c30699e8356da336a370243923dbaf21066bb9fe/mmlu.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:34,073 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/cais/mmlu/cais/mmlu.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:34,232 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/c30699e8356da336a370243923dbaf21066bb9fe/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:34,358 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=cais/mmlu "HTTP/1.1 200 OK"
+2026-03-16 22:57:34,471 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-03-16 22:57:34,495 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/openai/gsm8k/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/README.md "HTTP/1.1 200 OK"
+2026-03-16 22:57:34,568 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/gsm8k.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:34,625 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/openai/gsm8k/openai/gsm8k.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:34,700 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/datasets/openai/gsm8k/revision/cc7b047b6e5bb11b4f1af84efc572db110a51b3c "HTTP/1.1 200 OK"
+2026-03-16 22:57:34,778 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:34,866 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=openai/gsm8k "HTTP/1.1 200 OK"
+2026-03-16 22:57:34,948 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/datasets/openai/gsm8k/tree/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-03-16 22:57:35,023 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/datasets/openai/gsm8k/tree/cc7b047b6e5bb11b4f1af84efc572db110a51b3c?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-03-16 22:57:35,096 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/dataset_infos.json "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:35,171 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-03-16 22:57:35,195 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/openai/gsm8k/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/README.md "HTTP/1.1 200 OK"
+2026-03-16 22:57:35,267 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/gsm8k.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:35,320 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/openai/gsm8k/openai/gsm8k.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:35,397 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:35,476 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=openai/gsm8k "HTTP/1.1 200 OK"
+2026-03-16 22:57:35,560 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/dataset_infos.json "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:35,655 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-03-16 22:57:35,686 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/openai/gsm8k/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/README.md "HTTP/1.1 200 OK"
+2026-03-16 22:57:35,773 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/gsm8k.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:35,830 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/openai/gsm8k/openai/gsm8k.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:35,906 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:35,988 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=openai/gsm8k "HTTP/1.1 200 OK"
+2026-03-16 22:57:36,095 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/dataset_infos.json "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:36,169 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-03-16 22:57:36,196 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/openai/gsm8k/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/README.md "HTTP/1.1 200 OK"
+2026-03-16 22:57:36,276 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/gsm8k.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:36,331 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/openai/gsm8k/openai/gsm8k.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:36,468 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:36,572 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=openai/gsm8k "HTTP/1.1 200 OK"
+2026-03-16 22:57:36,659 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/dataset_infos.json "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:37,322 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-03-16 22:57:37,350 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/HuggingFaceTB/smol-smoltalk/f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc/README.md "HTTP/1.1 200 OK"
+2026-03-16 22:57:37,438 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk/resolve/f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc/smol-smoltalk.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:37,506 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/HuggingFaceTB/smol-smoltalk/HuggingFaceTB/smol-smoltalk.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:37,578 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk/resolve/f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:37,674 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=HuggingFaceTB/smol-smoltalk "HTTP/1.1 200 OK"
+2026-03-16 22:57:37,759 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/HuggingFaceTB/smol-smoltalk/resolve/f73fe857d519ff6ac5af2ea67c4d3834da7b8bcc/dataset_infos.json "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:37,853 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-03-16 22:57:37,876 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/cais/mmlu/c30699e8356da336a370243923dbaf21066bb9fe/README.md "HTTP/1.1 200 OK"
+2026-03-16 22:57:37,962 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/c30699e8356da336a370243923dbaf21066bb9fe/mmlu.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:38,015 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/cais/mmlu/cais/mmlu.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:38,187 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/cais/mmlu/resolve/c30699e8356da336a370243923dbaf21066bb9fe/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:38,302 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=cais/mmlu "HTTP/1.1 200 OK"
+2026-03-16 22:57:38,383 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://huggingface.co/api/datasets/cais/mmlu/tree/c30699e8356da336a370243923dbaf21066bb9fe/all?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-03-16 22:57:38,474 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-03-16 22:57:38,501 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/openai/gsm8k/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/README.md "HTTP/1.1 200 OK"
+2026-03-16 22:57:38,572 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/gsm8k.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:38,625 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/openai/gsm8k/openai/gsm8k.py "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:38,700 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-03-16 22:57:38,785 - httpx - [32m[1mINFO[0m - HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=openai/gsm8k "HTTP/1.1 200 OK"
+2026-03-16 22:57:38,857 - httpx - [32m[1mINFO[0m - HTTP Request: HEAD https://huggingface.co/datasets/openai/gsm8k/resolve/cc7b047b6e5bb11b4f1af84efc572db110a51b3c/dataset_infos.json "HTTP/1.1 404 Not Found"
+Autodetected device type: cuda
+COMPUTE_DTYPE: torch.float32 (auto-detected: CUDA SM 75 (pre-Ampere, bf16 not supported, using fp32))
+GPU: NVIDIA GeForce GTX 1660 SUPER | Peak FLOPS (BF16): inf
+WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback. Training will be less efficient.
+Inherited max_seq_len=128 from pretrained checkpoint
+Inherited device_batch_size=1 from pretrained checkpoint
+Inherited total_batch_size=128 from pretrained checkpoint
+Inherited embedding_lr=0.3 from pretrained checkpoint
+Inherited unembedding_lr=0.008 from pretrained checkpoint
+Inherited matrix_lr=0.02 from pretrained checkpoint
+Tokens / micro-batch / rank: 1 x 128 = 128
+Tokens / micro-batch: 128
+Total batch size 128 => gradient accumulation steps: 1
+Scaling the LR for the AdamW parameters ∝1/√(128/768) = 2.449490
+Loaded optimizer state from pretrained checkpoint (momentum buffers only, LRs reset)
+Training mixture: 1,071,840 rows (MMLU x3, GSM8K x4)
+Step 00000 | Validation bpb: 3.3084
+step 00001 (0.00%) | loss: 5.471677 | lrm: 1.00 | dt: 1142.98ms | tok/sec: 111 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00002 (0.00%) | loss: 7.252057 | lrm: 1.00 | dt: 5.71ms | tok/sec: 22,429 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00003 (0.00%) | loss: 8.043986 | lrm: 1.00 | dt: 5.07ms | tok/sec: 25,234 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00004 (0.00%) | loss: 8.467922 | lrm: 1.00 | dt: 5.55ms | tok/sec: 23,045 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00005 (0.00%) | loss: 8.182390 | lrm: 1.00 | dt: 5.31ms | tok/sec: 24,099 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00006 (0.00%) | loss: 9.552744 | lrm: 1.00 | dt: 5.39ms | tok/sec: 23,730 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00007 (0.00%) | loss: 9.522228 | lrm: 1.00 | dt: 6.54ms | tok/sec: 19,571 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00008 (0.00%) | loss: 8.991203 | lrm: 1.00 | dt: 5.11ms | tok/sec: 25,051 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00009 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.20ms | tok/sec: 24,595 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00010 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.31ms | tok/sec: 24,094 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00011 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.21ms | tok/sec: 24,546 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00012 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.22ms | tok/sec: 24,514 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00013 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.93ms | tok/sec: 25,975 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00014 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.08ms | tok/sec: 25,212 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00015 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.03ms | tok/sec: 25,458 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00016 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.87ms | tok/sec: 26,306 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00017 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.92ms | tok/sec: 26,038 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00018 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.19ms | tok/sec: 24,665 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00019 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.06ms | tok/sec: 25,307 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00020 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.90ms | tok/sec: 26,134 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00021 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.00ms | tok/sec: 25,601 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00022 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.98ms | tok/sec: 25,690 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00023 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.12ms | tok/sec: 25,012 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00024 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.37ms | tok/sec: 23,828 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00025 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.29ms | tok/sec: 24,191 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00026 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.30ms | tok/sec: 24,161 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00027 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.25ms | tok/sec: 24,385 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00028 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.12ms | tok/sec: 25,007 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00029 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.23ms | tok/sec: 24,493 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00030 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.12ms | tok/sec: 24,995 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00031 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.20ms | tok/sec: 24,627 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00032 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.97ms | tok/sec: 25,771 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00033 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.05ms | tok/sec: 25,361 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00034 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.04ms | tok/sec: 25,381 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00035 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.07ms | tok/sec: 25,241 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00036 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.91ms | tok/sec: 26,093 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00037 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.12ms | tok/sec: 25,003 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00038 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.90ms | tok/sec: 26,107 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00039 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.03ms | tok/sec: 25,446 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00040 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.90ms | tok/sec: 26,140 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00041 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.08ms | tok/sec: 25,195 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00042 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.26ms | tok/sec: 24,348 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00043 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.28ms | tok/sec: 24,239 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00044 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.09ms | tok/sec: 25,146 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00045 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.30ms | tok/sec: 24,153 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00046 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.22ms | tok/sec: 24,507 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00047 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.21ms | tok/sec: 24,564 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00048 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.07ms | tok/sec: 25,226 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00049 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.21ms | tok/sec: 24,571 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00050 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.28ms | tok/sec: 24,239 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00051 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.14ms | tok/sec: 24,908 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00052 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.94ms | tok/sec: 25,897 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00053 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.94ms | tok/sec: 25,902 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00054 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.34ms | tok/sec: 23,992 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00055 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.15ms | tok/sec: 24,844 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00056 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.92ms | tok/sec: 25,999 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00057 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.01ms | tok/sec: 25,528 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00058 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.97ms | tok/sec: 25,746 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00059 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.85ms | tok/sec: 26,383 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00060 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.92ms | tok/sec: 26,003 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00061 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.23ms | tok/sec: 24,496 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00062 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.22ms | tok/sec: 24,539 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00063 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.10ms | tok/sec: 25,100 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00064 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.12ms | tok/sec: 25,012 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00065 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.22ms | tok/sec: 24,505 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00066 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.14ms | tok/sec: 24,916 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00067 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.09ms | tok/sec: 25,124 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00068 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.13ms | tok/sec: 24,966 | mfu: 0.00 | epoch: 1 | total time: 0.00m
+step 00069 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.30ms | tok/sec: 24,131 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00070 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.26ms | tok/sec: 24,345 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00071 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.93ms | tok/sec: 25,986 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00072 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.92ms | tok/sec: 26,004 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00073 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.10ms | tok/sec: 25,102 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00074 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.09ms | tok/sec: 25,169 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00075 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.40ms | tok/sec: 23,719 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00076 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.97ms | tok/sec: 25,761 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00077 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.16ms | tok/sec: 24,809 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00078 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.15ms | tok/sec: 24,866 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00079 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.94ms | tok/sec: 25,914 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00080 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.19ms | tok/sec: 24,649 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00081 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.13ms | tok/sec: 24,970 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00082 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.14ms | tok/sec: 24,887 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00083 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.10ms | tok/sec: 25,113 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00084 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.23ms | tok/sec: 24,475 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00085 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.28ms | tok/sec: 24,263 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00086 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.30ms | tok/sec: 24,162 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00087 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.11ms | tok/sec: 25,044 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00088 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.12ms | tok/sec: 25,020 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00089 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.21ms | tok/sec: 24,571 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00090 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.95ms | tok/sec: 25,868 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00091 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.90ms | tok/sec: 26,113 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00092 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.91ms | tok/sec: 26,093 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00093 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.86ms | tok/sec: 26,328 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00094 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.83ms | tok/sec: 26,495 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00095 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.83ms | tok/sec: 26,487 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00096 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.81ms | tok/sec: 26,596 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00097 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.82ms | tok/sec: 26,544 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00098 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.81ms | tok/sec: 26,635 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00099 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.86ms | tok/sec: 26,315 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00100 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.00ms | tok/sec: 25,618 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00101 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.04ms | tok/sec: 25,416 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00102 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.04ms | tok/sec: 25,376 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00103 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.04ms | tok/sec: 25,417 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00104 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.04ms | tok/sec: 25,373 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00105 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.04ms | tok/sec: 25,379 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00106 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.01ms | tok/sec: 25,544 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00107 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.05ms | tok/sec: 25,336 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00108 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.07ms | tok/sec: 25,268 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00109 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.95ms | tok/sec: 25,858 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00110 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.91ms | tok/sec: 26,089 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00111 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.86ms | tok/sec: 26,340 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00112 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.85ms | tok/sec: 26,366 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00113 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.84ms | tok/sec: 26,428 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00114 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.85ms | tok/sec: 26,392 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00115 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.89ms | tok/sec: 26,195 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00116 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.86ms | tok/sec: 26,343 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00117 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.82ms | tok/sec: 26,565 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00118 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.86ms | tok/sec: 26,344 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00119 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.93ms | tok/sec: 25,958 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00120 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.99ms | tok/sec: 25,676 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00121 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.04ms | tok/sec: 25,388 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00122 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.05ms | tok/sec: 25,322 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00123 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.05ms | tok/sec: 25,322 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00124 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.05ms | tok/sec: 25,328 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00125 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.05ms | tok/sec: 25,364 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00126 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.10ms | tok/sec: 25,110 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00127 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.11ms | tok/sec: 25,060 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00128 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.08ms | tok/sec: 25,174 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00129 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.98ms | tok/sec: 25,697 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00130 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.90ms | tok/sec: 26,125 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00131 (0.00%) | loss: nan | lrm: 1.00 | dt: 5.04ms | tok/sec: 25,416 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00132 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.96ms | tok/sec: 25,816 | mfu: 0.00 | epoch: 1 | total time: 0.01m
+step 00133 (0.00%) | loss: nan | lrm: 1.00 | dt: 4.98ms | tok/sec: 25,696 | mfu: 0.00 | epoch: 1 | total time: 0.01m

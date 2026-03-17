@@ -37,11 +37,23 @@ class CustomJSON(Task):
                     line = line.strip()
                     if not line:  # skip empty lines
                         continue
-                    messages = json.loads(line)
-                    # Validate the conversation structure
+                    raw = json.loads(line)
+                    if isinstance(raw, dict):
+                        if "instruction" in raw or "input" in raw or "output" in raw:
+                            user_content = str(raw.get("instruction", ""))
+                            if raw.get("input"):
+                                user_content = user_content.rstrip() + "\n\n" + str(raw["input"])
+                            user_content = user_content.strip() or "Continue."
+                            messages = [
+                                {"role": "user", "content": user_content},
+                                {"role": "assistant", "content": str(raw.get("output", ""))},
+                            ]
+                        else:
+                            raise ValueError(f"Unsupported dict keys: {list(raw.keys())}")
+                    else:
+                        messages = raw
                     assert isinstance(messages, list), f"Expected list of messages, got {type(messages)}"
                     assert len(messages) >= 2, f"Conversation must have at least 2 messages, got {len(messages)}"
-                    # Validate message structure and alternating roles
                     for i, message in enumerate(messages):
                         assert "role" in message, f"Message {i} missing 'role' field"
                         assert "content" in message, f"Message {i} missing 'content' field"

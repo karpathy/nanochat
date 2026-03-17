@@ -11,12 +11,23 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --device-batch-s
 
 import gc
 import argparse
+import json
 import os
-os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+import sys
 import time
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+# #region agent log
+_DEBUG_LOG = "/home/keef/nanochatkwizzle/.cursor/debug-25bf98.log"
+def _dlog(msg, data=None, hid="?"):
+    try:
+        with open(_DEBUG_LOG, "a") as _f:
+            _f.write(json.dumps({"sessionId": "25bf98", "location": "chat_sft.py", "message": msg, "data": data or {}, "timestamp": int(time.time() * 1000), "hypothesisId": hid}) + "\n")
+    except Exception:
+        pass
+# #endregion
 import wandb
 import torch
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, get_checkpoint_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state
 from nanochat.loss_eval import evaluate_bpb
@@ -45,6 +56,7 @@ parser.add_argument("--model-step", type=int, default=None, help="model step to 
 parser.add_argument("--load-optimizer", type=int, default=1, help="warm-start optimizer from pretrained checkpoint (0=no, 1=yes)")
 # Training horizon
 parser.add_argument("--num-iterations", type=int, default=-1, help="number of optimization steps (-1 = full epoch)")
+parser.add_argument("--max-walltime-seconds", type=int, default=-1, help="stop after this many seconds of training (-1 = no limit)")
 # Batch sizes (default: inherit from pretrained checkpoint)
 parser.add_argument("--max-seq-len", type=int, default=None, help="max context length (default: inherit from pretrain)")
 parser.add_argument("--device-batch-size", type=int, default=None, help="per-device batch size (default: inherit from pretrain)")
@@ -66,7 +78,15 @@ parser.add_argument("--chatcore-max-sample", type=int, default=24, help="max pro
 # Data mixture
 parser.add_argument("--mmlu-epochs", type=int, default=3, help="number of epochs of MMLU in training mixture (teaches Multiple Choice)")
 parser.add_argument("--gsm8k-epochs", type=int, default=4, help="number of epochs of GSM8K in training mixture (teaches Math and Tool Use)")
-args = parser.parse_args()
+# #region agent log
+_dlog("script_start", {"argv_len": len(sys.argv), "argv_tail": sys.argv[-5:] if len(sys.argv) >= 5 else sys.argv}, "start")
+try:
+    args = parser.parse_args()
+except Exception as e:
+    _dlog("parse_args_failed", {"error": str(e), "type": type(e).__name__}, "A")
+    raise
+_dlog("parse_args_ok", {}, "A")
+# #endregion
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
 
@@ -162,11 +182,16 @@ for group in optimizer.param_groups:
 
 # SFT data mixture and DataLoader
 identity_conversations_filepath = os.path.join(base_dir, "identity_conversations.jsonl")
+basecamp_tactics_filepath = os.path.join(base_dir, "basecamp_tactics.jsonl")
 train_tasks = [
     SmolTalk(split="train"), # 460K rows of general conversations
     CustomJSON(filepath=identity_conversations_filepath), # 1000 rows of synthetic identity conversations
     CustomJSON(filepath=identity_conversations_filepath), # 2 epochs of these
+    CustomJSON(filepath=basecamp_tactics_filepath), # Basecamp project management tactics
+    CustomJSON(filepath=basecamp_tactics_filepath), # Multi-epoch for Basecamp data
+    CustomJSON(filepath=basecamp_tactics_filepath),
     *[MMLU(subset="auxiliary_train", split="train") for _ in range(args.mmlu_epochs)], # 100K rows per epoch
+
     *[GSM8K(subset="main", split="train") for _ in range(args.gsm8k_epochs)], # 8K rows per epoch
     SimpleSpelling(size=200000, split="train"), # 200K rows of Simple Spelling (e.g. spell the word 'apple')
     SpellingBee(size=80000, split="train"), # 80K rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
@@ -334,8 +359,13 @@ smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
 step = 0
+loop_start_wall = time.time()
 while True:
     flops_so_far = num_flops_per_token * args.total_batch_size * step
+
+    if args.max_walltime_seconds > 0 and (time.time() - loop_start_wall) >= args.max_walltime_seconds:
+        last_step = True
+        print0(f"Step {step:05d} | Stopping: max walltime {args.max_walltime_seconds}s reached")
 
     # Synchronize last_step across all ranks to avoid hangs in the distributed setting
     if ddp:
@@ -398,7 +428,7 @@ while True:
     # save checkpoint at the end of the run (all ranks participate so each saves its optimizer shard)
     if last_step:
         output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
-        checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
+        checkpoint_dir = os.path.join(get_checkpoint_base_dir(), "chatsft_checkpoints", output_dirname)
         save_checkpoint(
             checkpoint_dir,
             step,

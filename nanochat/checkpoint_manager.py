@@ -8,7 +8,7 @@ import json
 import logging
 import torch
 
-from nanochat.common import get_base_dir
+from nanochat.common import get_base_dir, get_checkpoint_base_dir
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.tokenizer import get_tokenizer
 from nanochat.common import setup_default_logging
@@ -167,8 +167,13 @@ def load_model(source, *args, **kwargs):
         "sft": "chatsft_checkpoints",
         "rl": "chatrl_checkpoints",
     }[source]
-    base_dir = get_base_dir()
+    base_dir = get_checkpoint_base_dir()
     checkpoints_dir = os.path.join(base_dir, model_dir)
+    if not os.path.isdir(checkpoints_dir):
+        raise FileNotFoundError(
+            f"Checkpoints directory does not exist: {checkpoints_dir}\n"
+            f"Train a model first (e.g. run scripts/chat_sft after pretraining) or set NANOCHAT_BASE_DIR to a path that contains '{model_dir}'."
+        )
     return load_model_from_dir(checkpoints_dir, *args, **kwargs)
 
 def load_optimizer_state(source, device, rank, model_tag=None, step=None):
@@ -178,7 +183,7 @@ def load_optimizer_state(source, device, rank, model_tag=None, step=None):
         "sft": "chatsft_checkpoints",
         "rl": "chatrl_checkpoints",
     }[source]
-    base_dir = get_base_dir()
+    base_dir = get_checkpoint_base_dir()
     checkpoints_dir = os.path.join(base_dir, model_dir)
     if model_tag is None:
         model_tag = find_largest_model(checkpoints_dir)
