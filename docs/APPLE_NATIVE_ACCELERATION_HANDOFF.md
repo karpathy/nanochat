@@ -41,26 +41,34 @@ The current best practical Apple-native training path is:
 - repeated synthetic batch input
 - optional initialization from translated PyTorch reference weights
 
-## Files To Read First
+## Key Files
 
-Read these first, in this order:
+Core implementation scripts in `dev/`:
 
-1. [APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md](APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md)
-2. [APPLE_NATIVE_ACCELERATION_TASKLIST.md](APPLE_NATIVE_ACCELERATION_TASKLIST.md)
-3. [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md)
-4. [APPLE_NATIVE_ACCELERATION_MLX_TRAINING_CHECK.md](APPLE_NATIVE_ACCELERATION_MLX_TRAINING_CHECK.md)
-5. [mlx_gpt_prototype.py](mlx_gpt_prototype.py)
-6. [benchmark_mlx_reference.py](benchmark_mlx_reference.py)
-7. [mlx_training_check.py](mlx_training_check.py)
-8. [mlx_training_session.py](mlx_training_session.py)
-9. [mlx_checkpoint_translation.py](mlx_checkpoint_translation.py)
-10. [mlx_input_batches.py](mlx_input_batches.py)
+1. [mlx_gpt_prototype.py](../dev/mlx_gpt_prototype.py) — MLX model definition
+2. [benchmark_mlx_reference.py](../dev/benchmark_mlx_reference.py) — benchmark harness
+3. [mlx_training_check.py](../dev/mlx_training_check.py) — short-run health checks
+4. [mlx_training_session.py](../dev/mlx_training_session.py) — longer training sessions
+5. [mlx_checkpoint_translation.py](../dev/mlx_checkpoint_translation.py) — PyTorch-to-MLX weight translation
+6. [mlx_input_batches.py](../dev/mlx_input_batches.py) — input batch modes
+
+Reference environment:
+
+- [APPLE_NATIVE_ACCELERATION_MACHINE_PROFILE.md](APPLE_NATIVE_ACCELERATION_MACHINE_PROFILE.md)
+- [APPLE_NATIVE_ACCELERATION_BASELINE_BENCHMARK.md](APPLE_NATIVE_ACCELERATION_BASELINE_BENCHMARK.md)
+
+Planning and decision history (archived in `docs/archive/`):
+
+- [archive/APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md](archive/APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md)
+- [archive/APPLE_NATIVE_ACCELERATION_TASKLIST.md](archive/APPLE_NATIVE_ACCELERATION_TASKLIST.md)
+- [archive/APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](archive/APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md)
+- [archive/APPLE_NATIVE_ACCELERATION_MLX_TRAINING_CHECK.md](archive/APPLE_NATIVE_ACCELERATION_MLX_TRAINING_CHECK.md)
 
 ## What Has Been Implemented
 
 ### Core MLX Prototype
 
-Implemented in [mlx_gpt_prototype.py](mlx_gpt_prototype.py):
+Implemented in [mlx_gpt_prototype.py](../dev/mlx_gpt_prototype.py):
 
 - GPT-style token embedding and LM head
 - transformer block stack
@@ -85,7 +93,7 @@ Important current judgment:
 
 ### Translation And Initialization
 
-Implemented in [mlx_checkpoint_translation.py](mlx_checkpoint_translation.py):
+Implemented in [mlx_checkpoint_translation.py](../dev/mlx_checkpoint_translation.py):
 
 - PyTorch config to MLX config mapping
 - PyTorch `state_dict` to MLX parameter-tree translation
@@ -94,15 +102,15 @@ Implemented in [mlx_checkpoint_translation.py](mlx_checkpoint_translation.py):
 
 Validation script:
 
-- [compare_pytorch_mlx_translation.py](compare_pytorch_mlx_translation.py)
+- [compare_pytorch_mlx_translation.py](../dev/compare_pytorch_mlx_translation.py)
 
 ### Benchmarking And Checks
 
 Implemented execution tooling:
 
-- [benchmark_mlx_reference.py](benchmark_mlx_reference.py)
-- [mlx_training_check.py](mlx_training_check.py)
-- [mlx_training_session.py](mlx_training_session.py)
+- [benchmark_mlx_reference.py](../dev/benchmark_mlx_reference.py)
+- [mlx_training_check.py](../dev/mlx_training_check.py)
+- [mlx_training_session.py](../dev/mlx_training_session.py)
 
 Coverage:
 
@@ -112,7 +120,7 @@ Coverage:
 
 ### Input Modes
 
-Implemented in [mlx_input_batches.py](mlx_input_batches.py):
+Implemented in [mlx_input_batches.py](../dev/mlx_input_batches.py):
 
 - repeated synthetic reference batch mode
 - dataset-backed batch mode using nanochat tokenizer and parquet text iteration
@@ -286,11 +294,11 @@ This is important because it means “Apple-native” is already true, but “co
 If a fresh agent needs to continue this phase without overthinking it, default to this:
 
 - use MLX, not PyTorch + MPS, for native prototype work
-- use [mlx_gpt_prototype.py](mlx_gpt_prototype.py) as the core model surface
+- use [mlx_gpt_prototype.py](../dev/mlx_gpt_prototype.py) as the core model surface
 - use grouped-AdamW matrix path, not the Muon-style experimental path, unless the task is explicitly optimizer-parity research
 - use translated PyTorch reference initialization when comparing runs
-- use [mlx_training_check.py](mlx_training_check.py) for health checks
-- use [mlx_training_session.py](mlx_training_session.py) for longer runs
+- use [mlx_training_check.py](../dev/mlx_training_check.py) for health checks
+- use [mlx_training_session.py](../dev/mlx_training_session.py) for longer runs
 - treat dataset-backed and real-checkpoint validation as the next evidence-building tasks once assets are available
 
 ## Recommended Next Actions
@@ -355,3 +363,5 @@ The remaining work is evidence and refinement:
 - dataset-backed validation
 - real-checkpoint validation
 - deciding how much optimizer parity is worth if it costs too much performance
+
+See [PLANNING.md](PLANNING.md) for the structured next-phase plan.

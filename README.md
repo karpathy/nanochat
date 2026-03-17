@@ -22,7 +22,7 @@ Presently, the main focus of development is on tuning the pretraining stage, whi
 
 The primary metric we care about is "time to GPT-2" - the wall clock time needed to outperform the GPT-2 (1.6B) CORE metric on an 8XH100 GPU node. The GPT-2 CORE score is 0.256525. In 2019, the training of GPT-2 cost approximately $43,000 so it is incredible that due to many advances over 7 years across the stack, we can now do so much faster and for well below $100 (e.g. at the current ~$3/GPU/hr, an 8XH100 node is ~$24/hr, so 2 hours is ~$48).
 
-See [dev/LEADERBOARD.md](dev/LEADERBOARD.md) for more docs on how to interpret and contribute to the leaderboard.
+See [docs/LEADERBOARD.md](docs/LEADERBOARD.md) for more docs on how to interpret and contribute to the leaderboard.
 
 ## Getting started
 
@@ -95,7 +95,7 @@ On Apple Silicon, nanochat will autodetect `mps` and run in eager mode by defaul
 
 For larger Apple Silicon machines such as M2 Ultra, use [runs/runm2ultra.sh](runs/runm2ultra.sh) and [dev/benchmark_mps_scaling.py](dev/benchmark_mps_scaling.py) to establish a benchmark-driven scaling ladder before choosing a deeper training run.
 
-On the M2 Ultra machine used for development, a synthetic 1024-token train-step probe reached a stable default tier around a 2.8B-parameter model (`depth=32`, `device-batch-size=2`) on a single MPS device. See [dev/M2_ULTRA_SCALING.md](dev/M2_ULTRA_SCALING.md) for the measured ladder and [runs/runm2ultra_base32.sh](runs/runm2ultra_base32.sh) for the recommended starter run. The M2 Ultra scripts also auto-bootstrap missing dataset shards and tokenizer artifacts before benchmarking or training.
+On the M2 Ultra machine used for development, a synthetic 1024-token train-step probe reached a stable default tier around a 2.8B-parameter model (`depth=32`, `device-batch-size=2`) on a single MPS device. See [docs/M2_ULTRA_SCALING.md](docs/M2_ULTRA_SCALING.md) for the measured ladder and [runs/runm2ultra_base32.sh](runs/runm2ultra_base32.sh) for the recommended starter run. The M2 Ultra scripts also auto-bootstrap missing dataset shards and tokenizer artifacts before benchmarking or training.
 
 ## Precision / dtype
 
