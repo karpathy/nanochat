@@ -61,17 +61,23 @@ Produce enough evidence to decide whether the MLX path should become the permane
 
 ### Story 2.1 — Obtain a trained checkpoint
 
-- [ ] Run a short PyTorch training session to produce a checkpoint, or locate an existing one
+- [X] Run a short PyTorch training session to produce a checkpoint, or locate an existing one
+
+Current evidence: a short MPS-backed base-training run produced checkpoint `base/phase2_d4_l_mps` at step 20 using full-context attention (`window_pattern=L`).
 
 ### Story 2.2 — Translate and validate
 
 - [ ] Translate the checkpoint to MLX format using the existing translation path
 - [ ] Validate logit agreement between the PyTorch original and the translated MLX model (target: max diff ~1e-7)
 
+Current evidence: translation succeeds and loss parity is exact on the step-20 `phase2_d4_l_mps` checkpoint, but logit agreement is still above target (`max_abs_logit_diff=1.736469566822052e-4`, `mean_abs_logit_diff=2.1859856133232825e-5`). See [runs/mlx_logs/phase2_translation_phase2_d4_l_mps_step20.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase2_translation_phase2_d4_l_mps_step20.json).
+
 ### Story 2.3 — Continue training from the translated checkpoint
 
-- [ ] Run a short MLX training session starting from the translated weights
-- [ ] Confirm loss continues to decrease; verify no non-finite values or instability
+- [X] Run a short MLX training session starting from the translated weights
+- [X] Confirm loss continues to decrease; verify no non-finite values or instability
+
+Current evidence: a 32-step MLX dataset-backed continuation run from `base/phase2_d4_l_mps@20` reduced loss from `9.7027` to `8.8138` with no non-finite values or instability. See [runs/mlx_logs/phase2_continue_d4_dataset_20260317-201500.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase2_continue_d4_dataset_20260317-201500.json).
 
 **Done when:** logit agreement is tight (~1e-7); MLX training from the checkpoint reduces loss; no instability.
 
@@ -83,10 +89,14 @@ Produce enough evidence to decide whether the MLX path should become the permane
 
 Grouped AdamW is the current practical winner (~900 tok/s). The Muon-style path works but is ~3.5x slower (~258 tok/s). The leading hypothesis is that repeated kernel dispatch in the Polar Express / Newton-Schulz loop (5 rounds of GEMMs dispatched as separate MLX kernels) is the bottleneck — not the GEMM count itself, but the launch overhead and intermediate buffer allocation between iterations.
 
+Current evidence: a fresh short benchmark sweep on this machine shows the gap is still present under a single consistent harness and in both input modes. Repeated-batch runs measured `880.03 tok/s` for `adamw` vs `267.08 tok/s` for `muon`; dataset-backed runs measured `893.32 tok/s` for `adamw` vs `266.78 tok/s` for `muon`. The near-identical Muon throughput across repeated and dataset modes suggests the bottleneck is in the optimizer path itself rather than the input pipeline. See [runs/mlx_logs/phase3_adamw_repeated_d32_repeated_20260317-202100.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_adamw_repeated_d32_repeated_20260317-202100.json), [runs/mlx_logs/phase3_muon_repeated_d32_repeated_20260317-202222.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_muon_repeated_d32_repeated_20260317-202222.json), [runs/mlx_logs/phase3_adamw_dataset_d32_dataset_20260317-202308.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_adamw_dataset_d32_dataset_20260317-202308.json), and [runs/mlx_logs/phase3_muon_dataset_d32_dataset_20260317-202430.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_muon_dataset_d32_dataset_20260317-202430.json).
+
 ### Story 3.1 — Profile to identify the bottleneck
 
 - [ ] Use Metal GPU Frame Capture to profile the Muon-style MLX path
 - [ ] Determine the dominant source: Polar Express dispatch overhead, parameter-group iteration, or framework overhead
+
+Deferred note: keep this as the next optimizer-specific investigation, but do not let it block the Apple-native runtime track while grouped AdamW remains the practical training path.
 
 ### Story 3.2a — If dispatch overhead dominates: fuse the Polar Express loop
 
@@ -121,6 +131,8 @@ The per-token loop in `engine.py` calls the model once per token and then runs a
 - [ ] Build a Swift inference binary using `mlx-swift`; use the `.safetensors` checkpoint file as the boundary with the Python training path
 - [ ] Replace the Python per-token loop in `engine.py` with the Swift binary
 - [ ] Measure per-token latency vs. the Python baseline
+
+Current evidence: the Python side of the boundary now exists. [dev/export_mlx_safetensors.py](/Users/peternicholls/Dev/nanochatter/dev/export_mlx_safetensors.py) exports translated MLX weights and sidecar metadata to `.safetensors`; the first concrete artifact is [runs/mlx_exports/phase2_d4_l_mps_step20.safetensors](/Users/peternicholls/Dev/nanochatter/runs/mlx_exports/phase2_d4_l_mps_step20.safetensors) with metadata in [runs/mlx_exports/phase2_d4_l_mps_step20.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_exports/phase2_d4_l_mps_step20.json).
 
 ### Story 4b — Swift data prefetch worker *(requires Phase 1)*
 

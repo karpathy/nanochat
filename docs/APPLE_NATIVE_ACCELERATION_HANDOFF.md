@@ -30,7 +30,8 @@ The current state is:
 - a longer reference-tier MLX training session has been executed successfully on the stable eager MLX path
 - an experimental Muon-style matrix optimizer exists, but it is much slower than the current grouped-AdamW matrix path
 - dataset-backed MLX input mode exists in code, but could not be exercised because local parquet shards are not available on this machine
-- real-checkpoint MLX validation exists in code, but could not be exercised because local trained checkpoints are not available on this machine
+- dataset-backed MLX input mode has now been exercised successfully on this machine
+- real-checkpoint MLX validation has been partially exercised: a short local base checkpoint was translated into MLX, continued training cleanly, and exported as a `.safetensors` boundary artifact for native runtime work
 
 The current best practical Apple-native training path is:
 
@@ -265,17 +266,19 @@ That is the single biggest technical gap still open in this phase.
 
 ### Dataset Parity Is Still Incomplete
 
-The training runs that matter most so far still use repeated synthetic batches.
+The strongest benchmark story is still driven by the reference repeated-batch path.
 
-That was acceptable for the feasibility and health-check phase, but it is not enough for stronger claims about trainer parity. The dataset-backed mode exists in code, but it has not been validated because the required parquet shards are missing on this machine.
+That said, dataset-backed mode is no longer just a code path. It has now been exercised successfully on this machine and holds roughly the same throughput as the repeated AdamW path at the reference configuration.
 
-So the code path exists, but the evidence does not yet.
+What is still incomplete is full trainer parity with the production loader, not basic real-data viability.
 
 ### Real Checkpoint Validation Is Still Missing
 
-The translation path can initialize from real checkpoints, but there are no local trained checkpoints available right now.
+The translation path can now initialize from a real local checkpoint, and that path has been exercised with a short MPS-produced base checkpoint.
 
-That means the infrastructure is there, but the strongest form of practical validation has not been performed yet.
+What remains open is strict numerical parity on trained checkpoints. The continuation path is healthy, but checkpoint logit agreement is not yet at the small-model `~1e-7` level.
+
+Separately, the Apple-native runtime seam now exists on the Python side: translated MLX weights can be exported as `.safetensors` plus sidecar metadata for a future `mlx-swift` inference binary.
 
 ### Compiled MLX Training-Step Reuse Is Not Ready
 
@@ -299,15 +302,16 @@ If a fresh agent needs to continue this phase without overthinking it, default t
 - use translated PyTorch reference initialization when comparing runs
 - use [mlx_training_check.py](../dev/mlx_training_check.py) for health checks
 - use [mlx_training_session.py](../dev/mlx_training_session.py) for longer runs
-- treat dataset-backed and real-checkpoint validation as the next evidence-building tasks once assets are available
+- use [export_mlx_safetensors.py](../dev/export_mlx_safetensors.py) when preparing a translated MLX checkpoint for an Apple-native runtime boundary
+- treat optimizer-path investigation as separate from the Apple-native runtime track
 
 ## Recommended Next Actions
 
 If continuing this phase, do these in order:
 
-1. validate dataset-backed MLX runs once local parquet shards are available
-2. validate MLX initialization from a real trained nanochat checkpoint once one exists locally
-3. investigate whether a closer optimizer path can preserve most of the grouped-AdamW performance advantage
+1. measure whether replacing the Python per-token loop can produce a worthwhile Apple-native inference win now that the first `mlx-swift` stub exists
+2. add efficient incremental decode and KV-cache support on the Swift side so the stub is comparable to `engine.py`
+3. keep Muon profiling as a deferred optimizer-specific investigation, not a blocker for the runtime track
 4. only revisit compiled multi-step training if there is a clear MLX-supported pattern for stateful optimizer updates across repeated calls
 
 ## Explicit Non-Goals For The Next Agent
@@ -348,6 +352,13 @@ Translation validation:
 ```bash
 export PYTHONPATH="$PWD"
 .venv/bin/python dev/compare_pytorch_mlx_translation.py
+```
+
+Export a translated MLX checkpoint for native runtime work:
+
+```bash
+export PYTHONPATH="$PWD"
+.venv/bin/python dev/export_mlx_safetensors.py --depth 4 --max-seq-len 512 --window-pattern L --pytorch-checkpoint-source base --pytorch-model-tag phase2_d4_l_mps --pytorch-step 20 --output-stem phase2_d4_l_mps_step20
 ```
 
 ## Final Takeaway

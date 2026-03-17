@@ -11,3 +11,13 @@ eval_bundle/
 # Local setup
 CLAUDE.md
 wandb/
+
+# Generated run artifacts
+runs/mlx_exports/
+runs/mlx_logs/
+
+# Swift/Xcode build artifacts
+swift/Build/
+swift/NanochatMLXStub/.build/
+swift/NanochatMLXStub/.derived/
+swift/NanochatMLXStub/.swiftpm/
