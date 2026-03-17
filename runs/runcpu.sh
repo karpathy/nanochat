@@ -18,18 +18,18 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --extra cpu
 source .venv/bin/activate
 if [ -z "$WANDB_RUN" ]; then
-    WANDB_RUN=dummy
+    WANDB_RUN=unnamed
 fi
 
 # train tokenizer on ~2B characters (~34 seconds on my MacBook Pro M3 Max)
-python -m nanochat.data.dataset -n 8
-python -m nanochat.scripts.tok_train --max-chars=2000000000
-python -m nanochat.scripts.tok_eval
+nanochat data download -n 8
+nanochat data tokenizer train --max-chars=2000000000
+nanochat data tokenizer eval
 
 # train a small 4 layer model
 # I tuned this run to complete in about 30 minutes on my MacBook Pro M3 Max.
 # To get better results, try increasing num_iterations, or get other ideas from your favorite LLM.
-python -m nanochat.scripts.base_train \
+nanochat train base \
     --depth=6 \
     --head-dim=64 \
     --window-pattern=L \
@@ -42,11 +42,11 @@ python -m nanochat.scripts.base_train \
     --sample-every=100 \
     --num-iterations=5000 \
     --run=$WANDB_RUN
-python -m nanochat.scripts.base_eval --device-batch-size=1 --split-tokens=16384 --max-per-task=16
+nanochat eval base --device-batch-size=1 --split-tokens=16384 --max-per-task=16
 
 # SFT (~10 minutes on my MacBook Pro M3 Max)
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
-python -m nanochat.scripts.chat_sft \
+nanochat train sft \
     --max-seq-len=512 \
     --device-batch-size=32 \
     --total-batch-size=16384 \
@@ -59,7 +59,7 @@ python -m nanochat.scripts.chat_sft \
 # The model should be able to say that it is Paris.
 # It might even know that the color of the sky is blue.
 # Sometimes the model likes it if you first say Hi before you ask it questions.
-# python -m nanochat.scripts.chat_cli -p "What is the capital of France?"
+# nanochat chat -p "What is the capital of France?"
 
 # Chat with the model over a pretty WebUI ChatGPT style
-# python -m nanochat.scripts.chat_web
+# nanochat serve

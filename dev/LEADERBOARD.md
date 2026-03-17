@@ -11,7 +11,7 @@ The script [runs/speedrun.sh](runs/speedrun.sh) always implements the current st
 In practice, I tune the base_train command a little bit. For example, once all the setup is configured and a tokenizer is trained, I like to do something like:
 
 ```
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m nanochat.cli train base -- \
     --depth=26 \
     --run="d26-feb2-fp8-ratio8.25" \
     --model-tag="d26_feb2_fp8_ratio8.25" \
@@ -61,7 +61,7 @@ git log -1 --format="%h"
 Achieved Jan 29 2026 on commit `348fbb3`. The launch command was
 
 ```
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m nanochat.cli train base -- \
     --depth=24 \
     --run=d24-jan29 \
     --model-tag=d24_jan29 \
@@ -92,7 +92,7 @@ Detailed writeup: [Beating GPT-2 for <<$100: the nanochat journey](https://githu
 Achieved Feb 2 2026 on commit `a67eba3`. The launch command was
 
 ```
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m nanochat.cli train base -- \
     --depth=26 \
     --run="d26-feb2-fp8-ratio8.5" \
     --model-tag="d26_feb2_fp8_ratio8.5" \
@@ -123,7 +123,7 @@ Previous record was 3.04 hours, so 2.91 hours is `(3.04 - 2.91)/3.04*100` ~= 4.3
 Achieved Feb 5 2026 on commit `2c062aa`. Launch command:
 
 ```
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m nanochat.cli train base -- \
     --depth=26 \
     --run="d26_feb4_double_batch_ratio8.25" \
     --model-tag="d26_feb4_double_batch_ratio8.25" \
@@ -155,14 +155,14 @@ Achived Mar 3 2026 on commit `324e69c`. The big change is the switch from Huggin
 To reproduce, use the commit above, download at least 150 data shards, train the tokenizer:
 
 ```
-python -m nanochat.dataset -n 150
+nanochat data download -n 150
 python -m scripts.tok_train
 ```
 
 Then kick off the run in the typical way, using a slightly lower than compute optimal ratio of 9.5 (vs compute optimal 10.5), meaning the d24 is slightly undertrained.
 
 ```
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m nanochat.cli train base -- \
     --depth=24 \
     --run="d24-climbmix" \
     --model-tag="d24-climbmix" \

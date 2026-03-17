@@ -202,7 +202,6 @@ def test_parse_no_args_uses_defaults(tmp_path):
     assert cfg.training.depth == 20
     assert cfg.common.run == "unnamed"
 
-
 # ---------------------------------------------------------------------------
 # ConfigLoader — TOML only (no CLI overrides)
 # ---------------------------------------------------------------------------

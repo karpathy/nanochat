@@ -173,7 +173,7 @@ See `dev/LOG.md` for detailed experiment notes on each. Note that it is very dif
 Here is how I trained the Jan29 model on commit `348fbb3`. Boot up your 8XH100 node (e.g. from Lambda or etc.), run the setup (see `runs/speedrun.sh`, you can just run the commands individually one by one to set up the environment, download the data shards and train the tokenizer), then run pretraining like this:
 
 ```bash
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.base_train -- \
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m nanochat.cli train base -- \
     --depth=24 \
     --run=d24-jan29 \
     --model-tag=d24_jan29 \

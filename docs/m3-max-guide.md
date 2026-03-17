@@ -6,7 +6,7 @@ read_when:
   - Debugging MPS-specific issues or performance
   - Choosing batch size and sequence length for MPS
 status: active
-last_updated: "2026-03-15"
+last_updated: "2026-06-14"
 ---
 
 # Apple Silicon (MPS) Guide
@@ -56,28 +56,28 @@ both paths at d12, T=1024, fp16). The explicit T×T bool mask is small (1MB at T
 
 ## What Works
 
-| Feature                         | Status | Notes                                                                                       |
-| ------------------------------- | ------ | ------------------------------------------------------------------------------------------- |
-| Base training (`base_train.py`) | ✅      | Full training loop works                                                                    |
-| SFT training (`chat_sft.py`)    | ✅      | Full fine-tuning loop works                                                                 |
-| Evaluation (`chat_eval.py`)     | ✅      | All eval tasks work                                                                         |
-| SDPA attention                  | ✅      | Automatic fallback from FA3                                                                 |
-| Compression tracking            | ✅      | `--track-compression` works                                                                 |
-| Checkpoint save/load            | ✅      | bf16→fp32 conversion on load                                                                |
-| `torch.compile`                 | ✅      | Works on MPS (PyTorch 2.9.1) — ~17% speedup on optimizer kernels                           |
-| Muon optimizer                  | ✅      | Compiled Polar Express + variance reduction kernels work on MPS                             |
-| `torch.mps.synchronize()`       | ✅      | Used for accurate step timing                                                               |
-| `torch.mps.empty_cache()`       | ✅      | Called between eval and training steps                                                      |
-| Memory reporting                | ✅      | `torch.mps.current_allocated_memory()` for peak memory stats                                |
+| Feature                               | Status | Notes                                                            |
+| ------------------------------------- | ------ | ---------------------------------------------------------------- |
+| Base training (`nanochat train base`) | ✅      | Full training loop works                                         |
+| SFT training (`nanochat train sft`)   | ✅      | Full fine-tuning loop works                                      |
+| Evaluation (`nanochat eval chat`)     | ✅      | All eval tasks work                                              |
+| SDPA attention                        | ✅      | Automatic fallback from FA3                                      |
+| Compression tracking                  | ✅      | `--track-compression` works                                      |
+| Checkpoint save/load                  | ✅      | bf16→fp32 conversion on load                                     |
+| `torch.compile`                       | ✅      | Works on MPS (PyTorch 2.9.1) — ~17% speedup on optimizer kernels |
+| Muon optimizer                        | ✅      | Compiled Polar Express + variance reduction kernels work on MPS  |
+| `torch.mps.synchronize()`             | ✅      | Used for accurate step timing                                    |
+| `torch.mps.empty_cache()`             | ✅      | Called between eval and training steps                           |
+| Memory reporting                      | ✅      | `torch.mps.current_allocated_memory()` for peak memory stats     |
 
 ## What Doesn't Work
 
-| Feature                       | Reason                                                                      |
-| ----------------------------- | --------------------------------------------------------------------------- |
-| FP8 training (`--fp8`)        | Requires CUDA — flag is ignored with a warning                              |
-| Flash Attention 3             | Requires Hopper GPU                                                         |
-| bf16 compute                  | MPS supports bf16 matmuls but nanochat uses fp16 (GradScaler compatibility) |
-| DDP / multi-device            | MPS is single-device only                                                   |
+| Feature                | Reason                                                                      |
+| ---------------------- | --------------------------------------------------------------------------- |
+| FP8 training (`--fp8`) | Requires CUDA — flag is ignored with a warning                              |
+| Flash Attention 3      | Requires Hopper GPU                                                         |
+| bf16 compute           | MPS supports bf16 matmuls but nanochat uses fp16 (GradScaler compatibility) |
+| DDP / multi-device     | MPS is single-device only                                                   |
 
 `pin_memory` and `non_blocking` are gated on `use_cuda` and disabled on MPS. This is
 correct — Apple Silicon uses unified memory (CPU and GPU share the same physical RAM),
@@ -89,7 +89,7 @@ so there is no PCIe bus transfer to optimize. These flags have no benefit on MPS
 MPS lacks an int64 kernel for the `< 0` operator. The code uses `y.int() < 0` (int32 cast)
 instead of comparing int64 tensors directly.
 
-**Peak FLOPS** (`scripts/base_train.py`):
+**Peak FLOPS** (`training/train_base.py`):
 `get_peak_flops` returns `float("inf")` for non-CUDA devices, which effectively disables
 MFU (model FLOPS utilization) reporting.
 
@@ -98,8 +98,7 @@ MFU (model FLOPS utilization) reporting.
 ### CLI Example
 
 ```bash
-python -m nanochat.scripts.base_train \
-    --device-type=mps \
+nanochat --device-type=mps train base \
     --depth=12 \
     --max-seq-len=1024 \
     --device-batch-size=4 \
@@ -130,8 +129,7 @@ and peak memory is reported via `torch.mps.current_allocated_memory()`.
 ### Overnight Runs
 
 ```bash
-nohup python -m nanochat.scripts.base_train \
-    --device-type=mps \
+nohup nanochat --device-type=mps train base \
     --depth=12 \
     --max-seq-len=1024 \
     --device-batch-size=4 \
@@ -141,4 +139,4 @@ nohup python -m nanochat.scripts.base_train \
 ```
 
 Use `--save-every` to checkpoint periodically in case of interruption.
-Use `--run=dummy` to disable wandb logging for local experiments.
+Use `--wandb=disabled` to disable wandb logging for local experiments.

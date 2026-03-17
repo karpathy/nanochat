@@ -11,14 +11,14 @@ For questions about the repo, I recommend either using [DeepWiki](https://deepwi
 
 Presently, the main focus of development is on tuning the pretraining stage, which takes the most amount of compute. Inspired by the modded-nanogpt repo and to incentivise progress and community collaboration, nanochat maintains a leaderboard for a "GPT-2 speedrun", which is the wall-clock time required to train a nanochat model to GPT-2 grade capability, as measured by the DCLM CORE score. The [runs/speedrun.sh](runs/speedrun.sh) script always reflects the reference way to train GPT-2 grade model and talk to it. The current leaderboard looks as follows:
 
-| # | time | val_bpb | CORE | Description | Date | Commit | Contributors |
-|---|-------------|---------|------|-------------|------|--------|--------------|
-| 0 | 168 hours | - | 0.2565 | Original OpenAI GPT-2 checkpoint | 2019 | - | OpenAI |
-| 1 | 3.04 | 0.74833 | 0.2585 | d24 baseline, slightly overtrained | Jan 29 2026 | 348fbb3 | @karpathy |
-| 2 | 2.91 | 0.74504 | 0.2578 | d26 slightly undertrained **+fp8** | Feb 2 2026 | a67eba3 | @karpathy |
-| 3 | 2.76 | 0.74645 | 0.2602 | bump total batch size to 1M tokens | Feb 5 2026 | 2c062aa | @karpathy |
-| 4 | 2.02 | 0.71854 | 0.2571 | change dataset to NVIDIA ClimbMix | Mar 4 2026 | 324e69c | @ddudek @karpathy |
-| 5 | 1.80 | 0.71808 | 0.2690 | autoresearch [round 1](https://x.com/karpathy/status/2031135152349524125) | Mar 9 2026 | 6ed7d1d | @karpathy |
+| #   | time      | val_bpb | CORE   | Description                                                               | Date        | Commit  | Contributors      |
+| --- | --------- | ------- | ------ | ------------------------------------------------------------------------- | ----------- | ------- | ----------------- |
+| 0   | 168 hours | -       | 0.2565 | Original OpenAI GPT-2 checkpoint                                          | 2019        | -       | OpenAI            |
+| 1   | 3.04      | 0.74833 | 0.2585 | d24 baseline, slightly overtrained                                        | Jan 29 2026 | 348fbb3 | @karpathy         |
+| 2   | 2.91      | 0.74504 | 0.2578 | d26 slightly undertrained **+fp8**                                        | Feb 2 2026  | a67eba3 | @karpathy         |
+| 3   | 2.76      | 0.74645 | 0.2602 | bump total batch size to 1M tokens                                        | Feb 5 2026  | 2c062aa | @karpathy         |
+| 4   | 2.02      | 0.71854 | 0.2571 | change dataset to NVIDIA ClimbMix                                         | Mar 4 2026  | 324e69c | @ddudek @karpathy |
+| 5   | 1.80      | 0.71808 | 0.2690 | autoresearch [round 1](https://x.com/karpathy/status/2031135152349524125) | Mar 9 2026  | 6ed7d1d | @karpathy         |
 
 The primary metric we care about is "time to GPT-2" - the wall clock time needed to outperform the GPT-2 (1.6B) CORE metric on an 8XH100 GPU node. The GPT-2 CORE score is 0.256525. In 2019, the training of GPT-2 cost approximately $43,000 so it is incredible that due to many advances over 7 years across the stack, we can now do so much faster and for well below $100 (e.g. at the current ~$3/GPU/hr, an 8XH100 node is ~$24/hr, so 2 hours is ~$48).
 
@@ -37,7 +37,7 @@ bash runs/speedrun.sh
 You may wish to do so in a screen session as this will take ~3 hours to run. Once it's done, you can talk to it via the ChatGPT-like web UI. Make sure again that your local uv virtual environment is active (run `source .venv/bin/activate`), and serve it:
 
 ```bash
-python -m nanochat.scripts.chat_web
+nanochat serve
 ```
 
 And then visit the URL shown. Make sure to access it correctly, e.g. on Lambda use the public IP of the node you're on, followed by the port, so for example [http://209.20.xxx.xxx:8000/](http://209.20.xxx.xxx:8000/), etc. Then talk to your LLM as you'd normally talk to ChatGPT! Get it to write stories or poems. Ask it to tell you who you are to see a hallucination. Ask it why the sky is blue. Or why it's green. The speedrun is a 4e19 FLOPs capability model so it's a bit like talking to a kindergartener :).
@@ -60,14 +60,14 @@ A few more notes:
 
 If you are a researcher and wish to help improve nanochat, two scripts of interest are [runs/scaling_laws.sh](runs/scaling_laws.sh) and [runs/miniseries.sh](runs/miniseries.sh). See [Jan 7 miniseries v1](docs/guides/miniseries-v1.md) for related documentation. For quick experimentation (~5 min pretraining runs) my favorite scale is to train a 12-layer model (GPT-1 sized), e.g. like this:
 
-```
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.base_train -- \
+```bash
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m nanochat.cli train base -- \
     --depth=12 \
     --run="d12" \
     --model-tag="d12" \
     --core-metric-every=999999 \
     --sample-every=-1 \
-    --save-every=-1 \
+    --save-every=-1
 ```
 
 This uses wandb (run name "d12"), only runs the CORE metric on last step, and it doesn't sample and save intermediate checkpoints. I like to change something in the code, re-run a d12 (or a d16 etc) and see if it helped, in an iteration loop. To see if a run helps, I like to monitor the wandb plots for:
@@ -86,20 +86,20 @@ The script [runs/runcpu.sh](runs/runcpu.sh) shows a very simple example of runni
 
 ## Precision / dtype
 
-nanochat does not use `torch.amp.autocast`. Instead, precision is managed explicitly through a single global `COMPUTE_DTYPE` (defined in `nanochat/common.py`). By default this is auto-detected based on your hardware:
+nanochat does not use `torch.amp.autocast`. Instead, precision is managed explicitly through a single global `COMPUTE_DTYPE` (defined in `nanochat/common/`). By default this is auto-detected based on your hardware:
 
-| Hardware | Default dtype | Why |
-|----------|--------------|-----|
-| CUDA SM 80+ (A100, H100, ...) | `bfloat16` | Native bf16 tensor cores |
-| CUDA SM < 80 (V100, T4, ...) | `float32` | No bf16; fp16 available via `NANOCHAT_DTYPE=float16` (uses GradScaler) |
-| MPS (Apple Silicon) | `float16` | fp16 tensor cores; GradScaler enabled automatically |
-| CPU | `float32` | No reduced-precision tensor cores |
+| Hardware                      | Default dtype | Why                                                                    |
+| ----------------------------- | ------------- | ---------------------------------------------------------------------- |
+| CUDA SM 80+ (A100, H100, ...) | `bfloat16`    | Native bf16 tensor cores                                               |
+| CUDA SM < 80 (V100, T4, ...)  | `float32`     | No bf16; fp16 available via `NANOCHAT_DTYPE=float16` (uses GradScaler) |
+| MPS (Apple Silicon)           | `float16`     | fp16 tensor cores; GradScaler enabled automatically                    |
+| CPU                           | `float32`     | No reduced-precision tensor cores                                      |
 
 You can override the default with the `NANOCHAT_DTYPE` environment variable:
 
 ```bash
-NANOCHAT_DTYPE=float32 python -m nanochat.scripts.chat_cli -p "hello"   # force fp32
-NANOCHAT_DTYPE=bfloat16 torchrun --nproc_per_node=8 -m nanochat.scripts.base_train  # force bf16
+NANOCHAT_DTYPE=float32 nanochat chat -p "hello"   # force fp32
+NANOCHAT_DTYPE=bfloat16 torchrun --nproc_per_node=8 -m nanochat.cli train base  # force bf16
 ```
 
 How it works: model weights are stored in fp32 (for optimizer precision), but our custom `Linear` layer casts them to `COMPUTE_DTYPE` during the forward pass. Embeddings are stored directly in `COMPUTE_DTYPE` to save memory. This gives us the same mixed-precision benefit as autocast but with full explicit control over what runs in which precision.
@@ -108,8 +108,10 @@ Note: `float16` training automatically enables a `GradScaler` in `base_train.py`
 
 ## Docs
 
-- [docs/configuration.md](docs/configuration.md) — TrainingConfig fields and TOML config files
+- [docs/guides/quickstart.md](docs/guides/quickstart.md) — first-time setup, data, tokenizer, training
+- [docs/configuration.md](docs/configuration.md) — config fields, TOML files, CLI overrides
 - [docs/data-layout.md](docs/data-layout.md) — where nanochat stores data, tokenizers, and checkpoints
+- [docs/code-structure.md](docs/code-structure.md) — package map and key cross-package flows
 - [docs/m3-max-guide.md](docs/m3-max-guide.md) — Apple Silicon (MPS) training guide
 - [docs/roadmap.md](docs/roadmap.md) — development roadmap and completed phases
 - [CONTRIBUTING.md](CONTRIBUTING.md) — setup, testing, code quality, and commit conventions
@@ -124,79 +126,11 @@ I've published a number of guides that might contain helpful information, most r
 - To customize your nanochat, see [Guide: infusing identity to your nanochat](docs/guides/infusing-identity.md), which describes how you can tune your nanochat's personality through synthetic data generation and mixing that data into the SFT stage.
 - [Oct 13 2025: original nanochat post](docs/guides/introducing-nanochat.md) introducing nanochat, though now it contains some deprecated information and the model is a lot older (with worse results) than current master.
 
-## File structure
-
-```
-.
-├── LICENSE
-├── README.md
-├── dev
-│   ├── gen_synthetic_data.py       # Example synthetic data for identity
-│   ├── generate_logo.html
-│   ├── nanochat.png
-│   └── repackage_data_reference.py # Pretraining data shard generation
-├── pyproject.toml
-├── runs
-│   ├── miniseries.sh               # Miniseries training script
-│   ├── runcpu.sh                   # Small example of how to run on CPU/MPS
-│   ├── scaling_laws.sh             # Scaling laws experiments
-│   └── speedrun.sh                 # Train the ~$100 nanochat d20
-├── src
-│   └── nanochat
-│       ├── __init__.py             # empty
-│       ├── common.py               # Misc small utilities, quality of life
-│       ├── execution.py            # Allows the LLM to execute Python code as tool
-│       ├── flash_attention.py      # Flash attention implementation
-│       ├── fp8.py                  # FP8 precision support
-│       ├── report.py               # Utilities for writing the nanochat Report
-│       ├── cli/                    # CLI utilities
-│       ├── data/
-│       │   ├── dataset.py          # Download/read utils for pretraining data
-│       │   └── tokenizer.py        # BPE Tokenizer wrapper in style of GPT-4
-│       ├── evaluation/
-│       │   ├── core_eval.py        # Evaluates base model CORE score (DCLM paper)
-│       │   ├── engine.py           # Efficient model inference with KV Cache
-│       │   └── loss_eval.py        # Evaluate bits per byte (instead of loss)
-│       ├── models/
-│       │   ├── attention.py        # Attention mechanisms
-│       │   ├── config.py           # Model configuration
-│       │   ├── gpt.py              # The GPT nn.Module Transformer
-│       │   └── mlp.py              # MLP layers
-│       ├── scripts/
-│       │   ├── base_eval.py        # Base model: CORE score, bits per byte, samples
-│       │   ├── base_train.py       # Base model: train
-│       │   ├── chat_cli.py         # Chat model: talk to over CLI
-│       │   ├── chat_eval.py        # Chat model: eval tasks
-│       │   ├── chat_rl.py          # Chat model: reinforcement learning
-│       │   ├── chat_sft.py         # Chat model: train SFT
-│       │   ├── chat_web.py         # Chat model: talk to over WebUI
-│       │   ├── tok_eval.py         # Tokenizer: evaluate compression rate
-│       │   └── tok_train.py        # Tokenizer: train it
-│       ├── tasks/
-│       │   ├── arc.py              # Multiple choice science questions
-│       │   ├── base.py             # Base task classes
-│       │   ├── customjson.py       # Make Task from arbitrary jsonl convos
-│       │   ├── gsm8k.py            # 8K Grade School Math questions
-│       │   ├── humaneval.py        # Misnomer; Simple Python coding task
-│       │   ├── mmlu.py             # Multiple choice questions, broad topics
-│       │   ├── smoltalk.py         # Conglomerate dataset of SmolTalk from HF
-│       │   ├── spellingbee.py      # Task teaching model to spell/count letters
-│       │   └── types.py            # Task type definitions
-│       └── training/
-│           ├── checkpoint.py       # Save/Load model checkpoints
-│           ├── dataloader.py       # Tokenizing Distributed Data Loader
-│           ├── optimizer.py        # AdamW + Muon optimizer, 1GPU and distributed
-│           └── schedulers.py       # Learning rate schedulers
-├── tests
-│   └── test_engine.py
-└── uv.lock
-```
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, code quality checks, and commit conventions.
 
-The goal of nanochat is to improve the state of the art in micro models that are accessible to work with end to end on budgets of < $1000 dollars. Accessibility is about overall cost but also about cognitive complexity - nanochat is not an exhaustively configurable LLM "framework"; there are no giant configuration objects, model factories, or if-then-else monsters in the code base. It is a single, cohesive, minimal, readable, hackable, maximally-forkable "strong baseline" codebase designed to run start to end and produce a ChatGPT model you can talk to. Currently, the most interesting part personally is speeding up the latency to GPT-2 (i.e. getting a CORE score above 0.256525). Currently this takes ~3 hours, but by improving the pretraining stage we can improve this further.
+The goal of nanochat is to improve the state of the art in micro models that are accessible to work with end to end on budgets of < $1000 dollars. Accessibility is about overall cost but also about cognitive complexity - nanochat is not an exhaustively configurable LLM "framework"; there are no giant configuration objects, model factories, or if-then-else monsters in the code base. It is a single, cohesive, minimal, readable, hackable, maximally-forkable "strong baseline" codebase designed to run start to end and produce a ChatGPT model you can talk to. Currently, the most interesting part personally is speeding up the latency to GPT-2 (i.e. getting a CORE score above 0.256525). Currently this takes ~1.8 hours, but by improving the pretraining stage we can improve this further.
 
 Current AI policy: disclosure. When submitting a PR, please declare any parts that had substantial LLM contribution and that you have not written or that you do not fully understand.
 

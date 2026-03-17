@@ -52,14 +52,14 @@ uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 Next we need the pretraining data so that we can 1) train the tokenizer and 2) pretrain the model. The pretraining data is just the text of a lot of webpages, and for this part we will use the [FineWeb-EDU](https://huggingface.co/spaces/HuggingFaceFW/blogpost-fineweb-v1) dataset. Normally, we'd be able to just use huggingface `datasets.load_dataset()`, but I didn't like how it's too heavy, bloated and obscures some very simple logic, so I re-packaged the entire dataset into simple, fully shuffled shards that we can easily and efficiently access at will and re-uploaded the sample-100B version of it as [karpathy/fineweb-edu-100b-shuffle](https://huggingface.co/datasets/karpathy/fineweb-edu-100b-shuffle). On this page you can also preview example text in the dataset. Each shard is a simple parquet file of about 0.25M characters and takes up about 100MB on disk (gzip compressed). There are 1822 shards in total but we only need 240 of them to train a depth=20 model (more on this later). So let's download all of the data now. This is about ~24GB download here, but it's fairly zippy on a cloud box normally:
 
 ```bash
-uv run python -m nanochat.data.dataset -n 240
+nanochat data download -n 240
 ```
 
 All of this is by default going into `~/.cache/nanochat`. Once the download is done, let's train our tokenizer, which translates back and forth between strings and sequences of symbols from a codebook. By default we are training a vocab size of `2**16 = 65,536` tokens (a nice number), of which a few tokens are reserved as special (to be used for the chat schema later). The training set is 2B characters, which only takes ~1 minute. The training algorithm is identical to the one used by OpenAI (regex splitting, byte-level BPE). See my video on [tokenization](https://www.youtube.com/watch?v=zduSFxRajkE) for a lot more information. Right after, we can evaluate the tokenizer:
 
 ```bash
-uv run python -m nanochat.scripts.tok_train --max_chars=2000000000
-uv run python -m nanochat.scripts.tok_eval
+nanochat data tokenizer train
+nanochat data tokenizer eval
 ```
 
 The evaluation tells us that we're achieving a compression ratio of about 4.8 (meaning 4.8 characters of original text become 1 token on average). We can also see a comparison to the GPT-2 and GPT-4 tokenizer. Compared to GPT-2 (which has 50257 tokens), ours is much better across the board in compressing text, except for math by a little bit:
@@ -92,10 +92,10 @@ wandb login
 We can now kick off pretraining! This is the most computationally heavy part, where we are training the LLM to compress internet web text by predicting the next token in the sequence, and where the LLM gains a lot of knowledge about the world:
 
 ```bash
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.base_train -- --depth=20
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli train base -- --depth=20
 ```
 
-Here we are launching training on 8 GPUs via the [scripts/base_train.py](scripts/base_train.py) script. We're training a Transformer with 20 layers. By default, each GPU is processing 32 rows of 2048 tokens per forward/backward for a total of `32*2048 = 2**19 = 524,288` ~= 0.5M tokens per step of the optimization. If you have wandb set up, append `--run=speedrun` (all training scripts accept it) to set the run name and log to it. When you launch training, you'll see something like this (stripping a bunch of stuff for brevity):
+Here we are launching training on 8 GPUs via the [scripts/base_train.py](scripts/base_train.py) script. We're training a Transformer with 20 layers. By default, each GPU is processing 32 rows of 2048 tokens per forward/backward for a total of `32*2048 = 2**19 = 524,288` ~= 0.5M tokens per step of the optimization. If you have wandb set up, append `--run=speedrun` (all training commands accept it) to set the run name and log to it. When you launch training, you'll see something like this (stripping a bunch of stuff for brevity):
 
 ```
 Vocab size: 65,536
@@ -142,10 +142,8 @@ We now wait for about 3 hours for 4e19 FLOPs to elapse... You should see somethi
 bpb going down over time is good (the model is predicting the next token more accurately). In addition, the CORE score is going up. Instead of just approximated metrics, we can evaluate the model more fully as:
 
 ```bash
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.base_eval
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli eval base
 ```
-
-> **Note:** `base_loss` no longer exists. `base_eval` now covers both loss evaluation and CORE score.
 
 We see that we reach train/val bits per byte (bpb) of ~0.81 and the CORE metric goes up to 0.22. For comparison, the eval bundle contains the GPT-2 model CORE scores. In particular, CORE of 0.22 is a little bit more than GPT-2 large (at 0.21) but a little bit less than GPT-2 xl (i.e. "the" GPT-2, at 0.26). The model at this point is a fancy autocomplete, so we can run a few prompts to get a sense of the knowledge stored in the model. The file `base_eval.py` runs these. The prompts are:
 
@@ -207,16 +205,14 @@ train_dataset = TaskMixture([
 
 And we kick it off as follows:
 
-> **Note:** `mid_train` no longer exists as a separate script. Midtraining is now handled inside `chat_sft.py`.
-
 ```bash
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.chat_sft
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli train sft
 ```
 
 This run only takes about 8 minutes, a lot shorter than pretraining at ~3 hours. Now that the model is a proper Chat model and it can take on the role of an Assistant answering User queries, we can evaluate it:
 
 ```bash
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.chat_eval -- -i mid
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli eval chat -- -i mid
 ```
 
 We get the following results for the model at this stage:
@@ -247,8 +243,8 @@ I don't really have a nice graphic to illustrate this step, but here is an examp
 Following midtraining is the Supervised Finetuning (SFT) stage. This is an additional round of finetuning on Conversations, but ideally here you'd cherry pick just the most beautiful/good data, and this is also where you'd do things like safety training (e.g. assistant refusals). Our model isn't even sure about the color of the sky so we're probably safe on the biohazard side of things for now. One domain adaptation that happens here is that SFT stretches out rows of data and pads them, exactly mimicking the test-time format. In other words, examples are not just randomly concatenated into long rows like in pre/mid-training, where it is done for efficiency of training. Fixing this domain mismatch serves as another little "tightening the screws" boost. We can run SFT and re-evaluate:
 
 ```bash
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.chat_sft
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.chat_eval -- -i sft
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli train sft
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli eval chat -- -i sft
 ```
 
 This again only runs for about 7 minutes and you should notice a small bump in metrics:
@@ -265,8 +261,8 @@ This again only runs for about 7 minutes and you should notice a small bump in m
 Finally, we can take on the role of a User and talk to our model! We could have already done it after midtraining, but it's a bit nicer here. Talk to it either in your terminal window (line 1), or via the web UI (2):
 
 ```bash
-python -m nanochat.scripts.chat_cli
-python -m nanochat.scripts.chat_web
+nanochat chat
+nanochat serve
 ```
 
 The `chat_web` script will serve the Engine using FastAPI. Make sure to access it correctly, e.g. on Lambda use the public IP of the node you're on, followed by the port, so for example [http://209.20.xxx.xxx:8000/](http://209.20.xxx.xxx:8000/), etc.
@@ -286,8 +282,8 @@ It won't win any physics or poem competitions anytime soon, but again - it seems
 The final stage of the speedrun (though it is commented out by default) is Reinforcement Learning. RLHF is a nice way to gain a few percent of performance and mitigate a lot of model shortcomings that come from the sampling loop itself - e.g. hallucinations, infinite loops, etc. But at our scale these are not a major consideration. That said, of all the datasets we're working with so far, GSM8K is the one that has a clear/objective reward function (the correct answer to a math problem). So we can run the RL (/GRPO) script to hillclimb on the answers directly in a simple RL loop that interleaves sampling and training:
 
 ```bash
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.chat_rl
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.chat_eval -- -i rl -a GSM8K
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli train rl
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli eval chat -- -i rl -a GSM8K
 ```
 
 During RL, the model goes over all GSM8K problems in the training set, samples completions, then we reward them, and train on the ones that got high rewards. We're using a highly simplified GRPO training loop, e.g. we don't use trust regions (throw away reference model and KL regularization), we are on policy (throw away the PPO ratios+clip), we use GAPO style normalization (token-level, not sequence-level normalization), and the advantage is simple reward shift by mean (throw away z-score normalization with dividing by sigma). So we're left with something that looks quite a bit more like REINFORCE, but keeping the GR ("group relative") part in calculating advantages from the rewards. It works ok at this scale and task simplicity. See script for more details.
@@ -331,13 +327,13 @@ Note that since the support for RL right now is a little bit mixed, I exclude it
 With nanochat, you can tune *anything*. Change the tokenizer, change any of the data, tune the hyperparameters, improve the optimization... there are many ideas to try. You may also wish to train bigger models. The codebase is set up to do that quite easily, simply use `--depth` to change the number of layers and everything else is based off of that as the single slider of complexity. For example, the number of channels will grow, the learning rates will adjust, etc. In principle, just by changing the depth you can sweep out an entire miniseries of nanochat. You should also see strictly better results by using a larger depth and waiting longer. The place you'd pass it in is during the `base_train.py` pretraining stage. For example, to get a GPT-2 capability model of CORE about 0.25, d26 is a good number to try. But to train larger models, we now have to tune the max device batch size, e.g. decreasing it from 32 to 16:
 
 ```bash
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.base_train -- --depth=26 --device-batch-size=16
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli train base -- --depth=26 --device-batch-size=16
 ```
 
 The code will notice and automatically compensate, calculating that it needs to now do a gradient accumulation loop of 2 iterations to meet the target desired batch size of 0.5M. To train a d30, we have to decrease it further again:
 
 ```bash
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.base_train -- --depth=30 --device-batch-size=8
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli train base -- --depth=30 --device-batch-size=8
 ```
 
 And so on. Feel free to also read the code, I tried very hard to keep it readable, commented, clean and accessible. And of course, feel free to package it all up and ask your favorite LLM as well, or even simpler, use [DeepWiki](https://deepwiki.com/) from Devin/Cognition to ask questions of this repo. Just change the URL of the repo from github.com to deepwiki.com, i.e. [nanochat DeepWiki](https://deepwiki.com/karpathy/nanochat).

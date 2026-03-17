@@ -66,7 +66,7 @@ for flops in "${FLOPS_BUDGETS[@]}"; do
         # Train the model with fixed flops budget
         # The script will auto-calculate num_iterations to hit target_flops
         # CORE eval happens once at the end (999999 ensures only final step)
-        torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m nanochat.scripts.base_train -- \
+        torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m nanochat.cli train base -- \
             --depth=$d \
             --target-flops=$flops \
             --target-param-data-ratio=-1 \

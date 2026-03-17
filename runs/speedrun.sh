@@ -35,15 +35,15 @@ source .venv/bin/activate
 # 2) Set the WANDB_RUN environment variable when running this script, e.g.:
 #    `WANDB_RUN=d26 bash speedrun.sh`
 if [ -z "$WANDB_RUN" ]; then
-    # by default use "dummy" : it's handled as a special case, skips logging to wandb
-    WANDB_RUN=dummy
+    # by default use "unnamed" run name
+    WANDB_RUN=unnamed
 fi
 
 # -----------------------------------------------------------------------------
 # During the course of the run, we will be writing markdown reports to the report/
 # directory in the base dir. This command clears it out and writes a header section
 # with a bunch of system info and a timestamp that marks the start of the run.
-python -m nanochat.report reset
+nanochat report reset
 
 # -----------------------------------------------------------------------------
 # Tokenizer
@@ -53,16 +53,16 @@ python -m nanochat.report reset
 # so we download 2e9 / 250e6 = 8 data shards at this point
 # each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
 # look at dev/repackage_data_reference.py for details on how this data was prepared
-python -m nanochat.data.dataset -n 8
+nanochat data download -n 8
 # Immediately also kick off downloading more shards in the background while tokenizer trains
 # Approximately 150 shards are needed for GPT-2 capability pretraining, add 20 for padding.
 # The maximum total number of shards available in the entire dataset is 6542.
-python -m nanochat.data.dataset -n 170 &
+nanochat data download -n 170 &
 DATASET_DOWNLOAD_PID=$!
 # train the tokenizer with vocab size 2**15 = 32768 on ~2B characters of data
-python -m nanochat.scripts.tok_train
+nanochat data tokenizer train
 # evaluate the tokenizer (report compression ratio etc.)
-python -m nanochat.scripts.tok_eval
+nanochat data tokenizer eval
 
 # -----------------------------------------------------------------------------
 # Base model (pretraining)
@@ -70,9 +70,9 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 9.5)
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.base_train -- --depth=24 --target-param-data-ratio=9.5 --device-batch-size=16 --fp8 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli train base -- --depth=24 --target-param-data-ratio=9.5 --device-batch-size=16 --fp8 --run=$WANDB_RUN
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.base_eval -- --device-batch-size=16
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli eval base -- --device-batch-size=16
 
 # -----------------------------------------------------------------------------
 # SFT (teach the model conversation special tokens, tool use, multiple choice)
@@ -82,16 +82,16 @@ torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.base_eval -- --devi
 curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
 # run SFT and eval the model
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.chat_sft -- --device-batch-size=16 --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m nanochat.scripts.chat_eval -- -i sft
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli train sft -- --device-batch-size=16 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=8 -m nanochat.cli eval chat -- -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
-# python -m nanochat.scripts.chat_cli -p "Why is the sky blue?"
+# nanochat chat -p "Why is the sky blue?"
 
 # even better, chat with your model over a pretty WebUI ChatGPT style
-# python -m nanochat.scripts.chat_web
+# nanochat serve
 
 # -----------------------------------------------------------------------------
 # Generate the full report by putting together all the sections
 # report.md is the output and will be copied to current directory for convenience
-python -m nanochat.report generate
+nanochat report generate

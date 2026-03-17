@@ -7,7 +7,7 @@ read_when:
   - Understanding where checkpoints, data, or tokenizer files are stored
   - Debugging missing file errors related to data paths
 status: active
-last_updated: "2026-03-14"
+last_updated: "2026-06-14"
 ---
 
 # Data Directory Layout
@@ -16,11 +16,14 @@ All nanochat runtime data lives under a single root called the **base directory*
 
 ## Base Directory Resolution
 
-Resolved in this order (first match wins):
+Resolved in this order (later overrides earlier):
 
-1. `--base-dir` CLI flag (available on `base_train`)
+1. Default: `~/.cache/nanochat/`
 2. `NANOCHAT_BASE_DIR` environment variable
-3. Default: `~/.cache/nanochat/`
+3. `base_dir` in `[common]` section of `config.toml`
+4. `--base-dir` CLI flag
+
+See [configuration.md](configuration.md) for the full config resolution order and TOML format.
 
 To keep data project-local, point `NANOCHAT_BASE_DIR` at any directory (e.g. `export NANOCHAT_BASE_DIR=$(pwd)/data`).
 
@@ -54,24 +57,33 @@ $NANOCHAT_BASE_DIR/
 ├── eval/                        # Evaluation results
 │   └── <model_slug>.csv
 │
+├── report/                      # Training and evaluation reports
+│
+├── runs/                        # Local wandb JSONL logs (wandb = "local")
+│   └── nanochat/
+│       └── <run>/
+│           └── wandb.jsonl
+│
 └── identity.jsonl               # Identity data for SFT
 ```
 
 ## Path Management
 
-All paths are defined in `src/nanochat/paths.py` — the single source of truth. No module constructs paths from `base_dir` directly. Available functions:
+All paths are defined in `src/nanochat/common/paths.py` — the single source of truth. No module constructs paths from `base_dir` directly. Available functions:
 
-| Function | Returns |
-|----------|---------|
-| `data_dir()` | `data/climbmix/` |
-| `tokenizer_dir()` | `tokenizer/` |
-| `checkpoint_dir(phase, tag)` | `checkpoints/{base,sft,rl}/<tag>/` |
-| `checkpoints_dir(phase)` | `checkpoints/{base,sft,rl}/` |
-| `eval_tasks_dir()` | `data/eval_tasks/` |
-| `eval_results_dir()` | `eval/` |
-| `identity_data_path()` | `identity.jsonl` |
+| Function                               | Returns                            |
+| -------------------------------------- | ---------------------------------- |
+| `data_dir(base_dir)`                   | `data/climbmix/`                   |
+| `legacy_data_dir(base_dir)`            | `data/fineweb/`                    |
+| `tokenizer_dir(base_dir)`              | `tokenizer/`                       |
+| `checkpoint_dir(base_dir, phase, tag)` | `checkpoints/{base,sft,rl}/<tag>/` |
+| `checkpoint_dir(base_dir, phase)`      | `checkpoints/{base,sft,rl}/`       |
+| `eval_tasks_dir(base_dir)`             | `data/eval_tasks/`                 |
+| `eval_results_dir(base_dir)`           | `eval/`                            |
+| `report_dir(base_dir)`                 | `report/`                          |
+| `identity_data_path(base_dir)`         | `identity.jsonl`                   |
 
-All functions accept an optional `base_dir` override.
+All functions create the directory if absent (except `legacy_data_dir` and `identity_data_path`).
 
 ## Model Tags
 
@@ -81,7 +93,7 @@ Checkpoint files use zero-padded step numbers: `model_000500.pt`, `meta_000500.j
 
 ## Training Data
 
-Shards are downloaded on demand by `python -m nanochat.data.dataset -n <count>`. The last shard (`shard_06542`) is always the validation split.
+Shards are downloaded on demand by `nanochat data download -n <count>`. The last shard (`shard_06542`) is always the validation split.
 
 ## External Models
 
@@ -91,14 +103,14 @@ External models (e.g. HuggingFace checkpoints loaded via `--hf-path`) are manage
 
 ```bash
 # Option A: Use default (~/.cache/nanochat/)
-python -m nanochat.data.dataset -n 170
-python -m nanochat.scripts.tok_train
+nanochat data download -n 170
+nanochat data tokenizer train
 
 # Option B: Use project-local directory
 export NANOCHAT_BASE_DIR=$(pwd)/data
-python -m nanochat.data.dataset -n 170
-python -m nanochat.scripts.tok_train
+nanochat data download -n 170
+nanochat data tokenizer train
 
 # Option C: Per-run override
-python -m nanochat.scripts.base_train --base-dir /data/nanochat --depth 12
+nanochat --base-dir /data/nanochat train base --depth 12
 ```
