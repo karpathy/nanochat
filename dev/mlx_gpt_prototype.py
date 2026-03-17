@@ -7,6 +7,15 @@ import mlx.core as mx
 import mlx.nn as nn
 
 
+POLAR_EXPRESS_COEFFS = [
+    (8.156554524902461, -22.48329292557795, 15.878769915207462),
+    (4.042929935166739, -2.808917465908714, 0.5000178451051316),
+    (3.8916678022926607, -2.772484153217685, 0.5060648178503393),
+    (3.285753657755655, -2.3681294933425376, 0.46449024233003106),
+    (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
+]
+
+
 def has_ve(layer_idx: int, n_layer: int) -> bool:
     return layer_idx % 2 == (n_layer - 1) % 2
 
@@ -34,6 +43,19 @@ def build_optimizer_group_trees(tree) -> dict[str, dict]:
         "x0": {"x0_lambdas": tree["x0_lambdas"]},
         "blocks": {"blocks": tree["blocks"]},
     }
+
+
+def _tree_map_leaves(fn, params, grads, path=()):
+    if isinstance(grads, dict):
+        result = {}
+        for key, value in grads.items():
+            result[key] = _tree_map_leaves(fn, params[key], value, path + (str(key),))
+        return result
+    if isinstance(grads, list):
+        return [_tree_map_leaves(fn, params[idx], value, path + (str(idx),)) for idx, value in enumerate(grads)]
+    if isinstance(grads, tuple):
+        return tuple(_tree_map_leaves(fn, params[idx], value, path + (str(idx),)) for idx, value in enumerate(grads))
+    return fn(path, params, grads)
 
 
 @dataclass
@@ -135,6 +157,124 @@ class GroupedAdamW:
         return [optimizer.state for optimizer in self.optimizers.values()]
 
 
+class MatrixMuon:
+    def __init__(self, *, lr: float, momentum: float = 0.95, beta2: float = 0.9, weight_decay: float = 0.28, ns_steps: int = 5):
+        self.lr = lr
+        self.momentum = momentum
+        self.beta2 = beta2
+        self.weight_decay = weight_decay
+        self.ns_steps = ns_steps
+        self.state: dict[str, dict[str, mx.array]] = {}
+
+    def _state_key(self, path: tuple[str, ...]) -> str:
+        return "/".join(path)
+
+    def _orthogonalize(self, grad: mx.array) -> mx.array:
+        x = grad.astype(mx.bfloat16)
+        x_norm = mx.sqrt(mx.sum(mx.square(x.astype(mx.float32))))
+        x = x / (x_norm * 1.01 + 1e-6)
+        for a, b, c in POLAR_EXPRESS_COEFFS[: self.ns_steps]:
+            if x.shape[-2] > x.shape[-1]:
+                gram = x.swapaxes(-1, -2) @ x
+                poly = b * gram + c * (gram @ gram)
+                x = a * x + x @ poly
+            else:
+                gram = x @ x.swapaxes(-1, -2)
+                poly = b * gram + c * (gram @ gram)
+                x = a * x + poly @ x
+        return x.astype(grad.dtype)
+
+    def _apply_one(self, path: tuple[str, ...], param: mx.array, grad: mx.array) -> mx.array:
+        if not isinstance(grad, mx.array) or grad.ndim < 2:
+            return param
+
+        key = self._state_key(path)
+        if key not in self.state:
+            second_shape = (param.shape[-2], 1) if param.shape[-2] >= param.shape[-1] else (1, param.shape[-1])
+            self.state[key] = {
+                "momentum_buffer": mx.zeros_like(param),
+                "second_momentum_buffer": mx.zeros(second_shape, dtype=mx.float32),
+            }
+
+        momentum_buffer = self.state[key]["momentum_buffer"]
+        second_momentum_buffer = self.state[key]["second_momentum_buffer"]
+
+        momentum_buffer = momentum_buffer + (grad - momentum_buffer) * (1.0 - self.momentum)
+        update = grad + (momentum_buffer - grad) * self.momentum
+        update = self._orthogonalize(update)
+
+        reduction_dim = -1 if update.shape[-2] >= update.shape[-1] else -2
+        reduction_size = update.shape[reduction_dim]
+        variance_mean = mx.mean(mx.square(update.astype(mx.float32)), axis=reduction_dim, keepdims=True)
+        variance_norm = mx.sqrt(mx.sum(variance_mean) * reduction_size)
+        second_momentum_buffer = second_momentum_buffer + (variance_mean - second_momentum_buffer) * (1.0 - self.beta2)
+        step_scale = mx.rsqrt(mx.maximum(second_momentum_buffer, 1e-10))
+        scaled_sq_sum = (variance_mean * reduction_size) * mx.square(step_scale)
+        variance_norm_new = mx.sqrt(mx.sum(scaled_sq_sum))
+        final_scale = step_scale * (variance_norm / mx.maximum(variance_norm_new, 1e-10))
+        update = update * final_scale.astype(update.dtype)
+
+        lr = self.lr * max(1.0, param.shape[-2] / param.shape[-1]) ** 0.5
+        mask = (update * param) >= 0
+        updated_param = param - lr * update - lr * self.weight_decay * param * mask.astype(param.dtype)
+
+        self.state[key] = {
+            "momentum_buffer": momentum_buffer,
+            "second_momentum_buffer": second_momentum_buffer,
+        }
+        return updated_param
+
+    def apply_gradients(self, grads: dict, params: dict) -> dict:
+        return _tree_map_leaves(self._apply_one, params, grads)
+
+    def state_tree(self) -> dict[str, dict[str, mx.array]]:
+        return self.state
+
+
+class GroupedMixedOptimizer:
+    def __init__(self, config: MLXGPTConfig, *, unembedding_lr: float, embedding_lr: float, matrix_lr: float, scalar_lr: float, weight_decay: float, matrix_optimizer: str = "adamw"):
+        self.adamw = GroupedAdamW(
+            config,
+            unembedding_lr=unembedding_lr,
+            embedding_lr=embedding_lr,
+            matrix_lr=matrix_lr,
+            scalar_lr=scalar_lr,
+            weight_decay=weight_decay,
+        )
+        self.matrix_optimizer_name = matrix_optimizer
+        self.matrix_optimizer = None if matrix_optimizer == "adamw" else MatrixMuon(
+            lr=matrix_lr,
+            momentum=0.95,
+            beta2=0.9,
+            weight_decay=weight_decay,
+            ns_steps=5,
+        )
+
+    def update(self, model: "MLXGPTPrototype", grads: dict) -> None:
+        params = build_optimizer_group_trees(model.parameters())
+        grad_groups = build_optimizer_group_trees(grads)
+
+        for group_name, optimizer in self.adamw.optimizers.items():
+            if group_name == "blocks" and self.matrix_optimizer is not None:
+                continue
+            if sum_parameter_leaves(grad_groups[group_name]) == 0:
+                continue
+            updated = optimizer.apply_gradients(grad_groups[group_name], params[group_name])
+            model.update(updated)
+
+        if self.matrix_optimizer is not None and sum_parameter_leaves(grad_groups["blocks"]) != 0:
+            updated_blocks = self.matrix_optimizer.apply_gradients(grad_groups["blocks"], params["blocks"])
+            model.update(updated_blocks)
+
+    def state_trees(self) -> list[dict]:
+        trees = [optimizer.state for name, optimizer in self.adamw.optimizers.items() if name != "blocks" or self.matrix_optimizer is None]
+        if self.matrix_optimizer is None:
+            trees.append(self.adamw.optimizers["blocks"].state)
+        else:
+            trees.append(self.matrix_optimizer.state_tree())
+        return trees
+
+
 class MLXGPTPrototype(nn.Module):
     def __init__(self, config: MLXGPTConfig):
         super().__init__()
@@ -169,14 +309,15 @@ class MLXGPTPrototype(nn.Module):
     def num_params(self) -> int:
         return sum_parameter_leaves(self.parameters())
 
-    def build_optimizer(self, *, unembedding_lr: float = 0.008, embedding_lr: float = 0.3, matrix_lr: float = 0.02, scalar_lr: float = 0.5, weight_decay: float = 0.28) -> GroupedAdamW:
-        return GroupedAdamW(
+    def build_optimizer(self, *, unembedding_lr: float = 0.008, embedding_lr: float = 0.3, matrix_lr: float = 0.02, scalar_lr: float = 0.5, weight_decay: float = 0.28, matrix_optimizer: str = "adamw") -> GroupedMixedOptimizer:
+        return GroupedMixedOptimizer(
             self.config,
             unembedding_lr=unembedding_lr,
             embedding_lr=embedding_lr,
             matrix_lr=matrix_lr,
             scalar_lr=scalar_lr,
             weight_decay=weight_decay,
+            matrix_optimizer=matrix_optimizer,
         )
 
 

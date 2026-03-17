@@ -9,7 +9,8 @@ import time
 import mlx.core as mx
 import mlx.nn as nn
 
-from dev.benchmark_mlx_reference import build_reference_batch, get_memory_stats, load_tokenizer_metadata
+from dev.benchmark_mlx_reference import get_memory_stats, load_tokenizer_metadata
+from dev.mlx_input_batches import build_input_batch
 from dev.mlx_checkpoint_translation import initialize_mlx_from_checkpoint_source, initialize_mlx_from_pytorch_reference
 from dev.mlx_gpt_prototype import MLXGPTPrototype, build_reference_config
 
@@ -95,6 +96,10 @@ def main() -> None:
     parser.add_argument("--matrix-lr", type=float, default=0.02)
     parser.add_argument("--scalar-lr", type=float, default=0.5)
     parser.add_argument("--weight-decay", type=float, default=0.28)
+    parser.add_argument("--matrix-optimizer", type=str, choices=["adamw", "muon"], default="adamw")
+    parser.add_argument("--input-mode", type=str, choices=["repeated", "dataset"], default="repeated")
+    parser.add_argument("--dataset-split", type=str, choices=["train", "val"], default="train")
+    parser.add_argument("--progress", action="store_true")
     parser.add_argument("--init-from-pytorch-reference", action="store_true")
     parser.add_argument("--pytorch-checkpoint-source", type=str, choices=["base", "sft", "rl"], default=None)
     parser.add_argument("--pytorch-model-tag", type=str, default=None)
@@ -119,8 +124,16 @@ def main() -> None:
         matrix_lr=args.matrix_lr,
         scalar_lr=args.scalar_lr,
         weight_decay=args.weight_decay,
+        matrix_optimizer=args.matrix_optimizer,
     )
-    inputs, targets = build_reference_batch(args.device_batch_size, args.max_seq_len, config.vocab_size, bos_token_id)
+    inputs, targets, input_metadata = build_input_batch(
+        args.input_mode,
+        args.device_batch_size,
+        args.max_seq_len,
+        config.vocab_size,
+        bos_token_id,
+        dataset_split=args.dataset_split,
+    )
     loss_and_grad = nn.value_and_grad(model, lambda batch, labels: model.loss(batch, labels))
 
     for _ in range(max(args.warmup_steps, 0)):
@@ -152,6 +165,11 @@ def main() -> None:
             "param_nonfinite": param_nonfinite,
             "memory": memory,
         })
+        if args.progress:
+            print(
+                f"step {step_index + 1}/{args.steps} loss={per_step[-1]['loss']:.4f} tok/s={per_step[-1]['tokens_per_s']:.1f} grad_l2={per_step[-1]['grad_l2']:.3f} peak_gb={memory['peak_gb']:.2f}",
+                flush=True,
+            )
 
     losses = [row["loss"] for row in per_step]
     step_times = [row["step_time_s"] for row in per_step]
@@ -184,6 +202,7 @@ def main() -> None:
             "shared_vocab_used": shared_tokenizer_used,
             "bos_token_id": bos_token_id,
         },
+        "input_batch": input_metadata,
         "metrics_to_log": [
             "loss",
             "step_time_s",

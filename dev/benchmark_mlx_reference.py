@@ -8,6 +8,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from dev.mlx_checkpoint_translation import initialize_mlx_from_checkpoint_source, initialize_mlx_from_pytorch_reference
+from dev.mlx_input_batches import build_input_batch
 from dev.mlx_gpt_prototype import MLXGPTPrototype, build_reference_config
 from nanochat.tokenizer import get_tokenizer
 
@@ -22,24 +23,6 @@ def load_tokenizer_metadata(default_vocab_size: int) -> tuple[int, int | None, b
         return tokenizer.get_vocab_size(), tokenizer.get_bos_token_id(), True
     except Exception:
         return default_vocab_size, None, False
-
-
-def build_reference_batch(batch_size: int, seq_len: int, vocab_size: int, bos_token_id: int | None) -> tuple[mx.array, mx.array]:
-    seed_ids = [
-        bos_token_id if bos_token_id is not None else 1,
-        17,
-        29,
-        113,
-        509,
-        997,
-        4093,
-        8191,
-    ]
-    seed_ids = [token_id % vocab_size for token_id in seed_ids]
-    repeated = (seed_ids * ((seq_len // len(seed_ids)) + 1))[:seq_len]
-    batch = mx.array([repeated for _ in range(batch_size)], dtype=mx.int32)
-    return batch, batch
-
 
 def get_memory_stats() -> dict[str, float]:
     return {
@@ -65,6 +48,9 @@ def main() -> None:
     parser.add_argument("--matrix-lr", type=float, default=0.02)
     parser.add_argument("--scalar-lr", type=float, default=0.5)
     parser.add_argument("--weight-decay", type=float, default=0.28)
+    parser.add_argument("--matrix-optimizer", type=str, choices=["adamw", "muon"], default="adamw")
+    parser.add_argument("--input-mode", type=str, choices=["repeated", "dataset"], default="repeated")
+    parser.add_argument("--dataset-split", type=str, choices=["train", "val"], default="train")
     parser.add_argument("--init-from-pytorch-reference", action="store_true")
     parser.add_argument("--pytorch-checkpoint-source", type=str, choices=["base", "sft", "rl"], default=None)
     parser.add_argument("--pytorch-model-tag", type=str, default=None)
@@ -99,8 +85,16 @@ def main() -> None:
         matrix_lr=args.matrix_lr,
         scalar_lr=args.scalar_lr,
         weight_decay=args.weight_decay,
+        matrix_optimizer=args.matrix_optimizer,
     )
-    inputs, targets = build_reference_batch(args.device_batch_size, args.max_seq_len, config.vocab_size, bos_token_id)
+    inputs, targets, input_metadata = build_input_batch(
+        args.input_mode,
+        args.device_batch_size,
+        args.max_seq_len,
+        config.vocab_size,
+        bos_token_id,
+        dataset_split=args.dataset_split,
+    )
 
     loss_and_grad = nn.value_and_grad(model, lambda batch, labels: model.loss(batch, labels))
 
@@ -142,10 +136,11 @@ def main() -> None:
             "shared_vocab_used": shared_tokenizer_used,
             "bos_token_id": bos_token_id,
         },
+        "input_batch": input_metadata,
         "initialization": init_metadata,
         "prototype_limitations": [
-            "Uses grouped AdamW instead of reproducing the full MuonAdamW split.",
-            "Uses shared-tokenizer-derived synthetic batches instead of the full dataset pipeline.",
+            "Matrix optimizer parity is still experimental when using the MLX Muon option.",
+            "Dataset-backed input mode currently builds a single static batch rather than reproducing the full distributed loader.",
         ],
     }
     print(json.dumps(summary, indent=2))

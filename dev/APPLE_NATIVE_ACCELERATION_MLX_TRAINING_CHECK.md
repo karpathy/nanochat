@@ -74,6 +74,20 @@ export PYTHONPATH="$PWD"
 .venv/bin/python dev/mlx_training_check.py --depth 32 --device-batch-size 2 --max-seq-len 1024 --steps 6 --warmup-steps 1 --init-from-pytorch-reference
 ```
 
+Reference-tier sanity run with progress output and experimental Muon-style matrix optimizer:
+
+```bash
+export PYTHONPATH="$PWD"
+.venv/bin/python dev/mlx_training_check.py --depth 32 --device-batch-size 2 --max-seq-len 1024 --steps 6 --warmup-steps 1 --init-from-pytorch-reference --matrix-optimizer muon --progress
+```
+
+Reference-tier sanity run using dataset-backed input batches when local parquet data is available:
+
+```bash
+export PYTHONPATH="$PWD"
+.venv/bin/python dev/mlx_training_check.py --depth 32 --device-batch-size 2 --max-seq-len 1024 --steps 6 --warmup-steps 1 --init-from-pytorch-reference --input-mode dataset --progress
+```
+
 ## Results
 
 ### Small Run
@@ -118,6 +132,57 @@ Observed result:
 - steady-state step-time CV: `0.0162`
 - peak memory: `59.50 GB`
 
+### Experimental Muon Matrix-Optimizer Run
+
+Small configuration:
+
+- status: `PASS`
+- initial loss: `9.247`
+- final loss: `0.154`
+- loss drop: `98.3%`
+- mean throughput: `2533.4 tok/s`
+- steady-state step-time CV: `0.0565`
+- peak memory: `0.462 GB`
+
+Reference-tier configuration:
+
+- status: `PASS`
+- initial loss: `1.523`
+- final loss: `0.0045`
+- loss drop: `99.7%`
+- mean throughput: `257.9 tok/s`
+- steady-state step-time CV: `0.0043`
+- peak memory: `58.93 GB`
+
+Raw reference-tier benchmark with Muon-style matrix optimization:
+
+- throughput: `269.1 tok/s`
+- peak memory: `47.13 GB`
+
+Interpretation:
+
+- the experimental Muon-style matrix optimizer is numerically healthy in short runs
+- it is currently much slower than the AdamW-based matrix path in this MLX prototype
+- so it improves algorithmic resemblance to nanochat, but not yet wall-clock performance
+
+### Dataset-Backed Input Progress
+
+Status: `IMPLEMENTED BUT BLOCKED LOCALLY`
+
+What is done:
+
+- the MLX benchmark and training-check scripts now support `--input-mode dataset`
+- dataset-backed batch construction is implemented in [mlx_input_batches.py](mlx_input_batches.py)
+
+Current blocker on this machine:
+
+- no local parquet shards were found under the nanochat dataset cache paths
+
+Implication:
+
+- dataset-backed MLX checks are ready to run once local shards exist
+- until then, repeated synthetic batches remain the active fallback for MLX validation
+
 ## Interpretation
 
 The MLX prototype currently passes the short-run training sanity check at both the small tier and the frozen reference tier.
@@ -135,3 +200,11 @@ Important caveat:
 - throughput from the training-check script is lower than the raw benchmark script because the training check computes extra health metrics such as gradient norms and parameter norms on every step
 
 So the training-check throughput should be used as an operational-health signal, not as the primary backend-comparison number.
+
+## Step Status
+
+Current progress on the immediate MLX follow-up steps:
+
+1. closer optimizer parity: `PARTIALLY COMPLETE`
+2. dataset-backed input path: `IMPLEMENTED, BLOCKED BY MISSING LOCAL DATA`
+3. real checkpoint validation: `BLOCKED BY MISSING LOCAL CHECKPOINTS`
