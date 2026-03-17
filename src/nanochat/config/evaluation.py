@@ -5,6 +5,8 @@ import argparse
 from dataclasses import dataclass
 from typing import Optional
 
+VALID_EVAL_MODES = frozenset({"core", "bpb", "sample"})
+
 
 @dataclass
 class EvaluationConfig:
@@ -29,6 +31,11 @@ class EvaluationConfig:
             "device_batch_size = 32\n"
             f"split_tokens = {40 * 524288}       # 40 * 524288\n"
         )
+
+    def __post_init__(self) -> None:
+        invalid = {m.strip() for m in self.modes.split(",")} - VALID_EVAL_MODES
+        if invalid:
+            raise ValueError(f"Invalid eval modes: {invalid}. Valid: {VALID_EVAL_MODES}")
 
     modes: str = "core,bpb,sample"
     hf_path: Optional[str] = None

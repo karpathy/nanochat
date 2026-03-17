@@ -1,43 +1,35 @@
 """
 New and upgraded chat mode because a lot of the code has changed since the last one.
 
-Intended to be run single GPU only atm:
-python -m nanochat.scripts.chat_cli
+Intended to be run single GPU only atm.
 """
 
-import argparse
-
+from nanochat.config import Config
 from nanochat.common import autodetect_device_type, compute_init
 from nanochat.evaluation.engine import Engine
 from nanochat.training.checkpoint import load_model
 
 
-def build_parser():
-    parser = argparse.ArgumentParser(description="Chat with the model")
-    parser.add_argument("-i", "--source", type=str, default="sft", help="Source of the model: sft|rl")
-    parser.add_argument("-g", "--model-tag", type=str, default=None, help="Model tag to load")
-    parser.add_argument("-s", "--step", type=int, default=None, help="Step to load")
-    parser.add_argument("-p", "--prompt", type=str, default="", help="Prompt the model, get a single response back")
-    parser.add_argument("-t", "--temperature", type=float, default=0.6, help="Temperature for generation")
-    parser.add_argument("-k", "--top-k", type=int, default=50, help="Top-k sampling parameter")
-    parser.add_argument(
-        "--device-type",
-        type=str,
-        default="",
-        choices=["cuda", "cpu", "mps"],
-        help="Device type for evaluation: cuda|cpu|mps. empty => autodetect",
-    )
-    return parser
+def chat_cli(config: Config, source: str, model_tag: str, step: int, prompt: str, temperature: float, top_k: int) -> None:
+    """Run an interactive chat session with a trained model.
 
+    Loads the model from ``config.common.base_dir`` using ``source`` and optional
+    ``model_tag``/``step``, then enters a REPL loop. In prompt mode prints a single
+    response and exits.
 
-def main():
-    parser = build_parser()
-    args = parser.parse_args()
-
+    Args:
+        config: Resolved nanochat config. Uses ``config.common.device_type`` and ``config.common.base_dir``.
+        source: Checkpoint source to load from: ``sft`` or ``rl``.
+        model_tag: Optional model tag to select a specific checkpoint.
+        step: Optional step number to load a specific checkpoint.
+        prompt: If non-empty, send this prompt, print the response, and exit.
+        temperature: Sampling temperature.
+        top_k: Top-k sampling parameter.
+    """
     # Init the model and tokenizer
-    device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+    device_type = autodetect_device_type() if config.common.device_type == "" else config.common.device_type
     _, _, _, _, device = compute_init(device_type)
-    model, tokenizer, _ = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
+    model, tokenizer, _ = load_model(source, device, phase="eval", model_tag=model_tag, step=step)
 
     # Special tokens for the chat state machine
     bos = tokenizer.get_bos_token_id()
@@ -59,9 +51,9 @@ def main():
     conversation_tokens = [bos]
 
     while True:
-        if args.prompt:
+        if prompt:
             # Get the prompt from the launch command
-            user_input = args.prompt
+            user_input = prompt
         else:
             # Get the prompt interactively from the console
             try:
@@ -93,8 +85,8 @@ def main():
         generate_kwargs = {
             "num_samples": 1,
             "max_tokens": 256,
-            "temperature": args.temperature,
-            "top_k": args.top_k,
+            "temperature": temperature,
+            "top_k": top_k,
         }
         response_tokens = []
         print("\nAssistant: ", end="", flush=True)
@@ -111,9 +103,5 @@ def main():
         conversation_tokens.extend(response_tokens)
 
         # In the prompt mode, we only want a single response and exit
-        if args.prompt:
+        if prompt:
             break
-
-
-if __name__ == "__main__":
-    main()

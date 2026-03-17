@@ -16,53 +16,43 @@ python -m nanochat.scripts.chat_rl
 torchrun --nproc_per_node=8 -m nanochat.scripts.chat_rl -- --run=default
 """
 
-import argparse
+
 import itertools
-import os
 from typing import cast
 
 import torch
 import torch.distributed as dist
-import wandb
 
 from nanochat.common import (
-    DummyWandb,
+    init_wandb,
     autodetect_device_type,
     compute_cleanup,
     compute_init,
-    get_base_dir,
     print0,
+    checkpoint_dir
 )
-from nanochat.common.config import add_common_args, add_rl_args
+from nanochat.config import Config
 from nanochat.evaluation.engine import Engine
 from nanochat.report import get_report
 from nanochat.tasks.gsm8k import GSM8K
-from nanochat.training.checkpoint import load_model, save_checkpoint
+from nanochat.training.checkpoint import save_checkpoint, load_model_from_dir
+from dataclasses import asdict
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Reinforcement learning on GSM8K")
-    add_common_args(parser)
-    add_rl_args(parser)
-    return parser
-
-def main():
-    parser = build_parser()
-    args = parser.parse_args()
-    user_config = vars(args).copy()
+def train_rl(config: Config):
+    user_config=asdict(config)
     # -----------------------------------------------------------------------------
 
     # Init compute/precision
-    device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+    device_type = autodetect_device_type() if config.common.device_type == "" else config.common.device_type
     ddp, ddp_rank, _, ddp_world_size, device = compute_init(device_type)
-    master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
 
     # wandb logging init
-    use_dummy_wandb = args.run == "dummy" or not master_process
-    wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl", name=args.run, config=user_config)
+    master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
+    wandb_run = init_wandb(config,user_config={},master_process=master_process, project_suffix="rl", user_config=user_config)
 
     # Init model and tokenizer
-    model, tokenizer, _ = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
+    model, tokenizer, _ = load_model_from_dir(base_dir=config.common.base_dir, phase="sft", device=device, model_tag=config.rl.model_tag, step=config.rl.model_step)  # note: we load the model in eval mode, but we will switch to train mode later. this is because we want to make sure to load the model with the right dtype and device, but we don't want to accidentally mess with any dropout or other train/eval specific behavior until we're ready to start training.
     engine = Engine(model, tokenizer)  # for sampling rollouts
 
     # -----------------------------------------------------------------------------
@@ -70,7 +60,7 @@ def main():
 
     train_task = GSM8K(subset="main", split="train")
     val_task = GSM8K(subset="main", split="test")
-    num_steps = (len(train_task) // args.examples_per_step) * args.num_epochs
+    num_steps = (len(train_task) // config.rl.examples_per_step) * config.rl.num_epochs
     print0(f"Calculated number of steps: {num_steps}")
 
 
@@ -95,15 +85,15 @@ def main():
             model.eval()  # ensure the model is in eval mode
             generated_token_sequences = []
             masks = []
-            num_sampling_steps = args.num_samples // args.device_batch_size  # go sequentially to prevent OOMs
+            num_sampling_steps = config.rl.num_samples // config.rl.device_batch_size  # go sequentially to prevent OOMs
             for sampling_step in range(num_sampling_steps):
                 seed = hash((step, example_idx, sampling_step)) & 0x7FFFFFFF  # positive half of int32
                 generated_token_sequences_batch, masks_batch = engine.generate_batch(
                     tokens,
-                    num_samples=args.device_batch_size,
-                    max_tokens=args.max_new_tokens,
-                    temperature=args.temperature,
-                    top_k=args.top_k,
+                    num_samples=config.rl.device_batch_size,
+                    max_tokens=config.rl.max_new_tokens,
+                    temperature=config.rl.temperature,
+                    top_k=config.rl.top_k,
                     seed=seed,  # must make sure to change the seed for each sampling step
                 )
                 generated_token_sequences.extend(generated_token_sequences_batch)
@@ -160,7 +150,7 @@ def main():
             tokens = tokenizer.render_for_completion(conversation)
             prefix_length = len(tokens)
             # Generate k samples using batched generation inside the Engine
-            assert num_samples <= args.device_batch_size  # usually this is true. we can add a loop if not...
+            assert num_samples <= config.rl.device_batch_size  # usually this is true. we can add a loop if not...
             generated_token_sequences, _ = engine.generate_batch(
                 tokens, num_samples=num_samples, max_tokens=max_completion_tokens, temperature=temperature, top_k=top_k
             )
@@ -184,15 +174,15 @@ def main():
 
     # Init the optimizer
     optimizer = model.setup_optimizer(
-        unembedding_lr=args.unembedding_lr,
-        embedding_lr=args.embedding_lr,
-        matrix_lr=args.matrix_lr,
-        weight_decay=args.weight_decay,
+        unembedding_lr=config.rl.unembedding_lr,
+        embedding_lr=config.rl.embedding_lr,
+        matrix_lr=config.rl.matrix_lr,
+        weight_decay=config.rl.weight_decay,
     )
 
     # Set the initial learning rate as a fraction of the base learning rate
     for group in optimizer.param_groups:
-        group["lr"] = group["lr"] * args.init_lr_frac
+        group["lr"] = group["lr"] * config.rl.init_lr_frac
         group["initial_lr"] = group["lr"]
 
 
@@ -203,39 +193,39 @@ def main():
 
 
     # Calculate the number of examples each rank handles to achieve the desired examples_per_step
-    print0(f"Total sequences per step: {args.examples_per_step * args.num_samples}")  # total batch size in sequences/step
-    assert args.examples_per_step % ddp_world_size == 0, (
+    print0(f"Total sequences per step: {config.rl.examples_per_step * config.rl.num_samples}")  # total batch size in sequences/step
+    assert config.rl.examples_per_step % ddp_world_size == 0, (
         "Desired examples per step must be divisible by the number of ranks"
     )
-    examples_per_rank = args.examples_per_step // ddp_world_size  # per GPU
+    examples_per_rank = config.rl.examples_per_step // ddp_world_size  # per GPU
     print0(f"Calculated examples per rank: {examples_per_rank}")
 
     # Kick off the training loop
     batch_iterator = get_batch()
     for step in range(num_steps):
         # Evaluate the model once in a while and log to wandb
-        if step % args.eval_every == 0:
+        if step % config.rl.eval_every == 0:
             model.eval()
-            passk = torch.zeros(args.device_batch_size, device=device)  # pass@k for k=1..device_batch_size
+            passk = torch.zeros(config.rl.device_batch_size, device=device)  # pass@k for k=1..device_batch_size
             records_iter = run_gsm8k_eval(
                 val_task,
                 tokenizer,
                 engine,
-                num_samples=args.device_batch_size,
-                max_examples=args.eval_examples,
+                num_samples=config.rl.device_batch_size,
+                max_examples=config.rl.eval_examples,
                 temperature=1.0,
             )
             records = list(records_iter)  # collect all records
-            for k in range(1, args.device_batch_size + 1):
+            for k in range(1, config.rl.device_batch_size + 1):
                 passk[k - 1] = sum(any(o["is_correct"] for o in cast(list[dict[str, object]], r["outcomes"])[:k]) for r in records)
             num_records = torch.tensor(len(records), dtype=torch.long, device=device)
             if ddp:
                 dist.all_reduce(num_records, op=dist.ReduceOp.SUM)
                 dist.all_reduce(passk, op=dist.ReduceOp.SUM)
             passk = passk / num_records.item()  # normalize by the total number of records
-            print_passk = [f"Pass@{k}: {passk[k - 1].item():.4f}" for k in range(1, args.device_batch_size + 1)]
+            print_passk = [f"Pass@{k}: {passk[k - 1].item():.4f}" for k in range(1, config.rl.device_batch_size + 1)]
             print0(f"Step {step} | {', '.join(print_passk)}")
-            log_passk = {f"pass@{k}": passk[k - 1].item() for k in range(1, args.device_batch_size + 1)}
+            log_passk = {f"pass@{k}": passk[k - 1].item() for k in range(1, config.rl.device_batch_size + 1)}
             wandb_run.log(
                 {
                     "step": step,
@@ -252,11 +242,11 @@ def main():
             # Evaluate the loss and gradients
             model.train()  # ensure the model is in train mode
             # We need one more loop because we can never exceed the device_batch_size
-            assert inputs_all.size(0) % args.device_batch_size == 0
-            num_passes = inputs_all.size(0) // args.device_batch_size
+            assert inputs_all.size(0) % config.rl.device_batch_size == 0
+            num_passes = inputs_all.size(0) // config.rl.device_batch_size
             for pass_idx in range(num_passes):
                 # Pluck out the batch for this pass
-                b0, b1 = pass_idx * args.device_batch_size, (pass_idx + 1) * args.device_batch_size
+                b0, b1 = pass_idx * config.rl.device_batch_size, (pass_idx + 1) * config.rl.device_batch_size
                 inputs = inputs_all[b0:b1]
                 targets = targets_all[b0:b1]
                 rewards = rewards_all[b0:b1]
@@ -314,16 +304,15 @@ def main():
         )
 
         # Master process saves the model once in a while. Skip first step. Save last step.
-        if master_process and ((step > 0 and step % args.save_every == 0) or step == num_steps - 1):
-            base_dir = get_base_dir()
+        if master_process and ((step > 0 and step % config.rl.save_every == 0) or step == num_steps - 1):
             depth = model.config.n_layer
             output_dirname = (
-                args.model_tag if args.model_tag else f"d{depth}"
+                config.rl.model_tag if config.rl.model_tag else f"d{depth}"
             )  # base the model tag on the depth of the base model
-            checkpoint_dir = os.path.join(base_dir, "checkpoints", "rl", output_dirname)
+            chk_dir = checkpoint_dir(base_dir=config.common.base_dir, phase= "rl", model_tag=output_dirname)
             model_config_kwargs = model.config.__dict__  # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
             save_checkpoint(
-                checkpoint_dir,
+                chk_dir,
                 step,
                 model.state_dict(),
                 None,  # note: we don't bother to save the optimizer state
@@ -331,10 +320,10 @@ def main():
                     "model_config": model_config_kwargs,
                 },
             )
-            print(f"✅ Saved model checkpoint to {checkpoint_dir}")
+            print(f"✅ Saved model checkpoint to {chk_dir}")
 
     # Log to report
-    get_report().log(
+    get_report(base_dir=config.common.base_dir).log(
         section="Chat RL",
         data=[
             user_config,  # CLI args
@@ -343,7 +332,3 @@ def main():
 
     wandb_run.finish()  # wandb run finish
     compute_cleanup()
-
-
-if __name__ == "__main__":
-    main()

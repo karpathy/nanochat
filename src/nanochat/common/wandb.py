@@ -22,15 +22,13 @@ class DummyWandb:
         pass
 
 
-class LocalWandb:
+class LocalWandb(DummyWandb):
     """Logs metrics to a JSONL file for offline runs."""
 
-    def __init__(self, run_name: str, project: str = "nanochat", base_dir: str | None = None):
-        from nanochat.common.io import get_base_dir
+    def __init__(self,  base_dir: str, run_name: str, project: str = "nanochat"):
         self.project = project
         self.run_name = run_name
-        root = base_dir if base_dir else get_base_dir()
-        log_dir = Path(root) / "runs" / project / run_name
+        log_dir = Path( base_dir) / "runs" / project / run_name
         os.makedirs(log_dir, exist_ok=True)
         self._f = open(log_dir / "wandb.jsonl", "a")
 
@@ -46,6 +44,7 @@ def init_wandb(
     config: "CommonConfig",
     user_config: dict,
     master_process: bool,
+    project_suffix: str |None = None,
 ) -> Union[DummyWandb, LocalWandb, object]:
     """Unified wandb initialisation.
 
@@ -63,13 +62,16 @@ def init_wandb(
     if config.run == "dummy" or os.environ.get("WANDB_MODE") == "disabled":
         mode = "disabled"
 
+    project=config.wandb_project if project_suffix is None else f"{config.wandb_project}-{project_suffix}"
+    
     match mode:
         case "disabled":
             return DummyWandb()
         case "local":
-            return LocalWandb(config.run, project=config.wandb_project, base_dir=config.base_dir)
+            assert config.base_dir is not None, "base_dir must be set for local wandb mode"
+            return LocalWandb(base_dir=config.base_dir, run_name=config.run, project=project )
         case "online":
             import wandb  # type: ignore[import-untyped]
-            return wandb.init(project=config.wandb_project, name=config.run, config=user_config)
+            return wandb.init(project=project, name=config.run, config=user_config)
         case _:
             raise ValueError(f"Unknown wandb mode: {mode!r}. Expected: online | local | disabled")

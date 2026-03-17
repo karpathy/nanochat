@@ -1,43 +1,30 @@
-"""
-Train a tokenizer using our own BPE Tokenizer library.
-In the style of GPT-4 tokenizer.
-"""
-
-import argparse
+"""BPE tokenizer training and token-bytes cache generation, in the style of GPT-4 tokenizer.."""
 import os
 import time
-
+from dataclasses import asdict
 import torch
 from nanochat.config import Config
 from nanochat.common import tokenizer_dir as get_tokenizer_dir
 from nanochat.dataset import parquets_iter_batched
-from nanochat.tokenizer.tokenizer import RustBPETokenizer
+from nanochat.tokenizer.rust_tokenizer import RustBPETokenizer
 from nanochat.report import get_report
 
 
-def tokenizer_train(config: Config):
-    ...
+def tokenizer_train(config: Config) -> None:
+    """Train a BPE tokenizer on the ClimbMix dataset and save it to disk.
 
-def build_parser():
-    parser = argparse.ArgumentParser(description="Train a BPE tokenizer")
-    parser.add_argument(
-        "--max-chars", type=int, default=2_000_000_000, help="Maximum characters to train on (default: 10B)"
-    )
-    parser.add_argument("--doc-cap", type=int, default=10_000, help="Maximum characters per document (default: 10,000)")
-    parser.add_argument("--vocab-size", type=int, default=32768, help="Vocabulary size (default: 32768 = 2^15)")
-    parser.add_argument("--base-dir", type=str, default=None, help="override NANOCHAT_BASE_DIR env var")
-    return parser
+    Streams documents from the train split up to ``config.tokenizer.max_chars``
+    total characters, crops each document to ``config.tokenizer.doc_cap``, then
+    trains a ``RustBPETokenizer`` with ``config.tokenizer.vocab_size`` tokens.
+    After training, saves the tokenizer and a ``token_bytes.pt`` cache (bytes
+    per token, used for bits-per-byte evaluation) to ``cfg.common.base_dir``.
 
-
-def main():
-    parser = build_parser()
-    args = parser.parse_args()
-
-    if args.base_dir is not None:
-        os.environ["NANOCHAT_BASE_DIR"] = args.base_dir
-    print(f"max_chars: {args.max_chars:,}")
-    print(f"doc_cap: {args.doc_cap:,}")
-    print(f"vocab_size: {args.vocab_size:,}")
+    Args:
+        config: Resolved nanochat config. Uses ``config.common`` and ``config.tokenizer``.
+    """
+    print(f"max_chars: {config.tokenizer.max_chars:,}")
+    print(f"doc_cap: {config.tokenizer.doc_cap:,}")
+    print(f"vocab_size: {config.tokenizer.vocab_size:,}")
 
     # -------------------------------------------------------------------------
     # Text iterator
@@ -49,14 +36,14 @@ def main():
         3) Break when we've seen args.max_chars characters
         """
         nchars = 0
-        for batch in parquets_iter_batched(split="train"):
+        for batch in parquets_iter_batched(base_dir=config.common.base_dir, split="train"):
             for doc in batch:
                 doc_text = doc
-                if len(doc_text) > args.doc_cap:
-                    doc_text = doc_text[: args.doc_cap]
+                if len(doc_text) > config.tokenizer.doc_cap:
+                    doc_text = doc_text[: config.tokenizer.doc_cap]
                 nchars += len(doc_text)
                 yield doc_text
-                if nchars > args.max_chars:
+                if nchars > config.tokenizer.max_chars:
                     return
 
     text_iter = text_iterator()
@@ -64,26 +51,19 @@ def main():
     # -------------------------------------------------------------------------
     # Train the tokenizer
     t0 = time.time()
-    tokenizer = RustBPETokenizer.train_from_iterator(text_iter, args.vocab_size)
+    tokenizer = RustBPETokenizer.train_from_iterator(text_iter, config.tokenizer.vocab_size)
     t1 = time.time()
     train_time = t1 - t0
     print(f"Training time: {train_time:.2f}s")
 
     # -------------------------------------------------------------------------
     # Save the tokenizer to disk
-    tok_dir = get_tokenizer_dir()
+    tok_dir = get_tokenizer_dir(config.common.base_dir)
     tokenizer.save(tok_dir)
 
     # -------------------------------------------------------------------------
     # Quick inline sanity check
-    test_text = """Hello world! This is a test.
-Numbers: 123, 4567, 89
-Contractions: I'm, you're, it's
-Special chars: @#$%^&*()
-Unicode: 你好世界 🌍"""
-    encoded = tokenizer.encode(test_text)
-    decoded = tokenizer.decode(encoded)
-    assert decoded == test_text
+    _sanity_check(tokenizer)
 
     # -------------------------------------------------------------------------
     # Cache a mapping from token id to number of bytes of that token
@@ -107,10 +87,10 @@ Unicode: 你好世界 🌍"""
 
     # Log to report
     token_bytes_nonzero = (token_bytes[token_bytes > 0]).to(dtype=torch.float32)
-    get_report().log(
+    get_report(config.common.base_dir).log(
         section="Tokenizer training",
         data=[
-            vars(args),
+            asdict(config.tokenizer),
             {"train_time": train_time},
             {"num_special_tokens": len(special_set)},
             {
@@ -122,6 +102,14 @@ Unicode: 你好世界 🌍"""
         ],
     )
 
+def _sanity_check(tokenizer):
+    test_text = """Hello world! This is a test.
+Numbers: 123, 4567, 89
+Contractions: I'm, you're, it's
+Special chars: @#$%^&*()
+Unicode: 你好世界 🌍"""
+    encoded = tokenizer.encode(test_text)
+    decoded = tokenizer.decode(encoded)
+    assert decoded == test_text
 
-if __name__ == "__main__":
-    main()
+

@@ -9,8 +9,6 @@ Functions:
 
 from multiprocessing import Pool
 
-import pyarrow.parquet as pq
-
 from nanochat.common import download_single_file
 from nanochat.common import data_dir as _data_dir
 from nanochat.config import Config
@@ -28,7 +26,7 @@ index_to_filename = lambda index: f"shard_{index:05d}.parquet"  # format of the 
 
 def climbmix_download(cfg: Config, num_files: int = -1, num_workers: int = 4) -> None:
     """Download dataset shards to the configured base directory.
-    
+
     num_files download ~170 shards, enough for GPT-2, adjust as desired
 
     Args:
@@ -59,6 +57,6 @@ def climbmix_download(cfg: Config, num_files: int = -1, num_workers: int = 4) ->
 
     # Report results
     successful = sum(1 for success in results if success)
-    print(f"Done! Downloaded: {successful}/{len(ids_to_download)} shards to {_get_data_dir()}")
+    print(f"Done! Downloaded: {successful}/{len(ids_to_download)} shards to {data_dir}")
 
 

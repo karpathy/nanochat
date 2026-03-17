@@ -6,20 +6,10 @@ import tomllib
 from argparse import Namespace
 from pathlib import Path
 import os
+from nanochat.common import get_default_base_dir
 from nanochat.config.common import CommonConfig
 from nanochat.config.config import Config, SECTION_CLS
 
-
-def _get_base_dir() -> str:
-    """Return the nanochat base directory: --base-dir CLI > NANOCHAT_BASE_DIR env > ~/.cache/nanochat."""
-    if os.environ.get("NANOCHAT_BASE_DIR"):
-        nanochat_dir = os.environ["NANOCHAT_BASE_DIR"]
-    else:
-        home_dir = os.path.expanduser("~")
-        cache_dir = os.path.join(home_dir, ".cache")
-        nanochat_dir = os.path.join(cache_dir, "nanochat")
-    os.makedirs(nanochat_dir, exist_ok=True)
-    return nanochat_dir
 
 class ConfigLoader:
 
@@ -43,6 +33,9 @@ class ConfigLoader:
 
     def add_evaluation(self) -> ConfigLoader:
         return self._add_section("evaluation")
+
+    def add_tokenizer(self) -> ConfigLoader:
+        return self._add_section("tokenizer")
 
     def parse(self, args: list[str] | None = None) -> Config:
         """Build a parser, parse args, and resolve. Used by tests; production path goes through resolve()."""
@@ -68,12 +61,12 @@ class ConfigLoader:
             toml_path = Path(cli["config"])
             base_dir = str(toml_path.parent)
         if base_dir is None:
-            base_dir = _get_base_dir()
+            base_dir = get_default_base_dir()
             candidate = Path(base_dir) / "config.toml"
             if candidate.exists():
                 toml_path = candidate
             else:
-                raise RuntimeError(f"Could not determine config.toml path. Please specify with --config, --base-dir or set NANOCHAT_BASE_DIR env var.")
+                raise RuntimeError("Could not determine config.toml path. Please specify with --config, --base-dir or set NANOCHAT_BASE_DIR env var.")
 
         toml_data: dict = {}
         if toml_path is not None:

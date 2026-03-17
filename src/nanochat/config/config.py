@@ -10,6 +10,7 @@ from nanochat.config.common import CommonConfig
 from nanochat.config.evaluation import EvaluationConfig
 from nanochat.config.rl import RLConfig
 from nanochat.config.sft import SFTConfig
+from nanochat.config.tokenizer import TokenizerConfig
 from nanochat.config.training import TrainingConfig
 
 SECTION_CLS: dict[str, type] = {
@@ -18,6 +19,7 @@ SECTION_CLS: dict[str, type] = {
     "sft": SFTConfig,
     "rl": RLConfig,
     "evaluation": EvaluationConfig,
+    "tokenizer": TokenizerConfig,
 }
 
 
@@ -28,6 +30,7 @@ class Config:
     sft: SFTConfig = field(default_factory=SFTConfig)
     rl: RLConfig = field(default_factory=RLConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    tokenizer: TokenizerConfig = field(default_factory=TokenizerConfig)
 
     def save(self, path: Path) -> None:
         data = {k: {fk: fv for fk, fv in v.items() if fv is not None} for k, v in asdict(self).items()}
@@ -54,5 +57,6 @@ class Config:
             "[training]\n" + TrainingConfig.generate_default() + "\n"
             "[sft]\n" + SFTConfig.generate_default() + "\n"
             "[rl]\n" + RLConfig.generate_default() + "\n"
-            "[evaluation]\n" + EvaluationConfig.generate_default()
+            "[evaluation]\n" + EvaluationConfig.generate_default() + "\n"
+            "[tokenizer]\n" + TokenizerConfig.generate_default()
         )

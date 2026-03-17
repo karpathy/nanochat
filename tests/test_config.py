@@ -57,6 +57,16 @@ def test_evaluation_config_defaults():
     assert cfg.max_per_task == -1
 
 
+def test_evaluation_config_invalid_mode_raises():
+    with pytest.raises(ValueError, match="Invalid eval modes"):
+        EvaluationConfig(modes="core,bogus")
+
+
+def test_evaluation_config_valid_subset():
+    cfg = EvaluationConfig(modes="core,bpb")
+    assert cfg.modes == "core,bpb"
+
+
 # ---------------------------------------------------------------------------
 # generate_default — each section produces valid TOML
 # ---------------------------------------------------------------------------

@@ -26,12 +26,18 @@ from nanochat.config import (
     EvaluationConfig,
     RLConfig,
     SFTConfig,
+    TokenizerConfig,
     TrainingConfig,
     config_init,
     config_show,
 )
 from nanochat.dataset import climbmix_download
 from nanochat.report import manage_report
+from nanochat.tokenizer import tokenizer_train, tokenizer_eval
+from nanochat.chat import chat_cli, chat_web_server
+from nanochat.evaluation import base_eval
+from nanochat.evaluation import chat_eval
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="nanochat", description="nanochat CLI")
@@ -81,10 +87,11 @@ def main() -> None:
     tok_sub.required = True
 
     p = tok_sub.add_parser("train", help="train BPE tokenizer")
-    p.set_defaults(func=lambda args: ConfigLoader().resolve(args))
+    TokenizerConfig.update_parser(p)
+    p.set_defaults(func=lambda args: tokenizer_train(ConfigLoader().add_tokenizer().resolve(args)))
 
     p = tok_sub.add_parser("eval", help="evaluate tokenizer compression")
-    p.set_defaults(func=lambda args: ConfigLoader().resolve(args))
+    p.set_defaults(func=lambda args: tokenizer_eval(ConfigLoader().resolve(args)))
 
     # --- train ---
     train_p = sub.add_parser("train", help="training commands")
@@ -99,7 +106,7 @@ def main() -> None:
     SFTConfig.update_parser(p)
     p.set_defaults(func=lambda args: ConfigLoader().add_sft().resolve(args))
 
-    p = train_sub.add_parser("rl", help="reinforcement learning")
+    p = train_sub.add_parser("rl", help="reinforcement learning on GSM8K")
     RLConfig.update_parser(p)
     p.set_defaults(func=lambda args: ConfigLoader().add_rl().resolve(args))
 
@@ -110,17 +117,65 @@ def main() -> None:
     eval_sub.required = True
 
     p = eval_sub.add_parser("base", help="evaluate base model")
-    p.set_defaults(func=lambda args: ConfigLoader().add_evaluation().resolve(args))
+    p.set_defaults(func=lambda args: base_eval(ConfigLoader().add_evaluation().resolve(args)))
 
     p = eval_sub.add_parser("chat", help="evaluate chat model")
-    p.set_defaults(func=lambda args: ConfigLoader().add_evaluation().resolve(args))
+    p.add_argument("-i", "--source", type=str, required=True, help="Source of the model: sft|rl")
+    p.add_argument("-a", "--task-name", type=str, default=None, help="Task name(s), default = all. Use | to split multiple.")
+    p.add_argument("-t", "--temperature", type=float, default=0.0)
+    p.add_argument("-m", "--max-new-tokens", type=int, default=512)
+    p.add_argument("-n", "--num-samples", type=int, default=1)
+    p.add_argument("-k", "--top-k", type=int, default=50)
+    p.add_argument("-b", "--batch-size", type=int, default=8, help="Batch size for categorical evaluation")
+    p.add_argument("-g", "--model-tag", type=str, default=None, help="Model tag to load")
+    p.add_argument("-s", "--step", type=int, default=None, help="Step to load")
+    p.add_argument("-x", "--max-problems", type=int, default=None, help="Max problems to evaluate")
+    p.set_defaults(func=lambda args: chat_eval(
+        config=ConfigLoader().resolve(args),
+        source=args.source,
+        task_name=args.task_name,
+        temperature=args.temperature,
+        max_new_tokens=args.max_new_tokens,
+        num_samples=args.num_samples,
+        top_k=args.top_k,
+        batch_size=args.batch_size,
+        model_tag=args.model_tag,
+        step=args.step,
+        max_problems=args.max_problems,
+    ))
 
     # --- chat / serve ---
     p = sub.add_parser("chat", help="interactive chat CLI")
-    p.set_defaults(func=lambda args: ConfigLoader().resolve(args))
+    p.add_argument("-i", "--source", type=str, default="sft", help="Source of the model: sft|rl")
+    p.add_argument("-g", "--model-tag", type=str, default=None, help="Model tag to load")
+    p.add_argument("-s", "--step", type=int, default=None, help="Step to load")
+    p.add_argument("-p", "--prompt", type=str, default="", help="Prompt the model, get a single response back")
+    p.add_argument("-t", "--temperature", type=float, default=0.6, help="Temperature for generation")
+    p.add_argument("-k", "--top-k", type=int, default=50, help="Top-k sampling parameter")
+    p.set_defaults(func=lambda args: chat_cli(ConfigLoader().resolve(args), source=args.source, model_tag=args.model_tag, step=args.step, prompt=args.prompt, temperature=args.temperature, top_k=args.top_k))
 
     p = sub.add_parser("serve", help="web chat server")
-    p.set_defaults(func=lambda args: ConfigLoader().resolve(args))
+    p.add_argument("-n", "--num-gpus", type=int, default=1, help="Number of GPUs to use (default: 1)")
+    p.add_argument("-i", "--source", type=str, default="sft", help="Source of the model: sft|rl")
+    p.add_argument("-t", "--temperature", type=float, default=0.8, help="Default temperature for generation")
+    p.add_argument("-k", "--top-k", type=int, default=50, help="Default top-k sampling parameter")
+    p.add_argument("-m", "--max-tokens", type=int, default=512, help="Default max tokens for generation")
+    p.add_argument("-g", "--model-tag", type=str, default=None, help="Model tag to load")
+    p.add_argument("-s", "--step", type=int, default=None, help="Step to load")
+    p.add_argument("-p", "--port", type=int, default=8000, help="Port to run the server on")
+    p.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind the server to")
+    p.set_defaults(func=lambda args: chat_web_server(
+        config=ConfigLoader().resolve(args),
+        num_gpus=args.num_gpus,
+        source=args.source,
+        temperature=args.temperature,
+        top_k=args.top_k,
+        max_tokens=args.max_tokens,
+        model_tag=args.model_tag,
+        step=args.step,
+        port=args.port,
+        host=args.host
+    ))
 
     args = parser.parse_args()
     args.func(args)

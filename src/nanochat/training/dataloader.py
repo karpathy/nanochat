@@ -20,10 +20,10 @@ import pyarrow.parquet as pq
 import torch
 
 from nanochat.common import get_dist_info
-from nanochat.data.dataset import list_parquet_files
+from nanochat.dataset import list_parquet_files
 
 
-def _document_batches(split: str, resume_state_dict: dict[str, object] | None, tokenizer_batch_size: int):
+def _document_batches(base_dir:str, split: str, resume_state_dict: dict[str, object] | None, tokenizer_batch_size: int):
     """
     Infinite iterator over document batches (list of text strings) from parquet files.
 
@@ -34,7 +34,7 @@ def _document_batches(split: str, resume_state_dict: dict[str, object] | None, t
     _, ddp_rank, _, ddp_world_size = get_dist_info()
 
     warn_on_legacy = ddp_rank == 0 and split == "train"  # rank 0 on train split will warn on legacy
-    parquet_paths = list_parquet_files(warn_on_legacy=warn_on_legacy)
+    parquet_paths = list_parquet_files(base_dir=base_dir, warn_on_legacy=warn_on_legacy)
     assert len(parquet_paths) != 0, "No dataset parquet files found, did you run dataset.py?"
     parquet_paths = parquet_paths[:-1] if split == "train" else parquet_paths[-1:]
 
@@ -73,6 +73,7 @@ def _document_batches(split: str, resume_state_dict: dict[str, object] | None, t
 
 
 def tokenizing_distributed_data_loader_with_state_bos_bestfit(
+        base_dir:str,
     tokenizer: object,
     B: int,
     T: int,
@@ -102,7 +103,7 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
     assert split in ["train", "val"], "split must be 'train' or 'val'"
 
     row_capacity = T + 1
-    batches = _document_batches(split, resume_state_dict, tokenizer_batch_size)
+    batches = _document_batches(base_dir, split, resume_state_dict, tokenizer_batch_size)
     bos_token = tokenizer.get_bos_token_id()
     doc_buffer = []
     pq_idx, rg_idx, epoch = 0, 0, 1
@@ -167,7 +168,16 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
         yield inputs, targets, state_dict
 
 
-def tokenizing_distributed_data_loader_bos_bestfit(*args: object, **kwargs: object):
+def tokenizing_distributed_data_loader_bos_bestfit(base_dir:str,
+    tokenizer: object,
+    B: int,
+    T: int,
+    split: str,
+    tokenizer_threads: int = 4,
+    tokenizer_batch_size: int = 128,
+    device: str | torch.device = "cuda",
+    resume_state_dict: dict[str, object] | None = None,
+    buffer_size: int = 1000):
     """Helper that omits state_dict from yields."""
-    for inputs, targets, _ in tokenizing_distributed_data_loader_with_state_bos_bestfit(*args, **kwargs):
+    for inputs, targets, _ in tokenizing_distributed_data_loader_with_state_bos_bestfit(base_dir, tokenizer, B, T, split, tokenizer_threads, tokenizer_batch_size, device, resume_state_dict, buffer_size):
         yield inputs, targets

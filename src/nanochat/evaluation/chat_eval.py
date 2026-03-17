@@ -8,14 +8,14 @@ python -m nanochat.scripts.chat_eval -a ARC-Easy
 torchrun --nproc_per_node=8 -m nanochat.scripts.chat_eval -- -a ARC-Easy
 """
 
-import argparse
+from dataclasses import asdict
 from functools import partial
 from typing import cast
-
 import torch
 import torch.distributed as dist
 
 from nanochat.common import autodetect_device_type, compute_cleanup, compute_init, get_dist_info, print0
+from nanochat.config import Config
 from nanochat.evaluation.engine import Engine
 from nanochat.tasks.arc import ARC
 from nanochat.tasks.base import Task
@@ -23,7 +23,8 @@ from nanochat.tasks.gsm8k import GSM8K
 from nanochat.tasks.humaneval import HumanEval
 from nanochat.tasks.mmlu import MMLU
 from nanochat.tasks.spellingbee import SpellingBee
-from nanochat.training.checkpoint import load_model
+from nanochat.training.checkpoint import load_model_from_dir
+from nanochat.report import get_report
 
 # -----------------------------------------------------------------------------
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
@@ -223,11 +224,7 @@ def evaluate_chat_model(
     top_k: int = 50,
     max_problems: int | None = None,
 ):
-    """Evaluate chat model on task suite.
-
-    Returns:
-        dict: Task results with accuracies
-    """
+    """Evaluate chat model on all or selected tasks, return per-task accuracies."""
     results = {}
     for task_name in task_names:
         acc = run_chat_eval(
@@ -247,42 +244,24 @@ def evaluate_chat_model(
     return results
 
 
-def build_parser():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-i", "--source", type=str, required=True, help="Source of the model: sft|rl")
-    parser.add_argument(
-        "-a",
-        "--task-name",
-        type=str,
-        default=None,
-        help="Task name. Default = all tasks. Use | to split multiple tasks.",
-    )
-    parser.add_argument("-t", "--temperature", type=float, default=0.0)
-    parser.add_argument("-m", "--max-new-tokens", type=int, default=512)
-    parser.add_argument("-n", "--num-samples", type=int, default=1)
-    parser.add_argument("-k", "--top-k", type=int, default=50)
-    parser.add_argument("-b", "--batch-size", type=int, default=8, help="Batch size for categorical evaluation")
-    parser.add_argument("-g", "--model-tag", type=str, default=None, help="Model tag to load")
-    parser.add_argument("-s", "--step", type=int, default=None, help="Step to load")
-    parser.add_argument("-x", "--max-problems", type=int, default=None, help="Max problems to evaluate")
-    parser.add_argument(
-        "--device-type",
-        type=str,
-        default="",
-        choices=["cuda", "cpu", "mps"],
-        help="Device type for evaluation: cuda|cpu|mps. empty => autodetect",
-    )
-
-    return parser
-
-def main():
-    parser = build_parser()
-    args = parser.parse_args()
-
-    device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+def chat_eval(
+    config: Config,
+    source: str,
+    task_name: str | None = None,
+    temperature: float = 0.0,
+    max_new_tokens: int = 512,
+    num_samples: int = 1,
+    top_k: int = 50,
+    batch_size: int = 8,
+    model_tag: str | None = None,
+    step: int | None = None,
+    max_problems: int | None = None,
+) -> None:
+    """Run chat model evaluation and log results to report.""" 
+    device_type = autodetect_device_type() if config.common.device_type == "" else config.common.device_type
     _, _, _, _, device = compute_init(device_type)
 
-    model, tokenizer, _ = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
+    model, tokenizer, _ = load_model_from_dir(base_dir=config.common.base_dir, phase=source, device=device, model_tag=model_tag, step=step)
     engine = Engine(model, tokenizer)
 
     # Get the tasks to evaluate on
@@ -295,7 +274,7 @@ def main():
         "HumanEval": 0.0,  # open-ended => 0%
         "SpellingBee": 0.0,  # open-ended => 0%
     }
-    task_names = all_tasks if args.task_name is None else args.task_name.split("|")
+    task_names = all_tasks if task_name is None else task_name.split("|")
 
     # Run all the task evaluations sequentially
     results = evaluate_chat_model(
@@ -304,16 +283,13 @@ def main():
         engine=engine,
         task_names=task_names,
         device=device,
-        batch_size=args.batch_size,
-        num_samples=args.num_samples,
-        max_new_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-        top_k=args.top_k,
-        max_problems=args.max_problems,
+        batch_size=batch_size,
+        num_samples=num_samples,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_k=top_k,
+        max_problems=max_problems,
     )
-
-    # Log to report
-    from nanochat.report import get_report
 
     all_tasks_were_evaluated = all(task_name in results for task_name in all_tasks)
     # calculate the ChatCORE metric if we can (similar to CORE, it's the mean centered accuracy)
@@ -327,17 +303,25 @@ def main():
             centered_mean += centered_acc
         chatcore_metric = centered_mean / len(results)
         chatcore_metric_dict = {"ChatCORE metric": chatcore_metric}
-    get_report().log(
-        section="Chat evaluation " + args.source,
+    get_report(base_dir=config.common.base_dir).log(
+        section="Chat evaluation " + source,
         data=[
-            vars(args),  # CLI args
+            asdict(config),
+            {
+                "source": source,
+                "task_name": task_name,
+                "temperature": temperature,
+                "max_new_tokens": max_new_tokens,
+                "num_samples": num_samples,
+                "top_k": top_k,
+                "batch_size": batch_size,
+                "model_tag": model_tag,
+                "step": step,
+                "max_problems": max_problems,
+            },
             results,
             chatcore_metric_dict,
         ],
     )
 
     compute_cleanup()
-
-
-if __name__ == "__main__":
-    main()
