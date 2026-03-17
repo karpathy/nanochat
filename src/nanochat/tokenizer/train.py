@@ -1,13 +1,16 @@
 """BPE tokenizer training and token-bytes cache generation, in the style of GPT-4 tokenizer.."""
+
 import os
 import time
 from dataclasses import asdict
+
 import torch
-from nanochat.config import Config
+
 from nanochat.common import tokenizer_dir as get_tokenizer_dir
+from nanochat.config import Config
 from nanochat.dataset import parquets_iter_batched
-from nanochat.tokenizer.rust_tokenizer import RustBPETokenizer
 from nanochat.report import get_report
+from nanochat.tokenizer.rust_tokenizer import RustBPETokenizer
 
 
 def tokenizer_train(config: Config) -> None:
@@ -102,6 +105,7 @@ def tokenizer_train(config: Config) -> None:
         ],
     )
 
+
 def _sanity_check(tokenizer):
     test_text = """Hello world! This is a test.
 Numbers: 123, 4567, 89
@@ -111,5 +115,3 @@ Unicode: 你好世界 🌍"""
     encoded = tokenizer.encode(test_text)
     decoded = tokenizer.decode(encoded)
     assert decoded == test_text
-
-

@@ -12,9 +12,9 @@ from typing import cast
 import torch
 
 from nanochat.common import checkpoint_dir
-from nanochat.tokenizer import get_tokenizer
 from nanochat.models.config import GPTConfig
 from nanochat.models.gpt import GPT
+from nanochat.tokenizer import get_tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,14 @@ def _patch_missing_keys(model_data: dict[str, object], model_config: GPTConfig) 
         log0("Patching missing x0_lambdas in model data to 0.0")
 
 
-def save_checkpoint(checkpoint_dir: str, step: int, model_data: dict[str, object], optimizer_data: dict[str, object] | None, meta_data: dict[str, object], rank: int = 0) -> None:
+def save_checkpoint(
+    checkpoint_dir: str,
+    step: int,
+    model_data: dict[str, object],
+    optimizer_data: dict[str, object] | None,
+    meta_data: dict[str, object],
+    rank: int = 0,
+) -> None:
     if rank == 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
         # Save the model state parameters
@@ -65,7 +72,9 @@ def save_checkpoint(checkpoint_dir: str, step: int, model_data: dict[str, object
         logger.info(f"Saved optimizer state to: {optimizer_path}")
 
 
-def load_checkpoint(checkpoint_dir: str, step: int, device: torch.device, load_optimizer: bool = False, rank: int = 0) -> tuple[dict[str, object], dict[str, object] | None, dict[str, object]]:
+def load_checkpoint(
+    checkpoint_dir: str, step: int, device: torch.device, load_optimizer: bool = False, rank: int = 0
+) -> tuple[dict[str, object], dict[str, object] | None, dict[str, object]]:
     # Load the model state
     model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
     model_data = torch.load(model_path, map_location=device)
@@ -81,7 +90,9 @@ def load_checkpoint(checkpoint_dir: str, step: int, device: torch.device, load_o
     return model_data, optimizer_data, meta_data
 
 
-def build_model(checkpoint_dir: str, step: int, device: torch.device, phase: str) -> tuple[GPT, object, dict[str, object]]:
+def build_model(
+    checkpoint_dir: str, step: int, device: torch.device, phase: str
+) -> tuple[GPT, object, dict[str, object]]:
     """
     A bunch of repetitive code to build a model from a given checkpoint.
     Returns:
@@ -154,7 +165,9 @@ def find_last_step(checkpoint_dir: str) -> int:
 # convenience functions that take into account nanochat's directory structure
 
 
-def load_model_from_dir(base_dir: str, phase: str, device: torch.device, model_tag: str | None = None, step: int | None = None) -> tuple[GPT, object, dict[str, object]]:
+def load_model_from_dir(
+    base_dir: str, phase: str, device: torch.device, model_tag: str | None = None, step: int | None = None
+) -> tuple[GPT, object, dict[str, object]]:
     phase_dir = checkpoint_dir(base_dir, phase)
     if model_tag is None:
         model_tag = find_largest_model(phase_dir)
@@ -171,7 +184,9 @@ def load_model(base_dir: str, source: str, *args: object, **kwargs: object) -> t
     return load_model_from_dir(base_dir, source, *args, **kwargs)
 
 
-def load_optimizer_state(base_dir: str, source: str, device: torch.device, rank: int, model_tag: str | None = None, step: int | None = None) -> dict[str, object] | None:
+def load_optimizer_state(
+    base_dir: str, source: str, device: torch.device, rank: int, model_tag: str | None = None, step: int | None = None
+) -> dict[str, object] | None:
     """Load just the optimizer shard for a given rank, without re-loading the model."""
     phase_dir = checkpoint_dir(base_dir, source)
     if model_tag is None:

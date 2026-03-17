@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 import torch
 
-
 B_REF = 2**19  # optimal batch size at d12 ~= 524,288 tokens (measured empirically)
 
 
@@ -18,6 +17,7 @@ def get_scaling_params(model: torch.nn.Module) -> int:
 @dataclass
 class TrainingHyperparams:
     """Derived hyperparameters from scaling law computations."""
+
     num_scaling_params: int
     target_tokens: int
     total_batch_size: int

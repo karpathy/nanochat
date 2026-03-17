@@ -1,11 +1,14 @@
 """CLI handlers for `nanochat config` subcommands."""
+
 import argparse
-import tomli_w
 from dataclasses import asdict
 from pathlib import Path
 
+import tomli_w
+
 from nanochat.config.config import Config
 from nanochat.config.loader import ConfigLoader
+
 
 def config_init(args: argparse.Namespace) -> None:
     out = Path(args.output)

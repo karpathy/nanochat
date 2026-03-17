@@ -6,13 +6,11 @@ Functions:
     main: Download dataset shards to the configured base directory.
 """
 
-
 from multiprocessing import Pool
 
-from nanochat.common import download_single_file
 from nanochat.common import data_dir as _data_dir
+from nanochat.common import download_single_file
 from nanochat.config import Config
-
 
 # -----------------------------------------------------------------------------
 # The specifics of the current pretraining dataset
@@ -21,7 +19,6 @@ from nanochat.config import Config
 BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
 MAX_SHARD = 6542  # the last datashard is shard_06542.parquet
 index_to_filename = lambda index: f"shard_{index:05d}.parquet"  # format of the filenames
-
 
 
 def climbmix_download(cfg: Config, num_files: int = -1, num_workers: int = 4) -> None:
@@ -50,13 +47,11 @@ def climbmix_download(cfg: Config, num_files: int = -1, num_workers: int = 4) ->
 
     def download_wrapper(index):
         filename = index_to_filename(index)
-        return download_single_file(data_dir,  f"{BASE_URL}/{filename}", filename)
-    
+        return download_single_file(data_dir, f"{BASE_URL}/{filename}", filename)
+
     with Pool(processes=num_workers) as pool:
         results = pool.map(download_wrapper, ids_to_download)
 
     # Report results
     successful = sum(1 for success in results if success)
     print(f"Done! Downloaded: {successful}/{len(ids_to_download)} shards to {data_dir}")
-
-

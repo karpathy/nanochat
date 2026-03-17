@@ -1,4 +1,5 @@
 """Top-level Config dataclass and SECTION_CLS registry mapping section names to their types."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -40,6 +41,7 @@ class Config:
     @classmethod
     def load(cls, path: Path) -> Config:
         import tomllib
+
         with open(path, "rb") as f:
             data = tomllib.load(f)
         cfg = cls()

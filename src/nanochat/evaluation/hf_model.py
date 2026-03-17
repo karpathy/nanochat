@@ -36,6 +36,7 @@ def load_hf_model(hf_path: str, device: object) -> tuple[object, object]:
     max_seq_len = 1024 if "gpt2" in hf_path else None
     model = ModelWrapper(model, max_seq_len=max_seq_len)
     from nanochat.tokenizer import HuggingFaceTokenizer
+
     tokenizer = HuggingFaceTokenizer.from_pretrained(hf_path)
     return model, tokenizer
 

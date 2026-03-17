@@ -1,4 +1,5 @@
 """Config for supervised fine-tuning (SFT) on chat data."""
+
 from __future__ import annotations
 
 import argparse

@@ -1,4 +1,5 @@
 """Config for BPE tokenizer training."""
+
 from __future__ import annotations
 
 import argparse
@@ -13,9 +14,15 @@ class TokenizerConfig:
 
     @classmethod
     def update_parser(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--vocab-size", type=int, default=argparse.SUPPRESS, help="vocabulary size (default: 32768)")
-        parser.add_argument("--max-chars", type=int, default=argparse.SUPPRESS, help="max characters to train on (default: 2B)")
-        parser.add_argument("--doc-cap", type=int, default=argparse.SUPPRESS, help="max characters per document (default: 10,000)")
+        parser.add_argument(
+            "--vocab-size", type=int, default=argparse.SUPPRESS, help="vocabulary size (default: 32768)"
+        )
+        parser.add_argument(
+            "--max-chars", type=int, default=argparse.SUPPRESS, help="max characters to train on (default: 2B)"
+        )
+        parser.add_argument(
+            "--doc-cap", type=int, default=argparse.SUPPRESS, help="max characters per document (default: 10,000)"
+        )
 
     @classmethod
     def generate_default(cls) -> str:

@@ -5,7 +5,6 @@ Utilities for generating training report cards. More messy code than usual, will
 import datetime
 import os
 import platform
-
 import socket
 import subprocess
 from typing import cast
@@ -247,4 +246,3 @@ def extract_timestamp(content: str, prefix: str) -> datetime.datetime | None:
             except Exception:
                 pass
     return None
-

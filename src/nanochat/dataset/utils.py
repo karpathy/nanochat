@@ -6,20 +6,15 @@ Functions:
     main: Download dataset shards to the configured base directory.
 """
 
-
 import os
-
 
 import pyarrow.parquet as pq
 
-
 from nanochat.common import data_dir as _data_dir
-
-
-
 
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
+
 
 def list_parquet_files(base_dir: str, warn_on_legacy: bool = False) -> list[str]:
     """Looks into a data dir and returns full paths to all parquet files."""
@@ -44,5 +39,3 @@ def parquets_iter_batched(base_dir: str, split: str, start: int = 0, step: int =
             rg = pf.read_row_group(rg_idx)
             texts = rg.column("text").to_pylist()
             yield texts
-
-

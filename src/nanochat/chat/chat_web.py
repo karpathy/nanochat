@@ -33,9 +33,9 @@ Abuse Prevention:
 import logging
 from typing import Optional
 
-from nanochat.config import Config
-from nanochat.common import autodetect_device_type, compute_init
 from nanochat.chat.server import create_app
+from nanochat.common import autodetect_device_type, compute_init
+from nanochat.config import Config
 
 
 def chat_web_server(
@@ -87,6 +87,7 @@ def chat_web_server(
     )
 
     import uvicorn
+
     print("Starting NanoChat Web Server")
     print(f"Temperature: {temperature}, Top-k: {top_k}, Max tokens: {max_tokens}")
     uvicorn.run(app, host=host, port=port)

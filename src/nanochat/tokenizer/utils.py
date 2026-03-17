@@ -5,9 +5,11 @@ import os
 from nanochat.common import tokenizer_dir as _tokenizer_dir
 from nanochat.tokenizer.rust_tokenizer import RustBPETokenizer
 
+
 def get_tokenizer(base_dir: str) -> RustBPETokenizer:
     """Load the trained RustBPETokenizer from the configured base directory."""
     from nanochat.tokenizer.rust_tokenizer import RustBPETokenizer
+
     return RustBPETokenizer.from_directory(_tokenizer_dir(base_dir))
 
 
@@ -18,6 +20,7 @@ def get_token_bytes(base_dir: str, device: str = "cpu"):
     number of UTF-8 bytes in that token (0 for special tokens).
     """
     import torch
+
     tok_dir = _tokenizer_dir(base_dir)
     token_bytes_path = os.path.join(tok_dir, "token_bytes.pt")
     assert os.path.exists(token_bytes_path), (

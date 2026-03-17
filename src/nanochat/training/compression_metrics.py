@@ -53,11 +53,7 @@ class CompressionMetrics:
 
         return entropy
 
-    def compute_conditional_entropy(
-        self,
-        tokens: torch.Tensor,
-        logits: torch.Tensor
-    ) -> float:
+    def compute_conditional_entropy(self, tokens: torch.Tensor, logits: torch.Tensor) -> float:
         """
         Compute conditional entropy H(X|Model).
 
@@ -73,21 +69,14 @@ class CompressionMetrics:
         log_probs = torch.log_softmax(logits, dim=-1)
 
         # Gather log probabilities of actual tokens
-        token_log_probs = log_probs.gather(
-            dim=-1,
-            index=tokens.unsqueeze(-1)
-        ).squeeze(-1)
+        token_log_probs = log_probs.gather(dim=-1, index=tokens.unsqueeze(-1)).squeeze(-1)
 
         # Convert from nats to bits and return average
         conditional_entropy = -token_log_probs.mean().item() / np.log(2)
 
         return conditional_entropy
 
-    def compute_compression_ratio(
-        self,
-        tokens: torch.Tensor,
-        logits: torch.Tensor
-    ) -> float:
+    def compute_compression_ratio(self, tokens: torch.Tensor, logits: torch.Tensor) -> float:
         """
         Compute compression ratio: H(X) / H(X|Model).
 
@@ -104,7 +93,7 @@ class CompressionMetrics:
         conditional_entropy = self.compute_conditional_entropy(tokens, logits)
 
         if conditional_entropy < 1e-6:
-            return float('inf')
+            return float("inf")
 
         compression_ratio = original_entropy / conditional_entropy
         return compression_ratio
@@ -125,11 +114,7 @@ class CompressionMetrics:
         ratio = len(token_bytes) / len(compressed)
         return ratio
 
-    def compute_pattern_diversity(
-        self,
-        activations: torch.Tensor,
-        window_size: int = 5
-    ) -> float:
+    def compute_pattern_diversity(self, activations: torch.Tensor, window_size: int = 5) -> float:
         """
         Count unique activation patterns (n-grams).
 
@@ -151,11 +136,7 @@ class CompressionMetrics:
 
         for b in range(B):
             for t in range(T - window_size + 1):
-                ngram = tuple(
-                    quantized[b, t:t+window_size, :sample_channels]
-                    .flatten()
-                    .tolist()
-                )
+                ngram = tuple(quantized[b, t : t + window_size, :sample_channels].flatten().tolist())
                 ngrams.add(ngram)
 
         total_patterns = B * (T - window_size + 1)
@@ -169,7 +150,7 @@ class CompressionMetrics:
         tokens: torch.Tensor,
         logits: torch.Tensor,
         loss: float,
-        activations: Optional[Dict[str, torch.Tensor]] = None
+        activations: Optional[Dict[str, torch.Tensor]] = None,
     ) -> Dict[str, float]:
         """
         Compute and log all compression metrics.
@@ -185,22 +166,22 @@ class CompressionMetrics:
             Dictionary of computed metrics
         """
         metrics = {
-            'step': step,
-            'loss': loss,
-            'entropy': self.compute_entropy(tokens),
-            'conditional_entropy': self.compute_conditional_entropy(tokens, logits),
-            'compression_ratio': self.compute_compression_ratio(tokens, logits),
-            'gzip_compression': self.compute_gzip_compression(tokens),
+            "step": step,
+            "loss": loss,
+            "entropy": self.compute_entropy(tokens),
+            "conditional_entropy": self.compute_conditional_entropy(tokens, logits),
+            "compression_ratio": self.compute_compression_ratio(tokens, logits),
+            "gzip_compression": self.compute_gzip_compression(tokens),
         }
 
         # Add pattern diversity if activations provided
         if activations:
             for layer_name, acts in activations.items():
                 if acts.dim() == 3:  # (B, T, C)
-                    metrics[f'{layer_name}_diversity'] = self.compute_pattern_diversity(acts)
+                    metrics[f"{layer_name}_diversity"] = self.compute_pattern_diversity(acts)
 
         # Compression efficiency: compression per unit loss
-        metrics['compression_efficiency'] = metrics['compression_ratio'] / max(loss, 1e-6)
+        metrics["compression_efficiency"] = metrics["compression_ratio"] / max(loss, 1e-6)
 
         self.history.append(metrics)
         return metrics
@@ -218,8 +199,8 @@ class CompressionMetrics:
         if len(self.history) < window * 2:
             return False
 
-        recent = [h['compression_ratio'] for h in self.history[-window:]]
-        previous = [h['compression_ratio'] for h in self.history[-2*window:-window]]
+        recent = [h["compression_ratio"] for h in self.history[-window:]]
+        previous = [h["compression_ratio"] for h in self.history[-2 * window : -window]]
 
         recent_mean = np.mean(recent)
         previous_mean = np.mean(previous)
@@ -239,14 +220,14 @@ class CompressionMetrics:
         if not self.history:
             return {}
 
-        compression_ratios = [h['compression_ratio'] for h in self.history]
-        efficiencies = [h['compression_efficiency'] for h in self.history]
+        compression_ratios = [h["compression_ratio"] for h in self.history]
+        efficiencies = [h["compression_efficiency"] for h in self.history]
 
         return {
-            'compression_ratio_mean': np.mean(compression_ratios),
-            'compression_ratio_std': np.std(compression_ratios),
-            'compression_ratio_min': np.min(compression_ratios),
-            'compression_ratio_max': np.max(compression_ratios),
-            'compression_efficiency_mean': np.mean(efficiencies),
-            'compression_efficiency_std': np.std(efficiencies),
+            "compression_ratio_mean": np.mean(compression_ratios),
+            "compression_ratio_std": np.std(compression_ratios),
+            "compression_ratio_min": np.min(compression_ratios),
+            "compression_ratio_max": np.max(compression_ratios),
+            "compression_efficiency_mean": np.mean(efficiencies),
+            "compression_efficiency_std": np.std(efficiencies),
         }

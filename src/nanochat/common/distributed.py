@@ -64,9 +64,7 @@ def compute_init(device_type: str = "cuda") -> Tuple[bool, int, int, int, torch.
         torch.cuda.manual_seed(42)
 
     if device_type == "cuda":
-        torch.set_float32_matmul_precision(
-            "high"
-        )  # uses tf32 instead of fp32 for matmuls
+        torch.set_float32_matmul_precision("high")  # uses tf32 instead of fp32 for matmuls
 
     is_ddp_requested, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     if is_ddp_requested and device_type == "cuda":

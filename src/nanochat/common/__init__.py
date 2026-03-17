@@ -10,14 +10,21 @@ from nanochat.common.distributed import (
 )
 from nanochat.common.dtype import get_compute_dtype, get_compute_dtype_reason
 from nanochat.common.hardware import get_device_sync, get_peak_flops
-from nanochat.common.io import download_file_with_lock, print0, print_banner, download_single_file
+from nanochat.common.io import download_file_with_lock, download_single_file, print0, print_banner
 from nanochat.common.logging import ColoredFormatter, setup_default_logging
+from nanochat.common.paths import (
+    checkpoint_dir,
+    data_dir,
+    eval_results_dir,
+    eval_tasks_dir,
+    get_default_base_dir,
+    identity_data_path,
+    legacy_data_dir,
+    report_dir,
+    root_data_dir,
+    tokenizer_dir,
+)
 from nanochat.common.wandb import DummyWandb, LocalWandb, init_wandb
-from nanochat.common.paths import (get_default_base_dir,
-    root_data_dir,data_dir,
-    legacy_data_dir, eval_tasks_dir,eval_results_dir,
-    tokenizer_dir, checkpoint_dir,
-    identity_data_path, report_dir)
 
 __all__ = [
     # dtype
@@ -47,9 +54,13 @@ __all__ = [
     "init_wandb",
     # paths
     "get_default_base_dir",
-    "root_data_dir","data_dir",
-    "legacy_data_dir", "eval_tasks_dir","eval_results_dir",
-    "tokenizer_dir", "checkpoint_dir",
+    "root_data_dir",
+    "data_dir",
+    "legacy_data_dir",
+    "eval_tasks_dir",
+    "eval_results_dir",
+    "tokenizer_dir",
+    "checkpoint_dir",
     "identity_data_path",
-    "report_dir"
+    "report_dir",
 ]

@@ -29,14 +29,21 @@ def place_eval_bundle(base_dir: str, file_path: str) -> None:
     print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
 
-def evaluate_core(base_dir: str, model: object, tokenizer: object, device: object, max_per_task: int = -1) -> Mapping[str, object]:
+def evaluate_core(
+    base_dir: str, model: object, tokenizer: object, device: object, max_per_task: int = -1
+) -> Mapping[str, object]:
     """
     Evaluate a model on the CORE benchmark.
     Returns dict with results, centered_results, and core_metric.
     """
     eval_bundle_dir = eval_tasks_dir(base_dir)
     if not os.path.exists(eval_bundle_dir):
-        download_file_with_lock(base_dir, EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=lambda file_path: place_eval_bundle(base_dir, file_path))
+        download_file_with_lock(
+            base_dir,
+            EVAL_BUNDLE_URL,
+            "eval_bundle.zip",
+            postprocess_fn=lambda file_path: place_eval_bundle(base_dir, file_path),
+        )
 
     config_path = os.path.join(eval_bundle_dir, "core.yaml")
     data_base_path = os.path.join(eval_bundle_dir, "eval_data")

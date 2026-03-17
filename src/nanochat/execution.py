@@ -214,7 +214,9 @@ def reliability_guard(maximum_memory_bytes: Optional[int] = None):
     sys.modules["tkinter"] = None
 
 
-def _unsafe_execute(code: str, timeout: float, maximum_memory_bytes: Optional[int], result_dict: dict[str, object]) -> None:
+def _unsafe_execute(
+    code: str, timeout: float, maximum_memory_bytes: Optional[int], result_dict: dict[str, object]
+) -> None:
     """Execute code in a subprocess with safety guards. Results are written to result_dict."""
     with create_tempdir():
         # These system calls are needed when cleaning up tempdir.

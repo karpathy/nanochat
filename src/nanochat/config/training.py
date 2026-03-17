@@ -1,4 +1,5 @@
 """Config for base model pre-training (architecture, optimizer, schedule, eval)."""
+
 from __future__ import annotations
 
 import argparse
@@ -12,10 +13,14 @@ class TrainingConfig:
     def update_parser(cls, parser: argparse.ArgumentParser) -> None:
         # Model architecture
         parser.add_argument("--depth", type=int, default=argparse.SUPPRESS)
-        parser.add_argument("--aspect-ratio", type=int, default=argparse.SUPPRESS, help="model_dim = depth * aspect_ratio")
+        parser.add_argument(
+            "--aspect-ratio", type=int, default=argparse.SUPPRESS, help="model_dim = depth * aspect_ratio"
+        )
         parser.add_argument("--head-dim", type=int, default=argparse.SUPPRESS)
         parser.add_argument("--max-seq-len", type=int, default=argparse.SUPPRESS)
-        parser.add_argument("--window-pattern", type=str, default=argparse.SUPPRESS, help="L=full, S=half context, tiled")
+        parser.add_argument(
+            "--window-pattern", type=str, default=argparse.SUPPRESS, help="L=full, S=half context, tiled"
+        )
         # Training horizon
         parser.add_argument("--num-iterations", type=int, default=argparse.SUPPRESS, help="-1 = disabled")
         parser.add_argument("--target-flops", type=float, default=argparse.SUPPRESS, help="-1 = disabled")

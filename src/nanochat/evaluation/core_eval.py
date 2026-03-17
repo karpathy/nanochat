@@ -17,7 +17,9 @@ from jinja2 import Template
 # Prompt rendering utilities
 
 
-def render_prompts_mc(item: dict[str, object], continuation_delimiter: str, fewshot_examples: list[dict[str, object]] | None = None) -> list[str]:
+def render_prompts_mc(
+    item: dict[str, object], continuation_delimiter: str, fewshot_examples: list[dict[str, object]] | None = None
+) -> list[str]:
     """Render complete prompts for a multiple choice question"""
     template_str = """
 {%- for example in fewshot_examples -%}
@@ -32,7 +34,9 @@ def render_prompts_mc(item: dict[str, object], continuation_delimiter: str, fews
     return prompts
 
 
-def render_prompts_schema(item: dict[str, object], continuation_delimiter: str, fewshot_examples: list[dict[str, object]] | None = None) -> list[str]:
+def render_prompts_schema(
+    item: dict[str, object], continuation_delimiter: str, fewshot_examples: list[dict[str, object]] | None = None
+) -> list[str]:
     """Render complete prompts for a schema question"""
     template_str = """
 {%- for example in fewshot_examples -%}
@@ -43,11 +47,16 @@ def render_prompts_schema(item: dict[str, object], continuation_delimiter: str, 
     template = Template(template_str)
     fewshot_examples = fewshot_examples or []
     context = {"fewshot_examples": fewshot_examples, "continuation_delimiter": continuation_delimiter, "item": item}
-    prompts = [template.render(context=context_option, **context) for context_option in cast(list[object], item["context_options"])]
+    prompts = [
+        template.render(context=context_option, **context)
+        for context_option in cast(list[object], item["context_options"])
+    ]
     return prompts
 
 
-def render_prompts_lm(item: dict[str, object], continuation_delimiter: str, fewshot_examples: list[dict[str, object]] | None = None) -> list[str]:
+def render_prompts_lm(
+    item: dict[str, object], continuation_delimiter: str, fewshot_examples: list[dict[str, object]] | None = None
+) -> list[str]:
     """
     Render complete prompt for a language modeling task.
     Notice that we manually trim the context in the template,
@@ -150,7 +159,14 @@ def forward_model(model: object, input_ids: torch.Tensor) -> tuple[torch.Tensor,
 
 
 @torch.no_grad()
-def evaluate_example(idx: int, model: object, tokenizer: object, data: list[dict[str, object]], device: torch.device, task_meta: dict[str, object]) -> bool:
+def evaluate_example(
+    idx: int,
+    model: object,
+    tokenizer: object,
+    data: list[dict[str, object]],
+    device: torch.device,
+    task_meta: dict[str, object],
+) -> bool:
     """Evaluate a single example, return True if correct, False otherwise"""
     item = data[idx]
     task_type = task_meta["task_type"]
@@ -225,7 +241,9 @@ def evaluate_example(idx: int, model: object, tokenizer: object, data: list[dict
     return bool(is_correct)
 
 
-def evaluate_task(model: object, tokenizer: object, data: list[dict[str, object]], device: torch.device, task_meta: dict[str, object]) -> float:
+def evaluate_task(
+    model: object, tokenizer: object, data: list[dict[str, object]], device: torch.device, task_meta: dict[str, object]
+) -> float:
     """
     This function is responsible for evaluating one task across many examples.
     It also handles dispatch to all processes if the script is run with torchrun.

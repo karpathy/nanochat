@@ -15,31 +15,30 @@ import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import time
+from dataclasses import asdict
 
 import torch
 import torch.distributed as dist
-from dataclasses import asdict
 
 from nanochat.common import (
     autodetect_device_type,
+    checkpoint_dir,
     compute_cleanup,
     compute_init,
     get_compute_dtype,
     get_compute_dtype_reason,
     get_device_sync,
     get_peak_flops,
+    init_wandb,
     is_ddp_initialized,
     print0,
-    init_wandb,
     print_banner,
-    checkpoint_dir,
 )
+from nanochat.common.flash_attention import HAS_FA3
 from nanochat.config import Config
 from nanochat.evaluation.chat_eval import run_chat_eval
-from nanochat.tokenizer import get_token_bytes
 from nanochat.evaluation.engine import Engine
 from nanochat.evaluation.loss_eval import evaluate_bpb
-from nanochat.common.flash_attention import HAS_FA3
 from nanochat.report import get_report
 from nanochat.tasks.base import TaskMixture
 from nanochat.tasks.customjson import CustomJSON
@@ -47,13 +46,14 @@ from nanochat.tasks.gsm8k import GSM8K
 from nanochat.tasks.mmlu import MMLU
 from nanochat.tasks.smoltalk import SmolTalk
 from nanochat.tasks.spellingbee import SimpleSpelling, SpellingBee
-from nanochat.training.checkpoint import load_optimizer_state, save_checkpoint, load_model_from_dir
+from nanochat.tokenizer import get_token_bytes
+from nanochat.training.checkpoint import load_model_from_dir, load_optimizer_state, save_checkpoint
 from nanochat.training.schedulers import create_muon_momentum_scheduler
 
 
-def train_sft(config:Config):
+def train_sft(config: Config):
     print_banner()
-    user_config=asdict(config)
+    user_config = asdict(config)
     base_dir = config.common.base_dir
     # -----------------------------------------------------------------------------
 
@@ -71,16 +71,18 @@ def train_sft(config:Config):
 
     # wandb logging init
     master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
-    wandb_run = init_wandb(config,master_process=master_process, project_suffix="sft", user_config=user_config)
-
+    wandb_run = init_wandb(config, master_process=master_process, project_suffix="sft", user_config=user_config)
 
     # Flash Attention status
     if not HAS_FA3:
-        print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback. Training will be less efficient.")
+        print0(
+            "WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback. Training will be less efficient."
+        )
 
     # Load the model and tokenizer
-    model, tokenizer, meta = load_model_from_dir(base_dir=base_dir, device=device, phase="train", model_tag=config.sft.model_tag, step=config.sft.model_step)
-
+    model, tokenizer, meta = load_model_from_dir(
+        base_dir=base_dir, device=device, phase="train", model_tag=config.sft.model_tag, step=config.sft.model_step
+    )
 
     # Inherit training hyperparameters from pretrained checkpoint (None = inherit, explicit value = override)
     pretrain_user_config = meta.get("user_config", {})
@@ -111,7 +113,9 @@ def train_sft(config:Config):
     world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size  # total tokens per iteration for all ranks
     assert config.sft.total_batch_size % world_tokens_per_fwdbwd == 0
     grad_accum_steps = config.sft.total_batch_size // world_tokens_per_fwdbwd
-    print0(f"Tokens / micro-batch / rank: {config.sft.device_batch_size} x {config.sft.max_seq_len} = {tokens_per_fwdbwd:,}")
+    print0(
+        f"Tokens / micro-batch / rank: {config.sft.device_batch_size} x {config.sft.max_seq_len} = {tokens_per_fwdbwd:,}"
+    )
     print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
     print0(f"Total batch size {config.sft.total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
     token_bytes = get_token_bytes(base_dir=config.common.base_dir, device=device)
@@ -119,16 +123,26 @@ def train_sft(config:Config):
     # Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
     # Note that pretraining ramps weight_decay to zero by end of pretraining, so SFT continues with zero
     optimizer = model.setup_optimizer(
-        unembedding_lr=config.sft.unembedding_lr, embedding_lr=config.sft.embedding_lr, matrix_lr=config.sft.matrix_lr, weight_decay=0.0
+        unembedding_lr=config.sft.unembedding_lr,
+        embedding_lr=config.sft.embedding_lr,
+        matrix_lr=config.sft.matrix_lr,
+        weight_decay=0.0,
     )
 
     # Optionally warm-start optimizer from pretrained checkpoint (momentum buffers etc.)
     # Note: load_state_dict overwrites param_group metadata (LRs, betas, etc.) with the
     # pretrained values. Since pretraining warmdown brings LRs to ~0, we must save and
     # restore our fresh SFT LRs after loading.
-    
+
     if config.sft.load_optimizer:
-        optimizer_data = load_optimizer_state(base_dir=config.common.base_dir, model_name="base", device=device, rank=ddp_rank, model_tag=config.sft.model_tag, step=config.sft.model_step)
+        optimizer_data = load_optimizer_state(
+            base_dir=config.common.base_dir,
+            model_name="base",
+            device=device,
+            rank=ddp_rank,
+            model_tag=config.sft.model_tag,
+            step=config.sft.model_step,
+        )
         if optimizer_data is not None:
             base_lrs = [group["lr"] for group in optimizer.param_groups]
             optimizer.load_state_dict(optimizer_data)
@@ -161,12 +175,18 @@ def train_sft(config:Config):
         SpellingBee(size=80000, split="train"),  # 80K rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
     ]
     train_dataset = TaskMixture(train_tasks)
-    print0(f"Training mixture: {len(train_dataset):,} rows (MMLU x{config.sft.mmlu_epochs}, GSM8K x{config.sft.gsm8k_epochs})")
+    print0(
+        f"Training mixture: {len(train_dataset):,} rows (MMLU x{config.sft.mmlu_epochs}, GSM8K x{config.sft.gsm8k_epochs})"
+    )
     val_dataset = TaskMixture(
         [
             SmolTalk(split="test"),  # 24K rows in test set
-            MMLU(subset="all", split="test", stop=5200),  # 14K rows in test set, use only 5.2K to match the train ratios
-            GSM8K(subset="main", split="test", stop=420),  # 1.32K rows in test set, use only 420 to match the train ratios
+            MMLU(
+                subset="all", split="test", stop=5200
+            ),  # 14K rows in test set, use only 5.2K to match the train ratios
+            GSM8K(
+                subset="main", split="test", stop=420
+            ),  # 1.32K rows in test set, use only 420 to match the train ratios
         ]
     )  # total: 24K + 14K + 1.32K ~= 39K rows
     # DataLoader is defined here, it emits inputs, targets : 2D tensors of shape (device_batch_size, max_seq_len)
@@ -175,7 +195,6 @@ def train_sft(config:Config):
     last_step = False  # we will toggle this to True when we reach the end of the training dataset
     approx_progress = 0.0  # will go from 0 to 1 over the course of the epoch
     current_epoch = 1  # track epoch for logging
-
 
     def sft_data_generator_bos_bestfit(split: str, buffer_size: int = 100):
         """
@@ -298,11 +317,9 @@ def train_sft(config:Config):
 
             yield inputs, targets
 
-
     train_loader = sft_data_generator_bos_bestfit("train")
     build_val_loader = lambda: sft_data_generator_bos_bestfit("val")
     progress = 0  # will go from 0 to 1 over the course of the epoch
-
 
     # Learning rate schedule (linear warmup, constant, linear warmdown)
     # Same shape as base_train but uses progress (0→1) instead of absolute step counts,
@@ -316,9 +333,7 @@ def train_sft(config:Config):
             decay = (progress - (1.0 - config.sft.warmdown_ratio)) / config.sft.warmdown_ratio
             return (1 - decay) * 1.0 + decay * config.sft.final_lr_frac
 
-
     get_muon_momentum = create_muon_momentum_scheduler()
-
 
     # -----------------------------------------------------------------------------
     # Training loop
@@ -342,7 +357,9 @@ def train_sft(config:Config):
         if last_step or (config.sft.eval_every > 0 and step % config.sft.eval_every == 0):
             model.eval()
             val_loader = build_val_loader()
-            eval_steps = config.sft.eval_tokens // (config.sft.device_batch_size * config.sft.max_seq_len * ddp_world_size)
+            eval_steps = config.sft.eval_tokens // (
+                config.sft.device_batch_size * config.sft.max_seq_len * ddp_world_size
+            )
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
             print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
             if val_bpb < min_val_bpb:
@@ -374,10 +391,17 @@ def train_sft(config:Config):
             }
             task_results = {}
             for task_name in all_tasks:
-                limit = config.sft.chatcore_max_cat if task_name in categorical_tasks else config.sft.chatcore_max_sample
+                limit = (
+                    config.sft.chatcore_max_cat if task_name in categorical_tasks else config.sft.chatcore_max_sample
+                )
                 max_problems = None if limit < 0 else limit  # -1 means no limit
                 acc = run_chat_eval(
-                    task_name, orig_model, tokenizer, engine, batch_size=config.sft.device_batch_size, max_problems=max_problems
+                    task_name,
+                    orig_model,
+                    tokenizer,
+                    engine,
+                    batch_size=config.sft.device_batch_size,
+                    max_problems=max_problems,
                 )
                 task_results[task_name] = acc
                 print0(f"  {task_name}: {100 * acc:.2f}%")

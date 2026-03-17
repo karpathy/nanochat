@@ -332,7 +332,9 @@ class GPT(nn.Module):
             f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         )
         assert idx.device == self.cos.device, "Rotary embeddings and idx are on different devices"
-        assert self.cos.dtype == get_compute_dtype(), f"Rotary embeddings must be in {get_compute_dtype()}, got {self.cos.dtype}"
+        assert self.cos.dtype == get_compute_dtype(), (
+            f"Rotary embeddings must be in {get_compute_dtype()}, got {self.cos.dtype}"
+        )
 
         # Offset rotary embeddings if using KV cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()

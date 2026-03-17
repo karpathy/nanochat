@@ -5,21 +5,21 @@ import logging
 import os
 import random
 from dataclasses import dataclass
-from typing import AsyncGenerator, Callable, Optional
+from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from nanochat.chat.server.constants import (
-    MAX_MESSAGES_PER_REQUEST,
-    MAX_MESSAGE_LENGTH,
-    MAX_TOTAL_CONVERSATION_LENGTH,
-    MIN_TEMPERATURE,
-    MAX_TEMPERATURE,
-    MIN_TOP_K,
-    MAX_TOP_K,
-    MIN_MAX_TOKENS,
     MAX_MAX_TOKENS,
+    MAX_MESSAGE_LENGTH,
+    MAX_MESSAGES_PER_REQUEST,
+    MAX_TEMPERATURE,
+    MAX_TOP_K,
+    MAX_TOTAL_CONVERSATION_LENGTH,
+    MIN_MAX_TOKENS,
+    MIN_TEMPERATURE,
+    MIN_TOP_K,
 )
 from nanochat.chat.server.models import ChatRequest
 from nanochat.chat.server.worker_pool import Worker
@@ -63,9 +63,7 @@ def validate_chat_request(request: ChatRequest) -> None:
 
     for i, message in enumerate(request.messages):
         if message.role not in ["user", "assistant"]:
-            raise HTTPException(
-                status_code=400, detail=f"Message {i} has invalid role. Must be 'user' or 'assistant'"
-            )
+            raise HTTPException(status_code=400, detail=f"Message {i} has invalid role. Must be 'user' or 'assistant'")
 
     if request.temperature is not None and not (MIN_TEMPERATURE <= request.temperature <= MAX_TEMPERATURE):
         raise HTTPException(
@@ -76,9 +74,7 @@ def validate_chat_request(request: ChatRequest) -> None:
         raise HTTPException(status_code=400, detail=f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}")
 
     if request.max_tokens is not None and not (MIN_MAX_TOKENS <= request.max_tokens <= MAX_MAX_TOKENS):
-        raise HTTPException(
-            status_code=400, detail=f"max_tokens must be between {MIN_MAX_TOKENS} and {MAX_MAX_TOKENS}"
-        )
+        raise HTTPException(status_code=400, detail=f"max_tokens must be between {MIN_MAX_TOKENS} and {MAX_MAX_TOKENS}")
 
 
 async def generate_stream(
@@ -113,7 +109,7 @@ async def generate_stream(
         accumulated_tokens.append(token)
         current_text = worker.tokenizer.decode(accumulated_tokens)
         if not current_text.endswith("\ufffd"):
-            new_text = current_text[len(last_clean_text):]
+            new_text = current_text[len(last_clean_text) :]
             if new_text:
                 yield f"data: {json.dumps({'token': new_text, 'gpu': worker.gpu_id}, ensure_ascii=False)}\n\n"
                 last_clean_text = current_text

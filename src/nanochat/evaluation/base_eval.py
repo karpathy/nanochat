@@ -23,8 +23,6 @@ Examples:
 import os
 from typing import cast
 
-import torch
-
 from nanochat.common import (
     autodetect_device_type,
     compute_cleanup,
@@ -33,20 +31,21 @@ from nanochat.common import (
     print0,
 )
 from nanochat.config import Config
-from nanochat.tokenizer import get_token_bytes
 from nanochat.evaluation.core_benchmark import evaluate_core
 from nanochat.evaluation.engine import Engine
-from nanochat.evaluation.hf_model import load_hf_model, get_hf_token_bytes
+from nanochat.evaluation.hf_model import get_hf_token_bytes, load_hf_model
 from nanochat.evaluation.loss_eval import evaluate_bpb
+from nanochat.report import get_report
+from nanochat.tokenizer import get_token_bytes
 from nanochat.training.checkpoint import load_model_from_dir
 from nanochat.training.dataloader import tokenizing_distributed_data_loader_bos_bestfit
-from nanochat.report import get_report
 
 # -----------------------------------------------------------------------------
 # base_eval
 
-def base_eval(config:Config):
-    base_dir=config.common.base_dir
+
+def base_eval(config: Config):
+    base_dir = config.common.base_dir
 
     # Parse evaluation modes
     eval_modes = set(mode.strip() for mode in config.evaluation.modes.split(","))
@@ -63,9 +62,15 @@ def base_eval(config:Config):
         model_name = config.evaluation.hf_path
         model_slug = config.evaluation.hf_path.replace("/", "-")
     else:
-        model, tokenizer, meta = load_model_from_dir(base_dir=base_dir, phase="base", device=device, model_tag=config.evaluation.model_tag, step=config.evaluation.step)
+        model, tokenizer, meta = load_model_from_dir(
+            base_dir=base_dir,
+            phase="base",
+            device=device,
+            model_tag=config.evaluation.model_tag,
+            step=config.evaluation.step,
+        )
         sequence_len = cast(int, cast(dict[str, object], meta["model_config"])["sequence_len"])
-        token_bytes = get_token_bytes(base_dir=base_dir,device=device)
+        token_bytes = get_token_bytes(base_dir=base_dir, device=device)
         model_name = f"base_model (step {cast(int, meta['step'])})"
         model_slug = f"base_model_{cast(int, meta['step']):06d}"
 
@@ -123,12 +128,14 @@ def base_eval(config:Config):
         if config.evaluation.split_tokens % tokens_per_step != 0:
             # Adjust to nearest multiple
             config.evaluation.split_tokens = (config.evaluation.split_tokens // tokens_per_step) * tokens_per_step
-            print0(f"Adjusted split_tokens to {config.evaluation.split_tokens} (must be divisible by {tokens_per_step})")
+            print0(
+                f"Adjusted split_tokens to {config.evaluation.split_tokens} (must be divisible by {tokens_per_step})"
+            )
         steps = config.evaluation.split_tokens // tokens_per_step
 
         for split_name in ["train", "val"]:
-            loader = tokenizing_distributed_data_loader_bos_bestfit(base_dir,
-                tokenizer, config.evaluation.device_batch_size, sequence_len, split_name, device=device
+            loader = tokenizing_distributed_data_loader_bos_bestfit(
+                base_dir, tokenizer, config.evaluation.device_batch_size, sequence_len, split_name, device=device
             )
             bpb = evaluate_bpb(model, loader, steps, token_bytes)
             bpb_results[split_name] = bpb
@@ -139,11 +146,16 @@ def base_eval(config:Config):
         print0("\n" + "=" * 80)
         print0("CORE Evaluation")
         print0("=" * 80)
-        core_results = evaluate_core(base_dir=base_dir, model=model, tokenizer=tokenizer, device=device, max_per_task=config.evaluation.max_per_task)
+        core_results = evaluate_core(
+            base_dir=base_dir,
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            max_per_task=config.evaluation.max_per_task,
+        )
 
         # Write CSV output
         if ddp_rank == 0:
-
             output_csv_path = os.path.join(eval_results_dir(base_dir), f"{model_slug}.csv")
             with open(output_csv_path, "w", encoding="utf-8", newline="") as f:
                 f.write(f"{'Task':<35}, {'Accuracy':<10}, {'Centered':<10}\n")
@@ -156,7 +168,6 @@ def base_eval(config:Config):
             print0(f"CORE metric: {core_results['core_metric']:.4f}")
 
     # --- Log to report ---
-    
 
     report_data = [{"model": model_name}]
 

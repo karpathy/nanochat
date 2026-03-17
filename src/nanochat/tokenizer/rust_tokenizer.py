@@ -34,9 +34,7 @@ class RustBPETokenizer:
         """Train a BPE tokenizer from a text iterator."""
         tokenizer = rustbpe.Tokenizer()
         vocab_size_no_special = vocab_size - len(SPECIAL_TOKENS)
-        assert vocab_size_no_special >= 256, (
-            f"vocab_size_no_special must be at least 256, got {vocab_size_no_special}"
-        )
+        assert vocab_size_no_special >= 256, f"vocab_size_no_special must be at least 256, got {vocab_size_no_special}"
         tokenizer.train_from_iterator(text_iterator, vocab_size_no_special, pattern=SPLIT_PATTERN)
         pattern = tokenizer.get_pattern()
         mergeable_ranks_list = tokenizer.get_mergeable_ranks()
@@ -107,7 +105,9 @@ class RustBPETokenizer:
             append: Optional token (id or special-token string) to append to each sequence.
             num_threads: Worker threads for batch encoding.
         """
-        prepend_id = (prepend if isinstance(prepend, int) else self.encode_special(prepend)) if prepend is not None else None
+        prepend_id = (
+            (prepend if isinstance(prepend, int) else self.encode_special(prepend)) if prepend is not None else None
+        )
         append_id = (append if isinstance(append, int) else self.encode_special(append)) if append is not None else None
 
         if isinstance(text, str):
@@ -178,7 +178,10 @@ class RustBPETokenizer:
 
         bos = self.get_bos_token_id()
         user_start, user_end = self.encode_special("<|user_start|>"), self.encode_special("<|user_end|>")
-        assistant_start, assistant_end = self.encode_special("<|assistant_start|>"), self.encode_special("<|assistant_end|>")
+        assistant_start, assistant_end = (
+            self.encode_special("<|assistant_start|>"),
+            self.encode_special("<|assistant_end|>"),
+        )
         python_start, python_end = self.encode_special("<|python_start|>"), self.encode_special("<|python_end|>")
         output_start, output_end = self.encode_special("<|output_start|>"), self.encode_special("<|output_end|>")
 

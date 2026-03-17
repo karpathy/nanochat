@@ -240,7 +240,9 @@ class Float8LinearConfig:
         return Float8LinearConfig()
 
 
-def convert_to_float8_training(module: nn.Module, *, config: object = None, module_filter_fn: object = None) -> nn.Module:
+def convert_to_float8_training(
+    module: nn.Module, *, config: object = None, module_filter_fn: object = None
+) -> nn.Module:
     """Replace nn.Linear layers with Float8Linear throughout a module.
 
     Walks the module tree in post-order (children before parents) and swaps

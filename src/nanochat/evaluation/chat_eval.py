@@ -11,12 +11,14 @@ torchrun --nproc_per_node=8 -m nanochat.scripts.chat_eval -- -a ARC-Easy
 from dataclasses import asdict
 from functools import partial
 from typing import cast
+
 import torch
 import torch.distributed as dist
 
 from nanochat.common import autodetect_device_type, compute_cleanup, compute_init, get_dist_info, print0
 from nanochat.config import Config
 from nanochat.evaluation.engine import Engine
+from nanochat.report import get_report
 from nanochat.tasks.arc import ARC
 from nanochat.tasks.base import Task
 from nanochat.tasks.gsm8k import GSM8K
@@ -24,14 +26,21 @@ from nanochat.tasks.humaneval import HumanEval
 from nanochat.tasks.mmlu import MMLU
 from nanochat.tasks.spellingbee import SpellingBee
 from nanochat.training.checkpoint import load_model_from_dir
-from nanochat.report import get_report
 
 # -----------------------------------------------------------------------------
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
 
 
 def run_generative_eval(
-    task_object: Task, tokenizer: object, model: torch.nn.Module, engine: Engine, num_samples: int, max_new_tokens: int, temperature: float, top_k: int, max_problems: int | None = None
+    task_object: Task,
+    tokenizer: object,
+    model: torch.nn.Module,
+    engine: Engine,
+    num_samples: int,
+    max_new_tokens: int,
+    temperature: float,
+    top_k: int,
+    max_problems: int | None = None,
 ):
 
     ddp, ddp_rank, _, ddp_world_size = get_dist_info()
@@ -93,7 +102,9 @@ def run_generative_eval(
 # batches at a time and just check the logits for correct answer choices.
 
 
-def run_categorical_eval(task_object: Task, tokenizer: object, model: object, batch_size: int, max_problems: int | None = None) -> float:
+def run_categorical_eval(
+    task_object: Task, tokenizer: object, model: object, batch_size: int, max_problems: int | None = None
+) -> float:
 
     ddp, ddp_rank, _, ddp_world_size = get_dist_info()
     device = model.get_device()
@@ -257,11 +268,13 @@ def chat_eval(
     step: int | None = None,
     max_problems: int | None = None,
 ) -> None:
-    """Run chat model evaluation and log results to report.""" 
+    """Run chat model evaluation and log results to report."""
     device_type = autodetect_device_type() if config.common.device_type == "" else config.common.device_type
     _, _, _, _, device = compute_init(device_type)
 
-    model, tokenizer, _ = load_model_from_dir(base_dir=config.common.base_dir, phase=source, device=device, model_tag=model_tag, step=step)
+    model, tokenizer, _ = load_model_from_dir(
+        base_dir=config.common.base_dir, phase=source, device=device, model_tag=model_tag, step=step
+    )
     engine = Engine(model, tokenizer)
 
     # Get the tasks to evaluate on

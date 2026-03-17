@@ -4,13 +4,15 @@ New and upgraded chat mode because a lot of the code has changed since the last 
 Intended to be run single GPU only atm.
 """
 
-from nanochat.config import Config
 from nanochat.common import autodetect_device_type, compute_init
+from nanochat.config import Config
 from nanochat.evaluation.engine import Engine
 from nanochat.training.checkpoint import load_model
 
 
-def chat_cli(config: Config, source: str, model_tag: str, step: int, prompt: str, temperature: float, top_k: int) -> None:
+def chat_cli(
+    config: Config, source: str, model_tag: str, step: int, prompt: str, temperature: float, top_k: int
+) -> None:
     """Run an interactive chat session with a trained model.
 
     Loads the model from ``config.common.base_dir`` using ``source`` and optional

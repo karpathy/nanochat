@@ -2,17 +2,18 @@
 Evaluate compression ratio of the tokenizer.
 """
 
+from nanochat.config import Config
 from nanochat.dataset import parquets_iter_batched
+from nanochat.report import get_report
+from nanochat.tokenizer.eval_fixtures import CODE_TEXT, KOREAN_TEXT, MATH_TEXT, NEWS_TEXT, SCIENCE_TEXT
 from nanochat.tokenizer.rust_tokenizer import RustBPETokenizer
 from nanochat.tokenizer.utils import get_tokenizer
-from nanochat.config import Config
-from nanochat.report import get_report
-from nanochat.tokenizer.eval_fixtures import NEWS_TEXT, KOREAN_TEXT, CODE_TEXT, MATH_TEXT, SCIENCE_TEXT
 
 # ANSI color codes
 GREEN = "\033[92m"
 RED = "\033[91m"
 RESET = "\033[0m"
+
 
 def _build_tokenizer(name: str, base_dir: str) -> RustBPETokenizer:
     if name == "gpt2":
@@ -31,7 +32,12 @@ def _encode_text(tokenizer, label: str, text: str) -> dict[str, object]:
     return {"bytes": n_bytes, "tokens": len(encoded), "ratio": n_bytes / len(encoded)}
 
 
-def _print_comparison(baseline_name: str, baseline_results: dict[str, dict[str, object]], ours_results: dict[str, dict[str, object]], all_text: list[tuple[str, str]]):
+def _print_comparison(
+    baseline_name: str,
+    baseline_results: dict[str, dict[str, object]],
+    ours_results: dict[str, dict[str, object]],
+    all_text: list[tuple[str, str]],
+):
     """Print comparison table between baseline tokenizer and ours."""
     print(f"\nComparison with {baseline_name}:")
     print("=" * 95)
@@ -67,7 +73,8 @@ def _print_comparison(baseline_name: str, baseline_results: dict[str, dict[str, 
             f"{diff_color}{relative_diff:+7.1f}%{RESET}     "
             f"{better:<10}"
         )
-        
+
+
 def tokenizer_eval(config: Config) -> None:
     """Evaluate and compare tokenizer compression ratios against GPT-2 and GPT-4 baselines.
 
@@ -108,14 +115,12 @@ def tokenizer_eval(config: Config) -> None:
         for name, text in all_text:
             tokenizer_results[tokenizer_name][name] = _encode_text(tokenizer, name, text)
 
-
-
     # Print vocab sizes
     print("\nVocab sizes:")
     print(f"GPT-2: {vocab_sizes['gpt2']}")
     print(f"GPT-4: {vocab_sizes['gpt4']}")
     print(f"Ours: {vocab_sizes['ours']}")
-    
+
     # Print comparisons
     _print_comparison("GPT-2", tokenizer_results["gpt2"], tokenizer_results["ours"], all_text)
     _print_comparison("GPT-4", tokenizer_results["gpt4"], tokenizer_results["ours"], all_text)
@@ -151,4 +156,3 @@ def tokenizer_eval(config: Config) -> None:
             report_markdown,
         ],
     )
-

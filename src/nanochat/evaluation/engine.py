@@ -111,7 +111,16 @@ class KVCache:
     - Position tracked per batch element via cache_seqlens tensor
     """
 
-    def __init__(self, batch_size: int, num_heads: int, seq_len: int, head_dim: int, num_layers: int, device: torch.device, dtype: torch.dtype) -> None:
+    def __init__(
+        self,
+        batch_size: int,
+        num_heads: int,
+        seq_len: int,
+        head_dim: int,
+        num_layers: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> None:
         self.batch_size = batch_size
         self.max_seq_len = seq_len
         self.n_layers = num_layers
@@ -155,7 +164,9 @@ class KVCache:
 
 # -----------------------------------------------------------------------------
 @torch.inference_mode()
-def sample_next_token(logits: torch.Tensor, rng: torch.Generator, temperature: float = 1.0, top_k: int | None = None) -> torch.Tensor:
+def sample_next_token(
+    logits: torch.Tensor, rng: torch.Generator, temperature: float = 1.0, top_k: int | None = None
+) -> torch.Tensor:
     """Sample a single next token from given logits of shape (B, vocab_size). Returns (B, 1)."""
     assert temperature >= 0.0, "temperature must be non-negative"
     if temperature == 0.0:
@@ -192,7 +203,15 @@ class Engine:
         self.tokenizer = tokenizer  # needed for tool use
 
     @torch.inference_mode()
-    def generate(self, tokens: list[int], num_samples: int = 1, max_tokens: int | None = None, temperature: float = 1.0, top_k: int | None = None, seed: int = 42):
+    def generate(
+        self,
+        tokens: list[int],
+        num_samples: int = 1,
+        max_tokens: int | None = None,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        seed: int = 42,
+    ):
         """Same as generate, but does single prefill and then clones the KV cache."""
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
         device = self.model.get_device()
@@ -294,7 +313,9 @@ class Engine:
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
             logits = self.model.forward(ids, kv_cache=kv_cache_decode)[:, -1, :]  # (B, vocab_size)
 
-    def generate_batch(self, tokens: list[int], num_samples: int = 1, **kwargs: object) -> tuple[list[list[int]], list[list[int]]]:
+    def generate_batch(
+        self, tokens: list[int], num_samples: int = 1, **kwargs: object
+    ) -> tuple[list[list[int]], list[list[int]]]:
         """
         Non-streaming batch generation that just returns the final token sequences.
         Returns a list of token sequences (list of lists of ints).

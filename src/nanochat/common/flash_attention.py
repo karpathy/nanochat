@@ -66,6 +66,7 @@ def _use_fa3():
     elif HAS_FA3:
         # FA3 Hopper kernels only support bf16 and fp8; fp16/fp32 must use SDPA fallback
         from nanochat.common import get_compute_dtype
+
         _use_fa3_cached = get_compute_dtype() == torch.bfloat16
     else:
         _use_fa3_cached = False
@@ -75,7 +76,9 @@ def _use_fa3():
 # =============================================================================
 # SDPA helpers
 # =============================================================================
-def _sdpa_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, window_size: tuple[int, int], enable_gqa: bool) -> torch.Tensor:
+def _sdpa_attention(
+    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, window_size: tuple[int, int], enable_gqa: bool
+) -> torch.Tensor:
     """
     SDPA attention with sliding window support.
     q, k, v are (B, H, T, D) format.
@@ -114,7 +117,9 @@ def _sdpa_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, window_si
 # =============================================================================
 # Public API: Same interface as FA3
 # =============================================================================
-def flash_attn_func(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool = False, window_size: tuple[int, int] = (-1, -1)) -> torch.Tensor:
+def flash_attn_func(
+    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool = False, window_size: tuple[int, int] = (-1, -1)
+) -> torch.Tensor:
     """
     Flash Attention for training (no KV cache).
 
@@ -139,7 +144,14 @@ def flash_attn_func(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: b
 
 
 def flash_attn_with_kvcache(
-    q: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, k: torch.Tensor | None = None, v: torch.Tensor | None = None, cache_seqlens: torch.Tensor | None = None, causal: bool = False, window_size: tuple[int, int] = (-1, -1)
+    q: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    k: torch.Tensor | None = None,
+    v: torch.Tensor | None = None,
+    cache_seqlens: torch.Tensor | None = None,
+    causal: bool = False,
+    window_size: tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
     """
     Flash Attention with KV cache for inference.

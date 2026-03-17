@@ -16,31 +16,23 @@ python -m nanochat.scripts.chat_rl
 torchrun --nproc_per_node=8 -m nanochat.scripts.chat_rl -- --run=default
 """
 
-
 import itertools
+from dataclasses import asdict
 from typing import cast
 
 import torch
 import torch.distributed as dist
 
-from nanochat.common import (
-    init_wandb,
-    autodetect_device_type,
-    compute_cleanup,
-    compute_init,
-    print0,
-    checkpoint_dir
-)
+from nanochat.common import autodetect_device_type, checkpoint_dir, compute_cleanup, compute_init, init_wandb, print0
 from nanochat.config import Config
 from nanochat.evaluation.engine import Engine
 from nanochat.report import get_report
 from nanochat.tasks.gsm8k import GSM8K
-from nanochat.training.checkpoint import save_checkpoint, load_model_from_dir
-from dataclasses import asdict
+from nanochat.training.checkpoint import load_model_from_dir, save_checkpoint
 
 
 def train_rl(config: Config):
-    user_config=asdict(config)
+    user_config = asdict(config)
     # -----------------------------------------------------------------------------
 
     # Init compute/precision
@@ -49,10 +41,16 @@ def train_rl(config: Config):
 
     # wandb logging init
     master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
-    wandb_run = init_wandb(config,master_process=master_process, project_suffix="rl", user_config=user_config)
+    wandb_run = init_wandb(config, master_process=master_process, project_suffix="rl", user_config=user_config)
 
     # Init model and tokenizer
-    model, tokenizer, _ = load_model_from_dir(base_dir=config.common.base_dir, phase="sft", device=device, model_tag=config.rl.model_tag, step=config.rl.model_step)  # note: we load the model in eval mode, but we will switch to train mode later. this is because we want to make sure to load the model with the right dtype and device, but we don't want to accidentally mess with any dropout or other train/eval specific behavior until we're ready to start training.
+    model, tokenizer, _ = load_model_from_dir(
+        base_dir=config.common.base_dir,
+        phase="sft",
+        device=device,
+        model_tag=config.rl.model_tag,
+        step=config.rl.model_step,
+    )  # note: we load the model in eval mode, but we will switch to train mode later. this is because we want to make sure to load the model with the right dtype and device, but we don't want to accidentally mess with any dropout or other train/eval specific behavior until we're ready to start training.
     engine = Engine(model, tokenizer)  # for sampling rollouts
 
     # -----------------------------------------------------------------------------
@@ -62,7 +60,6 @@ def train_rl(config: Config):
     val_task = GSM8K(subset="main", split="test")
     num_steps = (len(train_task) // config.rl.examples_per_step) * config.rl.num_epochs
     print0(f"Calculated number of steps: {num_steps}")
-
 
     @torch.no_grad()
     def get_batch():
@@ -132,11 +129,17 @@ def train_rl(config: Config):
             # yield inputs/targets as (B, T) of ids and rewards as (B,) of floats
             yield generated_token_sequences, inputs, targets, rewards, advantages
 
-
     # -----------------------------------------------------------------------------
     # Simple evaluation loop for GSM8K pass@k
     def run_gsm8k_eval(
-        task: GSM8K, tokenizer: object, engine: Engine, max_examples: int | None = None, num_samples: int = 1, max_completion_tokens: int = 256, temperature: float = 0.0, top_k: int = 50
+        task: GSM8K,
+        tokenizer: object,
+        engine: Engine,
+        max_examples: int | None = None,
+        num_samples: int = 1,
+        max_completion_tokens: int = 256,
+        temperature: float = 0.0,
+        top_k: int = 50,
     ):
         """
         Evaluates GSM8K task and returns a list of records of evaluation outcomes.
@@ -168,7 +171,6 @@ def train_rl(config: Config):
             }
             yield record
 
-
     # -----------------------------------------------------------------------------
     # Training loop
 
@@ -185,15 +187,15 @@ def train_rl(config: Config):
         group["lr"] = group["lr"] * config.rl.init_lr_frac
         group["initial_lr"] = group["lr"]
 
-
     # Learning rate scheduler: simple rampdown to zero over num_steps
     def get_lr_multiplier(it: int):
         lrm = 1.0 - it / num_steps
         return lrm
 
-
     # Calculate the number of examples each rank handles to achieve the desired examples_per_step
-    print0(f"Total sequences per step: {config.rl.examples_per_step * config.rl.num_samples}")  # total batch size in sequences/step
+    print0(
+        f"Total sequences per step: {config.rl.examples_per_step * config.rl.num_samples}"
+    )  # total batch size in sequences/step
     assert config.rl.examples_per_step % ddp_world_size == 0, (
         "Desired examples per step must be divisible by the number of ranks"
     )
@@ -217,7 +219,9 @@ def train_rl(config: Config):
             )
             records = list(records_iter)  # collect all records
             for k in range(1, config.rl.device_batch_size + 1):
-                passk[k - 1] = sum(any(o["is_correct"] for o in cast(list[dict[str, object]], r["outcomes"])[:k]) for r in records)
+                passk[k - 1] = sum(
+                    any(o["is_correct"] for o in cast(list[dict[str, object]], r["outcomes"])[:k]) for r in records
+                )
             num_records = torch.tensor(len(records), dtype=torch.long, device=device)
             if ddp:
                 dist.all_reduce(num_records, op=dist.ReduceOp.SUM)
@@ -309,8 +313,10 @@ def train_rl(config: Config):
             output_dirname = (
                 config.rl.model_tag if config.rl.model_tag else f"d{depth}"
             )  # base the model tag on the depth of the base model
-            chk_dir = checkpoint_dir(base_dir=config.common.base_dir, phase= "rl", model_tag=output_dirname)
-            model_config_kwargs = model.config.__dict__  # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
+            chk_dir = checkpoint_dir(base_dir=config.common.base_dir, phase="rl", model_tag=output_dirname)
+            model_config_kwargs = (
+                model.config.__dict__
+            )  # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
             save_checkpoint(
                 chk_dir,
                 step,

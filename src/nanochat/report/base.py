@@ -1,10 +1,9 @@
+import datetime
+import os
 import re
 import shutil
-import os
 
-import datetime
-
-from nanochat.report.utils import slugify, extract_timestamp, EXPECTED_FILES, extract, chat_metrics, generate_header
+from nanochat.report.utils import EXPECTED_FILES, chat_metrics, extract, extract_timestamp, generate_header, slugify
 
 
 class BaseReport:
@@ -13,6 +12,7 @@ class BaseReport:
     Provides the directory structure and no-op implementations of log, reset,
     and generate. Subclasses override these to produce actual output.
     """
+
     def __init__(self, report_dir: str) -> None:
         os.makedirs(report_dir, exist_ok=True)
         self.report_dir = report_dir
@@ -38,7 +38,7 @@ class Report(BaseReport):
 
     def __init__(self, report_dir: str) -> None:
         super().__init__(report_dir)
-        
+
     def log(self, section: str, data: list[object]) -> str:
         """Log a section of data to the report."""
         file_path = self._log_path(section)
@@ -167,4 +167,3 @@ class Report(BaseReport):
             f.write(header)
             f.write(f"Run started: {start_time}\n\n---\n\n")
         print(f"Reset report and wrote header to {header_file}")
-

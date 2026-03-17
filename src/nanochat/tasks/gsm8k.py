@@ -96,7 +96,9 @@ class GSM8K(Task):
         assistant_message = cast(list[dict[str, object]], conversation["messages"])[-1]
         assert assistant_message["role"] == "assistant", "Last message must be from the Assistant"
         assert isinstance(assistant_message["content"], list), "This is expected to be a list of parts"
-        last_text_part = cast(list[dict[str, object]], assistant_message["content"])[-1]["text"]  # this contains the final answer in GSM8K
+        last_text_part = cast(list[dict[str, object]], assistant_message["content"])[-1][
+            "text"
+        ]  # this contains the final answer in GSM8K
         # Extract both the ground truth answer and the predicted answer
         ref_num = extract_answer(last_text_part)
         pred_num = extract_answer(assistant_response)

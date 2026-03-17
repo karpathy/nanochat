@@ -23,7 +23,9 @@ from nanochat.common import get_dist_info
 from nanochat.dataset import list_parquet_files
 
 
-def _document_batches(base_dir:str, split: str, resume_state_dict: dict[str, object] | None, tokenizer_batch_size: int):
+def _document_batches(
+    base_dir: str, split: str, resume_state_dict: dict[str, object] | None, tokenizer_batch_size: int
+):
     """
     Infinite iterator over document batches (list of text strings) from parquet files.
 
@@ -73,7 +75,7 @@ def _document_batches(base_dir:str, split: str, resume_state_dict: dict[str, obj
 
 
 def tokenizing_distributed_data_loader_with_state_bos_bestfit(
-        base_dir:str,
+    base_dir: str,
     tokenizer: object,
     B: int,
     T: int,
@@ -168,7 +170,8 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
         yield inputs, targets, state_dict
 
 
-def tokenizing_distributed_data_loader_bos_bestfit(base_dir:str,
+def tokenizing_distributed_data_loader_bos_bestfit(
+    base_dir: str,
     tokenizer: object,
     B: int,
     T: int,
@@ -177,7 +180,19 @@ def tokenizing_distributed_data_loader_bos_bestfit(base_dir:str,
     tokenizer_batch_size: int = 128,
     device: str | torch.device = "cuda",
     resume_state_dict: dict[str, object] | None = None,
-    buffer_size: int = 1000):
+    buffer_size: int = 1000,
+):
     """Helper that omits state_dict from yields."""
-    for inputs, targets, _ in tokenizing_distributed_data_loader_with_state_bos_bestfit(base_dir, tokenizer, B, T, split, tokenizer_threads, tokenizer_batch_size, device, resume_state_dict, buffer_size):
+    for inputs, targets, _ in tokenizing_distributed_data_loader_with_state_bos_bestfit(
+        base_dir,
+        tokenizer,
+        B,
+        T,
+        split,
+        tokenizer_threads,
+        tokenizer_batch_size,
+        device,
+        resume_state_dict,
+        buffer_size,
+    ):
         yield inputs, targets

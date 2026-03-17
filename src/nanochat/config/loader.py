@@ -1,18 +1,18 @@
 """ConfigLoader: builds Config from TOML + CLI args with a single active section."""
+
 from __future__ import annotations
 
 import argparse
 import tomllib
 from argparse import Namespace
 from pathlib import Path
-import os
+
 from nanochat.common import get_default_base_dir
 from nanochat.config.common import CommonConfig
-from nanochat.config.config import Config, SECTION_CLS
+from nanochat.config.config import SECTION_CLS, Config
 
 
 class ConfigLoader:
-
     def __init__(self) -> None:
         self._sections: set[str] = {"common"}
 
@@ -47,11 +47,11 @@ class ConfigLoader:
 
     def resolve(self, ns: Namespace) -> Config:
         """Resolve Config from an already-parsed argparse Namespace + optional TOML."""
-        
+
         cli = vars(ns)
 
         toml_path: Path | None = None
-        base_dir :str | None = cli.get("base_dir")
+        base_dir: str | None = cli.get("base_dir")
 
         if base_dir is not None:
             candidate = Path(base_dir) / "config.toml"
@@ -66,7 +66,9 @@ class ConfigLoader:
             if candidate.exists():
                 toml_path = candidate
             else:
-                raise RuntimeError("Could not determine config.toml path. Please specify with --config, --base-dir or set NANOCHAT_BASE_DIR env var.")
+                raise RuntimeError(
+                    "Could not determine config.toml path. Please specify with --config, --base-dir or set NANOCHAT_BASE_DIR env var."
+                )
 
         toml_data: dict = {}
         if toml_path is not None:
@@ -79,10 +81,8 @@ class ConfigLoader:
             valid = cls.__dataclass_fields__
             merged = {**toml_data.get(section, {}), **{k: v for k, v in cli.items() if k in valid}}
             setattr(cfg, section, cls(**merged))
-        
+
         if cfg.common.base_dir is None:
             cfg.common.base_dir = base_dir
 
         return cfg
-
-

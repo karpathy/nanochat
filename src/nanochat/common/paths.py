@@ -7,6 +7,7 @@ constructing os.path.join(base_dir, ...) inline.
 
 import os
 
+
 def _dir(base: str, *parts: str) -> str:
     """Join path parts under base, create the directory if absent, and return the path."""
     path = os.path.join(base, *parts)
@@ -28,24 +29,28 @@ def get_default_base_dir() -> str:
 
 def root_data_dir(base_dir: str) -> str:
     """Return the top-level data directory under base_dir."""
-    return _dir(base_dir, "data" )
+    return _dir(base_dir, "data")
 
-def data_dir(base_dir: str ) -> str:
+
+def data_dir(base_dir: str) -> str:
     """Return the primary training data directory (climbmix mix)."""
-    return _dir(root_data_dir(base_dir) , "climbmix")
+    return _dir(root_data_dir(base_dir), "climbmix")
 
-def legacy_data_dir(base_dir: str ) -> str:
+
+def legacy_data_dir(base_dir: str) -> str:
     """Legacy FinewebEdu-100B fallback path (no auto-create)."""
-    return os.path.join(root_data_dir(base_dir) , "fineweb")
+    return os.path.join(root_data_dir(base_dir), "fineweb")
 
-def eval_tasks_dir(base_dir: str ) -> str:
+
+def eval_tasks_dir(base_dir: str) -> str:
     """Return the directory for evaluation task datasets."""
-    return _dir(root_data_dir(base_dir) , "eval_tasks")
+    return _dir(root_data_dir(base_dir), "eval_tasks")
 
 
-def tokenizer_dir(base_dir: str ) -> str:
+def tokenizer_dir(base_dir: str) -> str:
     """Return the directory where tokenizer files are stored."""
-    return _dir(base_dir , "tokenizer")
+    return _dir(base_dir, "tokenizer")
+
 
 def checkpoint_dir(base_dir: str, phase: str, model_tag: str | None = None) -> str:
     """Return the checkpoint directory for a training phase, optionally scoped to a model tag."""
@@ -54,14 +59,17 @@ def checkpoint_dir(base_dir: str, phase: str, model_tag: str | None = None) -> s
         return _dir(base_dir, "checkpoints", phase, model_tag)
     return _dir(base_dir, "checkpoints", phase)
 
-def eval_results_dir(base_dir: str ) -> str:
+
+def eval_results_dir(base_dir: str) -> str:
     """Return the directory where evaluation results are written."""
-    return _dir(base_dir , "eval")
+    return _dir(base_dir, "eval")
 
-def identity_data_path(base_dir: str ) -> str:
+
+def identity_data_path(base_dir: str) -> str:
     """Return the path to the identity fine-tuning data file."""
-    return os.path.join(base_dir , "identity.jsonl")
+    return os.path.join(base_dir, "identity.jsonl")
 
-def report_dir(base_dir: str ) -> str:
+
+def report_dir(base_dir: str) -> str:
     """Return the directory for training and evaluation reports."""
     return _dir(base_dir, "report")

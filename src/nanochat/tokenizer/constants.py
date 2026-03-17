@@ -4,13 +4,13 @@ SPECIAL_TOKENS = [
     # every document begins with the Beginning of Sequence (BOS) token that delimits documents
     "<|bos|>",
     # tokens below are only used during finetuning to render Conversations into token ids
-    "<|user_start|>",       # user messages
+    "<|user_start|>",  # user messages
     "<|user_end|>",
     "<|assistant_start|>",  # assistant messages
     "<|assistant_end|>",
-    "<|python_start|>",     # assistant invokes python REPL tool
+    "<|python_start|>",  # assistant invokes python REPL tool
     "<|python_end|>",
-    "<|output_start|>",     # python REPL outputs back to assistant
+    "<|output_start|>",  # python REPL outputs back to assistant
     "<|output_end|>",
 ]
 

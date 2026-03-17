@@ -27,32 +27,36 @@ import torch.distributed as dist
 
 from nanochat.common import (
     autodetect_device_type,
+    checkpoint_dir,
     compute_cleanup,
     compute_init,
-    init_wandb,
     get_compute_dtype,
     get_compute_dtype_reason,
     get_device_sync,
     get_peak_flops,
+    init_wandb,
     is_ddp_initialized,
     print0,
     print_banner,
-    checkpoint_dir,
 )
-from nanochat.config import Config
-from nanochat.training.compression_metrics import CompressionMetrics
-from nanochat.tokenizer import get_token_bytes, get_tokenizer
-from nanochat.evaluation import Engine, evaluate_bpb, evaluate_core
 from nanochat.common.flash_attention import HAS_FA3, _use_fa3
+from nanochat.config import Config
+from nanochat.evaluation import Engine, evaluate_bpb, evaluate_core
 from nanochat.models.gpt import GPT, GPTConfig, Linear
+from nanochat.report import get_report
+from nanochat.tokenizer import get_token_bytes, get_tokenizer
 from nanochat.training.checkpoint import load_checkpoint, save_checkpoint
+from nanochat.training.compression_metrics import CompressionMetrics
 from nanochat.training.dataloader import (
     tokenizing_distributed_data_loader_bos_bestfit,
     tokenizing_distributed_data_loader_with_state_bos_bestfit,
 )
-from nanochat.report import get_report
 from nanochat.training.scaling import B_REF, compute_training_hyperparams, get_scaling_params
-from nanochat.training.schedulers import create_lr_scheduler, create_muon_momentum_scheduler, create_weight_decay_scheduler
+from nanochat.training.schedulers import (
+    create_lr_scheduler,
+    create_muon_momentum_scheduler,
+    create_weight_decay_scheduler,
+)
 
 
 def build_model_meta(
@@ -89,7 +93,6 @@ def train_base(config: Config):
     device_type = autodetect_device_type() if config.common.device_type == "" else config.common.device_type
     _, ddp_rank, _, ddp_world_size, device = compute_init(device_type)
 
-
     synchronize, get_max_memory = get_device_sync(device_type)
     if device_type == "cuda":
         gpu_device_name = torch.cuda.get_device_name(0)
@@ -102,8 +105,7 @@ def train_base(config: Config):
     # wandb logging init
     user_config = asdict(config)  # for logging
     master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
-    wandb_run = init_wandb(config,master_process=master_process, user_config=user_config)
-
+    wandb_run = init_wandb(config, master_process=master_process, user_config=user_config)
 
     # Flash Attention status
     if _use_fa3():
@@ -136,9 +138,15 @@ def train_base(config: Config):
     # -----------------------------------------------------------------------------
     # Initialize the Model
 
-
     # Build the model, move to device, init the weights
-    model = build_model_meta(config.training.depth, config.training.aspect_ratio, config.training.head_dim, config.training.max_seq_len, config.training.window_pattern, vocab_size)  # 1) Build on meta device (only shapes/dtypes, no data)
+    model = build_model_meta(
+        config.training.depth,
+        config.training.aspect_ratio,
+        config.training.head_dim,
+        config.training.max_seq_len,
+        config.training.window_pattern,
+        vocab_size,
+    )  # 1) Build on meta device (only shapes/dtypes, no data)
     model_config_kwargs = asdict(model.config)
     print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
     model.to_empty(device=device)  # 2) All tensors get storage on target device but with uninitialized (garbage) data
@@ -194,7 +202,6 @@ def train_base(config: Config):
                 f"✓ FP8 training enabled ({config.training.fp8_recipe} scaling) - converted {num_fp8}/{num_linear} linear layers, skipped {num_skipped} (too small)"
             )
 
-
     # Context manager to temporarily disable FP8 so that model evaluation remains in BF16
     @contextmanager
     def disable_fp8(model: torch.nn.Module):
@@ -241,7 +248,6 @@ def train_base(config: Config):
             for parent, attr_name, fp8_module in fp8_locations:
                 setattr(parent, attr_name, fp8_module)
 
-
     # -----------------------------------------------------------------------------
     # Compile the model
 
@@ -260,10 +266,16 @@ def train_base(config: Config):
     num_flops_per_token = model.estimate_flops()
     print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
-
     # Scaling law computations: optimal tokens, batch size, LR scale, weight decay
     # ref: Power Lines paper https://arxiv.org/abs/2505.13738, T_epoch framework https://arxiv.org/abs/2405.13698
-    d12_ref = build_model_meta(12, config.training.aspect_ratio, config.training.head_dim, config.training.max_seq_len, config.training.window_pattern, vocab_size)
+    d12_ref = build_model_meta(
+        12,
+        config.training.aspect_ratio,
+        config.training.head_dim,
+        config.training.max_seq_len,
+        config.training.window_pattern,
+        vocab_size,
+    )
     hp = compute_training_hyperparams(
         target_param_data_ratio=config.training.target_param_data_ratio,
         total_batch_size_override=config.training.total_batch_size,
@@ -281,7 +293,9 @@ def train_base(config: Config):
     if batch_lr_scale != 1.0:
         print0(f"Scaling LRs by {batch_lr_scale:.4f} for batch size {total_batch_size:,} (reference: {B_REF:,})")
     if weight_decay_scaled != config.training.weight_decay:
-        print0(f"Scaling weight decay from {config.training.weight_decay:.6f} to {weight_decay_scaled:.6f} for depth {config.training.depth}")
+        print0(
+            f"Scaling weight decay from {config.training.weight_decay:.6f} to {weight_decay_scaled:.6f} for depth {config.training.depth}"
+        )
 
     # -----------------------------------------------------------------------------
     # Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
@@ -327,7 +341,11 @@ def train_base(config: Config):
     # Calculate the number of iterations we will train for and set up the various schedulers
 
     # num_iterations: either it is given, or from target flops, or from target data:param ratio (in that order)
-    assert config.training.num_iterations > 0 or config.training.target_param_data_ratio > 0 or config.training.target_flops > 0
+    assert (
+        config.training.num_iterations > 0
+        or config.training.target_param_data_ratio > 0
+        or config.training.target_flops > 0
+    )
     if config.training.num_iterations > 0:
         # Override num_iterations to a specific value if given
         num_iterations = config.training.num_iterations
@@ -349,22 +367,21 @@ def train_base(config: Config):
     )  # e.g. Chinchilla was ~20
     print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
-
     # Learning rate and optimizer schedulers
-    get_lr_multiplier = create_lr_scheduler(num_iterations, config.training.warmup_steps, config.training.warmdown_ratio, config.training.final_lr_frac)
+    get_lr_multiplier = create_lr_scheduler(
+        num_iterations, config.training.warmup_steps, config.training.warmdown_ratio, config.training.final_lr_frac
+    )
     get_muon_momentum = create_muon_momentum_scheduler()
     get_weight_decay = create_weight_decay_scheduler(weight_decay_scaled, num_iterations)
 
-
     # -----------------------------------------------------------------------------
     # Training loop
-
 
     def train_base_model():
         """Train base model. Captures all state from main() via closure."""
         # Initialize compression tracker if enabled
         compression_tracker = None
-        if  config.training.track_compression:
+        if config.training.track_compression:
             compression_tracker = CompressionMetrics(vocab_size=vocab_size)
             print0("✓ Compression metrics tracking enabled")
         # Loop state (variables updated by the training loop)
@@ -386,11 +403,15 @@ def train_base(config: Config):
             dataloader_state_dict = dataloader_resume_state_dict
 
         # Figure out the needed gradient accumulation micro-steps to reach the desired total batch size per step
-        tokens_per_fwdbwd = config.training.device_batch_size * config.training.max_seq_len  # tokens per iteration for a single rank
+        tokens_per_fwdbwd = (
+            config.training.device_batch_size * config.training.max_seq_len
+        )  # tokens per iteration for a single rank
         world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size  # total tokens per iteration for all ranks
         assert total_batch_size % world_tokens_per_fwdbwd == 0
         grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
-        print0(f"Tokens / micro-batch / rank: {config.training.device_batch_size} x {config.training.max_seq_len} = {tokens_per_fwdbwd:,}")
+        print0(
+            f"Tokens / micro-batch / rank: {config.training.device_batch_size} x {config.training.max_seq_len} = {tokens_per_fwdbwd:,}"
+        )
         print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
         print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 
@@ -407,7 +428,9 @@ def train_base(config: Config):
             if config.training.eval_every > 0 and (last_step or step % config.training.eval_every == 0):
                 model.eval()
                 val_loader = build_val_loader()
-                eval_steps = config.training.eval_tokens // (config.training.device_batch_size * config.training.max_seq_len * ddp_world_size)
+                eval_steps = config.training.eval_tokens // (
+                    config.training.device_batch_size * config.training.max_seq_len * ddp_world_size
+                )
                 with disable_fp8(model):
                     val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
                 print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
@@ -427,10 +450,18 @@ def train_base(config: Config):
             # use the original uncompiled model because the inputs keep changing shape
             # disable FP8 for evaluation to use BF16 for more consistent/accurate results
             results = {}
-            if  config.training.core_metric_every > 0 and (last_step or (step > 0 and step % config.training.core_metric_every == 0)):
+            if config.training.core_metric_every > 0 and (
+                last_step or (step > 0 and step % config.training.core_metric_every == 0)
+            ):
                 model.eval()
                 with disable_fp8(orig_model):
-                    results = evaluate_core(base_dir=base_dir, model=orig_model, tokenizer=tokenizer, device=device, max_per_task=config.training.core_metric_max_per_task)
+                    results = evaluate_core(
+                        base_dir=base_dir,
+                        model=orig_model,
+                        tokenizer=tokenizer,
+                        device=device,
+                        max_per_task=config.training.core_metric_max_per_task,
+                    )
                 print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
                 wandb_run.log(
                     {
@@ -444,7 +475,11 @@ def train_base(config: Config):
 
             # once in a while: sample from the model (only on master process)
             # use the original uncompiled model because the inputs keep changing shape
-            if  config.training.sample_every > 0 and master_process and (last_step or (step > 0 and step % config.training.sample_every == 0)):
+            if (
+                config.training.sample_every > 0
+                and master_process
+                and (last_step or (step > 0 and step % config.training.sample_every == 0))
+            ):
                 model.eval()
                 prompts = [
                     "The capital of France is",
@@ -465,7 +500,10 @@ def train_base(config: Config):
 
             # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step
             if last_step or (
-                step > 0 and step != config.training.resume_from_step and config.training.save_every > 0 and step % config.training.save_every == 0
+                step > 0
+                and step != config.training.resume_from_step
+                and config.training.save_every > 0
+                and step % config.training.save_every == 0
             ):
                 save_checkpoint(
                     ckpt_dir,
@@ -511,8 +549,7 @@ def train_base(config: Config):
                     with torch.amp.autocast(device_type=device_type, dtype=get_compute_dtype()):
                         logits_for_compression = model(x)
                     loss = torch.nn.functional.cross_entropy(
-                        logits_for_compression.view(-1, logits_for_compression.size(-1)),
-                        y.view(-1)
+                        logits_for_compression.view(-1, logits_for_compression.size(-1)), y.view(-1)
                     )
                 else:
                     loss = model(x, y)
@@ -577,7 +614,11 @@ def train_base(config: Config):
                 f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time / 60:.2f}m{eta_str}"
             )
             # Track compression metrics if enabled
-            if compression_tracker and step % config.training.compression_log_every == 0 and logits_for_compression is not None:
+            if (
+                compression_tracker
+                and step % config.training.compression_log_every == 0
+                and logits_for_compression is not None
+            ):
                 with torch.no_grad():
                     compression_metrics = compression_tracker.log_metrics(
                         step=step,
@@ -600,11 +641,7 @@ def train_base(config: Config):
 
                     # Log compression metrics to wandb
                     if master_process:
-                        compression_log = {
-                            f"compression/{k}": v
-                            for k, v in compression_metrics.items()
-                            if k != 'step'
-                        }
+                        compression_log = {f"compression/{k}": v for k, v in compression_metrics.items() if k != "step"}
                         wandb_run.log(compression_log)
 
             if step % 100 == 0:
@@ -640,7 +677,6 @@ def train_base(config: Config):
         print0(f"Total training time: {total_training_time / 60:.2f}m")
         if val_bpb is not None:
             print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
-
 
         get_report(config.common.base_dir).log(
             section="Base model training",
@@ -679,10 +715,8 @@ def train_base(config: Config):
             "peak_memory": get_max_memory() / 1024 / 1024,
         }
 
-
     # -------------------------------------------------------------------------
     # Run training and cleanup
     train_base_model()
     wandb_run.finish()
     compute_cleanup()
-
