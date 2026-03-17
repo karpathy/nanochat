@@ -28,18 +28,6 @@ def init_model(model: MLXGPTPrototype, args) -> dict[str, object] | None:
     return None
 
 
-def build_eager_train_step(model: MLXGPTPrototype, optimizer):
-    loss_and_grad = nn.value_and_grad(model, lambda batch, labels: model.loss(batch, labels))
-
-    def step(batch, labels):
-        loss, grads = loss_and_grad(batch, labels)
-        optimizer.update(model, grads)
-        mx.eval(loss, model.parameters(), *optimizer.state_trees())
-        return loss
-
-    return step
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a longer MLX training session on the Apple-native prototype")
     parser.add_argument("--depth", type=int, default=32)
@@ -58,6 +46,9 @@ def main() -> None:
     parser.add_argument("--scalar-lr", type=float, default=0.5)
     parser.add_argument("--weight-decay", type=float, default=0.28)
     parser.add_argument("--matrix-optimizer", type=str, choices=["adamw", "muon"], default="adamw")
+    parser.add_argument("--muon-ns-steps", type=int, default=5)
+    parser.add_argument("--muon-orthogonalize-dtype", type=str, choices=["float16", "bfloat16", "float32"], default="bfloat16")
+    parser.add_argument("--muon-block-groups", type=str, choices=["all", "mlp_only", "attn_only"], default="all")
     parser.add_argument("--input-mode", type=str, choices=["repeated", "dataset"], default="repeated")
     parser.add_argument("--dataset-split", type=str, choices=["train", "val"], default="train")
     parser.add_argument("--init-from-pytorch-reference", action="store_true")
@@ -86,6 +77,9 @@ def main() -> None:
         scalar_lr=args.scalar_lr,
         weight_decay=args.weight_decay,
         matrix_optimizer=args.matrix_optimizer,
+        muon_ns_steps=args.muon_ns_steps,
+        muon_orthogonalize_dtype=args.muon_orthogonalize_dtype,
+        muon_block_groups=args.muon_block_groups,
     )
     input_provider = make_input_batch_provider(
         args.input_mode,
@@ -96,15 +90,16 @@ def main() -> None:
         dataset_split=args.dataset_split,
     )
     input_metadata = None
-
-    train_step = build_eager_train_step(model, optimizer)
+    loss_and_grad = nn.value_and_grad(model, lambda batch, labels: model.loss(batch, labels))
 
     bootstrap_loss = None
     for warmup_idx in range(max(args.warmup_steps, 0)):
         inputs, targets, batch_metadata = input_provider.next_batch()
         if input_metadata is None:
             input_metadata = batch_metadata
-        warm_loss = train_step(inputs, targets)
+        warm_loss, warm_grads = loss_and_grad(inputs, targets)
+        optimizer.update(model, warm_grads)
+        mx.eval(warm_loss, model.parameters(), *optimizer.state_trees())
         if warmup_idx == 0:
             bootstrap_loss = warm_loss
 
@@ -116,15 +111,22 @@ def main() -> None:
         if input_metadata is None:
             input_metadata = batch_metadata
         start = time.perf_counter()
-        loss = train_step(inputs, targets)
-        mx.eval(loss)
-        elapsed = time.perf_counter() - start
+        loss, grads = loss_and_grad(inputs, targets)
+        after_backward = time.perf_counter()
+        optimizer.update(model, grads)
+        after_update = time.perf_counter()
+        mx.eval(loss, model.parameters(), *optimizer.state_trees())
+        after_eval = time.perf_counter()
+        elapsed = after_eval - start
         memory = get_memory_stats()
         row = {
             "step": step_idx + 1,
             "loss": float(loss.item()),
             "step_time_s": elapsed,
             "tokens_per_s": (args.device_batch_size * args.max_seq_len) / elapsed if elapsed > 0 else 0.0,
+            "forward_backward_s": after_backward - start,
+            "optimizer_update_s": after_update - after_backward,
+            "eval_s": after_eval - after_update,
             "input_batch": batch_metadata,
             "memory": memory,
         }
@@ -139,6 +141,9 @@ def main() -> None:
     losses = [row["loss"] for row in per_step]
     throughputs = [row["tokens_per_s"] for row in per_step]
     step_times = [row["step_time_s"] for row in per_step]
+    forward_backward_times = [row["forward_backward_s"] for row in per_step]
+    optimizer_update_times = [row["optimizer_update_s"] for row in per_step]
+    eval_times = [row["eval_s"] for row in per_step]
 
     summary = {
         "config": {
@@ -154,6 +159,7 @@ def main() -> None:
             "weight_decay": args.weight_decay,
             "execution_mode": "eager_mlx",
         },
+        "optimizer": optimizer.metadata(),
         "initialization": init_metadata,
         "tokenizer": {
             "shared_vocab_used": shared_tokenizer_used,
@@ -170,6 +176,9 @@ def main() -> None:
             "min_loss": min(losses),
             "loss_drop_pct": ((losses[0] - losses[-1]) / losses[0]) * 100.0 if losses[0] != 0 else 0.0,
             "mean_step_time_s": statistics.fmean(step_times),
+            "mean_forward_backward_s": statistics.fmean(forward_backward_times),
+            "mean_optimizer_update_s": statistics.fmean(optimizer_update_times),
+            "mean_eval_s": statistics.fmean(eval_times),
             "mean_tokens_per_s": statistics.fmean(throughputs),
             "max_peak_memory_gb": max(row["memory"]["peak_gb"] for row in per_step),
             "final_active_memory_gb": per_step[-1]["memory"]["active_gb"],

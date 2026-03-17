@@ -2,6 +2,32 @@ import Foundation
 import MLX
 import MLXNN
 
+struct WorkerRequest: Decodable {
+    let promptTokens: [Int]
+    let maxNewTokens: Int
+    let stopTokenIds: [Int]
+
+    enum CodingKeys: String, CodingKey {
+        case promptTokens = "prompt_tokens"
+        case maxNewTokens = "max_new_tokens"
+        case stopTokenIds = "stop_token_ids"
+    }
+}
+
+struct WorkerResponse: Encodable {
+    let ok: Bool
+    let generatedTokenIds: [Int]
+    let timing: [String: String]
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case generatedTokenIds = "generated_token_ids"
+        case timing
+        case error
+    }
+}
+
 struct ExportSection: Decodable {
     let format: String
     let tensorCount: Int
@@ -64,6 +90,7 @@ struct CLIOptions {
     let maxNewTokens: Int
     let stopTokenIds: [Int]
     let useGPU: Bool
+    let serveStdin: Bool
 }
 
 enum StubError: Error, LocalizedError {
@@ -104,6 +131,7 @@ func usageText() -> String {
       --max-new-tokens <n>    Number of greedy tokens to generate. Default: 1.
       --stop-token-ids <ids>  Optional comma-separated stop token ids.
       --device <cpu|gpu>      Execution device. Default: cpu. GPU is not wired yet in this first stub.
+            --serve-stdin           Start a persistent JSON-lines worker on stdin/stdout.
     """
 }
 
@@ -126,10 +154,16 @@ func parseArguments() throws -> CLIOptions {
     var stopTokenIdsValue: String?
     var device = "cpu"
     var maxNewTokens = 1
+    var serveStdin = false
 
     var index = 0
     while index < args.count {
         let arg = args[index]
+        if arg == "--serve-stdin" {
+            serveStdin = true
+            index += 1
+            continue
+        }
         guard index + 1 < args.count else {
             throw StubError.usage(usageText())
         }
@@ -180,8 +214,19 @@ func parseArguments() throws -> CLIOptions {
         promptTokens: promptTokens,
         maxNewTokens: maxNewTokens,
         stopTokenIds: stopTokenIds,
-        useGPU: normalizedDevice == "gpu"
+        useGPU: normalizedDevice == "gpu",
+        serveStdin: serveStdin
     )
+}
+
+func timingDict(deviceLabel: String, loadTimeMs: Double, prefillTimeMs: Double, avgDecodeMs: Double, tokensDecoded: Int) -> [String: String] {
+    [
+        "device": deviceLabel,
+        "load": String(format: "%.1fms", loadTimeMs),
+        "prefill": String(format: "%.1fms", prefillTimeMs),
+        "avg_decode": String(format: "%.2fms", avgDecodeMs),
+        "tokens_decoded": String(tokensDecoded),
+    ]
 }
 
 func loadManifest(_ url: URL) throws -> ExportManifest {
@@ -467,6 +512,96 @@ struct NanochatPrototype {
     }
 }
 
+func generateTokenIds(
+    model: NanochatPrototype,
+    promptTokens: [Int],
+    maxNewTokens: Int,
+    stopTokenIds: [Int],
+    loadTimeMs: Double,
+    deviceLabel: String
+) throws -> (generatedTokenIds: [Int], logitsShape: [Int], timing: [String: String]) {
+    let cache = KVCache(nLayers: model.config.nLayer)
+    let prefillStart = CFAbsoluteTimeGetCurrent()
+    let promptArray = MLXArray(promptTokens.map(Int32.init), [1, promptTokens.count])
+    let prefillLogits = model(promptArray, cache: cache)
+    try checkedEval(prefillLogits)
+    cache.advance(by: promptTokens.count)
+    let prefillTimeMs = (CFAbsoluteTimeGetCurrent() - prefillStart) * 1000.0
+
+    let finalLogitsShape = prefillLogits.shape
+    let firstTokenId = try greedyNextTokenId(finalLogitsStep(prefillLogits, sequenceLength: promptTokens.count))
+
+    var generatedTokenIds = [firstTokenId]
+    var allTokenIds = promptTokens + [firstTokenId]
+    var decodeTimesMs: [Double] = []
+
+    if maxNewTokens > 1 && !stopTokenIds.contains(firstTokenId) {
+        for _ in 1 ..< maxNewTokens {
+            let decodeStart = CFAbsoluteTimeGetCurrent()
+            let newToken = MLXArray([Int32(allTokenIds.last!)], [1, 1])
+            let logits = model(newToken, cache: cache)
+            try checkedEval(logits)
+            cache.advance(by: 1)
+            let nextTokenId = try greedyNextTokenId(logits)
+            let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStart) * 1000.0
+            decodeTimesMs.append(decodeMs)
+
+            generatedTokenIds.append(nextTokenId)
+            allTokenIds.append(nextTokenId)
+            if stopTokenIds.contains(nextTokenId) {
+                break
+            }
+        }
+    }
+
+    let avgDecodeMs = decodeTimesMs.isEmpty ? 0.0 : decodeTimesMs.reduce(0.0, +) / Double(decodeTimesMs.count)
+    let tokensDecoded = decodeTimesMs.count
+    return (
+        generatedTokenIds,
+        finalLogitsShape,
+        timingDict(
+            deviceLabel: deviceLabel,
+            loadTimeMs: loadTimeMs,
+            prefillTimeMs: prefillTimeMs,
+            avgDecodeMs: avgDecodeMs,
+            tokensDecoded: tokensDecoded
+        )
+    )
+}
+
+func runWorkerLoop(model: NanochatPrototype, loadTimeMs: Double, deviceLabel: String) throws {
+    let encoder = JSONEncoder()
+    let decoder = JSONDecoder()
+
+    let readyData = try JSONSerialization.data(withJSONObject: ["status": "ready", "device": deviceLabel])
+    FileHandle.standardOutput.write(readyData)
+    FileHandle.standardOutput.write(Data("\n".utf8))
+
+    while let line = readLine() {
+        if line.isEmpty {
+            continue
+        }
+        do {
+            let request = try decoder.decode(WorkerRequest.self, from: Data(line.utf8))
+            let result = try generateTokenIds(
+                model: model,
+                promptTokens: request.promptTokens,
+                maxNewTokens: request.maxNewTokens,
+                stopTokenIds: request.stopTokenIds,
+                loadTimeMs: loadTimeMs,
+                deviceLabel: deviceLabel
+            )
+            let response = WorkerResponse(ok: true, generatedTokenIds: result.generatedTokenIds, timing: result.timing, error: nil)
+            FileHandle.standardOutput.write(try encoder.encode(response))
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        } catch {
+            let response = WorkerResponse(ok: false, generatedTokenIds: [], timing: [:], error: error.localizedDescription)
+            FileHandle.standardOutput.write(try encoder.encode(response))
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        }
+    }
+}
+
 func main() throws {
     let options = try parseArguments()
     let manifest = try loadManifest(options.manifestURL)
@@ -483,55 +618,25 @@ func main() throws {
     // --- Compute on the requested device ---
     let computeDevice = options.useGPU ? Device(.gpu) : Device(.cpu)
     try Device.withDefaultDevice(computeDevice) {
-        // --- Prefill ---
-        let cache = KVCache(nLayers: manifest.config.nLayer)
-        let prefillStart = CFAbsoluteTimeGetCurrent()
-        let promptArray = MLXArray(options.promptTokens.map(Int32.init), [1, options.promptTokens.count])
-        let prefillLogits = model(promptArray, cache: cache)
-        try checkedEval(prefillLogits)
-        cache.advance(by: options.promptTokens.count)
-        let prefillTimeMs = (CFAbsoluteTimeGetCurrent() - prefillStart) * 1000.0
-
-        let finalLogitsShape = prefillLogits.shape
-
-        // First token from prefill logits
-        let firstTokenId = try greedyNextTokenId(finalLogitsStep(prefillLogits, sequenceLength: options.promptTokens.count))
-
-        var generatedTokenIds = [firstTokenId]
-        var allTokenIds = options.promptTokens + [firstTokenId]
-        var decodeTimesMs: [Double] = []
-
-        // --- Incremental decode ---
-        if options.maxNewTokens > 1 && !options.stopTokenIds.contains(firstTokenId) {
-            for _ in 1 ..< options.maxNewTokens {
-                let decodeStart = CFAbsoluteTimeGetCurrent()
-                let newToken = MLXArray([Int32(allTokenIds.last!)], [1, 1])
-                let logits = model(newToken, cache: cache)
-                try checkedEval(logits)
-                cache.advance(by: 1)
-                let nextTokenId = try greedyNextTokenId(logits)
-                let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStart) * 1000.0
-                decodeTimesMs.append(decodeMs)
-
-                generatedTokenIds.append(nextTokenId)
-                allTokenIds.append(nextTokenId)
-                if options.stopTokenIds.contains(nextTokenId) {
-                    break
-                }
-            }
-        }
-
-        // --- Output ---
         let deviceLabel = options.useGPU ? "gpu" : "cpu"
-        let avgDecodeMs = decodeTimesMs.isEmpty ? 0.0 : decodeTimesMs.reduce(0.0, +) / Double(decodeTimesMs.count)
-        let tokensDecoded = decodeTimesMs.count
-
-        print("Loaded export: \(checkpointURL.path)")
-        print("Prompt token count: \(options.promptTokens.count)")
-        print("Max new tokens requested: \(options.maxNewTokens)")
-        print("Logits shape: \(finalLogitsShape)")
-        print("Generated token ids: \(generatedTokenIds.map(String.init).joined(separator: ","))")
-        print("Timing: device=\(deviceLabel) load=\(String(format: "%.1f", loadTimeMs))ms prefill=\(String(format: "%.1f", prefillTimeMs))ms avg_decode=\(String(format: "%.2f", avgDecodeMs))ms tokens_decoded=\(tokensDecoded)")
+        if options.serveStdin {
+            try runWorkerLoop(model: model, loadTimeMs: loadTimeMs, deviceLabel: deviceLabel)
+        } else {
+            let result = try generateTokenIds(
+                model: model,
+                promptTokens: options.promptTokens,
+                maxNewTokens: options.maxNewTokens,
+                stopTokenIds: options.stopTokenIds,
+                loadTimeMs: loadTimeMs,
+                deviceLabel: deviceLabel
+            )
+            print("Loaded export: \(checkpointURL.path)")
+            print("Prompt token count: \(options.promptTokens.count)")
+            print("Max new tokens requested: \(options.maxNewTokens)")
+            print("Logits shape: \(result.logitsShape)")
+            print("Generated token ids: \(result.generatedTokenIds.map(String.init).joined(separator: ","))")
+            print("Timing: device=\(result.timing["device"] ?? deviceLabel) load=\(result.timing["load"] ?? "0.0ms") prefill=\(result.timing["prefill"] ?? "0.0ms") avg_decode=\(result.timing["avg_decode"] ?? "0.00ms") tokens_decoded=\(result.timing["tokens_decoded"] ?? "0")")
+        }
     }
 }
 

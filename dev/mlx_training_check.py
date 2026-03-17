@@ -98,6 +98,9 @@ def main() -> None:
     parser.add_argument("--scalar-lr", type=float, default=0.5)
     parser.add_argument("--weight-decay", type=float, default=0.28)
     parser.add_argument("--matrix-optimizer", type=str, choices=["adamw", "muon"], default="adamw")
+    parser.add_argument("--muon-ns-steps", type=int, default=5)
+    parser.add_argument("--muon-orthogonalize-dtype", type=str, choices=["float16", "bfloat16", "float32"], default="bfloat16")
+    parser.add_argument("--muon-block-groups", type=str, choices=["all", "mlp_only", "attn_only"], default="all")
     parser.add_argument("--input-mode", type=str, choices=["repeated", "dataset"], default="repeated")
     parser.add_argument("--dataset-split", type=str, choices=["train", "val"], default="train")
     parser.add_argument("--progress", action="store_true")
@@ -127,6 +130,9 @@ def main() -> None:
         scalar_lr=args.scalar_lr,
         weight_decay=args.weight_decay,
         matrix_optimizer=args.matrix_optimizer,
+        muon_ns_steps=args.muon_ns_steps,
+        muon_orthogonalize_dtype=args.muon_orthogonalize_dtype,
+        muon_block_groups=args.muon_block_groups,
     )
     input_provider = make_input_batch_provider(
         args.input_mode,
@@ -155,19 +161,25 @@ def main() -> None:
             input_metadata = batch_metadata
         start = time.perf_counter()
         loss, grads = loss_and_grad(inputs, targets)
+        after_backward = time.perf_counter()
         grad_l2 = tree_l2_norm(grads)
         grad_nonfinite = tree_nonfinite_count(grads)
         optimizer.update(model, grads)
+        after_update = time.perf_counter()
         param_l2 = tree_l2_norm(model.parameters())
         param_nonfinite = tree_nonfinite_count(model.parameters())
         mx.eval(loss, model.parameters(), *optimizer.state_trees())
-        elapsed = time.perf_counter() - start
+        after_eval = time.perf_counter()
+        elapsed = after_eval - start
         memory = get_memory_stats()
         per_step.append({
             "step": step_index + 1,
             "loss": float(loss.item()),
             "step_time_s": elapsed,
             "tokens_per_s": (args.device_batch_size * args.max_seq_len) / elapsed if elapsed > 0 else 0.0,
+            "forward_backward_s": after_backward - start,
+            "optimizer_update_s": after_update - after_backward,
+            "eval_s": after_eval - after_update,
             "grad_l2": grad_l2,
             "grad_nonfinite": grad_nonfinite,
             "param_l2": param_l2,
@@ -185,6 +197,9 @@ def main() -> None:
     step_times = [row["step_time_s"] for row in per_step]
     steady_state_step_times = step_times[1:] if len(step_times) > 1 else step_times
     tokens_per_s = [row["tokens_per_s"] for row in per_step]
+    forward_backward_times = [row["forward_backward_s"] for row in per_step]
+    optimizer_update_times = [row["optimizer_update_s"] for row in per_step]
+    eval_times = [row["eval_s"] for row in per_step]
     active_memory = [row["memory"]["active_gb"] for row in per_step]
 
     success_criteria = {
@@ -208,6 +223,7 @@ def main() -> None:
             "params_total": model.num_params(),
         },
         "initialization": init_metadata,
+        "optimizer": optimizer.metadata(),
         "tokenizer": {
             "shared_vocab_used": shared_tokenizer_used,
             "bos_token_id": bos_token_id,
@@ -240,6 +256,9 @@ def main() -> None:
             "min_loss": min(losses),
             "loss_drop_pct": ((losses[0] - losses[-1]) / losses[0]) * 100.0 if losses[0] != 0 else 0.0,
             "mean_step_time_s": statistics.fmean(step_times),
+            "mean_forward_backward_s": statistics.fmean(forward_backward_times),
+            "mean_optimizer_update_s": statistics.fmean(optimizer_update_times),
+            "mean_eval_s": statistics.fmean(eval_times),
             "step_time_cv": coefficient_of_variation(step_times),
             "steady_state_step_time_cv": coefficient_of_variation(steady_state_step_times),
             "mean_tokens_per_s": statistics.fmean(tokens_per_s),

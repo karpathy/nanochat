@@ -11,6 +11,7 @@ Current scope:
 - runs a greedy generation loop with KV-cache incremental decoding
 - supports both CPU and GPU execution via `Device.withDefaultDevice`
 - prints the generated token ids and per-token timing so a Python-side wrapper can decode and benchmark
+- supports a persistent JSON-lines stdin/stdout worker mode for Python-side reuse
 - validates the first exported checkpoint boundary on the Swift side without introducing tokenizer or engine-state work yet
 
 Current non-goals:
@@ -42,6 +43,24 @@ $PWD/swift/Build/Products/Debug/nanochat-mlx-stub \
 ```
 
 The stub intentionally takes token ids instead of raw text so the checkpoint boundary can be exercised before committing to a Swift tokenizer path.
+
+Persistent worker mode:
+
+```bash
+export DYLD_FRAMEWORK_PATH="$PWD/swift/Build/Products/Debug"
+$PWD/swift/Build/Products/Debug/nanochat-mlx-stub \
+  --manifest runs/mlx_exports/mlx_reference_d32.json \
+  --device gpu \
+  --serve-stdin \
+  --prompt-tokens 0 \
+  --max-new-tokens 1
+```
+
+After the initial ready line, send one JSON request per line on stdin:
+
+```json
+{"prompt_tokens":[32759,483,2027],"max_new_tokens":8,"stop_token_ids":[32759]}
+```
 
 Current validation status:
 

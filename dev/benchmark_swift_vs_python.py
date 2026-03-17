@@ -1,38 +1,55 @@
-"""
-Benchmark: Swift MLX stub (KV-cache, GPU) vs Python MLX forward (no KV-cache, GPU).
+"""Benchmark Swift MLX stub against the Python MLX prototype on exported checkpoints."""
 
-Measures per-token decode latency on the same d4 checkpoint to establish the
-latency baseline comparison for Story 4a.
-"""
-
+import argparse
 import json
-import time
-import subprocess
 import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import mlx.core as mx
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
 REPO = Path(__file__).resolve().parent
 if not (REPO / "nanochat").exists():
     REPO = Path(os.environ.get("REPO", "/Users/peternicholls/Dev/nanochatter"))
-
-MANIFEST_PATH = REPO / "runs" / "mlx_exports" / "phase2_d4_l_mps_step20.json"
-PROMPT_TOKENS = [32759, 483, 2027, 5636, 286, 668, 306]  # "The chemical formula of water is"
-MAX_NEW_TOKENS = 32
-WARMUP_RUNS = 2
-TIMED_RUNS = 5
 
 # ---------------------------------------------------------------------------
 # Python MLX model (minimal, no KV-cache)
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(REPO))
 from dev.mlx_gpt_prototype import MLXGPTPrototype, MLXGPTConfig
+from nanochat.tokenizer import get_tokenizer
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Benchmark Swift MLX stub against Python MLX on an exported checkpoint")
+    parser.add_argument("--manifest", type=str, default="runs/mlx_exports/phase2_d4_l_mps_step20.json")
+    parser.add_argument("--prompt", type=str, default="The chemical formula of water is")
+    parser.add_argument("--prompt-tokens", type=str, default=None, help="Optional comma-separated token ids to bypass Python tokenization")
+    parser.add_argument("--max-new-tokens", type=int, default=32)
+    parser.add_argument("--warmup-runs", type=int, default=2)
+    parser.add_argument("--timed-runs", type=int, default=5)
+    parser.add_argument("--swift-device", type=str, choices=["gpu", "cpu", "both"], default="both")
+    parser.add_argument("--skip-python", action="store_true")
+    return parser.parse_args()
+
+
+def resolve_repo_path(candidate: str) -> Path:
+    path = Path(candidate)
+    if path.is_absolute():
+        return path
+    return REPO / path
+
+
+def build_prompt_tokens(args: argparse.Namespace) -> list[int]:
+    if args.prompt_tokens is not None:
+        return [int(token) for token in args.prompt_tokens.split(",") if token.strip()]
+
+    tokenizer = get_tokenizer()
+    bos_token_id = tokenizer.get_bos_token_id()
+    return tokenizer.encode(args.prompt, prepend=bos_token_id)
 
 
 def load_python_model(manifest_path: Path):
@@ -123,93 +140,97 @@ def swift_mlx_generate(manifest_path, prompt_tokens, max_new_tokens, device="gpu
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    print(f"Benchmark: Swift MLX (KV-cache, GPU) vs Python MLX (no KV-cache, GPU)")
-    print(f"Checkpoint: {MANIFEST_PATH.name}")
-    print(f"Prompt tokens: {len(PROMPT_TOKENS)}, max new tokens: {MAX_NEW_TOKENS}")
+    args = parse_args()
+    manifest_path = resolve_repo_path(args.manifest)
+    prompt_tokens = build_prompt_tokens(args)
+
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
+
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+
+    print("Benchmark: Swift MLX stub vs Python MLX prototype")
+    print(f"Checkpoint: {manifest_path.name}")
+    print(
+        "Model config: "
+        f"d{manifest['config']['n_layer']} "
+        f"emb={manifest['config']['n_embd']} "
+        f"heads={manifest['config']['n_head']} "
+        f"vocab={manifest['config']['vocab_size']}"
+    )
+    print(f"Prompt tokens: {len(prompt_tokens)}, max new tokens: {args.max_new_tokens}")
     print()
 
-    # --- Python MLX ---
-    print("Loading Python MLX model...")
-    model = load_python_model(MANIFEST_PATH)
-    print(f"Model params: {model.num_params():,}")
+    python_avg = None
+    if not args.skip_python:
+        print("Loading Python MLX model...")
+        model = load_python_model(manifest_path)
+        print(f"Model params: {model.num_params():,}")
 
-    # Warmup
-    for i in range(WARMUP_RUNS):
-        tokens, _ = python_mlx_greedy_generate(model, PROMPT_TOKENS, MAX_NEW_TOKENS)
-        print(f"  warmup {i+1}: first token = {tokens[0]}")
+        for i in range(args.warmup_runs):
+            tokens, _ = python_mlx_greedy_generate(model, prompt_tokens, args.max_new_tokens)
+            print(f"  warmup {i + 1}: first token = {tokens[0]}")
 
-    # Timed runs
-    python_decode_times_all = []
-    for i in range(TIMED_RUNS):
-        tokens, decode_times = python_mlx_greedy_generate(model, PROMPT_TOKENS, MAX_NEW_TOKENS)
-        avg = sum(decode_times) / len(decode_times) if decode_times else 0
-        python_decode_times_all.append(avg)
-        print(f"  run {i+1}: avg_decode={avg:.2f}ms ({len(decode_times)} steps)")
+        python_decode_times_all = []
+        for i in range(args.timed_runs):
+            tokens, decode_times = python_mlx_greedy_generate(model, prompt_tokens, args.max_new_tokens)
+            avg = sum(decode_times) / len(decode_times) if decode_times else 0
+            python_decode_times_all.append(avg)
+            print(f"  run {i + 1}: avg_decode={avg:.2f}ms ({len(decode_times)} steps)")
 
-    python_avg = sum(python_decode_times_all) / len(python_decode_times_all)
-    print(f"\nPython MLX avg decode: {python_avg:.2f}ms/token (no KV-cache, full recompute)")
-    print(f"  First generated token: {tokens[0]}")
-    print()
+        python_avg = sum(python_decode_times_all) / len(python_decode_times_all)
+        print(f"\nPython MLX avg decode: {python_avg:.2f}ms/token (no KV-cache, full recompute)")
+        print(f"  First generated token: {tokens[0]}")
+        print()
 
-    # --- Swift MLX GPU ---
-    print("Running Swift MLX stub (GPU, KV-cache)...")
+    def run_swift_device(device: str) -> tuple[float, float, dict[str, object] | None]:
+        print(f"Running Swift MLX stub ({device.upper()}, KV-cache)...")
+        last_timing = None
+        for i in range(args.warmup_runs):
+            timing = swift_mlx_generate(manifest_path, prompt_tokens, args.max_new_tokens, device)
+            if timing:
+                print(f"  warmup {i + 1}: avg_decode={timing.get('avg_decode', '?')}")
 
-    # Warmup
-    for i in range(WARMUP_RUNS):
-        t = swift_mlx_generate(MANIFEST_PATH, PROMPT_TOKENS, MAX_NEW_TOKENS, "gpu")
-        if t:
-            print(f"  warmup {i+1}: avg_decode={t.get('avg_decode', '?')}")
+        swift_decode_times = []
+        swift_prefill_times = []
+        for i in range(args.timed_runs):
+            timing = swift_mlx_generate(manifest_path, prompt_tokens, args.max_new_tokens, device)
+            if timing:
+                last_timing = timing
+                avg_val = float(timing.get("avg_decode", "0").replace("ms", ""))
+                prefill_val = float(timing.get("prefill", "0").replace("ms", ""))
+                swift_decode_times.append(avg_val)
+                swift_prefill_times.append(prefill_val)
+                print(f"  run {i + 1}: prefill={timing.get('prefill', '?')} avg_decode={timing.get('avg_decode', '?')}")
 
-    # Timed runs
-    swift_decode_times = []
-    swift_prefill_times = []
-    for i in range(TIMED_RUNS):
-        t = swift_mlx_generate(MANIFEST_PATH, PROMPT_TOKENS, MAX_NEW_TOKENS, "gpu")
-        if t:
-            avg_str = t.get("avg_decode", "0")
-            avg_val = float(avg_str.replace("ms", ""))
-            swift_decode_times.append(avg_val)
-            prefill_str = t.get("prefill", "0")
-            prefill_val = float(prefill_str.replace("ms", ""))
-            swift_prefill_times.append(prefill_val)
-            print(f"  run {i+1}: prefill={prefill_str} avg_decode={avg_str}")
+        decode_avg = sum(swift_decode_times) / len(swift_decode_times) if swift_decode_times else 0.0
+        prefill_avg = sum(swift_prefill_times) / len(swift_prefill_times) if swift_prefill_times else 0.0
+        print(f"\nSwift MLX avg decode: {decode_avg:.2f}ms/token ({device.upper()}, KV-cache)")
+        print(f"Swift MLX avg prefill: {prefill_avg:.1f}ms")
+        if last_timing:
+            print(f"  First generated token: {last_timing.get('tokens', [None])[0] if last_timing.get('tokens') else '?'}")
+        print()
+        return decode_avg, prefill_avg, last_timing
 
-    swift_avg = sum(swift_decode_times) / len(swift_decode_times) if swift_decode_times else 0
-    swift_prefill_avg = sum(swift_prefill_times) / len(swift_prefill_times) if swift_prefill_times else 0
-    print(f"\nSwift MLX avg decode: {swift_avg:.2f}ms/token (KV-cache, GPU)")
-    print(f"Swift MLX avg prefill: {swift_prefill_avg:.1f}ms")
-    if t:
-        print(f"  First generated token: {t.get('tokens', [None])[0] if t.get('tokens') else '?'}")
-    print()
+    swift_gpu_avg = None
+    swift_cpu_avg = None
+    if args.swift_device in {"gpu", "both"}:
+        swift_gpu_avg, _, _ = run_swift_device("gpu")
+    if args.swift_device in {"cpu", "both"}:
+        swift_cpu_avg, _, _ = run_swift_device("cpu")
 
-    # --- Swift MLX CPU ---
-    print("Running Swift MLX stub (CPU, KV-cache)...")
-    swift_cpu_times = []
-    for i in range(TIMED_RUNS):
-        t = swift_mlx_generate(MANIFEST_PATH, PROMPT_TOKENS, MAX_NEW_TOKENS, "cpu")
-        if t:
-            avg_str = t.get("avg_decode", "0")
-            avg_val = float(avg_str.replace("ms", ""))
-            swift_cpu_times.append(avg_val)
-            print(f"  run {i+1}: avg_decode={avg_str}")
-
-    swift_cpu_avg = sum(swift_cpu_times) / len(swift_cpu_times) if swift_cpu_times else 0
-    print(f"\nSwift MLX CPU avg decode: {swift_cpu_avg:.2f}ms/token (KV-cache, CPU)")
-    print()
-
-    # --- Summary ---
     print("=" * 60)
-    print("SUMMARY (d4 model, 4 layers, ~2M params)")
+    print("SUMMARY")
     print("=" * 60)
-    print(f"Python MLX (no KV-cache, GPU default): {python_avg:.2f}ms/token")
-    print(f"Swift  MLX (KV-cache, GPU):             {swift_avg:.2f}ms/token")
-    print(f"Swift  MLX (KV-cache, CPU):             {swift_cpu_avg:.2f}ms/token")
-    if swift_avg > 0:
-        print(f"Speedup (Swift GPU vs Python):          {python_avg / swift_avg:.1f}x")
-    print()
-    print("NOTE: This is a tiny d4 model. At 2.8B params, the GPU work")
-    print("per token is O(10-30ms) and the Python overhead is O(1-5ms),")
-    print("so the KV-cache + Swift path should show clearer wins.")
+    if python_avg is not None:
+        print(f"Python MLX (no KV-cache, GPU default): {python_avg:.2f}ms/token")
+    if swift_gpu_avg is not None:
+        print(f"Swift  MLX (KV-cache, GPU):             {swift_gpu_avg:.2f}ms/token")
+    if swift_cpu_avg is not None:
+        print(f"Swift  MLX (KV-cache, CPU):             {swift_cpu_avg:.2f}ms/token")
+    if python_avg is not None and swift_gpu_avg not in {None, 0.0}:
+        print(f"Speedup (Swift GPU vs Python):          {python_avg / swift_gpu_avg:.1f}x")
 
 
 if __name__ == "__main__":

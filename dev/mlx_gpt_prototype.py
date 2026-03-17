@@ -15,6 +15,12 @@ POLAR_EXPRESS_COEFFS = [
     (2.3465413258596377, -1.7097828382687081, 0.42323551169305323),
 ]
 
+ORTHOGONALIZE_DTYPES = {
+    "float16": mx.float16,
+    "bfloat16": mx.bfloat16,
+    "float32": mx.float32,
+}
+
 
 def has_ve(layer_idx: int, n_layer: int) -> bool:
     return layer_idx % 2 == (n_layer - 1) % 2
@@ -41,7 +47,8 @@ def build_optimizer_group_trees(tree) -> dict[str, dict]:
         "value_embeds": {"value_embeds": tree["value_embeds"]},
         "resid": {"resid_lambdas": tree["resid_lambdas"]},
         "x0": {"x0_lambdas": tree["x0_lambdas"]},
-        "blocks": {"blocks": tree["blocks"]},
+        "attn_blocks": {"blocks": [{"attn": block["attn"]} for block in tree["blocks"]]},
+        "mlp_blocks": {"blocks": [{"mlp": block["mlp"]} for block in tree["blocks"]]},
     }
 
 
@@ -141,7 +148,8 @@ class GroupedAdamW:
             "value_embeds": optim.AdamW(embedding_lr * dmodel_lr_scale * 0.5, betas=[0.8, 0.995], eps=1e-10, weight_decay=0.01),
             "resid": optim.AdamW(scalar_lr * 0.01, betas=[0.8, 0.95], eps=1e-10, weight_decay=0.05),
             "x0": optim.AdamW(scalar_lr, betas=[0.96, 0.95], eps=1e-10, weight_decay=0.0),
-            "blocks": optim.AdamW(matrix_lr, betas=[0.9, 0.95], eps=1e-10, weight_decay=weight_decay),
+            "attn_blocks": optim.AdamW(matrix_lr, betas=[0.9, 0.95], eps=1e-10, weight_decay=weight_decay),
+            "mlp_blocks": optim.AdamW(matrix_lr, betas=[0.9, 0.95], eps=1e-10, weight_decay=weight_decay),
         }
 
     def update(self, model: "MLXGPTPrototype", grads: dict) -> None:
@@ -158,19 +166,20 @@ class GroupedAdamW:
 
 
 class MatrixMuon:
-    def __init__(self, *, lr: float, momentum: float = 0.95, beta2: float = 0.9, weight_decay: float = 0.28, ns_steps: int = 5):
+    def __init__(self, *, lr: float, momentum: float = 0.95, beta2: float = 0.9, weight_decay: float = 0.28, ns_steps: int = 5, orthogonalize_dtype: str = "bfloat16"):
         self.lr = lr
         self.momentum = momentum
         self.beta2 = beta2
         self.weight_decay = weight_decay
         self.ns_steps = ns_steps
+        self.orthogonalize_dtype = orthogonalize_dtype
         self.state: dict[str, dict[str, mx.array]] = {}
 
     def _state_key(self, path: tuple[str, ...]) -> str:
         return "/".join(path)
 
     def _orthogonalize(self, grad: mx.array) -> mx.array:
-        x = grad.astype(mx.bfloat16)
+        x = grad.astype(ORTHOGONALIZE_DTYPES[self.orthogonalize_dtype])
         x_norm = mx.sqrt(mx.sum(mx.square(x.astype(mx.float32))))
         x = x / (x_norm * 1.01 + 1e-6)
         for a, b, c in POLAR_EXPRESS_COEFFS[: self.ns_steps]:
@@ -230,9 +239,19 @@ class MatrixMuon:
     def state_tree(self) -> dict[str, dict[str, mx.array]]:
         return self.state
 
+    def metadata(self) -> dict[str, object]:
+        return {
+            "lr": self.lr,
+            "momentum": self.momentum,
+            "beta2": self.beta2,
+            "weight_decay": self.weight_decay,
+            "ns_steps": self.ns_steps,
+            "orthogonalize_dtype": self.orthogonalize_dtype,
+        }
+
 
 class GroupedMixedOptimizer:
-    def __init__(self, config: MLXGPTConfig, *, unembedding_lr: float, embedding_lr: float, matrix_lr: float, scalar_lr: float, weight_decay: float, matrix_optimizer: str = "adamw"):
+    def __init__(self, config: MLXGPTConfig, *, unembedding_lr: float, embedding_lr: float, matrix_lr: float, scalar_lr: float, weight_decay: float, matrix_optimizer: str = "adamw", muon_ns_steps: int = 5, muon_orthogonalize_dtype: str = "bfloat16", muon_block_groups: str = "all"):
         self.adamw = GroupedAdamW(
             config,
             unembedding_lr=unembedding_lr,
@@ -242,37 +261,63 @@ class GroupedMixedOptimizer:
             weight_decay=weight_decay,
         )
         self.matrix_optimizer_name = matrix_optimizer
-        self.matrix_optimizer = None if matrix_optimizer == "adamw" else MatrixMuon(
-            lr=matrix_lr,
-            momentum=0.95,
-            beta2=0.9,
-            weight_decay=weight_decay,
-            ns_steps=5,
-        )
+        self.muon_block_groups = muon_block_groups
+        self.matrix_optimizers: dict[str, MatrixMuon] = {}
+        self.muon_group_names = self._resolve_muon_group_names(matrix_optimizer, muon_block_groups)
+        if matrix_optimizer != "adamw":
+            for group_name in self.muon_group_names:
+                self.matrix_optimizers[group_name] = MatrixMuon(
+                    lr=matrix_lr,
+                    momentum=0.95,
+                    beta2=0.9,
+                    weight_decay=weight_decay,
+                    ns_steps=muon_ns_steps,
+                    orthogonalize_dtype=muon_orthogonalize_dtype,
+                )
+
+    @staticmethod
+    def _resolve_muon_group_names(matrix_optimizer: str, muon_block_groups: str) -> set[str]:
+        if matrix_optimizer == "adamw":
+            return set()
+        if muon_block_groups == "all":
+            return {"attn_blocks", "mlp_blocks"}
+        if muon_block_groups == "mlp_only":
+            return {"mlp_blocks"}
+        if muon_block_groups == "attn_only":
+            return {"attn_blocks"}
+        raise ValueError(f"unsupported muon block group selection: {muon_block_groups}")
 
     def update(self, model: "MLXGPTPrototype", grads: dict) -> None:
         params = build_optimizer_group_trees(model.parameters())
         grad_groups = build_optimizer_group_trees(grads)
 
         for group_name, optimizer in self.adamw.optimizers.items():
-            if group_name == "blocks" and self.matrix_optimizer is not None:
+            if group_name in self.muon_group_names:
                 continue
             if sum_parameter_leaves(grad_groups[group_name]) == 0:
                 continue
             updated = optimizer.apply_gradients(grad_groups[group_name], params[group_name])
             model.update(updated)
 
-        if self.matrix_optimizer is not None and sum_parameter_leaves(grad_groups["blocks"]) != 0:
-            updated_blocks = self.matrix_optimizer.apply_gradients(grad_groups["blocks"], params["blocks"])
-            model.update(updated_blocks)
+        for group_name, optimizer in self.matrix_optimizers.items():
+            if sum_parameter_leaves(grad_groups[group_name]) == 0:
+                continue
+            updated_group = optimizer.apply_gradients(grad_groups[group_name], params[group_name])
+            model.update(updated_group)
 
     def state_trees(self) -> list[dict]:
-        trees = [optimizer.state for name, optimizer in self.adamw.optimizers.items() if name != "blocks" or self.matrix_optimizer is None]
-        if self.matrix_optimizer is None:
-            trees.append(self.adamw.optimizers["blocks"].state)
-        else:
-            trees.append(self.matrix_optimizer.state_tree())
+        trees = [optimizer.state for name, optimizer in self.adamw.optimizers.items() if name not in self.muon_group_names]
+        for group_name in sorted(self.muon_group_names):
+            trees.append(self.matrix_optimizers[group_name].state_tree())
         return trees
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "matrix_optimizer": self.matrix_optimizer_name,
+            "muon_block_groups": self.muon_block_groups,
+            "muon_groups_active": sorted(self.muon_group_names),
+            "muon_group_configs": {group_name: optimizer.metadata() for group_name, optimizer in self.matrix_optimizers.items()},
+        }
 
 
 class MLXGPTPrototype(nn.Module):
@@ -309,7 +354,7 @@ class MLXGPTPrototype(nn.Module):
     def num_params(self) -> int:
         return sum_parameter_leaves(self.parameters())
 
-    def build_optimizer(self, *, unembedding_lr: float = 0.008, embedding_lr: float = 0.3, matrix_lr: float = 0.02, scalar_lr: float = 0.5, weight_decay: float = 0.28, matrix_optimizer: str = "adamw") -> GroupedMixedOptimizer:
+    def build_optimizer(self, *, unembedding_lr: float = 0.008, embedding_lr: float = 0.3, matrix_lr: float = 0.02, scalar_lr: float = 0.5, weight_decay: float = 0.28, matrix_optimizer: str = "adamw", muon_ns_steps: int = 5, muon_orthogonalize_dtype: str = "bfloat16", muon_block_groups: str = "all") -> GroupedMixedOptimizer:
         return GroupedMixedOptimizer(
             self.config,
             unembedding_lr=unembedding_lr,
@@ -318,6 +363,9 @@ class MLXGPTPrototype(nn.Module):
             scalar_lr=scalar_lr,
             weight_decay=weight_decay,
             matrix_optimizer=matrix_optimizer,
+            muon_ns_steps=muon_ns_steps,
+            muon_orthogonalize_dtype=muon_orthogonalize_dtype,
+            muon_block_groups=muon_block_groups,
         )
 
 

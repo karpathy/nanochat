@@ -21,6 +21,12 @@ Produce enough evidence to decide whether the MLX path should become the permane
 2. Initialization from real checkpoints, not just fresh weights
 3. A clear optimizer recommendation that does not give back the performance win
 
+# Hardware
+- Apple Silicon M2 Ultra
+- 128GB unified memory
+- 60 GPU cores
+- macOS Sonoma
+
 ---
 
 ## Phase 1 — Real-Data Training Validation
@@ -67,10 +73,12 @@ Current evidence: a short MPS-backed base-training run produced checkpoint `base
 
 ### Story 2.2 — Translate and validate
 
-- [ ] Translate the checkpoint to MLX format using the existing translation path
-- [ ] Validate logit agreement between the PyTorch original and the translated MLX model (target: max diff ~1e-7)
+- [-] Translate the checkpoint to MLX format using the existing translation path
+- [-] Validate logit agreement between the PyTorch original and the translated MLX model (target: max diff ~1e-7)
 
 Current evidence: translation succeeds and loss parity is exact on the step-20 `phase2_d4_l_mps` checkpoint, but logit agreement is still above target (`max_abs_logit_diff=1.736469566822052e-4`, `mean_abs_logit_diff=2.1859856133232825e-5`). See [runs/mlx_logs/phase2_translation_phase2_d4_l_mps_step20.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase2_translation_phase2_d4_l_mps_step20.json).
+
+Additional evidence: the translation path itself is capable of near-target parity on the small random-reference harness. Running [dev/compare_pytorch_mlx_translation.py](/Users/peternicholls/Dev/nanochatter/dev/compare_pytorch_mlx_translation.py) on a freshly initialized depth-2 pair produced `max_abs_logit_diff=1.9371509552001953e-07` and `mean_abs_logit_diff=3.0761263758449786e-08` with exact loss parity. That narrows the remaining gap to checkpoint-specific behavior rather than a general MLX-vs-PyTorch mismatch in the prototype forward path.
 
 ### Story 2.3 — Continue training from the translated checkpoint
 
@@ -91,6 +99,12 @@ Grouped AdamW is the current practical winner (~900 tok/s). The Muon-style path 
 
 Current evidence: a fresh short benchmark sweep on this machine shows the gap is still present under a single consistent harness and in both input modes. Repeated-batch runs measured `880.03 tok/s` for `adamw` vs `267.08 tok/s` for `muon`; dataset-backed runs measured `893.32 tok/s` for `adamw` vs `266.78 tok/s` for `muon`. The near-identical Muon throughput across repeated and dataset modes suggests the bottleneck is in the optimizer path itself rather than the input pipeline. See [runs/mlx_logs/phase3_adamw_repeated_d32_repeated_20260317-202100.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_adamw_repeated_d32_repeated_20260317-202100.json), [runs/mlx_logs/phase3_muon_repeated_d32_repeated_20260317-202222.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_muon_repeated_d32_repeated_20260317-202222.json), [runs/mlx_logs/phase3_adamw_dataset_d32_dataset_20260317-202308.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_adamw_dataset_d32_dataset_20260317-202308.json), and [runs/mlx_logs/phase3_muon_dataset_d32_dataset_20260317-202430.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_muon_dataset_d32_dataset_20260317-202430.json).
 
+Additional evidence: the MLX harness now logs per-step timing breakdowns and exposes Muon tuning knobs directly (`--muon-ns-steps`, `--muon-block-groups`, `--muon-orthogonalize-dtype`). On the repeated-batch reference harness, reducing Polar Express rounds from `5` to `3` improved full-Muon throughput from `268.87 tok/s` to `371.98 tok/s`, and the corresponding 6-step training check still passed. Applying Muon only to the largest per-block matrices (`mlp_only`) with `3` rounds improved throughput further to `489.18 tok/s`, but the matching 6-step training check failed the loss-improvement criterion despite all values remaining finite, so that partial-Muon configuration is not yet a recommended training path. The timing breakdowns also strengthen the existing bottleneck hypothesis: the largest gap vs. AdamW remains in the eval/device-execution portion of the step rather than in Python-side forward/backward bookkeeping. See [runs/mlx_logs/phase3_adamw_repeated_breakdown_d32_repeated_20260317-214724.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_adamw_repeated_breakdown_d32_repeated_20260317-214724.json), [runs/mlx_logs/phase3_muon_repeated_breakdown_d32_repeated_20260317-214749.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_muon_repeated_breakdown_d32_repeated_20260317-214749.json), [runs/mlx_logs/phase3_muon_ns3_repeated_d32_repeated_20260317-214807.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_muon_ns3_repeated_d32_repeated_20260317-214807.json), [runs/mlx_logs/phase3_muon_mlp_only_ns3_repeated_d32_repeated_20260317-214821.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_muon_mlp_only_ns3_repeated_d32_repeated_20260317-214821.json), [runs/mlx_logs/phase3_check_muon_ns3_d32_repeated_20260317-215013.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_check_muon_ns3_d32_repeated_20260317-215013.json), and [runs/mlx_logs/phase3_check_muon_mlp_only_ns3_d32_repeated_20260317-214917.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_check_muon_mlp_only_ns3_d32_repeated_20260317-214917.json).
+
+Current best candidate: limiting Muon to attention matrices only and reducing Polar Express rounds to `2` produces the first closer-to-Muon configuration that meets the phase throughput target. Short repeated-batch benchmarks measured `653.96 tok/s` with bfloat16 orthogonalization and `659.48 tok/s` with float16 orthogonalization, both within the “≤50% slower than AdamW” target band. Both corresponding 6-step training checks passed, and a longer 32-step repeated-batch session on the float16 variant remained stable while averaging `652.24 tok/s` and reducing loss from `3.3076` to `0.00017`. This does not displace grouped AdamW as the practical default, but it does mean the phase now has a viable closer-to-Muon candidate worth carrying forward into profiling instead of treating AdamW as the only acceptable outcome. See [runs/mlx_logs/phase3_muon_attn_only_ns2_repeated_d32_repeated_20260317-215354.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_muon_attn_only_ns2_repeated_d32_repeated_20260317-215354.json), [runs/mlx_logs/phase3_muon_attn_only_ns2_f16_repeated_d32_repeated_20260317-215405.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_muon_attn_only_ns2_f16_repeated_d32_repeated_20260317-215405.json), [runs/mlx_logs/phase3_check_muon_attn_only_ns2_d32_repeated_20260317-215450.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_check_muon_attn_only_ns2_d32_repeated_20260317-215450.json), [runs/mlx_logs/phase3_check_muon_attn_only_ns2_f16_d32_repeated_20260317-215515.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_check_muon_attn_only_ns2_f16_d32_repeated_20260317-215515.json), and [runs/mlx_logs/phase3_session_muon_attn_only_ns2_f16_d32_repeated_20260317-215728.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_session_muon_attn_only_ns2_f16_d32_repeated_20260317-215728.json).
+
+Latest confirmation: the same `attn_only / ns=2 / float16` candidate also survives dataset-backed mode. A 32-step dataset-backed session averaged `654.12 tok/s`, held roughly the same step time as the repeated-batch run, and reduced loss from `13.3097` to `10.2515` with no instability or non-finite values. That closes the remaining concern that the candidate might only be viable on synthetic repeated batches. See [runs/mlx_logs/phase3_script_session_muon_attn_only_ns2_f16_d32_dataset_20260317-221651.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase3_script_session_muon_attn_only_ns2_f16_d32_dataset_20260317-221651.json).
+
 ### Story 3.1 — Profile to identify the bottleneck
 
 - [ ] Use Metal GPU Frame Capture to profile the Muon-style MLX path
@@ -106,9 +120,9 @@ Deferred note: keep this as the next optimizer-specific investigation, but do no
 
 ### Story 3.2b — If the bottleneck is algorithmic: tune at the Python level
 
-- [ ] Test reduced Newton-Schulz iterations or lower precision
-- [ ] Test partial Muon (apply only to the largest weight matrices) to map the cost/benefit frontier
-- [ ] Benchmark partial-Muon configurations against AdamW and full Muon
+- [X] Test reduced Newton-Schulz iterations or lower precision
+- [X] Test partial Muon (apply only to the largest weight matrices) to map the cost/benefit frontier
+- [X] Benchmark partial-Muon configurations against AdamW and full Muon
 
 **Decision point:** if neither 3.2a nor 3.2b closes the gap to within ~50% of AdamW throughput, document the gap and recommend AdamW as the right MLX optimizer choice.
 
@@ -132,7 +146,11 @@ The per-token loop in `engine.py` calls the model once per token and then runs a
 - [ ] Replace the Python per-token loop in `engine.py` with the Swift binary
 - [X] Measure per-token latency vs. the Python baseline
 
-Current evidence: the Swift stub now supports KV-cache incremental decoding and GPU execution via `Device.withDefaultDevice`. A benchmark on the d4 checkpoint (4 layers, ~37M params) showed that **at this small model scale, the Python MLX path is faster**: Python MLX (full recompute, GPU default) averaged 1.90ms/token vs Swift MLX (KV-cache, GPU) at 3.94ms/token vs Swift MLX (KV-cache, CPU) at 8.91ms/token. Both paths produce identical tokens, confirming KV-cache numerical correctness. The result is consistent with the hypothesis: at d4 scale, GPU work per step is so small (~2ms) that KV-cache concat and Swift process overhead exceed the savings. The hypothesis that Swift helps at 2.8B params (where GPU work is O(10–30ms) and Python overhead is O(1–5ms)) remains untested. See [dev/benchmark_swift_vs_python.py](/Users/peternicholls/Dev/nanochatter/dev/benchmark_swift_vs_python.py) for the benchmark harness.
+Current evidence: the Swift stub now supports KV-cache incremental decoding and GPU execution via `Device.withDefaultDevice`. A benchmark on the d4 checkpoint (4 layers, ~37M params) showed that **at this small model scale, the Python MLX path is faster**: Python MLX (full recompute, GPU default) averaged 1.90ms/token vs Swift MLX (KV-cache, GPU) at 3.94ms/token vs Swift MLX (KV-cache, CPU) at 8.91ms/token. Both paths produce identical tokens, confirming KV-cache numerical correctness. The result is consistent with the hypothesis: at d4 scale, GPU work per step is so small (~2ms) that KV-cache concat and Swift process overhead exceed the savings.
+
+New M2 Ultra evidence: the same benchmark on a d32 random-reference export (`n_layer=32`, `n_embd=2048`, ~2.82B params) shows the gap narrows substantially but Swift still does not win yet on this machine. Python MLX (full recompute, GPU default) averaged `27.79ms/token`, while Swift MLX (KV-cache, GPU) averaged `30.29ms/token`; both produced the same first generated token on the benchmark prompt. That means the Apple-native Swift path is now close enough to be a real optimization target on the M2 Ultra, but it has not yet crossed over into a latency win. The next concrete work is to reduce Apple-native inference overhead rather than to justify the runtime seam.
+
+Integration update: the optional `chat_cli` Swift path via `--swift-manifest` now reuses a persistent Swift worker over JSON-lines stdin/stdout instead of spawning a fresh Swift process per request. A direct two-request d4 worker smoke test showed identical token outputs across requests while avoiding repeated model loads inside the same worker process. This is still not the final lowest-overhead path, but it removes the most obvious Python-side integration penalty and turns the remaining Phase 4a problem into runtime overhead inside the persistent Apple-native path rather than process startup churn.
 
 ### Story 4b — Swift data prefetch worker *(requires Phase 1)*
 
@@ -160,8 +178,6 @@ The outer training loop (`mlx_training_session.py`) is GPU-bound. Swift translat
 ---
 
 ## Phase 5 — Compiled MLX Training
-
-**Priority: low. Do not invest time here until Phases 1–3 are done.**
 
 Compiled single-step training works today, but stateful optimizer updates across repeated calls do not advance correctly. This is worth revisiting only if MLX surfaces a supported pattern. If the Swift training path (Story 4c) is pursued, it benefits from this resolution automatically — monitor both together.
 

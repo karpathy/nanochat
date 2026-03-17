@@ -50,6 +50,9 @@ def main() -> None:
     parser.add_argument("--scalar-lr", type=float, default=0.5)
     parser.add_argument("--weight-decay", type=float, default=0.28)
     parser.add_argument("--matrix-optimizer", type=str, choices=["adamw", "muon"], default="adamw")
+    parser.add_argument("--muon-ns-steps", type=int, default=5)
+    parser.add_argument("--muon-orthogonalize-dtype", type=str, choices=["float16", "bfloat16", "float32"], default="bfloat16")
+    parser.add_argument("--muon-block-groups", type=str, choices=["all", "mlp_only", "attn_only"], default="all")
     parser.add_argument("--input-mode", type=str, choices=["repeated", "dataset"], default="repeated")
     parser.add_argument("--dataset-split", type=str, choices=["train", "val"], default="train")
     parser.add_argument("--init-from-pytorch-reference", action="store_true")
@@ -88,6 +91,9 @@ def main() -> None:
         scalar_lr=args.scalar_lr,
         weight_decay=args.weight_decay,
         matrix_optimizer=args.matrix_optimizer,
+        muon_ns_steps=args.muon_ns_steps,
+        muon_orthogonalize_dtype=args.muon_orthogonalize_dtype,
+        muon_block_groups=args.muon_block_groups,
     )
     input_provider = make_input_batch_provider(
         args.input_mode,
@@ -111,14 +117,24 @@ def main() -> None:
 
     mx.reset_peak_memory()
     start = time.perf_counter()
+    forward_backward_elapsed = 0.0
+    optimizer_update_elapsed = 0.0
+    eval_elapsed = 0.0
     final_loss = None
     for _ in range(args.steps):
         inputs, targets, batch_metadata = input_provider.next_batch()
         if input_metadata is None:
             input_metadata = batch_metadata
+        step_start = time.perf_counter()
         loss, grads = loss_and_grad(inputs, targets)
+        after_backward = time.perf_counter()
         optimizer.update(model, grads)
+        after_update = time.perf_counter()
         mx.eval(loss, model.parameters(), *optimizer.state_trees())
+        after_eval = time.perf_counter()
+        forward_backward_elapsed += after_backward - step_start
+        optimizer_update_elapsed += after_update - after_backward
+        eval_elapsed += after_eval - after_update
         final_loss = loss
     elapsed = time.perf_counter() - start
 
@@ -139,7 +155,11 @@ def main() -> None:
             "elapsed_s": elapsed,
             "tokens_per_s": tokens_processed / elapsed if elapsed > 0 else 0.0,
             "loss": float(final_loss.item()) if final_loss is not None else None,
+            "mean_forward_backward_s": forward_backward_elapsed / args.steps if args.steps > 0 else 0.0,
+            "mean_optimizer_update_s": optimizer_update_elapsed / args.steps if args.steps > 0 else 0.0,
+            "mean_eval_s": eval_elapsed / args.steps if args.steps > 0 else 0.0,
         },
+        "optimizer": optimizer.metadata(),
         "memory": get_memory_stats(),
         "tokenizer": {
             "shared_vocab_used": shared_tokenizer_used,
