@@ -26,6 +26,11 @@ def _patch_missing_config_keys(model_config_kwargs):
     if "window_pattern" not in model_config_kwargs:
         model_config_kwargs["window_pattern"] = "L"
         log0(f"Patching missing window_pattern in model config to 'L'")
+    # AttnRes defaults to disabled
+    if "attn_res" not in model_config_kwargs:
+        model_config_kwargs["attn_res"] = False
+    if "attn_res_block_size" not in model_config_kwargs:
+        model_config_kwargs["attn_res_block_size"] = 4
 
 def _patch_missing_keys(model_data, model_config):
     """Add default values for new parameters that may be missing in old checkpoints."""

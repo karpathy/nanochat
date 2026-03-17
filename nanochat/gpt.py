@@ -10,6 +10,7 @@ Notable features:
 - no bias in linear layers
 - Group-Query Attention (GQA) support for more efficient inference
 - Flash Attention 3 integration
+- Optional Block Attention Residuals (AttnRes): https://github.com/MoonshotAI/Attention-Residuals
 """
 
 from functools import partial
@@ -37,10 +38,22 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    # Attention Residuals (Block AttnRes): replaces resid_lambdas/x0_lambdas with learned
+    # depth-attention over block-level representations. See: https://github.com/MoonshotAI/Attention-Residuals
+    attn_res: bool = False
+    attn_res_block_size: int = 4  # layers per block (must be >= 2 and even)
 
 
 def norm(x):
     return F.rms_norm(x, (x.size(-1),)) # note that this will run in bf16, seems ok
+
+def block_attn_res(blocks, partial_block, w):
+    """Depth-attention over block representations. w is a (D,) pseudo-query vector."""
+    V = torch.stack(blocks + [partial_block])  # (N+1, B, T, D)
+    K = norm(V)
+    logits = torch.einsum('d, n b t d -> n b t', w, K)
+    h = torch.einsum('n b t, n b t d -> b t d', logits.softmax(0), V)
+    return h
 
 class Linear(nn.Linear):
     """nn.Linear that casts weights to match input dtype in forward.
@@ -160,6 +173,13 @@ class GPT(nn.Module):
         """
         super().__init__()
         self.config = config
+        # Validate AttnRes config
+        if config.attn_res:
+            assert config.attn_res_block_size >= 2 and config.attn_res_block_size % 2 == 0, \
+                f"attn_res_block_size must be >= 2 and even, got {config.attn_res_block_size}"
+            # Per-layer pseudo-query vectors for depth-attention (one before attn, one before mlp)
+            self.attn_res_proj = nn.Parameter(torch.zeros(config.n_layer, config.n_embd))
+            self.mlp_res_proj = nn.Parameter(torch.zeros(config.n_layer, config.n_embd))
         # Compute per-layer window sizes for sliding window attention
         # window_size is (left, right) tuple: (-1, 0) for full context, (N, 0) for sliding window
         self.window_sizes = self._compute_window_sizes(config)
@@ -177,6 +197,7 @@ class GPT(nn.Module):
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
         # x0_lambdas: blends initial embedding back in at each layer (init 0.0 = disabled)
         # Separate parameters so they can have different optimizer treatment
+        # When AttnRes is enabled, these are still created (for checkpoint compat) but unused in forward
         self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))   # fake init, real init in init_weights()
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))     # fake init, real init in init_weights()
         # Smear: mix previous token's embedding into current token (cheap bigram-like info)
@@ -246,6 +267,11 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
                 torch.nn.init.uniform_(block.attn.ve_gate.weight, 0.0, 0.02)
+
+        # AttnRes pseudo-query vectors: small init
+        if self.config.attn_res:
+            torch.nn.init.normal_(self.attn_res_proj, mean=0.0, std=0.02)
+            torch.nn.init.normal_(self.mlp_res_proj, mean=0.0, std=0.02)
 
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
@@ -324,9 +350,13 @@ class GPT(nn.Module):
         nparams = sum(p.numel() for p in self.parameters())
         # Exclude non-matmul params: embeddings and per-layer scalars
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
+        attn_res_numel = 0
+        if self.config.attn_res:
+            attn_res_numel = self.attn_res_proj.numel() + self.mlp_res_proj.numel()
         nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
                           self.resid_lambdas.numel() + self.x0_lambdas.numel() +
-                          self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel())
+                          self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel() +
+                          attn_res_numel)
         h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window
         attn_flops = 0
@@ -354,7 +384,8 @@ class GPT(nn.Module):
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
-        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel()
+        attn_res = (self.attn_res_proj.numel() + self.mlp_res_proj.numel()) if self.config.attn_res else 0
+        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel() + attn_res
         total = wte + value_embeds + lm_head + transformer_matrices + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
@@ -372,13 +403,14 @@ class GPT(nn.Module):
 
         # Separate out all parameters into groups
         matrix_params = list(self.transformer.h.parameters())
+        attn_res_params = [self.attn_res_proj, self.mlp_res_proj] if self.config.attn_res else []
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
         smear_params = [self.smear_gate.weight, self.smear_lambda, self.backout_lambda]
-        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(smear_params)
+        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(smear_params) + len(attn_res_params)
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
@@ -393,7 +425,7 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.05),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
             dict(kind='adamw', params=smear_params, lr=0.2, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0),
-        ]
+        ] + ([dict(kind='adamw', params=attn_res_params, lr=0.02, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0)] if attn_res_params else [])
         # Muon groups (matrix params, grouped by shape for stacking)
         for shape in sorted({p.shape for p in matrix_params}):
             group_params = [p for p in matrix_params if p.shape == shape]
@@ -444,16 +476,41 @@ class GPT(nn.Module):
                 x = x + gate * x_pre_smear
 
         # Forward the trunk of the Transformer
-        x0 = x  # save initial normalized embedding for x0 residual
         n_layer = self.config.n_layer
         backout_layer = n_layer // 2  # cache at halfway point
         x_backout = None
-        for i, block in enumerate(self.transformer.h):
-            x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
-            if i == backout_layer:
-                x_backout = x
+        if not self.config.attn_res:
+            # Standard residual path with resid_lambdas / x0_lambdas
+            x0 = x  # save initial normalized embedding for x0 residual
+            for i, block in enumerate(self.transformer.h):
+                x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
+                ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
+                x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+                if i == backout_layer:
+                    x_backout = x
+        else:
+            # AttnRes path: depth-attention over block-level representations
+            # replaces resid_lambdas/x0_lambdas with learned depth-attention
+            block_size = self.config.attn_res_block_size
+            ar_blocks = []  # completed block representations
+            partial = x
+            for i, block in enumerate(self.transformer.h):
+                ve = self.value_embeds[str(i)](idx).to(partial.dtype) if str(i) in self.value_embeds else None
+                # Depth-attention before attention sublayer
+                h = block_attn_res(ar_blocks, partial, self.attn_res_proj[i].to(partial.dtype))
+                # Block boundary: save partial, start fresh
+                if i > 0 and i % (block_size // 2) == 0:
+                    ar_blocks = ar_blocks + [partial]
+                    partial = None
+                attn_out = block.attn(norm(h), ve, cos_sin, self.window_sizes[i], kv_cache)
+                partial = partial + attn_out if partial is not None else attn_out
+                # Depth-attention before MLP sublayer
+                h = block_attn_res(ar_blocks, partial, self.mlp_res_proj[i].to(partial.dtype))
+                mlp_out = block.mlp(norm(h))
+                partial = partial + mlp_out
+                if i == backout_layer:
+                    x_backout = partial
+            x = partial
         # Subtract mid-layer residual to remove low-level features before logit projection
         if x_backout is not None:
             x = x - self.backout_lambda.to(x.dtype) * x_backout
