@@ -3,20 +3,20 @@
 import json
 import os
 
-from nanochat.common.config import CommonConfig
+from nanochat.config import CommonConfig
 from nanochat.common.wandb import DummyWandb, LocalWandb, init_wandb
 
 
 def test_creates_output_dir(tmp_path):
     run_dir = tmp_path / "runs" / "nanochat" / "my-run"
     assert not run_dir.exists()
-    w = LocalWandb("my-run", base_dir=str(tmp_path))
+    w = LocalWandb(str(tmp_path), "my-run")
     w.finish()
     assert run_dir.exists()
 
 
 def test_log_writes_jsonl(tmp_path):
-    w = LocalWandb("test-run", base_dir=str(tmp_path))
+    w = LocalWandb(str(tmp_path), "test-run")
     w.log({"step": 0, "loss": 1.5})
     w.log({"step": 1, "loss": 1.2})
     w.finish()
@@ -28,7 +28,7 @@ def test_log_writes_jsonl(tmp_path):
 
 
 def test_finish_closes_file(tmp_path):
-    w = LocalWandb("test-run", base_dir=str(tmp_path))
+    w = LocalWandb(str(tmp_path), "test-run")
     w.finish()
     assert w._f.closed
 

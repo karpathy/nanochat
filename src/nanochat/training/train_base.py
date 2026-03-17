@@ -41,7 +41,9 @@ from nanochat.common import (
 )
 from nanochat.common.flash_attention import HAS_FA3, _use_fa3
 from nanochat.config import Config
-from nanochat.evaluation import Engine, evaluate_bpb, evaluate_core
+from nanochat.evaluation.core_benchmark import evaluate_core
+from nanochat.evaluation.engine import Engine
+from nanochat.evaluation.loss_eval import evaluate_bpb
 from nanochat.models.gpt import GPT, GPTConfig, Linear
 from nanochat.report import get_report
 from nanochat.tokenizer import get_token_bytes, get_tokenizer

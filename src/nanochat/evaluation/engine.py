@@ -20,7 +20,6 @@ import torch
 import torch.nn.functional as F
 
 from nanochat.common import autodetect_device_type, compute_init
-from nanochat.training.checkpoint import load_model
 
 
 # -----------------------------------------------------------------------------
@@ -338,57 +337,3 @@ class Engine:
             if all(completed):
                 break
         return results, masks
-
-
-if __name__ == "__main__":
-    """
-    Quick inline test to make sure that the naive/slow model.generate function
-    is equivalent to the faster Engine.generate function here.
-    """
-    import time
-
-    # init compute
-    device_type = autodetect_device_type()
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
-    # load the model and tokenizer
-    model, tokenizer, meta = load_model("base", device, phase="eval")
-    bos_token_id = tokenizer.get_bos_token_id()
-    # common hyperparameters
-    kwargs = dict(max_tokens=64, temperature=0.0)
-    # set the starting prompt
-    prompt_tokens = tokenizer.encode("The chemical formula of water is", prepend=bos_token_id)
-    # generate the reference sequence using the model.generate() function
-    generated_tokens = []
-    torch.cuda.synchronize()
-    t0 = time.time()
-    stream = model.generate(prompt_tokens, **kwargs)
-    for token in stream:
-        generated_tokens.append(token)
-        chunk = tokenizer.decode([token])
-        print(chunk, end="", flush=True)
-    print()
-    torch.cuda.synchronize()
-    t1 = time.time()
-    print(f"Reference time: {t1 - t0:.2f}s")
-    reference_ids = generated_tokens
-    # generate tokens with Engine
-    generated_tokens = []
-    engine = Engine(model, tokenizer)
-    stream = engine.generate(prompt_tokens, num_samples=1, **kwargs)  # note: runs in fp32
-    torch.cuda.synchronize()
-    t0 = time.time()
-    for token_column, token_masks in stream:
-        token = token_column[0]  # only print out the first row
-        generated_tokens.append(token)
-        chunk = tokenizer.decode([token])
-        print(chunk, end="", flush=True)
-    print()
-    torch.cuda.synchronize()
-    t1 = time.time()
-    print(f"Engine time: {t1 - t0:.2f}s")
-    # compare the two sequences
-    for i in range(len(reference_ids)):
-        if reference_ids[i] != generated_tokens[i]:
-            print(f"Mismatch at {i}: {reference_ids[i]} != {generated_tokens[i]}")
-            break
-    print(f"Match: {reference_ids == generated_tokens}")

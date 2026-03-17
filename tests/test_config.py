@@ -168,37 +168,37 @@ def test_save_omits_none_fields(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_parse_cli_only_common():
-    cfg = ConfigLoader().parse(["--run", "smoke", "--wandb", "disabled"])
+def test_parse_cli_only_common(tmp_path):
+    cfg = ConfigLoader().parse(["--base-dir", str(tmp_path), "--run", "smoke", "--wandb", "disabled"])
     assert cfg.common.run == "smoke"
     assert cfg.common.wandb == "disabled"
 
 
-def test_parse_cli_only_training():
-    cfg = ConfigLoader().add_training().parse(["--depth", "6", "--num-iterations", "20"])
+def test_parse_cli_only_training(tmp_path):
+    cfg = ConfigLoader().add_training().parse(["--base-dir", str(tmp_path), "--depth", "6", "--num-iterations", "20"])
     assert cfg.training.depth == 6
     assert cfg.training.num_iterations == 20
 
 
-def test_parse_cli_only_sft():
-    cfg = ConfigLoader().add_sft().parse(["--mmlu-epochs", "7", "--no-load-optimizer"])
+def test_parse_cli_only_sft(tmp_path):
+    cfg = ConfigLoader().add_sft().parse(["--base-dir", str(tmp_path), "--mmlu-epochs", "7", "--no-load-optimizer"])
     assert cfg.sft.mmlu_epochs == 7
     assert cfg.sft.load_optimizer is False
 
 
-def test_parse_cli_only_rl():
-    cfg = ConfigLoader().add_rl().parse(["--num-epochs", "4", "--temperature", "0.8"])
+def test_parse_cli_only_rl(tmp_path):
+    cfg = ConfigLoader().add_rl().parse(["--base-dir", str(tmp_path), "--num-epochs", "4", "--temperature", "0.8"])
     assert cfg.rl.num_epochs == 4
     assert cfg.rl.temperature == 0.8
 
 
-def test_parse_cli_only_evaluation():
-    cfg = ConfigLoader().add_evaluation().parse(["--max-per-task", "50"])
+def test_parse_cli_only_evaluation(tmp_path):
+    cfg = ConfigLoader().add_evaluation().parse(["--base-dir", str(tmp_path), "--max-per-task", "50"])
     assert cfg.evaluation.max_per_task == 50
 
 
-def test_parse_no_args_uses_defaults():
-    cfg = ConfigLoader().add_training().parse([])
+def test_parse_no_args_uses_defaults(tmp_path):
+    cfg = ConfigLoader().add_training().parse(["--base-dir", str(tmp_path)])
     assert cfg.training.depth == 20
     assert cfg.common.run == "unnamed"
 

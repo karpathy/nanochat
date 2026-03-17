@@ -32,9 +32,9 @@ def test_print0_non_master_silent(monkeypatch, capsys):
 
 def test_skips_download_if_file_exists(tmp_path):
     """File already present — urlopen must never be called."""
-    existing = tmp_path / "data" / "climbmix"
-    existing.mkdir(parents=True)
-    target = existing / "file.bin"
+    data_root = tmp_path / "data"
+    data_root.mkdir(parents=True)
+    target = data_root / "file.bin"
     target.write_bytes(b"data")
 
     called = []
