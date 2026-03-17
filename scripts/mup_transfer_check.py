@@ -484,8 +484,8 @@ def main():
                         help='Comma-separated list of widths to test')
     # Paper-style default: ~1000x range, 11 log-spaced points
     parser.add_argument('--lr-mults', type=str,
-                        default='0.03125,0.0625,0.125,0.25,0.5,1.0,2.0,4.0,8.0,16.0,32.0',
-                        help='Comma-separated LR multipliers to sweep (default: 1024x range, 11 points)')
+                        default='0.03125,0.044,0.0625,0.088,0.125,0.177,0.25,0.354,0.5,0.707,1.0,1.414,2.0,2.828,4.0,5.657,8.0',
+                        help='Comma-separated LR multipliers to sweep (default: 256x range, 17 points, ~sqrt(2) spacing)')
     parser.add_argument('--num-random-trials', type=int, default=0,
                         help='If >0, use N log-uniform random LR multipliers from 10^Uniform(-1.5,1.5) '
                              'instead of the grid. Paper-style methodology (Section F).')
