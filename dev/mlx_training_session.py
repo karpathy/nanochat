@@ -11,7 +11,7 @@ import mlx.nn as nn
 from dev.benchmark_mlx_reference import get_memory_stats, load_tokenizer_metadata
 from dev.mlx_checkpoint_translation import initialize_mlx_from_checkpoint_source, initialize_mlx_from_pytorch_reference
 from dev.mlx_gpt_prototype import MLXGPTPrototype, build_reference_config
-from dev.mlx_input_batches import build_input_batch
+from dev.mlx_input_batches import make_input_batch_provider
 
 
 def init_model(model: MLXGPTPrototype, args) -> dict[str, object] | None:
@@ -85,7 +85,7 @@ def main() -> None:
         weight_decay=args.weight_decay,
         matrix_optimizer=args.matrix_optimizer,
     )
-    inputs, targets, input_metadata = build_input_batch(
+    input_provider = make_input_batch_provider(
         args.input_mode,
         args.device_batch_size,
         args.max_seq_len,
@@ -93,11 +93,15 @@ def main() -> None:
         bos_token_id,
         dataset_split=args.dataset_split,
     )
+    input_metadata = None
 
     train_step = build_eager_train_step(model, optimizer)
 
     bootstrap_loss = None
     for warmup_idx in range(max(args.warmup_steps, 0)):
+        inputs, targets, batch_metadata = input_provider.next_batch()
+        if input_metadata is None:
+            input_metadata = batch_metadata
         warm_loss = train_step(inputs, targets)
         if warmup_idx == 0:
             bootstrap_loss = warm_loss
@@ -106,6 +110,9 @@ def main() -> None:
     per_step = []
     wall_start = time.perf_counter()
     for step_idx in range(args.steps):
+        inputs, targets, batch_metadata = input_provider.next_batch()
+        if input_metadata is None:
+            input_metadata = batch_metadata
         start = time.perf_counter()
         loss = train_step(inputs, targets)
         mx.eval(loss)
@@ -116,6 +123,7 @@ def main() -> None:
             "loss": float(loss.item()),
             "step_time_s": elapsed,
             "tokens_per_s": (args.device_batch_size * args.max_seq_len) / elapsed if elapsed > 0 else 0.0,
+            "input_batch": batch_metadata,
             "memory": memory,
         }
         per_step.append(row)

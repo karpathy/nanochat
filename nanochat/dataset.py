@@ -57,6 +57,13 @@ def list_parquet_files(data_dir=None, warn_on_legacy=False):
         # attempt a fallback to the legacy data directory
         data_dir = os.path.join(base_dir, "base_data")
 
+    if not os.path.exists(data_dir):
+        raise FileNotFoundError(
+            "No dataset directory found. Run `python -m nanochat.dataset -n 32` to download parquet shards "
+            "and `python -m scripts.tok_train --max-chars=500000000` if the tokenizer is also missing. "
+            f"Checked: {DATA_DIR} and legacy fallback {os.path.join(base_dir, 'base_data')}"
+        )
+
     parquet_files = sorted([
         f for f in os.listdir(data_dir)
         if f.endswith('.parquet') and not f.endswith('.tmp')

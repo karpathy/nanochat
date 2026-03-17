@@ -8,7 +8,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from dev.mlx_checkpoint_translation import initialize_mlx_from_checkpoint_source, initialize_mlx_from_pytorch_reference
-from dev.mlx_input_batches import build_input_batch
+from dev.mlx_input_batches import make_input_batch_provider
 from dev.mlx_gpt_prototype import MLXGPTPrototype, build_reference_config
 from nanochat.tokenizer import get_tokenizer
 
@@ -87,7 +87,7 @@ def main() -> None:
         weight_decay=args.weight_decay,
         matrix_optimizer=args.matrix_optimizer,
     )
-    inputs, targets, input_metadata = build_input_batch(
+    input_provider = make_input_batch_provider(
         args.input_mode,
         args.device_batch_size,
         args.max_seq_len,
@@ -95,10 +95,14 @@ def main() -> None:
         bos_token_id,
         dataset_split=args.dataset_split,
     )
+    input_metadata = None
 
     loss_and_grad = nn.value_and_grad(model, lambda batch, labels: model.loss(batch, labels))
 
     for _ in range(max(args.warmup_steps, 0)):
+        inputs, targets, batch_metadata = input_provider.next_batch()
+        if input_metadata is None:
+            input_metadata = batch_metadata
         loss, grads = loss_and_grad(inputs, targets)
         optimizer.update(model, grads)
         mx.eval(loss, model.parameters(), *optimizer.state_trees())
@@ -107,6 +111,9 @@ def main() -> None:
     start = time.perf_counter()
     final_loss = None
     for _ in range(args.steps):
+        inputs, targets, batch_metadata = input_provider.next_batch()
+        if input_metadata is None:
+            input_metadata = batch_metadata
         loss, grads = loss_and_grad(inputs, targets)
         optimizer.update(model, grads)
         mx.eval(loss, model.parameters(), *optimizer.state_trees())
@@ -140,7 +147,7 @@ def main() -> None:
         "initialization": init_metadata,
         "prototype_limitations": [
             "Matrix optimizer parity is still experimental when using the MLX Muon option.",
-            "Dataset-backed input mode currently builds a single static batch rather than reproducing the full distributed loader.",
+            "Dataset-backed input mode is still a single-process sequential packer rather than the full distributed best-fit loader.",
         ],
     }
     print(json.dumps(summary, indent=2))
