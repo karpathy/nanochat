@@ -88,6 +88,13 @@ export PYTHONPATH="$PWD"
 .venv/bin/python dev/mlx_training_check.py --depth 32 --device-batch-size 2 --max-seq-len 1024 --steps 6 --warmup-steps 1 --init-from-pytorch-reference --input-mode dataset --progress
 ```
 
+Longer Apple-native compiled training session:
+
+```bash
+export PYTHONPATH="$PWD"
+.venv/bin/python dev/mlx_training_session.py --depth 32 --device-batch-size 2 --max-seq-len 1024 --steps 32 --warmup-steps 2 --init-from-pytorch-reference --matrix-optimizer adamw --progress-interval 4
+```
+
 ## Results
 
 ### Small Run
