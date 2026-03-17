@@ -29,12 +29,12 @@ Produce enough evidence to decide whether the MLX path should become the permane
 
 ### Story 1.1 — Bootstrap data and tokenizer
 
-- [ ] Download a minimal set of parquet shards: `python -m nanochat.dataset -n 32`
-- [ ] Train the tokenizer if missing: `python -m scripts.tok_train --max-chars=500000000`
+- [X] Download a minimal set of parquet shards: `python -m nanochat.dataset -n 32`
+- [X] Train the tokenizer if missing: `python -m scripts.tok_train --max-chars=500000000`
 
 ### Story 1.2 — Run the dataset-backed training check
 
-- [ ] Run the MLX training check with `--input-mode dataset`:
+- [X] Run the MLX training check with `--input-mode dataset`:
   ```bash
   export PYTHONPATH="$PWD"
   .venv/bin/python dev/mlx_training_check.py \
@@ -43,13 +43,13 @@ Produce enough evidence to decide whether the MLX path should become the permane
     --init-from-pytorch-reference \
     --input-mode dataset --progress
   ```
-- [ ] Confirm the check passes: no crashes, finite loss at every step
+- [X] Confirm the check passes: no crashes, finite loss at every step
 
 ### Story 1.3 — Validate throughput and loss trajectory
 
-- [ ] Run a longer dataset-backed session (64+ steps)
-- [ ] Compare loss trajectory against the synthetic-batch baseline
-- [ ] Confirm throughput does not regress more than ~10% versus synthetic batches
+- [X] Run a longer dataset-backed session (64+ steps)
+- [X] Compare loss trajectory against the synthetic-batch baseline
+- [X] Confirm throughput does not regress more than ~10% versus synthetic batches
 
 **Done when:** training check passes with real data; throughput regression ≤10%; loss is decreasing, finite, and stable.
 
