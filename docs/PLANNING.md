@@ -128,11 +128,11 @@ MLX's lazy-and-fused execution model means Python builds the computation DAG and
 
 The per-token loop in `engine.py` calls the model once per token and then runs a Python state machine (`RowState`, `forced_tokens`, calculator parsing). At 2.8B params, GPU work per token is O(10–30ms); Python per-token overhead is O(1–5ms), serialised through the GIL under batch generation.
 
-- [ ] Build a Swift inference binary using `mlx-swift`; use the `.safetensors` checkpoint file as the boundary with the Python training path
+- [X] Build a Swift inference binary using `mlx-swift`; use the `.safetensors` checkpoint file as the boundary with the Python training path
 - [ ] Replace the Python per-token loop in `engine.py` with the Swift binary
-- [ ] Measure per-token latency vs. the Python baseline
+- [X] Measure per-token latency vs. the Python baseline
 
-Current evidence: the Python side of the boundary now exists. [dev/export_mlx_safetensors.py](/Users/peternicholls/Dev/nanochatter/dev/export_mlx_safetensors.py) exports translated MLX weights and sidecar metadata to `.safetensors`; the first concrete artifact is [runs/mlx_exports/phase2_d4_l_mps_step20.safetensors](/Users/peternicholls/Dev/nanochatter/runs/mlx_exports/phase2_d4_l_mps_step20.safetensors) with metadata in [runs/mlx_exports/phase2_d4_l_mps_step20.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_exports/phase2_d4_l_mps_step20.json).
+Current evidence: the Swift stub now supports KV-cache incremental decoding and GPU execution via `Device.withDefaultDevice`. A benchmark on the d4 checkpoint (4 layers, ~37M params) showed that **at this small model scale, the Python MLX path is faster**: Python MLX (full recompute, GPU default) averaged 1.90ms/token vs Swift MLX (KV-cache, GPU) at 3.94ms/token vs Swift MLX (KV-cache, CPU) at 8.91ms/token. Both paths produce identical tokens, confirming KV-cache numerical correctness. The result is consistent with the hypothesis: at d4 scale, GPU work per step is so small (~2ms) that KV-cache concat and Swift process overhead exceed the savings. The hypothesis that Swift helps at 2.8B params (where GPU work is O(10–30ms) and Python overhead is O(1–5ms)) remains untested. See [dev/benchmark_swift_vs_python.py](/Users/peternicholls/Dev/nanochatter/dev/benchmark_swift_vs_python.py) for the benchmark harness.
 
 ### Story 4b — Swift data prefetch worker *(requires Phase 1)*
 

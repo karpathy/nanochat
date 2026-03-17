@@ -8,18 +8,16 @@ Current scope:
 - loads the paired `.safetensors` checkpoint directly with `mlx-swift`
 - validates the expected tensor surface for the current MLX prototype
 - runs a full forward pass from token ids to logits
-- runs a simple greedy generation loop by recomputing over the growing prefix
-- prints the generated token ids so a Python-side wrapper can decode them back to text
+- runs a greedy generation loop with KV-cache incremental decoding
+- supports both CPU and GPU execution via `Device.withDefaultDevice`
+- prints the generated token ids and per-token timing so a Python-side wrapper can decode and benchmark
 - validates the first exported checkpoint boundary on the Swift side without introducing tokenizer or engine-state work yet
 
 Current non-goals:
 
 - tokenizer parity in Swift
-- KV-cache decoding loop
 - tool-state logic from `nanochat/engine.py`
 - production packaging or app integration
-- GPU execution wiring for this CLI shell path
-- efficient incremental decode; the current loop recomputes the full prefix each step
 
 Why `xcodebuild` instead of `swift run`:
 
@@ -40,7 +38,7 @@ $PWD/swift/Build/Products/Debug/nanochat-mlx-stub \
   --manifest runs/mlx_exports/phase2_d4_l_mps_step20.json \
   --prompt-tokens 32759,464,1223 \
   --max-new-tokens 8 \
-  --device cpu
+  --device gpu
 ```
 
 The stub intentionally takes token ids instead of raw text so the checkpoint boundary can be exercised before committing to a Swift tokenizer path.
@@ -49,8 +47,9 @@ Current validation status:
 
 - build verified with `swift build`
 - runtime verified with `xcodebuild` output plus `DYLD_FRAMEWORK_PATH`
-- end-to-end CPU forward pass verified against `runs/mlx_exports/phase2_d4_l_mps_step20.safetensors`
-- GPU execution is deferred for a later pass
+- end-to-end CPU and GPU forward pass verified against `runs/mlx_exports/phase2_d4_l_mps_step20.safetensors`
+- KV-cache produces identical token sequences to full-prefix recompute
+- timing: d4 model on M2 Ultra — GPU 3.94ms/token, CPU 8.91ms/token (KV-cache decode)
 
 Python bridge:
 

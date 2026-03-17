@@ -309,8 +309,8 @@ If a fresh agent needs to continue this phase without overthinking it, default t
 
 If continuing this phase, do these in order:
 
-1. measure whether replacing the Python per-token loop can produce a worthwhile Apple-native inference win now that the first `mlx-swift` stub exists
-2. add efficient incremental decode and KV-cache support on the Swift side so the stub is comparable to `engine.py`
+1. test the Swift MLX inference path at full reference scale (d32, ~2.8B params) to determine whether the KV-cache + Swift path produces a per-token latency win over Python MLX — at d4 scale Swift was 2x slower due to overhead dominating the tiny model (see `dev/benchmark_swift_vs_python.py`)
+2. if the larger model shows a meaningful win, design the `engine.py` integration seam: Python keeps the state machine (`RowState`, `forced_tokens`, calculator parsing) and delegates the forward-pass + greedy loop to the Swift binary
 3. keep Muon profiling as a deferred optimizer-specific investigation, not a blocker for the runtime track
 4. only revisit compiled multi-step training if there is a clear MLX-supported pattern for stateful optimizer updates across repeated calls
 

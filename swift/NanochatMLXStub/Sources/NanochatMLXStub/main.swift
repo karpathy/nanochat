@@ -471,65 +471,68 @@ func main() throws {
     let options = try parseArguments()
     let manifest = try loadManifest(options.manifestURL)
     let checkpointURL = resolveCheckpointURL(manifestURL: options.manifestURL, checkpointPath: manifest.export.safetensorsPath)
-    let stream: StreamOrDevice = options.useGPU ? .gpu : .cpu
 
-    // --- Load checkpoint ---
+    // --- Load checkpoint (always on CPU; file I/O is a CPU operation) ---
     let loadStart = CFAbsoluteTimeGetCurrent()
     let checkpointData = try Data(contentsOf: checkpointURL)
-    let (tensors, metadata) = try loadArraysAndMetadata(data: checkpointData, stream: stream)
+    let (tensors, metadata) = try loadArraysAndMetadata(data: checkpointData, stream: .cpu)
     try validateManifest(manifest: manifest, tensors: tensors, metadata: metadata)
     let model = try NanochatPrototype(config: manifest.config, tensors: tensors)
     let loadTimeMs = (CFAbsoluteTimeGetCurrent() - loadStart) * 1000.0
 
-    // --- Prefill ---
-    let cache = KVCache(nLayers: manifest.config.nLayer)
-    let prefillStart = CFAbsoluteTimeGetCurrent()
-    let promptArray = MLXArray(options.promptTokens.map(Int32.init), [1, options.promptTokens.count])
-    let prefillLogits = model(promptArray, cache: cache)
-    try checkedEval(prefillLogits)
-    cache.advance(by: options.promptTokens.count)
-    let prefillTimeMs = (CFAbsoluteTimeGetCurrent() - prefillStart) * 1000.0
+    // --- Compute on the requested device ---
+    let computeDevice = options.useGPU ? Device(.gpu) : Device(.cpu)
+    try Device.withDefaultDevice(computeDevice) {
+        // --- Prefill ---
+        let cache = KVCache(nLayers: manifest.config.nLayer)
+        let prefillStart = CFAbsoluteTimeGetCurrent()
+        let promptArray = MLXArray(options.promptTokens.map(Int32.init), [1, options.promptTokens.count])
+        let prefillLogits = model(promptArray, cache: cache)
+        try checkedEval(prefillLogits)
+        cache.advance(by: options.promptTokens.count)
+        let prefillTimeMs = (CFAbsoluteTimeGetCurrent() - prefillStart) * 1000.0
 
-    let finalLogitsShape = prefillLogits.shape
+        let finalLogitsShape = prefillLogits.shape
 
-    // First token from prefill logits
-    let firstTokenId = try greedyNextTokenId(finalLogitsStep(prefillLogits, sequenceLength: options.promptTokens.count))
+        // First token from prefill logits
+        let firstTokenId = try greedyNextTokenId(finalLogitsStep(prefillLogits, sequenceLength: options.promptTokens.count))
 
-    var generatedTokenIds = [firstTokenId]
-    var allTokenIds = options.promptTokens + [firstTokenId]
-    var decodeTimesMs: [Double] = []
+        var generatedTokenIds = [firstTokenId]
+        var allTokenIds = options.promptTokens + [firstTokenId]
+        var decodeTimesMs: [Double] = []
 
-    // --- Incremental decode ---
-    if options.maxNewTokens > 1 && !options.stopTokenIds.contains(firstTokenId) {
-        for _ in 1 ..< options.maxNewTokens {
-            let decodeStart = CFAbsoluteTimeGetCurrent()
-            let newToken = MLXArray([Int32(allTokenIds.last!)], [1, 1])
-            let logits = model(newToken, cache: cache)
-            try checkedEval(logits)
-            cache.advance(by: 1)
-            let nextTokenId = try greedyNextTokenId(logits)
-            let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStart) * 1000.0
-            decodeTimesMs.append(decodeMs)
+        // --- Incremental decode ---
+        if options.maxNewTokens > 1 && !options.stopTokenIds.contains(firstTokenId) {
+            for _ in 1 ..< options.maxNewTokens {
+                let decodeStart = CFAbsoluteTimeGetCurrent()
+                let newToken = MLXArray([Int32(allTokenIds.last!)], [1, 1])
+                let logits = model(newToken, cache: cache)
+                try checkedEval(logits)
+                cache.advance(by: 1)
+                let nextTokenId = try greedyNextTokenId(logits)
+                let decodeMs = (CFAbsoluteTimeGetCurrent() - decodeStart) * 1000.0
+                decodeTimesMs.append(decodeMs)
 
-            generatedTokenIds.append(nextTokenId)
-            allTokenIds.append(nextTokenId)
-            if options.stopTokenIds.contains(nextTokenId) {
-                break
+                generatedTokenIds.append(nextTokenId)
+                allTokenIds.append(nextTokenId)
+                if options.stopTokenIds.contains(nextTokenId) {
+                    break
+                }
             }
         }
+
+        // --- Output ---
+        let deviceLabel = options.useGPU ? "gpu" : "cpu"
+        let avgDecodeMs = decodeTimesMs.isEmpty ? 0.0 : decodeTimesMs.reduce(0.0, +) / Double(decodeTimesMs.count)
+        let tokensDecoded = decodeTimesMs.count
+
+        print("Loaded export: \(checkpointURL.path)")
+        print("Prompt token count: \(options.promptTokens.count)")
+        print("Max new tokens requested: \(options.maxNewTokens)")
+        print("Logits shape: \(finalLogitsShape)")
+        print("Generated token ids: \(generatedTokenIds.map(String.init).joined(separator: ","))")
+        print("Timing: device=\(deviceLabel) load=\(String(format: "%.1f", loadTimeMs))ms prefill=\(String(format: "%.1f", prefillTimeMs))ms avg_decode=\(String(format: "%.2f", avgDecodeMs))ms tokens_decoded=\(tokensDecoded)")
     }
-
-    // --- Output ---
-    let deviceLabel = options.useGPU ? "gpu" : "cpu"
-    let avgDecodeMs = decodeTimesMs.isEmpty ? 0.0 : decodeTimesMs.reduce(0.0, +) / Double(decodeTimesMs.count)
-
-    print("Loaded export: \(checkpointURL.path)")
-    print("Prompt token count: \(options.promptTokens.count)")
-    print("Max new tokens requested: \(options.maxNewTokens)")
-    print("Logits shape: \(finalLogitsShape)")
-    print("Generated token ids: \(generatedTokenIds.map(String.init).joined(separator: \",\"))")
-    print(String(format: "Timing: device=%@ load=%.1fms prefill=%.1fms avg_decode=%.2fms tokens_decoded=%d",
-                 deviceLabel, loadTimeMs, prefillTimeMs, avgDecodeMs, decodeTimesMs.count))
 }
 
 do {

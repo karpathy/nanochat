@@ -26,9 +26,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="cpu",
+        default="gpu",
         choices=["cpu", "gpu"],
-        help="Execution device for the Swift stub. The current stub only supports cpu.",
+        help="Execution device for the Swift stub",
     )
     parser.add_argument(
         "--max-new-tokens",
@@ -136,6 +136,21 @@ def parse_generated_tokens(stdout: str) -> list[int]:
     raise RuntimeError("Swift stub output did not include a generated token line")
 
 
+def parse_timing(stdout: str) -> dict[str, str] | None:
+    prefix = "Timing: "
+    for line in stdout.splitlines():
+        if not line.startswith(prefix):
+            continue
+        payload = line[len(prefix):].strip()
+        result = {}
+        for pair in payload.split():
+            key, _, val = pair.partition("=")
+            if key:
+                result[key] = val
+        return result
+    return None
+
+
 def invoke_stub(root: Path, *, manifest: Path, prompt_tokens: list[int], device: str, max_new_tokens: int, stop_token_ids: list[int]) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["DYLD_FRAMEWORK_PATH"] = str(build_products_dir(root))
@@ -192,6 +207,13 @@ def main() -> int:
 
     generated_tokens = parse_generated_tokens(completed.stdout)
     print("Generated text:", decode_tokens(generated_tokens))
+    timing = parse_timing(completed.stdout)
+    if timing:
+        print(f"Timing: device={timing.get('device', '?')} "
+              f"load={timing.get('load', '?')} "
+              f"prefill={timing.get('prefill', '?')} "
+              f"avg_decode={timing.get('avg_decode', '?')} "
+              f"tokens_decoded={timing.get('tokens_decoded', '?')}")
     return 0
 
 
