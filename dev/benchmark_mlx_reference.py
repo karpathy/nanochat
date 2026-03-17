@@ -7,6 +7,7 @@ import time
 import mlx.core as mx
 import mlx.nn as nn
 
+from dev.mlx_checkpoint_translation import initialize_mlx_from_checkpoint_source, initialize_mlx_from_pytorch_reference
 from dev.mlx_gpt_prototype import MLXGPTPrototype, build_reference_config
 from nanochat.tokenizer import get_tokenizer
 
@@ -64,6 +65,10 @@ def main() -> None:
     parser.add_argument("--matrix-lr", type=float, default=0.02)
     parser.add_argument("--scalar-lr", type=float, default=0.5)
     parser.add_argument("--weight-decay", type=float, default=0.28)
+    parser.add_argument("--init-from-pytorch-reference", action="store_true")
+    parser.add_argument("--pytorch-checkpoint-source", type=str, choices=["base", "sft", "rl"], default=None)
+    parser.add_argument("--pytorch-model-tag", type=str, default=None)
+    parser.add_argument("--pytorch-step", type=int, default=None)
     args = parser.parse_args()
 
     shared_vocab_size, bos_token_id, shared_tokenizer_used = load_tokenizer_metadata(args.vocab_size)
@@ -77,6 +82,17 @@ def main() -> None:
     )
 
     model = MLXGPTPrototype(config)
+    init_metadata = None
+    if args.init_from_pytorch_reference:
+        init_metadata = initialize_mlx_from_pytorch_reference(model)
+    elif args.pytorch_checkpoint_source is not None:
+        init_metadata = initialize_mlx_from_checkpoint_source(
+            model,
+            source=args.pytorch_checkpoint_source,
+            model_tag=args.pytorch_model_tag,
+            step=args.pytorch_step,
+        )
+
     optimizer = model.build_optimizer(
         unembedding_lr=args.unembedding_lr,
         embedding_lr=args.embedding_lr,
@@ -126,6 +142,7 @@ def main() -> None:
             "shared_vocab_used": shared_tokenizer_used,
             "bos_token_id": bos_token_id,
         },
+        "initialization": init_metadata,
         "prototype_limitations": [
             "Uses grouped AdamW instead of reproducing the full MuonAdamW split.",
             "Uses shared-tokenizer-derived synthetic batches instead of the full dataset pipeline.",

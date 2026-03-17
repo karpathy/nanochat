@@ -8,6 +8,7 @@ It covers:
 
 - the implemented prototype surface
 - how shared repo assets are consumed
+- PyTorch-to-MLX initialization support
 - the first benchmark results against the frozen PyTorch + MPS baseline
 - implementation friction and missing features
 - the current expand-or-stop decision
@@ -17,6 +18,8 @@ Execution date: 2026-03-16
 ## Implemented Files
 
 - [benchmark_mlx_reference.py](benchmark_mlx_reference.py)
+- [compare_pytorch_mlx_translation.py](compare_pytorch_mlx_translation.py)
+- [mlx_checkpoint_translation.py](mlx_checkpoint_translation.py)
 - [mlx_gpt_prototype.py](mlx_gpt_prototype.py)
 
 Dependency update:
@@ -35,6 +38,7 @@ The first MLX prototype now implements:
 - ReLU squared MLP
 - backward pass through `nn.value_and_grad`
 - grouped optimizer updates through MLX `AdamW`
+- PyTorch-to-MLX weight translation for matching model shapes
 - reference-workload benchmark harness
 
 The prototype also mirrors two nanochat-specific features:
@@ -72,6 +76,24 @@ Representative input batches are loaded as deterministic token-id sequences shap
 
 That keeps the benchmark aligned with the synthetic PyTorch baseline probe rather than pretending to be a full dataset-integrated trainer.
 
+## PyTorch-To-MLX Translation
+
+The prototype can now initialize MLX weights from a matching PyTorch model layout.
+
+Implemented support:
+
+- translate a matching PyTorch `state_dict` into the MLX parameter tree
+- initialize the benchmark from a matching fresh PyTorch reference model
+- initialize from a checkpoint source once local nanochat checkpoints are available
+
+Validation result on a small reference model:
+
+- max absolute logit difference: `1.83e-7`
+- mean absolute logit difference: `3.08e-8`
+- loss absolute difference: `0.0`
+
+That is strong evidence that the current PyTorch-to-MLX weight mapping is numerically correct for the overlapping model surface.
+
 ## Benchmark Commands Executed
 
 Smoke test:
@@ -88,11 +110,25 @@ export PYTHONPATH="$PWD"
 .venv/bin/python dev/benchmark_mlx_reference.py --depth 32 --device-batch-size 2 --max-seq-len 1024 --steps 2 --warmup-steps 1
 ```
 
+Reference-tier benchmark initialized from translated PyTorch weights:
+
+```bash
+export PYTHONPATH="$PWD"
+.venv/bin/python dev/benchmark_mlx_reference.py --depth 32 --device-batch-size 2 --max-seq-len 1024 --steps 2 --warmup-steps 1 --init-from-pytorch-reference
+```
+
 ## Benchmark Result
 
 Measured MLX reference-tier result:
 
 - throughput: `897.4 tokens/s`
+- active memory: `42.00 GB`
+- peak memory: `49.00 GB`
+- cache memory: `15.87 GB`
+
+Measured MLX reference-tier result with translated PyTorch initialization:
+
+- throughput: `899.3 tokens/s`
 - active memory: `42.00 GB`
 - peak memory: `49.00 GB`
 - cache memory: `15.87 GB`
@@ -121,7 +157,7 @@ Current prototype limitations:
 
 1. it uses grouped `AdamW` instead of reproducing the full nanochat `MuonAdamW` split
 2. it uses deterministic synthetic batches instead of the full dataset pipeline
-3. it does not yet attempt checkpoint translation or optimizer-state portability
+3. it does not yet validate against a real trained nanochat checkpoint or optimizer-state portability
 
 Because of those limits, this result should be interpreted as:
 
@@ -142,9 +178,9 @@ Observed friction:
 
 Still missing:
 
-- parity with the current optimizer split and hyperparameter schedule
+- parity with the current `MuonAdamW` split and hyperparameter schedule
 - real dataset-loader integration
-- checkpoint translation
+- validation against real trained nanochat checkpoints once local checkpoints are available
 - evaluation parity against the existing Python path
 - a more rigorous long-run benchmark with multiple configurations
 
