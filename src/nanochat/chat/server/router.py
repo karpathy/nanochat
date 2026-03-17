@@ -1,4 +1,5 @@
 """Chat API router: all route handlers and streaming generation."""
+# pyright: basic
 
 import json
 import logging

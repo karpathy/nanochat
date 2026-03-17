@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+from typing import Any
 from typing import TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ class LocalWandb(DummyWandb):
         os.makedirs(log_dir, exist_ok=True)
         self._f = open(log_dir / "wandb.jsonl", "a")
 
-    def log(self, data: dict, *args: object, **kwargs: object) -> None:
+    def log(self, data: dict[str, Any], *args: object, **kwargs: object) -> None:
         self._f.write(json.dumps(data) + "\n")
         self._f.flush()
 
@@ -42,7 +43,7 @@ class LocalWandb(DummyWandb):
 
 def init_wandb(
     config: "CommonConfig",
-    user_config: dict,
+    user_config: dict[str, Any],
     master_process: bool,
     project_suffix: str | None = None,
 ) -> Union[DummyWandb, LocalWandb, object]:

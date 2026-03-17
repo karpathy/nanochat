@@ -2,6 +2,7 @@ import datetime
 import os
 import re
 import shutil
+from typing import IO, Any
 
 from nanochat.report.utils import EXPECTED_FILES, chat_metrics, extract, extract_timestamp, generate_header, slugify
 
@@ -78,7 +79,7 @@ class Report(BaseReport):
         bloat_data = bloat_match.group(1) if bloat_match else ""
         return start_time, bloat_data, content
 
-    def _process_sections(self, out_file, report_dir: str) -> tuple[datetime.datetime | None, dict]:
+    def _process_sections(self, out_file: IO[str], report_dir: str) -> tuple[datetime.datetime | None, dict[str, Any]]:
         """Write each section to out_file, return (end_time, final_metrics)."""
         end_time = None
         final_metrics = {}
@@ -101,7 +102,7 @@ class Report(BaseReport):
             out_file.write("\n")
         return end_time, final_metrics
 
-    def _write_summary(self, out_file, final_metrics: dict, bloat_data: str, start_time, end_time) -> None:
+    def _write_summary(self, out_file: IO[str], final_metrics: dict[str, Any], bloat_data: str, start_time: datetime.datetime | None, end_time: datetime.datetime | None) -> None:
         """Write the summary table and wall clock time to out_file."""
         out_file.write("## Summary\n\n")
         out_file.write(bloat_data)

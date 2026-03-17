@@ -45,7 +45,7 @@ def climbmix_download(cfg: Config, num_files: int = -1, num_workers: int = 4) ->
     print(f"Target directory: {data_dir}")
     print()
 
-    def download_wrapper(index):
+    def download_wrapper(index: int):
         filename = index_to_filename(index)
         return download_single_file(data_dir, f"{BASE_URL}/{filename}", filename)
 

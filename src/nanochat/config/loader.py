@@ -6,6 +6,7 @@ import argparse
 import tomllib
 from argparse import Namespace
 from pathlib import Path
+from typing import Any
 
 from nanochat.common import get_default_base_dir
 from nanochat.config.common import CommonConfig
@@ -70,7 +71,7 @@ class ConfigLoader:
                     "Could not determine config.toml path. Please specify with --config, --base-dir or set NANOCHAT_BASE_DIR env var."
                 )
 
-        toml_data: dict = {}
+        toml_data: dict[str, Any] = {}
         if toml_path is not None:
             with open(toml_path, "rb") as f:
                 toml_data = tomllib.load(f)

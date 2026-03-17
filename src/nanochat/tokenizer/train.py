@@ -106,7 +106,7 @@ def tokenizer_train(config: Config) -> None:
     )
 
 
-def _sanity_check(tokenizer):
+def _sanity_check(tokenizer: RustBPETokenizer) -> None:
     test_text = """Hello world! This is a test.
 Numbers: 123, 4567, 89
 Contractions: I'm, you're, it's

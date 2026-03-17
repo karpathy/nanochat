@@ -23,7 +23,7 @@ def _build_tokenizer(name: str, base_dir: str) -> RustBPETokenizer:
     return get_tokenizer(base_dir=base_dir)
 
 
-def _encode_text(tokenizer, label: str, text: str) -> dict[str, object]:
+def _encode_text(tokenizer: RustBPETokenizer, label: str, text: str) -> dict[str, object]:
     encoded = tokenizer.encode(text)
     decoded = tokenizer.decode(encoded)
     if decoded != text:

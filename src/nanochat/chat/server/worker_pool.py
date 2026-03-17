@@ -7,6 +7,7 @@ from typing import List, Optional
 import torch
 
 from nanochat.evaluation.engine import Engine
+from nanochat.tokenizer import RustBPETokenizer
 from nanochat.training.checkpoint import load_model
 
 
@@ -17,7 +18,7 @@ class Worker:
     gpu_id: int
     device: torch.device
     engine: Engine
-    tokenizer: object
+    tokenizer: RustBPETokenizer
 
 
 class WorkerPool:

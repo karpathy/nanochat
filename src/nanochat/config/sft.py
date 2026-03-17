@@ -40,9 +40,9 @@ class SFTConfig:
             "# model_step = -1          # -1 = last checkpoint\n"
             "load_optimizer = true\n"
             "num_iterations = -1        # -1 = full epoch\n"
-            "# max_seq_len = -1         # -1 = inherit from pretrain\n"
-            "# device_batch_size = -1   # -1 = inherit from pretrain\n"
-            "# total_batch_size = -1    # -1 = inherit from pretrain\n"
+            "max_seq_len = 2048         # inherit from pretrain if checkpoint has it\n"
+            "device_batch_size = 32     # inherit from pretrain if checkpoint has it\n"
+            "total_batch_size = 524288  # inherit from pretrain if checkpoint has it\n"
             "# embedding_lr = -1.0      # -1 = inherit from pretrain\n"
             "# unembedding_lr = -1.0    # -1 = inherit from pretrain\n"
             "# matrix_lr = -1.0        # -1 = inherit from pretrain\n"
@@ -63,9 +63,9 @@ class SFTConfig:
     model_step: Optional[int] = None
     load_optimizer: bool = True
     num_iterations: int = -1
-    max_seq_len: Optional[int] = None
-    device_batch_size: Optional[int] = None
-    total_batch_size: Optional[int] = None
+    max_seq_len: int = 2048
+    device_batch_size: int = 32
+    total_batch_size: int = 524288
     embedding_lr: Optional[float] = None
     unembedding_lr: Optional[float] = None
     matrix_lr: Optional[float] = None
