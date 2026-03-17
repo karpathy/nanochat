@@ -138,27 +138,27 @@ Only start this section after a go decision.
 
 ### Setup
 
-- [ ] Define the MLX reference model configuration equivalent to the PyTorch baseline tier.
-- [ ] Define how tokenizer assets are consumed by the MLX prototype.
-- [ ] Define how the prototype will load representative input batches.
+- [x] Define the MLX reference model configuration equivalent to the PyTorch baseline tier. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
+- [x] Define how tokenizer assets are consumed by the MLX prototype. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
+- [x] Define how the prototype will load representative input batches. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
 
 ### Model Prototype
 
-- [ ] Implement the GPT forward pass in MLX.
-- [ ] Implement the backward pass in MLX.
-- [ ] Implement one optimizer step in MLX.
+- [x] Implement the GPT forward pass in MLX. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
+- [x] Implement the backward pass in MLX. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
+- [x] Implement one optimizer step in MLX. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
 
 ### Benchmarking
 
-- [ ] Benchmark the MLX prototype against the PyTorch + MPS baseline.
-- [ ] Record throughput delta.
-- [ ] Record memory delta.
-- [ ] Record implementation friction and missing features.
+- [x] Benchmark the MLX prototype against the PyTorch + MPS baseline. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
+- [x] Record throughput delta. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
+- [x] Record memory delta. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
+- [x] Record implementation friction and missing features. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
 
 ### Decision Gate
 
-- [ ] Decide whether the MLX prototype meaningfully beats the baseline.
-- [ ] Decide whether to expand the MLX track or stop it.
+- [x] Decide whether the MLX prototype meaningfully beats the baseline. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
+- [x] Decide whether to expand the MLX track or stop it. See [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md).
 
 ## Implementation Phase: Hybrid Hot-Path Prototype
 
@@ -221,3 +221,4 @@ Only start this section after a go decision and only if inference-native work is
 - [APPLE_NATIVE_ACCELERATION_PROTOTYPE_SCOPE.md](APPLE_NATIVE_ACCELERATION_PROTOTYPE_SCOPE.md)
 - [APPLE_NATIVE_ACCELERATION_INTEGRATION_STRATEGY.md](APPLE_NATIVE_ACCELERATION_INTEGRATION_STRATEGY.md)
 - [APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md](APPLE_NATIVE_ACCELERATION_RECOMMENDATION.md)
+- [APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md](APPLE_NATIVE_ACCELERATION_MLX_PROTOTYPE.md)
