@@ -12,6 +12,7 @@ from dev.benchmark_mlx_reference import get_memory_stats, load_tokenizer_metadat
 from dev.mlx_checkpoint_translation import initialize_mlx_from_checkpoint_source, initialize_mlx_from_pytorch_reference
 from dev.mlx_gpt_prototype import MLXGPTPrototype, build_reference_config
 from dev.mlx_input_batches import make_input_batch_provider
+from dev.mlx_logging import add_logging_args, write_summary_log
 
 
 def init_model(model: MLXGPTPrototype, args) -> dict[str, object] | None:
@@ -63,6 +64,7 @@ def main() -> None:
     parser.add_argument("--pytorch-checkpoint-source", type=str, choices=["base", "sft", "rl"], default=None)
     parser.add_argument("--pytorch-model-tag", type=str, default=None)
     parser.add_argument("--pytorch-step", type=int, default=None)
+    add_logging_args(parser)
     args = parser.parse_args()
 
     shared_vocab_size, bos_token_id, shared_tokenizer_used = load_tokenizer_metadata(args.vocab_size)
@@ -174,6 +176,22 @@ def main() -> None:
         },
         "per_step": per_step,
     }
+    log_path = write_summary_log(
+        summary,
+        log_dir=args.log_dir,
+        script_name="mlx_training_session",
+        log_prefix=args.log_prefix,
+        depth=args.depth,
+        input_mode=args.input_mode,
+    )
+    summary["logging"] = {
+        "log_dir": args.log_dir,
+        "log_path": log_path,
+    }
+    if log_path is not None:
+        with open(log_path, "w", encoding="utf-8") as handle:
+            json.dump(summary, handle, indent=2)
+            handle.write("\n")
     print(json.dumps(summary, indent=2))
 
 
