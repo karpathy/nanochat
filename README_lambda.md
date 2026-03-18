@@ -116,7 +116,7 @@ After downloading your models, go to the Lambda Cloud Dashboard, select your ins
 
 ## 6. Showcasing Your Model on Hugging Face Spaces
 
-You don't need to build a custom web app! `nanochat` already has a ChatGPT-like web UI built-in (`scripts.chat_web`), and Hugging Face (HF) Spaces allows you to host it easily.
+You can easily host your trained model for free using Hugging Face (HF) Spaces and Gradio.
 
 ### Step 1: Upload your Checkpoint to HF
 1. Create a free account on [Hugging Face](https://huggingface.co/).
@@ -127,37 +127,66 @@ You don't need to build a custom web app! `nanochat` already has a ChatGPT-like 
 ### Step 2: Create a Hugging Face Space
 1. On Hugging Face, click on your profile and select **New Space**.
 2. Give it a name (e.g., `Nanochat-Demo`).
-3. Select **Docker** as the Space SDK and choose **Blank** template.
+3. Select **Gradio** as the Space SDK.
 4. Set the Hardware to a basic CPU or a free-tier GPU. The 1.5B GPT-2 model generates tokens fine on a CPU, but a T4 GPU (often free or very cheap on HF) makes it much faster.
 
 ### Step 3: Configure your Space
 Clone your Space to your local machine (or add files directly via the HF web interface). You need the following files inside your Space:
 
 1. **Your codebase:** Clone or copy the `nanochat` code into the Space repository.
-2. **A Dockerfile:** HF Docker spaces require one to set the environment. Create a `Dockerfile`:
-   ```dockerfile
-   FROM python:3.10-slim
+2. **`requirements.txt`:** HF Gradio spaces automatically install dependencies from this file. Create it and add:
+   ```text
+   torch>=2.4.0
+   huggingface-hub
+   transformers
+   tqdm
+   tiktoken
+   ```
+   *(Note: Add any other dependencies from `pyproject.toml` that your specific codebase requires).*
+
+3. **`app.py`:** Create this python script to serve the web UI using Gradio:
+   ```python
+   import gradio as gr
+   import torch
+   from huggingface_hub import hf_hub_download
+   from nanochat.checkpoint_manager import load_model
+   from nanochat.engine import Engine
+
+   # 1. Download your model from your HF model repo
+   # Replace 'username/my-nanochat-gpt2' with your actual repo ID
+   checkpoint_path = hf_hub_download(repo_id="username/my-nanochat-gpt2", filename="model_sft.pt")
    
-   # Set the working directory
-   WORKDIR /app
-   
-   # Setup uv and install dependencies
-   COPY pyproject.toml .
-   RUN pip install uv && uv pip install --system -r pyproject.toml
-   
-   # Copy the rest of the app
-   COPY . .
-   
-   # Expose the web port
-   EXPOSE 8000
-   
-   # Start the chat web server
-   CMD ["python", "-m", "scripts.chat_web", "--host", "0.0.0.0", "--port", "8000"]
+   # 2. Load the model and engine
+   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+   model, tokenizer, _ = load_model(checkpoint_path, device, phase="eval")
+   engine = Engine(model, tokenizer)
+
+   # 3. Define the chat function
+   def chat_fn(message, history):
+       bos = tokenizer.get_bos_token_id()
+       user_start = tokenizer.encode_special("<|user_start|>")
+       user_end = tokenizer.encode_special("<|user_end|>")
+       assistant_start = tokenizer.encode_special("<|assistant_start|>")
+       assistant_end = tokenizer.encode_special("<|assistant_end|>")
+
+       tokens = [bos]
+       for user_msg, bot_msg in history:
+           tokens.extend([user_start] + tokenizer.encode(user_msg) + [user_end])
+           tokens.extend([assistant_start] + tokenizer.encode(bot_msg) + [assistant_end])
+       
+       tokens.extend([user_start] + tokenizer.encode(message) + [user_end, assistant_start])
+
+       response_tokens = []
+       for token_col, _ in engine.generate(tokens, num_samples=1, max_tokens=512, temperature=0.8, top_k=50):
+           token = token_col[0]
+           if token == assistant_end or token == bos:
+               break
+           response_tokens.append(token)
+           yield tokenizer.decode(response_tokens)
+
+   # 4. Launch the UI
+   demo = gr.ChatInterface(chat_fn, title="Nanochat GPT-2 Demo")
+   demo.launch()
    ```
 
-3. **Configure the script to load your model:**
-   By default, `chat_web.py` might try to load a local checkpoint. You can either:
-   - Include your checkpoint *inside* the Space files (not recommended for large files).
-   - Use the Hugging Face Hub library inside `chat_web.py` to automatically download your model from your model repository when the Space boots up.
-
-Once you commit and push these files to your Space on Hugging Face, it will automatically build the Docker image and launch the web UI publicly for anyone to use!
+Once you commit and push these files to your Space on Hugging Face, it will automatically install the requirements and launch the Gradio web UI publicly for anyone to use!
