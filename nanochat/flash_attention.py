@@ -1,13 +1,15 @@
 """
-Unified Flash Attention interface with automatic FA3/SDPA switching.
+Unified Flash Attention interface with automatic BackLite/FA3/SDPA switching.
 
-Exports `flash_attn` module that matches the FA3 API exactly, but falls back
-to PyTorch SDPA on non-Hopper GPUs (including Blackwell), MPS, and CPU.
+Priority: BackLite (sparse backward, negl_prob > 0) > FA3 (dense) > SDPA fallback.
 
-Usage (drop-in replacement for FA3):
-    from nanochat.flash_attention import flash_attn
+BackLite limitation: does NOT support varlen/packed sequences. For any
+flash_attn_varlen_func call, use vanilla FA3 directly — never route through here.
 
-    # Training (no KV cache)
+Usage:
+    from nanochat.flash_attention import flash_attn, set_backlite_negl_prob
+
+    # Training (no KV cache) — BackLite applies when negl_prob > 0
     y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
 
     # Inference (with KV cache)
@@ -64,6 +66,46 @@ USE_FA3 = _resolve_use_fa3()
 
 
 # =============================================================================
+# Detection: Try to load BackLite on Hopper+ GPUs
+# =============================================================================
+def _load_backlite():
+    """Try to load BackLite sparse-backward attention (Hopper only, requires FA3).
+
+    Returns the module-level flash_attn_func from back_lite, or None.
+    BackLite only covers flash_attn_func (training); kvcache inference always
+    uses vanilla FA3. Does NOT support varlen/packed sequences.
+    """
+    if not USE_FA3:
+        return None
+    try:
+        import back_lite as _bl
+        return _bl.back_lite.flash_attn_func
+    except Exception:
+        return None
+
+
+_backlite_flash_attn_func = _load_backlite()
+HAS_BACKLITE = _backlite_flash_attn_func is not None
+
+# Module-level negl_prob state (0.0 = disabled, i.e. vanilla FA3)
+_backlite_negl_prob: float = 0.0
+
+
+def set_backlite_negl_prob(p: float) -> None:
+    """Set the negligible-probability threshold for BackLite sparse backward.
+
+    p=0.0 disables BackLite and falls through to vanilla FA3.
+    """
+    global _backlite_negl_prob
+    _backlite_negl_prob = p
+
+
+def get_backlite_negl_prob() -> float:
+    return _backlite_negl_prob
+
+
+
+# =============================================================================
 # SDPA helpers
 # =============================================================================
 def _sdpa_attention(q, k, v, window_size, enable_gqa):
@@ -108,6 +150,9 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
     """
     Flash Attention for training (no KV cache).
 
+    Routes to BackLite (sparse backward) when negl_prob > 0, else vanilla FA3,
+    else PyTorch SDPA. BackLite does NOT support varlen sequences.
+
     Args:
         q, k, v: Tensors of shape (B, T, H, D)
         causal: Whether to use causal masking
@@ -116,6 +161,11 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
     Returns:
         Output tensor of shape (B, T, H, D)
     """
+    if HAS_BACKLITE and _backlite_negl_prob > 0.0:
+        return _backlite_flash_attn_func(
+            q, k, v, causal=causal, window_size=window_size,
+            negl_prob=_backlite_negl_prob,
+        )
     if USE_FA3:
         return _fa3.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
 
@@ -133,7 +183,7 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
     """
     Flash Attention with KV cache for inference.
 
-    FA3 updates k_cache/v_cache in-place. Our SDPA fallback does the same.
+    FA3/BackLite update k_cache/v_cache in-place. Our SDPA fallback does the same.
 
     Args:
         q: Queries, shape (B, T_new, H, D)
@@ -146,6 +196,7 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
     Returns:
         Output tensor of shape (B, T_new, H, D)
     """
+    # BackLite is for training. Inference always uses vanilla FA3
     if USE_FA3:
         return _fa3.flash_attn_with_kvcache(
             q, k_cache, v_cache, k=k, v=v, cache_seqlens=cache_seqlens,
@@ -185,3 +236,10 @@ flash_attn = SimpleNamespace(
     flash_attn_func=flash_attn_func,
     flash_attn_with_kvcache=flash_attn_with_kvcache,
 )
+
+__all__ = [
+    "flash_attn",
+    "HAS_FA3", "USE_FA3",
+    "HAS_BACKLITE",
+    "set_backlite_negl_prob", "get_backlite_negl_prob",
+]
