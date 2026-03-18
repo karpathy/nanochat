@@ -204,14 +204,19 @@ The data pipeline is completely non-bottlenecked at current throughput. The buff
 - [ ] ~~Build a Swift worker using Foundation structured concurrency (no GIL)~~ *(deprioritized — no bottleneck)*
 - [ ] ~~Replace the Python glue layer in `_fill_row_from_docs` / `build_dataset_backed_batch()`~~ *(deprioritized)*
 - [ ] ~~Connect to the MLX training loop via shared memory or pipe boundary~~ *(deprioritized)*
-- [ ] Verify GPU utilisation stays ≥95% on real-data training runs *(still useful as a health check)*
+- [defered] Verify GPU utilisation stays ≥95% on real-data training runs *(still useful as a health check)*
 
 ### Story 4c — Training session orchestration *(low priority — monitor upstream)*
 
 The outer training loop (`mlx_training_session.py`) is GPU-bound. Swift translation adds marginal value until MLX supports compiled stateful optimizer updates.
 
+- [X] Re-check current local MLX compiled-training behavior with an isolated probe
 - [ ] Monitor MLX releases for compiled stateful training support
 - [ ] If a supported pattern emerges, evaluate rewriting the training session in `mlx-swift`
+
+**Current evidence (2026-03-18):** a dedicated probe script now exists at [dev/mlx_compiled_training_probe.py](/Users/peternicholls/Dev/nanochatter/dev/mlx_compiled_training_probe.py). On the current local MLX install, pure `mx.compile` works, but a minimal stateful optimizer-update probe still fails hard: the pure compile child process exits `0`, while the stateful compile child process exits with `SIGSEGV` (`returncode=-11`). That means the local environment still does **not** support compiled stateful training updates well enough to justify a Swift training-loop rewrite. See [runs/mlx_logs/phase4c_compiled_probe_d0_probe_20260318-002157.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase4c_compiled_probe_d0_probe_20260318-002157.json).
+
+**Current decision:** do not rewrite `mlx_training_session.py` in Swift. Story 4c remains blocked on upstream MLX support for compiled stateful optimizer updates.
 
 **Non-patterns to avoid:**
 - No hybrid Python+Swift graph ownership — integration overhead exceeds the gain
@@ -222,7 +227,7 @@ The outer training loop (`mlx_training_session.py`) is GPU-bound. Swift translat
 
 **Story 4a status: complete.** The Swift persistent-worker path is integrated (`SwiftStubEngine`), at parity with Python at 32 tokens, faster at 64+ tokens, and now auto-selected by `chat_cli.py` when a matching export is present and the request is compatible with the current greedy-only Swift path. Sampling requests continue to use the PyTorch engine as the safe fallback.
 
-**Priority update:** Story 4b is no longer the default next investment. The measured data-loading cost is negligible, so the highest-value remaining work in Phase 4 is Story 4a hardening and regression coverage.
+**Priority update:** Story 4b is no longer the default next investment, and Story 4c remains blocked on upstream MLX support. There is no active Phase 4 implementation item that is currently justified beyond monitoring upstream compiled-training support.
 
 ---
 
@@ -230,8 +235,11 @@ The outer training loop (`mlx_training_session.py`) is GPU-bound. Swift translat
 
 Compiled single-step training works today, but stateful optimizer updates across repeated calls do not advance correctly. This is worth revisiting only if MLX surfaces a supported pattern. If the Swift training path (Story 4c) is pursued, it benefits from this resolution automatically — monitor both together.
 
+- [X] Confirm the current local MLX install still lacks a usable compiled stateful-training path
 - [ ] Monitor MLX releases for compiled stateful training support
 - [ ] If a supported pattern emerges, test it on the reference workload and compare eager vs. compiled throughput
+
+**Current evidence (2026-03-18):** the local probe in [dev/mlx_compiled_training_probe.py](/Users/peternicholls/Dev/nanochatter/dev/mlx_compiled_training_probe.py) confirms that pure `mx.compile` works, but compiled stateful optimizer updates still fail at process level (`SIGSEGV`) in the current environment. This is stronger evidence than the earlier “does not keep advancing state correctly” observation: for this MLX build, the stateful compiled path is not merely non-convergent, it is not robust enough to run as a supported training mode.
 
 ---
 

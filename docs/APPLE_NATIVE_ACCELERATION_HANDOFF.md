@@ -290,6 +290,8 @@ Current conclusion:
 - repeated stateful optimizer updates through the compiled path did not continue advancing the training state across iterations in the way needed here
 - the current stable long-run session therefore uses eager MLX execution, not compiled multi-step optimizer execution
 
+Latest confirmation on this machine (2026-03-18): a dedicated local probe now exists at [dev/mlx_compiled_training_probe.py](/Users/peternicholls/Dev/nanochatter/dev/mlx_compiled_training_probe.py). It runs pure-compile and stateful-compile checks in isolated child processes. In the current local MLX environment, pure `mx.compile` succeeds, but the minimal stateful optimizer-update probe exits with `SIGSEGV` (`returncode=-11`). See [runs/mlx_logs/phase4c_compiled_probe_d0_probe_20260318-002157.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase4c_compiled_probe_d0_probe_20260318-002157.json). That means compiled stateful training is still not a viable foundation for this repo's training session orchestration work.
+
 This is important because it means “Apple-native” is already true, but “compiled stateful training loop” is not yet a reliable building block for this repo.
 
 ## Recommended Default Path Right Now
