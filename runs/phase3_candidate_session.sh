@@ -17,6 +17,7 @@ WARMUP_STEPS="${WARMUP_STEPS:-2}"
 STEPS="${STEPS:-32}"
 PROGRESS_INTERVAL="${PROGRESS_INTERVAL:-8}"
 INPUT_MODE="${INPUT_MODE:-repeated}"
+EXECUTION_MODE="${EXECUTION_MODE:-compiled}"
 
 echo "== Muon candidate longer session (attn_only, ns=2, float16) =="
 python dev/mlx_training_session.py \
@@ -27,6 +28,7 @@ python dev/mlx_training_session.py \
     --steps "$STEPS" \
     --progress-interval "$PROGRESS_INTERVAL" \
     --input-mode "$INPUT_MODE" \
+    --execution-mode "$EXECUTION_MODE" \
     --matrix-optimizer muon \
     --muon-block-groups attn_only \
     --muon-ns-steps 2 \

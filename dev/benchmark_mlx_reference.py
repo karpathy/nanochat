@@ -54,7 +54,7 @@ def main() -> None:
     parser.add_argument("--muon-ns-steps", type=int, default=5)
     parser.add_argument("--muon-orthogonalize-dtype", type=str, choices=["float16", "bfloat16", "float32"], default="bfloat16")
     parser.add_argument("--muon-block-groups", type=str, choices=["all", "mlp_only", "attn_only"], default="all")
-    parser.add_argument("--execution-mode", type=str, choices=["eager", "compiled"], default="eager")
+    parser.add_argument("--execution-mode", type=str, choices=["eager", "compiled"], default="compiled")
     parser.add_argument("--input-mode", type=str, choices=["repeated", "dataset"], default="repeated")
     parser.add_argument("--dataset-split", type=str, choices=["train", "val"], default="train")
     parser.add_argument("--init-from-pytorch-reference", action="store_true")

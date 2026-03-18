@@ -16,6 +16,7 @@ MAX_SEQ_LEN="${MAX_SEQ_LEN:-1024}"
 WARMUP_STEPS="${WARMUP_STEPS:-1}"
 STEPS="${STEPS:-2}"
 INPUT_MODE="${INPUT_MODE:-repeated}"
+EXECUTION_MODE="${EXECUTION_MODE:-compiled}"
 
 run_case() {
     local label="$1"
@@ -29,6 +30,7 @@ run_case() {
         --warmup-steps "$WARMUP_STEPS" \
         --steps "$STEPS" \
         --input-mode "$INPUT_MODE" \
+        --execution-mode "$EXECUTION_MODE" \
         "$@"
     echo
 }

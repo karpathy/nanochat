@@ -288,11 +288,11 @@ Current conclusion:
 
 - the unsafe implicit stateful-closure form still crashes
 - repeated stateful optimizer updates work when `mx.compile` captures model and optimizer state explicitly via `inputs=` and `outputs=`
-- the MLX harnesses now expose this as `--execution-mode compiled`, while keeping eager mode as the default until larger-scale benchmarks are in
+- the MLX harnesses now expose this as `--execution-mode compiled`, and compiled mode is now the default after holding up on the full d32 reference workload
 
 Latest confirmation on this machine (2026-03-18): the probe at [dev/mlx_compiled_training_probe.py](/Users/peternicholls/Dev/nanochatter/dev/mlx_compiled_training_probe.py) now tests both the crashing implicit form and the explicit-state form. In the current local MLX environment, pure `mx.compile` succeeds, the implicit stateful optimizer-update probe still exits with `SIGSEGV` (`returncode=-11`), and the explicit-stateful compile path succeeds. See [runs/mlx_logs/phase4c_compiled_probe_d0_probe_20260318-002634.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase4c_compiled_probe_d0_probe_20260318-002634.json).
 
-This is important because it means “Apple-native” is already true, and a compiled stateful training loop is now available in Python MLX without needing a Swift rewrite. The remaining question is how much benefit it provides on the real reference workload.
+This is important because it means “Apple-native” is already true, and a compiled stateful training loop is now available in Python MLX without needing a Swift rewrite. That question is now answered on the real reference workload: on the d32 repeated benchmark, eager measured about `904.55 tok/s` while compiled reached about `1121.64 tok/s` with the same 2-step harness, a roughly `1.24x` speedup. See [runs/mlx_logs/phase5_reference_eager_d32_repeated_20260318-003227.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase5_reference_eager_d32_repeated_20260318-003227.json) and [runs/mlx_logs/phase5_reference_compiled_d32_repeated_20260318-003243.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase5_reference_compiled_d32_repeated_20260318-003243.json).
 
 ## Recommended Default Path Right Now
 
@@ -304,7 +304,8 @@ If a fresh agent needs to continue this phase without overthinking it, default t
 - use translated PyTorch reference initialization when comparing runs
 - use [mlx_training_check.py](../dev/mlx_training_check.py) for health checks
 - use [mlx_training_session.py](../dev/mlx_training_session.py) for longer runs
-- use `--execution-mode compiled` only through the explicit-state path already wired into those scripts; do not reintroduce an implicit mutating closure around model and optimizer state
+- compiled mode is the preferred default for the MLX benchmark, check, and session harnesses; keep `--execution-mode eager` available only as an explicit fallback or comparison mode
+- use compiled mode only through the explicit-state path already wired into those scripts; do not reintroduce an implicit mutating closure around model and optimizer state
 - use [export_mlx_safetensors.py](../dev/export_mlx_safetensors.py) when preparing a translated MLX checkpoint for an Apple-native runtime boundary
 - treat optimizer-path investigation as separate from the Apple-native runtime track
 
@@ -315,7 +316,7 @@ If continuing this phase, do these in order:
 1. test the Swift MLX inference path at full reference scale (d32, ~2.8B params) to determine whether the KV-cache + Swift path produces a per-token latency win over Python MLX — at d4 scale Swift was 2x slower due to overhead dominating the tiny model (see `dev/benchmark_swift_vs_python.py`)
 2. if the larger model shows a meaningful win, design the `engine.py` integration seam: Python keeps the state machine (`RowState`, `forced_tokens`, calculator parsing) and delegates the forward-pass + greedy loop to the Swift binary
 3. keep Muon profiling as a deferred optimizer-specific investigation, not a blocker for the runtime track
-4. benchmark the explicit-state compiled mode on the real reference workload before deciding whether it should become the default or whether any Swift training-session work remains worthwhile
+4. treat compiled Python MLX as the default training-harness path, and re-evaluate Swift training-session work only if a later workload exposes a gap that compiled Python does not close
 
 ## Explicit Non-Goals For The Next Agent
 
