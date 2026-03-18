@@ -309,27 +309,38 @@ final class KVCache: @unchecked Sendable {
     private var keys: [MLXArray?]
     private var values: [MLXArray?]
     private(set) var length: Int
+    private let maxTokens: Int
 
-    init(nLayers: Int) {
+    /// Pre-allocate key/value buffers for a fixed maximum number of tokens.
+    /// Avoids the growing O(n²) concatenation that building the cache step-by-step would require.
+    /// Buffers are allocated lazily on first use so we can match the dtype of the activations.
+    init(nLayers: Int, maxTokens: Int) {
         keys = Array(repeating: nil, count: nLayers)
         values = Array(repeating: nil, count: nLayers)
         length = 0
+        self.maxTokens = maxTokens
     }
 
-    /// Append new K, V for a layer and return the full (cached + new) K, V.
+    /// Write new K, V into the pre-allocated buffer and return a view over all stored positions.
     func update(layerIndex: Int, newK: MLXArray, newV: MLXArray) -> (MLXArray, MLXArray) {
-        let k: MLXArray
-        let v: MLXArray
-        if let existingK = keys[layerIndex], let existingV = values[layerIndex] {
-            k = concatenated([existingK, newK], axis: 2)
-            v = concatenated([existingV, newV], axis: 2)
-        } else {
-            k = newK
-            v = newV
+        let seqLen = newK.shape[2]
+        if keys[layerIndex] == nil {
+            // Lazy allocation: use dtype of the first activation tensor.
+            keys[layerIndex] = zeros(
+                [newK.shape[0], newK.shape[1], maxTokens, newK.shape[3]], dtype: newK.dtype)
+            values[layerIndex] = zeros(
+                [newV.shape[0], newV.shape[1], maxTokens, newV.shape[3]], dtype: newV.dtype)
         }
+        var k = keys[layerIndex]!
+        var v = values[layerIndex]!
+        k[0..., 0..., length..<(length + seqLen), 0...] = newK
+        v[0..., 0..., length..<(length + seqLen), 0...] = newV
         keys[layerIndex] = k
         values[layerIndex] = v
-        return (k, v)
+        return (
+            k[0..., 0..., 0..<(length + seqLen), 0...],
+            v[0..., 0..., 0..<(length + seqLen), 0...]
+        )
     }
 
     func advance(by count: Int) { length += count }
@@ -520,7 +531,7 @@ func generateTokenIds(
     loadTimeMs: Double,
     deviceLabel: String
 ) throws -> (generatedTokenIds: [Int], logitsShape: [Int], timing: [String: String]) {
-    let cache = KVCache(nLayers: model.config.nLayer)
+    let cache = KVCache(nLayers: model.config.nLayer, maxTokens: promptTokens.count + maxNewTokens)
     let prefillStart = CFAbsoluteTimeGetCurrent()
     let promptArray = MLXArray(promptTokens.map(Int32.init), [1, promptTokens.count])
     let prefillLogits = model(promptArray, cache: cache)
@@ -594,10 +605,14 @@ func runWorkerLoop(model: NanochatPrototype, loadTimeMs: Double, deviceLabel: St
             let response = WorkerResponse(ok: true, generatedTokenIds: result.generatedTokenIds, timing: result.timing, error: nil)
             FileHandle.standardOutput.write(try encoder.encode(response))
             FileHandle.standardOutput.write(Data("\n".utf8))
+            // Release cached GPU buffers from this request so they don't
+            // inflate memory pressure for the next one.
+            Memory.clearCache()
         } catch {
             let response = WorkerResponse(ok: false, generatedTokenIds: [], timing: [:], error: error.localizedDescription)
             FileHandle.standardOutput.write(try encoder.encode(response))
             FileHandle.standardOutput.write(Data("\n".utf8))
+            Memory.clearCache()
         }
     }
 }

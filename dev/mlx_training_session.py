@@ -107,7 +107,9 @@ def main() -> None:
     per_step = []
     wall_start = time.perf_counter()
     for step_idx in range(args.steps):
+        before_data = time.perf_counter()
         inputs, targets, batch_metadata = input_provider.next_batch()
+        after_data = time.perf_counter()
         if input_metadata is None:
             input_metadata = batch_metadata
         start = time.perf_counter()
@@ -118,12 +120,14 @@ def main() -> None:
         mx.eval(loss, model.parameters(), *optimizer.state_trees())
         after_eval = time.perf_counter()
         elapsed = after_eval - start
+        data_load_s = after_data - before_data
         memory = get_memory_stats()
         row = {
             "step": step_idx + 1,
             "loss": float(loss.item()),
             "step_time_s": elapsed,
             "tokens_per_s": (args.device_batch_size * args.max_seq_len) / elapsed if elapsed > 0 else 0.0,
+            "data_load_s": data_load_s,
             "forward_backward_s": after_backward - start,
             "optimizer_update_s": after_update - after_backward,
             "eval_s": after_eval - after_update,
@@ -141,6 +145,7 @@ def main() -> None:
     losses = [row["loss"] for row in per_step]
     throughputs = [row["tokens_per_s"] for row in per_step]
     step_times = [row["step_time_s"] for row in per_step]
+    data_load_times = [row["data_load_s"] for row in per_step]
     forward_backward_times = [row["forward_backward_s"] for row in per_step]
     optimizer_update_times = [row["optimizer_update_s"] for row in per_step]
     eval_times = [row["eval_s"] for row in per_step]
@@ -176,6 +181,9 @@ def main() -> None:
             "min_loss": min(losses),
             "loss_drop_pct": ((losses[0] - losses[-1]) / losses[0]) * 100.0 if losses[0] != 0 else 0.0,
             "mean_step_time_s": statistics.fmean(step_times),
+            "mean_data_load_s": statistics.fmean(data_load_times),
+            "max_data_load_s": max(data_load_times),
+            "data_load_pct_of_step": (statistics.fmean(data_load_times) / statistics.fmean(step_times)) * 100.0 if statistics.fmean(step_times) > 0 else 0.0,
             "mean_forward_backward_s": statistics.fmean(forward_backward_times),
             "mean_optimizer_update_s": statistics.fmean(optimizer_update_times),
             "mean_eval_s": statistics.fmean(eval_times),
