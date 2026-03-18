@@ -6,6 +6,9 @@ import subprocess
 import threading
 from pathlib import Path
 
+from nanochat.checkpoint_manager import find_largest_model, find_last_step
+from nanochat.common import get_base_dir
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
@@ -27,11 +30,57 @@ def bundle_path(root: Path) -> Path:
     return build_products_dir(root) / "mlx-swift_Cmlx.bundle"
 
 
+def exports_dir(root: Path) -> Path:
+    return root / "runs" / "mlx_exports"
+
+
 def resolve_repo_path(root: Path, candidate: str) -> Path:
     path = Path(candidate)
     if path.is_absolute():
         return path
     return root / path
+
+
+def is_valid_manifest_file(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and "config" in payload and "export" in payload
+
+
+def swift_decode_supported(*, temperature: float, top_k: int | None) -> bool:
+    return temperature in (0, 0.0) and top_k in (None, 0)
+
+
+def resolve_preferred_manifest(root: Path, *, source: str, model_tag: str | None, step: int | None) -> Path | None:
+    checkpoint_dir_by_source = {
+        "base": "base_checkpoints",
+        "sft": "chatsft_checkpoints",
+        "rl": "chatrl_checkpoints",
+    }
+    source_dir = checkpoint_dir_by_source.get(source)
+    if source_dir is None:
+        return None
+
+    checkpoints_dir = Path(get_base_dir()) / source_dir
+    if not checkpoints_dir.exists():
+        return None
+
+    try:
+        resolved_model_tag = model_tag or find_largest_model(str(checkpoints_dir))
+        checkpoint_dir = checkpoints_dir / resolved_model_tag
+        resolved_step = step if step is not None else find_last_step(str(checkpoint_dir))
+    except FileNotFoundError:
+        return None
+
+    candidate = exports_dir(root) / f"mlx_{source}_{resolved_model_tag}_step{resolved_step}.json"
+    if is_valid_manifest_file(candidate):
+        return candidate
+    return None
 
 
 def ensure_stub_is_built(root: Path, *, rebuild: bool) -> None:
