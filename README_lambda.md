@@ -24,6 +24,7 @@ This guide outlines the steps to deploy and train Nanochat to full GPT-2 capabil
 2. **Select Instance Type:** 
    - For the fastest training (reference speedrun), select an **8x H100 (80GB)** instance (approx. $24/hr). 
    - Alternatively, an **8x A100 (80GB)** instance is also fully capable but will take slightly longer (around 4-5 hours). **Note:** Using an A100 will *not* result in a less capable model. The script is configured to use the exact same model depth, dataset scale, and sequence length regardless of hardware. The only difference is training wall-clock time and the precision used under the hood (A100 will use bfloat16 instead of the explicit FP8 requested by the H100 run, but this doesn't degrade capability).
+   - **Out of Capacity?** If standard on-demand instances are unavailable, you can use a **1-click cluster**. Lambda's H100 SXM5 clusters are typically deployed as 8-GPU nodes (with +208 vCPUs, +1800 GiB RAM). At ~$2.70/GPU/hr, the total cost for the 8-GPU node is ~$21.60/hr. This is actually a very powerful and cost-effective alternative for the speedrun.
 3. Select an Ubuntu image (e.g., Ubuntu 22.04 or 24.04 with standard ML drivers).
 4. Select your SSH key and launch the instance.
 
