@@ -33,7 +33,7 @@ This guide outlines the steps to deploy and train Nanochat to full GPT-2 capabil
 
 ## 3. Environment Setup & Training
 
-Once the instance is running, copy its Public IP address from the dashboard and SSH into it:
+Once the instance is running, go to the **Instances** dashboard on Lambda Cloud. You will see a column named **IP** next to your instance. Copy that IPv4 address and use it to SSH into the machine:
 
 ```bash
 ssh ubuntu@<PUBLIC_IP>
