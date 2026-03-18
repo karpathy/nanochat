@@ -15,7 +15,7 @@ This guide outlines the steps to deploy and train Nanochat to full GPT-2 capabil
      ```bash
      cat ~/.ssh/id_ed25519.pub
      ```
-   - Copy the output and paste it into the Lambda Cloud SSH Keys section.
+   - Copy the **entire output string** (including the `ssh-ed25519` at the beginning and your `email@example.com` at the end) and paste it into the Lambda Cloud SSH Keys section.
 3. **Add Payment Method:** Ensure your billing information is up to date, as you cannot launch GPU instances without a valid payment method.
 
 ## 2. Launching the Instance
