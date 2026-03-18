@@ -7,6 +7,7 @@ import time
 import mlx.core as mx
 import mlx.nn as nn
 
+from dev.mlx_compile_utils import build_loss_and_grad, eval_training_state, make_training_step
 from dev.mlx_checkpoint_translation import initialize_mlx_from_checkpoint_source, initialize_mlx_from_pytorch_reference
 from dev.mlx_input_batches import make_input_batch_provider
 from dev.mlx_logging import add_logging_args, write_summary_log
@@ -53,6 +54,7 @@ def main() -> None:
     parser.add_argument("--muon-ns-steps", type=int, default=5)
     parser.add_argument("--muon-orthogonalize-dtype", type=str, choices=["float16", "bfloat16", "float32"], default="bfloat16")
     parser.add_argument("--muon-block-groups", type=str, choices=["all", "mlp_only", "attn_only"], default="all")
+    parser.add_argument("--execution-mode", type=str, choices=["eager", "compiled"], default="eager")
     parser.add_argument("--input-mode", type=str, choices=["repeated", "dataset"], default="repeated")
     parser.add_argument("--dataset-split", type=str, choices=["train", "val"], default="train")
     parser.add_argument("--init-from-pytorch-reference", action="store_true")
@@ -105,15 +107,29 @@ def main() -> None:
     )
     input_metadata = None
 
-    loss_and_grad = nn.value_and_grad(model, lambda batch, labels: model.loss(batch, labels))
+    warmup_loss_and_grad = build_loss_and_grad(model)
 
-    for _ in range(max(args.warmup_steps, 0)):
+    warmup_steps_applied = max(args.warmup_steps, 0)
+    if args.execution_mode == "compiled" and warmup_steps_applied == 0:
+        warmup_steps_applied = 1
+
+    for _ in range(warmup_steps_applied):
         inputs, targets, batch_metadata = input_provider.next_batch()
         if input_metadata is None:
             input_metadata = batch_metadata
-        loss, grads = loss_and_grad(inputs, targets)
+        loss, grads = warmup_loss_and_grad(inputs, targets)
         optimizer.update(model, grads)
-        mx.eval(loss, model.parameters(), *optimizer.state_trees())
+        eval_training_state(loss, model, optimizer, grads)
+
+    train_step = make_training_step(model, optimizer, execution_mode=args.execution_mode)
+    compile_warmup_steps_applied = 0
+    if args.execution_mode == "compiled":
+        inputs, targets, batch_metadata = input_provider.next_batch()
+        if input_metadata is None:
+            input_metadata = batch_metadata
+        loss, grads = train_step(inputs, targets)
+        eval_training_state(loss, model, optimizer, grads)
+        compile_warmup_steps_applied = 1
 
     mx.reset_peak_memory()
     start = time.perf_counter()
@@ -126,14 +142,19 @@ def main() -> None:
         if input_metadata is None:
             input_metadata = batch_metadata
         step_start = time.perf_counter()
-        loss, grads = loss_and_grad(inputs, targets)
-        after_backward = time.perf_counter()
-        optimizer.update(model, grads)
-        after_update = time.perf_counter()
-        mx.eval(loss, model.parameters(), *optimizer.state_trees())
+        if args.execution_mode == "compiled":
+            loss, grads = train_step(inputs, targets)
+            after_backward = step_start
+            after_update = time.perf_counter()
+        else:
+            loss, grads = train_step(inputs, targets)
+            after_backward = time.perf_counter()
+            optimizer.update(model, grads)
+            after_update = time.perf_counter()
+        eval_training_state(loss, model, optimizer, grads)
         after_eval = time.perf_counter()
-        forward_backward_elapsed += after_backward - step_start
-        optimizer_update_elapsed += after_update - after_backward
+        forward_backward_elapsed += after_update - step_start if args.execution_mode == "compiled" else after_backward - step_start
+        optimizer_update_elapsed += 0.0 if args.execution_mode == "compiled" else after_update - after_backward
         eval_elapsed += after_eval - after_update
         final_loss = loss
     elapsed = time.perf_counter() - start
@@ -149,9 +170,13 @@ def main() -> None:
             "vocab_size": config.vocab_size,
             "window_pattern": config.window_pattern,
             "params_total": model.num_params(),
+            "execution_mode": args.execution_mode,
         },
         "benchmark": {
             "steps": args.steps,
+            "warmup_steps_requested": args.warmup_steps,
+            "warmup_steps_applied": warmup_steps_applied,
+            "compile_warmup_steps_applied": compile_warmup_steps_applied,
             "elapsed_s": elapsed,
             "tokens_per_s": tokens_processed / elapsed if elapsed > 0 else 0.0,
             "loss": float(final_loss.item()) if final_loss is not None else None,

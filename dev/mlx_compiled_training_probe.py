@@ -74,6 +74,53 @@ print(json.dumps({
 '''
 
 
+EXPLICIT_STATEFUL_COMPILE_SNIPPET = r'''
+import json
+import mlx
+import mlx.core as mx
+import mlx.nn as nn
+import mlx.optimizers as optim
+
+class Tiny(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.w = mx.array([[1.0]], dtype=mx.float32)
+
+    def __call__(self, x):
+        return x @ self.w
+
+model = Tiny()
+optimizer = optim.AdamW(learning_rate=0.1)
+x = mx.array([[2.0]], dtype=mx.float32)
+y = mx.array([[0.0]], dtype=mx.float32)
+loss_and_grad = nn.value_and_grad(model, lambda batch, targets: mx.mean(mx.square(model(batch) - targets)))
+
+def step(batch, targets):
+    loss, grads = loss_and_grad(batch, targets)
+    optimizer.update(model, grads)
+    return loss, model.w
+
+compiled_step = mx.compile(
+    step,
+    inputs=[model.state, optimizer.state],
+    outputs=[model.state, optimizer.state],
+)
+losses = []
+weights = []
+for _ in range(3):
+    loss, weight = compiled_step(x, y)
+    mx.eval(loss, weight, model.parameters(), optimizer.state)
+    losses.append(float(loss))
+    weights.append(float(weight.item()))
+
+print(json.dumps({
+    "mlx_version": getattr(mlx, "__version__", "unknown"),
+    "losses": losses,
+    "weights": weights,
+}))
+'''
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Probe whether the local MLX install supports compiled stateful training updates")
     parser.add_argument("--python", type=str, default=sys.executable, help="Python executable to use for child probes")
@@ -106,17 +153,20 @@ def main() -> None:
     args = parse_args()
     pure = run_child(args.python, PURE_COMPILE_SNIPPET)
     stateful = run_child(args.python, STATEFUL_COMPILE_SNIPPET)
+    explicit_stateful = run_child(args.python, EXPLICIT_STATEFUL_COMPILE_SNIPPET)
 
     summary = {
         "python": args.python,
         "probes": {
             "pure_compile": pure,
             "stateful_compile": stateful,
+            "explicit_stateful_compile": explicit_stateful,
         },
         "assessment": {
             "pure_compile_works": pure["returncode"] == 0,
             "stateful_compile_works": stateful["returncode"] == 0,
-            "supports_compiled_stateful_training": pure["returncode"] == 0 and stateful["returncode"] == 0,
+            "explicit_stateful_compile_works": explicit_stateful["returncode"] == 0,
+            "supports_compiled_stateful_training": pure["returncode"] == 0 and explicit_stateful["returncode"] == 0,
         },
     }
 

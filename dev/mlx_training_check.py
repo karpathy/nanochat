@@ -10,6 +10,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from dev.benchmark_mlx_reference import get_memory_stats, load_tokenizer_metadata
+from dev.mlx_compile_utils import build_loss_and_grad, eval_training_state, make_training_step
 from dev.mlx_input_batches import make_input_batch_provider
 from dev.mlx_checkpoint_translation import initialize_mlx_from_checkpoint_source, initialize_mlx_from_pytorch_reference
 from dev.mlx_gpt_prototype import MLXGPTPrototype, build_reference_config
@@ -101,6 +102,7 @@ def main() -> None:
     parser.add_argument("--muon-ns-steps", type=int, default=5)
     parser.add_argument("--muon-orthogonalize-dtype", type=str, choices=["float16", "bfloat16", "float32"], default="bfloat16")
     parser.add_argument("--muon-block-groups", type=str, choices=["all", "mlp_only", "attn_only"], default="all")
+    parser.add_argument("--execution-mode", type=str, choices=["eager", "compiled"], default="eager")
     parser.add_argument("--input-mode", type=str, choices=["repeated", "dataset"], default="repeated")
     parser.add_argument("--dataset-split", type=str, choices=["train", "val"], default="train")
     parser.add_argument("--progress", action="store_true")
@@ -143,15 +145,29 @@ def main() -> None:
         dataset_split=args.dataset_split,
     )
     input_metadata = None
-    loss_and_grad = nn.value_and_grad(model, lambda batch, labels: model.loss(batch, labels))
+    warmup_loss_and_grad = build_loss_and_grad(model)
 
-    for _ in range(max(args.warmup_steps, 0)):
+    warmup_steps_applied = max(args.warmup_steps, 0)
+    if args.execution_mode == "compiled" and warmup_steps_applied == 0:
+        warmup_steps_applied = 1
+
+    for _ in range(warmup_steps_applied):
         inputs, targets, batch_metadata = input_provider.next_batch()
         if input_metadata is None:
             input_metadata = batch_metadata
-        warm_loss, warm_grads = loss_and_grad(inputs, targets)
+        warm_loss, warm_grads = warmup_loss_and_grad(inputs, targets)
         optimizer.update(model, warm_grads)
-        mx.eval(warm_loss, model.parameters(), *optimizer.state_trees())
+        eval_training_state(warm_loss, model, optimizer, warm_grads)
+
+    train_step = make_training_step(model, optimizer, execution_mode=args.execution_mode)
+    compile_warmup_steps_applied = 0
+    if args.execution_mode == "compiled":
+        inputs, targets, batch_metadata = input_provider.next_batch()
+        if input_metadata is None:
+            input_metadata = batch_metadata
+        loss, grads = train_step(inputs, targets)
+        eval_training_state(loss, model, optimizer, grads)
+        compile_warmup_steps_applied = 1
 
     mx.reset_peak_memory()
     per_step = []
@@ -160,15 +176,20 @@ def main() -> None:
         if input_metadata is None:
             input_metadata = batch_metadata
         start = time.perf_counter()
-        loss, grads = loss_and_grad(inputs, targets)
-        after_backward = time.perf_counter()
+        if args.execution_mode == "compiled":
+            loss, grads = train_step(inputs, targets)
+            after_backward = start
+            after_update = time.perf_counter()
+        else:
+            loss, grads = train_step(inputs, targets)
+            after_backward = time.perf_counter()
+            optimizer.update(model, grads)
+            after_update = time.perf_counter()
         grad_l2 = tree_l2_norm(grads)
         grad_nonfinite = tree_nonfinite_count(grads)
-        optimizer.update(model, grads)
-        after_update = time.perf_counter()
         param_l2 = tree_l2_norm(model.parameters())
         param_nonfinite = tree_nonfinite_count(model.parameters())
-        mx.eval(loss, model.parameters(), *optimizer.state_trees())
+        eval_training_state(loss, model, optimizer, grads)
         after_eval = time.perf_counter()
         elapsed = after_eval - start
         memory = get_memory_stats()
@@ -177,8 +198,8 @@ def main() -> None:
             "loss": float(loss.item()),
             "step_time_s": elapsed,
             "tokens_per_s": (args.device_batch_size * args.max_seq_len) / elapsed if elapsed > 0 else 0.0,
-            "forward_backward_s": after_backward - start,
-            "optimizer_update_s": after_update - after_backward,
+            "forward_backward_s": after_update - start if args.execution_mode == "compiled" else after_backward - start,
+            "optimizer_update_s": 0.0 if args.execution_mode == "compiled" else after_update - after_backward,
             "eval_s": after_eval - after_update,
             "grad_l2": grad_l2,
             "grad_nonfinite": grad_nonfinite,
@@ -221,6 +242,7 @@ def main() -> None:
             "heads": config.n_head,
             "vocab_size": config.vocab_size,
             "params_total": model.num_params(),
+            "execution_mode": args.execution_mode,
         },
         "initialization": init_metadata,
         "optimizer": optimizer.metadata(),
@@ -251,6 +273,9 @@ def main() -> None:
             "throughput_positive": True,
         },
         "aggregates": {
+            "warmup_steps_requested": args.warmup_steps,
+            "warmup_steps_applied": warmup_steps_applied,
+            "compile_warmup_steps_applied": compile_warmup_steps_applied,
             "initial_loss": losses[0],
             "final_loss": losses[-1],
             "min_loss": min(losses),
