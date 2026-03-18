@@ -237,10 +237,7 @@ for step in range(num_steps):
         print_passk = [f"Pass@{k}: {passk[k - 1].item():.4f}" for k in range(1, args.device_batch_size + 1)]
         print0(f"Step {step} | {', '.join(print_passk)}")
         log_passk = {f"pass@{k}": passk[k - 1].item() for k in range(1, args.device_batch_size + 1)}
-        wandb_run.log({
-            "step": step,
-            **log_passk,
-        })
+        wandb_run.log(log_passk, step)
 
     # Forward/Backward on rollouts over multiple examples in the dataset
     rewards_list = []
@@ -287,11 +284,6 @@ for step in range(num_steps):
         mean_reward = mean_reward_tensor.item()
         mean_sequence_length = mean_sequence_length_tensor.item()
     print0(f"Step {step}/{num_steps} | Average reward: {mean_reward} | Average sequence length: {mean_sequence_length:.2f}")
-    wandb_run.log({
-        "step": step,
-        "reward": mean_reward,
-        "sequence_length": mean_sequence_length,
-    })
 
     # Update the model parameters
     lrm = get_lr_multiplier(step)
@@ -300,9 +292,10 @@ for step in range(num_steps):
     optimizer.step()
     model.zero_grad(set_to_none=True)
     wandb_run.log({
-        "step": step,
+        "reward": mean_reward,
+        "sequence_length": mean_sequence_length,
         "lrm": lrm,
-    })
+    }, step)
 
     # Master process saves the model once in a while. Skip first step. Save last step.
     if master_process and ((step > 0 and step % args.save_every == 0) or step == num_steps - 1):
