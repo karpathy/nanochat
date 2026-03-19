@@ -289,6 +289,7 @@ Current conclusion:
 - the unsafe implicit stateful-closure form still crashes
 - repeated stateful optimizer updates work when `mx.compile` captures model and optimizer state explicitly via `inputs=` and `outputs=`
 - the MLX harnesses now expose this as `--execution-mode compiled`, and compiled mode is now the default after holding up on the full d32 reference workload
+- a Phase 5 extended inference sweep (2026-03-19) ran one-shot and persistent worker benchmarks at 32, 64, and 128 output tokens: the crossover is confirmed at ~50 tokens for both paths; Swift persistent decode stays flat at ~32ms while Python full-recompute grows from 29ms (32 tok) to 42ms (128 tok); at 128 tokens persistent is 1.31x faster; see `runs/mlx_logs/phase5_inference_oneshot_sweep_20260319-042411.log` and `runs/mlx_logs/phase5_inference_persistent_sweep_20260319-042831.log`
 
 Latest confirmation on this machine (2026-03-18): the probe at [dev/mlx_compiled_training_probe.py](/Users/peternicholls/Dev/nanochatter/dev/mlx_compiled_training_probe.py) now tests both the crashing implicit form and the explicit-state form. In the current local MLX environment, pure `mx.compile` succeeds, the implicit stateful optimizer-update probe still exits with `SIGSEGV` (`returncode=-11`), and the explicit-stateful compile path succeeds. See [runs/mlx_logs/phase4c_compiled_probe_d0_probe_20260318-002634.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase4c_compiled_probe_d0_probe_20260318-002634.json).
 
