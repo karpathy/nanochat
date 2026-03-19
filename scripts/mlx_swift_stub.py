@@ -79,6 +79,30 @@ def bundle_path(root: Path) -> Path:
     return build_products_dir(root) / "mlx-swift_Cmlx.bundle"
 
 
+def _stub_build_inputs(root: Path) -> list[Path]:
+    package_root = package_dir(root)
+    inputs = [package_root / "Package.swift", package_root / "Package.resolved"]
+    sources_dir = package_root / "Sources"
+    if sources_dir.exists():
+        inputs.extend(path for path in sources_dir.rglob("*.swift") if path.is_file())
+    return [path for path in inputs if path.exists()]
+
+
+def _stub_build_is_fresh(root: Path) -> bool:
+    binary = stub_binary_path(root)
+    bundle = bundle_path(root)
+    if not binary.exists() or not bundle.exists():
+        return False
+
+    inputs = _stub_build_inputs(root)
+    if not inputs:
+        return False
+
+    newest_input_mtime = max(path.stat().st_mtime for path in inputs)
+    oldest_output_mtime = min(binary.stat().st_mtime, bundle.stat().st_mtime)
+    return oldest_output_mtime >= newest_input_mtime
+
+
 def resolve_repo_path(root: Path, candidate: str) -> Path:
     path = Path(candidate)
     if path.is_absolute():
@@ -87,9 +111,7 @@ def resolve_repo_path(root: Path, candidate: str) -> Path:
 
 
 def ensure_stub_is_built(root: Path, *, rebuild: bool) -> None:
-    binary = stub_binary_path(root)
-    bundle = bundle_path(root)
-    if not rebuild and binary.exists() and bundle.exists():
+    if not rebuild and _stub_build_is_fresh(root):
         return
 
     command = [
@@ -100,6 +122,7 @@ def ensure_stub_is_built(root: Path, *, rebuild: bool) -> None:
         "platform=macOS",
         "-derivedDataPath",
         ".derived",
+        "clean",
         "build",
     ]
     subprocess.run(command, cwd=package_dir(root), check=True)

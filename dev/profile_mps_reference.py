@@ -16,11 +16,8 @@ import time
 
 import torch
 
+from nanochat.common import bytes_to_gb, get_mps_memory_stats
 from nanochat.gpt import GPT, GPTConfig
-
-
-def bytes_to_gb(num_bytes: int) -> float:
-    return num_bytes / (1024 ** 3)
 
 
 def tensor_nbytes(tensor: torch.Tensor) -> int:
@@ -29,19 +26,6 @@ def tensor_nbytes(tensor: torch.Tensor) -> int:
 
 def sum_tensor_bytes(tensors) -> int:
     return sum(tensor_nbytes(tensor) for tensor in tensors if tensor is not None)
-
-
-def get_mps_memory_stats() -> dict[str, float]:
-    allocated = torch.mps.current_allocated_memory()
-    driver = torch.mps.driver_allocated_memory()
-    recommended = torch.mps.recommended_max_memory()
-    return {
-        "allocated_gb": bytes_to_gb(allocated),
-        "driver_gb": bytes_to_gb(driver),
-        "recommended_gb": bytes_to_gb(recommended),
-        "driver_frac": (driver / recommended) if recommended else 0.0,
-    }
-
 
 def synchronize() -> None:
     torch.mps.synchronize()
@@ -97,6 +81,7 @@ def main() -> None:
     parser.add_argument("--warmup-steps", type=int, default=1)
     parser.add_argument("--profile-steps", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--recommended-budget-frac", type=float, default=0.9)
     args = parser.parse_args()
 
     if not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available():
@@ -144,20 +129,20 @@ def main() -> None:
 
         model.zero_grad(set_to_none=True)
         synchronize()
-        before_forward = get_mps_memory_stats()
+        before_forward = get_mps_memory_stats(budget_frac=args.recommended_budget_frac)
 
         forward_time, loss = phase_time(lambda: model(inputs, targets))
-        after_forward = get_mps_memory_stats()
+        after_forward = get_mps_memory_stats(budget_frac=args.recommended_budget_frac)
 
         backward_time, _ = phase_time(loss.backward)
-        after_backward = get_mps_memory_stats()
+        after_backward = get_mps_memory_stats(budget_frac=args.recommended_budget_frac)
         last_grad_bytes = sum_tensor_bytes(param.grad for param in model.parameters())
 
         optimizer_time, _ = phase_time(optimizer.step)
-        after_step = get_mps_memory_stats()
+        after_step = get_mps_memory_stats(budget_frac=args.recommended_budget_frac)
 
         zero_grad_time, _ = phase_time(lambda: model.zero_grad(set_to_none=True))
-        after_zero_grad = get_mps_memory_stats()
+        after_zero_grad = get_mps_memory_stats(budget_frac=args.recommended_budget_frac)
 
         final_loss = float(loss.item())
         step_record.update({
@@ -224,6 +209,13 @@ def main() -> None:
         },
         "memory": {
             "last_snapshot": last_snapshot,
+            "budget": {
+                "recommended_budget_frac": args.recommended_budget_frac,
+                "budget_limit_gb": last_snapshot["after_step"]["budget_limit_gb"],
+                "budget_headroom_gb": last_snapshot["after_step"]["budget_headroom_gb"],
+                "driver_headroom_gb": last_snapshot["after_step"]["headroom_gb"],
+                "exceeds_budget": any(snapshot[phase]["exceeds_budget"] for snapshot in memory_snapshots for phase in snapshot if phase != "step"),
+            },
             "tensor_estimates_gb": {
                 "parameters": bytes_to_gb(param_bytes),
                 "gradients": bytes_to_gb(grad_bytes),

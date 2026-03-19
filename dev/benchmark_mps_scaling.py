@@ -11,30 +11,12 @@ import time
 
 import torch
 
-from nanochat.common import maybe_torch_compile
+from nanochat.common import get_mps_memory_stats, maybe_torch_compile
 from nanochat.gpt import GPT, GPTConfig
 
 
 def parse_csv_ints(value: str) -> list[int]:
     return [int(part.strip()) for part in value.split(",") if part.strip()]
-
-
-def bytes_to_gb(num_bytes: int) -> float:
-    return num_bytes / (1024 ** 3)
-
-
-def get_mps_memory_stats() -> dict[str, float]:
-    if not hasattr(torch, "mps"):
-        return {"allocated_gb": 0.0, "driver_gb": 0.0, "recommended_gb": 0.0}
-    allocated = torch.mps.current_allocated_memory()
-    driver = torch.mps.driver_allocated_memory()
-    recommended = torch.mps.recommended_max_memory()
-    return {
-        "allocated_gb": bytes_to_gb(allocated),
-        "driver_gb": bytes_to_gb(driver),
-        "recommended_gb": bytes_to_gb(recommended),
-    }
-
 
 def clear_mps_state() -> None:
     gc.collect()
@@ -107,7 +89,7 @@ def run_trial(depth: int, batch_size: int, args, device: torch.device) -> dict[s
         torch.mps.synchronize()
         elapsed = time.perf_counter() - start
 
-        mem = get_mps_memory_stats()
+        mem = get_mps_memory_stats(budget_frac=args.recommended_budget_frac)
         result.update({
             "loss": float(loss.item()),
             "params_m": params["total"] / 1e6,
@@ -118,7 +100,12 @@ def run_trial(depth: int, batch_size: int, args, device: torch.device) -> dict[s
             "allocated_gb": mem["allocated_gb"],
             "driver_gb": mem["driver_gb"],
             "recommended_gb": mem["recommended_gb"],
-            "driver_frac": (mem["driver_gb"] / mem["recommended_gb"]) if mem["recommended_gb"] else 0.0,
+            "driver_frac": mem["driver_frac"],
+            "headroom_gb": mem["headroom_gb"],
+            "budget_frac": mem["budget_frac"],
+            "budget_limit_gb": mem["budget_limit_gb"],
+            "budget_headroom_gb": mem["budget_headroom_gb"],
+            "exceeds_budget": mem["exceeds_budget"],
         })
     except Exception as exc:
         result["status"] = "oom" if "out of memory" in str(exc).lower() else "runtime_error"
@@ -132,26 +119,29 @@ def run_trial(depth: int, batch_size: int, args, device: torch.device) -> dict[s
 def print_table(results: list[dict[str, object]]) -> None:
     header = (
         f"{'depth':>5}  {'bs':>4}  {'dim':>5}  {'heads':>5}  {'params(M)':>10}  "
-        f"{'tok/s':>10}  {'drv GB':>8}  {'rec GB':>8}  {'drv%':>6}  {'status':>12}"
+        f"{'tok/s':>10}  {'drv GB':>8}  {'rec GB':>8}  {'head GB':>8}  {'drv%':>6}  {'budget':>8}  {'status':>12}"
     )
     print(header)
     print("-" * len(header))
     for row in results:
         if row["status"] == "ok":
+            budget_label = "over" if row["exceeds_budget"] else "ok"
             print(
                 f"{row['depth']:>5}  {row['batch_size']:>4}  {row['model_dim']:>5}  {row['heads']:>5}  "
                 f"{row['params_m']:>10.1f}  {row['tokens_per_s']:>10.0f}  {row['driver_gb']:>8.1f}  "
-                f"{row['recommended_gb']:>8.1f}  {100.0 * row['driver_frac']:>5.1f}%  {row['status']:>12}"
+                f"{row['recommended_gb']:>8.1f}  {row['headroom_gb']:>8.1f}  {100.0 * row['driver_frac']:>5.1f}%  {budget_label:>8}  {row['status']:>12}"
             )
         else:
             print(
                 f"{row['depth']:>5}  {row['batch_size']:>4}  {'-':>5}  {'-':>5}  {'-':>10}  {'-':>10}  "
-                f"{'-':>8}  {'-':>8}  {'-':>6}  {row['status']:>12}"
+                f"{'-':>8}  {'-':>8}  {'-':>8}  {'-':>6}  {'-':>8}  {row['status']:>12}"
             )
 
 
 def print_recommendation(results: list[dict[str, object]]) -> None:
-    successful = [row for row in results if row["status"] == "ok"]
+    successful = [row for row in results if row["status"] == "ok" and not row.get("exceeds_budget", False)]
+    if not successful:
+        successful = [row for row in results if row["status"] == "ok"]
     if not successful:
         print("\nNo successful configurations were found.")
         return
@@ -178,6 +168,7 @@ def main() -> None:
     parser.add_argument("--warmup-steps", type=int, default=1, help="Warmup optimization steps per trial")
     parser.add_argument("--lr", type=float, default=1e-3, help="Synthetic learning rate for benchmark")
     parser.add_argument("--compile", action="store_true", help="Try torch.compile during benchmark")
+    parser.add_argument("--recommended-budget-frac", type=float, default=0.9, help="Warn when MPS driver memory exceeds this fraction of torch.mps.recommended_max_memory()")
     args = parser.parse_args()
 
     if not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available():
@@ -191,6 +182,7 @@ def main() -> None:
     print(f"Benchmarking MPS scaling on {device} with seq_len={args.seq_len}, steps={args.steps}")
     print(f"Depths: {depths}")
     print(f"Batch sizes: {batch_sizes}")
+    print(f"Recommended MPS budget threshold: {100.0 * args.recommended_budget_frac:.1f}% of recommended_max_memory")
 
     results = []
     for depth in depths:

@@ -70,6 +70,48 @@ def setup_default_logging():
 setup_default_logging()
 logger = logging.getLogger(__name__)
 
+
+def bytes_to_gb(num_bytes: int | float) -> float:
+    return float(num_bytes) / (1024 ** 3)
+
+
+def get_mps_memory_stats(*, budget_frac: float = 0.9) -> dict[str, float | bool]:
+    budget_frac = min(max(float(budget_frac), 0.0), 1.0)
+    if not hasattr(torch, "mps"):
+        return {
+            "allocated_gb": 0.0,
+            "driver_gb": 0.0,
+            "recommended_gb": 0.0,
+            "driver_frac": 0.0,
+            "headroom_gb": 0.0,
+            "headroom_frac": 0.0,
+            "budget_frac": budget_frac,
+            "budget_limit_gb": 0.0,
+            "budget_headroom_gb": 0.0,
+            "exceeds_budget": False,
+        }
+
+    allocated = torch.mps.current_allocated_memory()
+    driver = torch.mps.driver_allocated_memory()
+    recommended = torch.mps.recommended_max_memory()
+    recommended_gb = bytes_to_gb(recommended)
+    driver_gb = bytes_to_gb(driver)
+    budget_limit_gb = recommended_gb * budget_frac
+    driver_frac = (driver / recommended) if recommended else 0.0
+    headroom_frac = (1.0 - driver_frac) if recommended else 0.0
+    return {
+        "allocated_gb": bytes_to_gb(allocated),
+        "driver_gb": driver_gb,
+        "recommended_gb": recommended_gb,
+        "driver_frac": driver_frac,
+        "headroom_gb": recommended_gb - driver_gb,
+        "headroom_frac": headroom_frac,
+        "budget_frac": budget_frac,
+        "budget_limit_gb": budget_limit_gb,
+        "budget_headroom_gb": budget_limit_gb - driver_gb,
+        "exceeds_budget": bool(recommended and driver_gb > budget_limit_gb),
+    }
+
 def get_base_dir():
     # co-locate nanochat intermediates with other cached data in ~/.cache (by default)
     if os.environ.get("NANOCHAT_BASE_DIR"):

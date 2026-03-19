@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import subprocess
 import sys
 import types
@@ -13,6 +14,7 @@ from nanochat.swift_stub_engine import (
     SwiftStubEngine,
     build_swift_request_telemetry,
     choose_swift_backend,
+    ensure_stub_is_built,
     parse_timing,
     resolve_preferred_manifest,
     swift_decode_supported,
@@ -61,6 +63,12 @@ class FakeProcess:
 
 def write_manifest(path: Path):
     path.write_text(json.dumps({"config": {}, "export": {}}), encoding="utf-8")
+
+
+def write_file(path: Path, content: str, *, mtime: int):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    os.utime(path, (mtime, mtime))
 
 
 def test_parse_timing_extracts_key_value_pairs():
@@ -201,6 +209,60 @@ def test_resolve_preferred_manifest_uses_largest_model_and_latest_step(tmp_path,
 
     resolved = resolve_preferred_manifest(repo_root, source="base", model_tag=None, step=None)
     assert resolved == manifest_path
+
+
+def test_ensure_stub_is_built_skips_clean_build_when_outputs_are_fresh(tmp_path, monkeypatch):
+    write_file(tmp_path / "swift" / "NanochatMLXStub" / "Package.swift", "", mtime=100)
+    write_file(tmp_path / "swift" / "NanochatMLXStub" / "Package.resolved", "", mtime=100)
+    write_file(tmp_path / "swift" / "NanochatMLXStub" / "Sources" / "NanochatMLXStub" / "main.swift", "", mtime=100)
+    write_file(tmp_path / "swift" / "Build" / "Products" / "Debug" / "nanochat-mlx-stub", "", mtime=200)
+    write_file(tmp_path / "swift" / "Build" / "Products" / "Debug" / "mlx-swift_Cmlx.bundle", "", mtime=200)
+
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr("nanochat.swift_stub_engine.subprocess.run", fake_run)
+
+    ensure_stub_is_built(tmp_path, rebuild=False)
+
+    assert calls == []
+
+
+def test_ensure_stub_is_built_forces_clean_build_when_sources_are_newer(tmp_path, monkeypatch):
+    write_file(tmp_path / "swift" / "NanochatMLXStub" / "Package.swift", "", mtime=100)
+    write_file(tmp_path / "swift" / "NanochatMLXStub" / "Package.resolved", "", mtime=100)
+    write_file(tmp_path / "swift" / "NanochatMLXStub" / "Sources" / "NanochatMLXStub" / "main.swift", "", mtime=300)
+    write_file(tmp_path / "swift" / "Build" / "Products" / "Debug" / "nanochat-mlx-stub", "", mtime=200)
+    write_file(tmp_path / "swift" / "Build" / "Products" / "Debug" / "mlx-swift_Cmlx.bundle", "", mtime=200)
+
+    calls = []
+
+    def fake_run(command, *, cwd, check):
+        calls.append((command, cwd, check))
+
+    monkeypatch.setattr("nanochat.swift_stub_engine.subprocess.run", fake_run)
+
+    ensure_stub_is_built(tmp_path, rebuild=False)
+
+    assert calls == [
+        (
+            [
+                "xcodebuild",
+                "-scheme",
+                "NanochatMLXStub",
+                "-destination",
+                "platform=macOS",
+                "-derivedDataPath",
+                ".derived",
+                "clean",
+                "build",
+            ],
+            tmp_path / "swift" / "NanochatMLXStub",
+            True,
+        )
+    ]
 
 
 def test_swift_stub_engine_handles_repeated_requests_and_updates_timing(tmp_path, monkeypatch):
