@@ -16,15 +16,6 @@ import os
 import sys
 import time
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
-# #region agent log
-_DEBUG_LOG = "/home/keef/nanochatkwizzle/.cursor/debug-25bf98.log"
-def _dlog(msg, data=None, hid="?"):
-    try:
-        with open(_DEBUG_LOG, "a") as _f:
-            _f.write(json.dumps({"sessionId": "25bf98", "location": "chat_sft.py", "message": msg, "data": data or {}, "timestamp": int(time.time() * 1000), "hypothesisId": hid}) + "\n")
-    except Exception:
-        pass
-# #endregion
 import wandb
 import torch
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, get_checkpoint_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
@@ -78,15 +69,7 @@ parser.add_argument("--chatcore-max-sample", type=int, default=24, help="max pro
 # Data mixture
 parser.add_argument("--mmlu-epochs", type=int, default=3, help="number of epochs of MMLU in training mixture (teaches Multiple Choice)")
 parser.add_argument("--gsm8k-epochs", type=int, default=4, help="number of epochs of GSM8K in training mixture (teaches Math and Tool Use)")
-# #region agent log
-_dlog("script_start", {"argv_len": len(sys.argv), "argv_tail": sys.argv[-5:] if len(sys.argv) >= 5 else sys.argv}, "start")
-try:
-    args = parser.parse_args()
-except Exception as e:
-    _dlog("parse_args_failed", {"error": str(e), "type": type(e).__name__}, "A")
-    raise
-_dlog("parse_args_ok", {}, "A")
-# #endregion
+args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
 
