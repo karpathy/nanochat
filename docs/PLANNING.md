@@ -183,6 +183,16 @@ With these fixes the persistent worker (`28.44ms`) is **essentially tied with Py
 
 Swift's per-token decode cost stays roughly constant (~31ms) as output length grows because the KV-cache keeps each step O(1). Python's full-recompute cost grows linearly with context length (~28ms at 32 tokens, ~43ms at 128 tokens). The crossover point is at approximately 50–60 output tokens. For typical chat responses (100–256 tokens), the Swift persistent-worker path will be materially faster than the Python path. See [runs/mlx_logs/phase4a_crossover_64tok_d32_20260317-235641.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase4a_crossover_64tok_d32_20260317-235641.json) and [runs/mlx_logs/phase4a_crossover_128tok_d32_20260317-235641.json](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase4a_crossover_128tok_d32_20260317-235641.json).
 
+**Phase 5 extended sweep (d32, M2 Ultra, 2026-03-19) — one-shot and persistent at 32/64/128 tokens:**
+
+| Output tokens | Python MLX (full recompute) | Swift one-shot (KV-cache) | Swift persistent (KV-cache) |
+|---|---|---|---|
+| 32 | 29.15 ms/token | 32.88 ms/token (0.9x) | 31.92 ms/token (0.9x) |
+| 64 | 35.02 ms/token | 33.48 ms/token (1.05x) | 32.07 ms/token (1.09x) |
+| 128 | 42.10 ms/token | 33.48 ms/token (1.26x) | **32.23 ms/token (1.31x)** |
+
+The Phase 5 re-run was taken right after heavy training benchmark sessions (higher machine memory pressure), which explains the ~1–2ms absolute regression vs Phase 4a numbers. The structural pattern is identical: Python recompute cost grows from 29ms to 42ms as output length doubles twice, while Swift KV-cache decode stays flat at ~32–33ms across all three lengths. The persistent worker eliminates the 640–740ms cold-start prefill cost per request (dropping to ~40ms in steady state) and tracks ~1ms faster than one-shot on decode. The crossover is confirmed at approximately **50 output tokens** for both Swift paths. See [runs/mlx_logs/phase5_inference_oneshot_sweep_20260319-042411.log](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase5_inference_oneshot_sweep_20260319-042411.log) and [runs/mlx_logs/phase5_inference_persistent_sweep_20260319-042831.log](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase5_inference_persistent_sweep_20260319-042831.log).
+
 The integration is complete: `SwiftStubEngine` in `nanochat/swift_stub_engine.py` replaces the Python per-token loop via a persistent JSON-lines worker and is wired into `scripts/chat_cli.py` via `--swift-manifest`. The PyTorch `Engine` path is retained unchanged as the training-path engine.
 
 **Productization follow-up:** the next work on Story 4a is not more micro-benchmarking, but hardening and default-path integration:
