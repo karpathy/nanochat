@@ -117,11 +117,40 @@ def autodetect_device_type():
 
 
 def get_peak_flops(name: str) -> float:
+    # Approximate practical BF16 TFLOPS (dense tensor cores, no sparsity).
+    # Used only for MFU reporting. Listed roughly in order from highest to lowest.
+    # Data center GPUs
     flops_map = {
         "H100": 1.98e15,
         "A100": 3.12e14,
+        "A10G": 1.25e14,
         "A10": 1.25e14,
+        # RTX 50 series (Blackwell, SM 100) — BF16 tensor
+        "RTX 5090": 1.80e14,
+        "RTX 5080": 1.10e14,
+        "RTX 5070 Ti": 8.0e13,
+        "RTX 5070": 5.8e13,
+        "RTX 5060 Ti": 4.2e13,
+        "RTX 5060": 3.0e13,
+        # RTX 40 series (Ada Lovelace, SM 89) — BF16 tensor
         "RTX 4090": 8.2e13,
+        "RTX 4080 SUPER": 5.2e13,
+        "RTX 4080": 4.9e13,
+        "RTX 4070 Ti SUPER": 4.5e13,
+        "RTX 4070 Ti": 4.0e13,
+        "RTX 4070 SUPER": 3.5e13,
+        "RTX 4070": 2.9e13,
+        "RTX 4060 Ti": 2.2e13,
+        "RTX 4060": 1.6e13,
+        # RTX 30 series (Ampere, SM 86) — BF16 tensor
+        "RTX 3090 Ti": 4.0e13,
+        "RTX 3090": 3.6e13,
+        "RTX 3080 Ti": 3.5e13,
+        "RTX 3080": 3.0e13,
+        "RTX 3070 Ti": 2.2e13,
+        "RTX 3070": 2.0e13,
+        "RTX 3060 Ti": 1.6e13,
+        "RTX 3060": 1.3e13,
     }
     for key, flops in flops_map.items():
         if key in name:
