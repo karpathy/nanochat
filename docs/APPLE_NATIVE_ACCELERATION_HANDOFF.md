@@ -381,3 +381,57 @@ The remaining work is evidence and refinement:
 - deciding how much optimizer parity is worth if it costs too much performance
 
 See [PLANNING.md](PLANNING.md) for the structured next-phase plan.
+
+## 2026-03-19 Continuation Instruction
+
+Use this as the starting brief for the next agent working on Apple-native acceleration.
+
+### Current validated state
+
+- Priority 1 compiled-state hardening is done.
+- The Swift inference seam has been re-validated against the real built worker, not just mocks.
+- The live Swift worker rebuild issue is fixed: [main.swift](../swift/NanochatMLXStub/Sources/NanochatMLXStub/main.swift) now resets peak memory with `Memory.peakMemory = 0`, which is compatible with the pinned `mlx-swift` version.
+- End-to-end `chat_cli` validation confirmed runtime-visible backend reason codes and the live telemetry contract for the Swift path:
+	- `ttft_ms`
+	- `decode_ms_per_token`
+	- `active_memory_gb`
+	- `peak_memory_gb`
+	- `cache_memory_gb`
+	- `persistent_worker_reuse_count`
+- The default automatic Swift-routing threshold has been lowered from `64` to `48` output tokens in [swift_stub_engine.py](../nanochat/swift_stub_engine.py), based on fresh M2 Ultra measurements.
+- Focused regression coverage still passes:
+
+```bash
+export PYTHONPATH="$PWD"
+.venv/bin/pytest tests/test_swift_stub_engine.py -q
+```
+
+### Fresh evidence to trust
+
+On `runs/mlx_exports/mlx_reference_d32.json` with the real rebuilt worker:
+
+- One-shot crossover sweep:
+	- 32 tokens: Python `28.53 ms/token`, Swift `30.28 ms/token`
+	- 48 tokens: Python `30.73 ms/token`, Swift `30.15 ms/token`
+	- 64 tokens: Python `32.60 ms/token`, Swift `30.81 ms/token`
+	- 96 tokens: Python `36.97 ms/token`, Swift `30.38 ms/token`
+	- 128 tokens: Python `42.44 ms/token`, Swift `30.49 ms/token`
+- Persistent-worker sweep:
+	- 32 tokens: Swift `29.55 ms/token`
+	- 48 tokens: Swift `29.11 ms/token`
+	- 64 tokens: Swift `29.44 ms/token`
+	- 96 tokens: Swift `27.92 ms/token`
+	- 128 tokens: Swift `29.09 ms/token`
+
+Interpretation: the shipped persistent worker is still slower than Python at 32 tokens, but it is already ahead by 48 tokens and widens from there. Keep the default at `48` unless new measurements on a real checkpoint overturn that.
+
+### What remains to do next
+
+1. Re-run the same `chat_cli` routing checks against a real cached base or SFT checkpoint if one becomes available under `~/.cache/nanochat`.
+2. Add one smoke test or validation script for the Swift clean rebuild path so a stale binary cannot mask a broken source build again.
+3. Keep PyTorch fallback behavior unchanged unless fixing correctness or safety.
+4. Do not expand Swift deeper into training orchestration. The remaining work is runtime hardening, evidence, and guardrails.
+
+### Exact instruction for the next agent
+
+Continue from the March 19 validated Swift runtime state. Do not revisit training-side architecture. Treat Python MLX as the Apple-native training path and Swift MLX as an inference seam only. First check whether a real checkpoint now exists under `~/.cache/nanochat/{base_checkpoints,chatsft_checkpoints}`. If one exists, rerun end-to-end `scripts/chat_cli.py` checks for long greedy, short greedy, and incompatible sampling requests using the real checkpoint-backed PyTorch fallback and a matching MLX export if available. Confirm the backend reason codes and telemetry contract still match the current implementation. Then add the smallest practical clean-build smoke check for the Swift worker so the rebuild path is continuously trustworthy. Only change code if you find a real correctness or telemetry regression. If measurements still support it, keep the `48`-token default threshold.

@@ -193,6 +193,18 @@ Swift's per-token decode cost stays roughly constant (~31ms) as output length gr
 
 The Phase 5 re-run was taken right after heavy training benchmark sessions (higher machine memory pressure), which explains the ~1–2ms absolute regression vs Phase 4a numbers. The structural pattern is identical: Python recompute cost grows from 29ms to 42ms as output length doubles twice, while Swift KV-cache decode stays flat at ~32–33ms across all three lengths. The persistent worker eliminates the 640–740ms cold-start prefill cost per request (dropping to ~40ms in steady state) and tracks ~1ms faster than one-shot on decode. The crossover is confirmed at approximately **50 output tokens** for both Swift paths. See [runs/mlx_logs/phase5_inference_oneshot_sweep_20260319-042411.log](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase5_inference_oneshot_sweep_20260319-042411.log) and [runs/mlx_logs/phase5_inference_persistent_sweep_20260319-042831.log](/Users/peternicholls/Dev/nanochatter/runs/mlx_logs/phase5_inference_persistent_sweep_20260319-042831.log).
 
+**Phase 5 routing re-validation (d32, M2 Ultra, 2026-03-19, fresh post-fix sweep) — one-shot at 32/48/64/96/128 tokens and persistent at 32/48/64/96/128 tokens:**
+
+| Output tokens | Python MLX (full recompute) | Swift one-shot (KV-cache) | Swift persistent (KV-cache) |
+|---|---|---|---|
+| 32 | 28.53 ms/token | 30.28 ms/token (0.94x) | 29.55 ms/token (0.97x) |
+| 48 | 30.73 ms/token | 30.15 ms/token (1.02x) | **29.11 ms/token (1.06x)** |
+| 64 | 32.60 ms/token | 30.81 ms/token (1.06x) | **29.44 ms/token (1.11x)** |
+| 96 | 36.97 ms/token | 30.38 ms/token (1.22x) | **27.92 ms/token (1.32x)** |
+| 128 | 42.44 ms/token | 30.49 ms/token (1.39x) | **29.09 ms/token (1.46x)** |
+
+This re-run was taken after fixing the live Swift worker so it actually emits the full timing and memory telemetry contract on the pinned `mlx-swift` version. The deployed persistent-worker path now crosses over slightly earlier than the earlier coarse sweep suggested: it is still slower than Python at 32 tokens, but it is already ahead by 48 tokens and widens from there. On that basis, the default automatic Swift-routing threshold should move from 64 tokens down to **48 tokens**. That keeps a safety margin above the 32-token loss point while capturing the first clear win on the shipped persistent-worker path.
+
 The integration is complete: `SwiftStubEngine` in `nanochat/swift_stub_engine.py` replaces the Python per-token loop via a persistent JSON-lines worker and is wired into `scripts/chat_cli.py` via `--swift-manifest`. The PyTorch `Engine` path is retained unchanged as the training-path engine.
 
 **Productization follow-up:** the next work on Story 4a is not more micro-benchmarking, but hardening and default-path integration:
@@ -236,7 +248,7 @@ The outer training loop (`mlx_training_session.py`) is GPU-bound. Swift translat
 
 **Done when:** ✅ Swift inference engine shows measurable per-token latency reduction *(confirmed: 1.1x at 64 tokens, 1.4x at 128 tokens)*; the preferred MLX inference path is wired into `chat_cli.py` for greedy-compatible requests; regression coverage exists for worker lifecycle and repeated requests; no regressions on throughput or loss.
 
-**Story 4a status: complete.** The Swift persistent-worker path is integrated (`SwiftStubEngine`), at parity with Python at 32 tokens, faster at 64+ tokens, and now auto-selected by `chat_cli.py` when a matching export is present and the request is compatible with the current greedy-only Swift path. Sampling requests continue to use the PyTorch engine as the safe fallback.
+**Story 4a status: complete.** The Swift persistent-worker path is integrated (`SwiftStubEngine`), slower than Python at 32 tokens, faster by 48+ tokens on the current M2 Ultra measurements, and now auto-selected by `chat_cli.py` when a matching export is present and the request is compatible with the current greedy-only Swift path. Sampling requests continue to use the PyTorch engine as the safe fallback.
 
 **Priority update:** Story 4b is no longer the default next investment. Story 4c now has a viable compiled Python MLX path, so the remaining question is benchmark value, not basic capability.
 
