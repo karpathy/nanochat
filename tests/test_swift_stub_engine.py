@@ -1,12 +1,18 @@
 import io
 import json
 import subprocess
+import sys
+import types
 from pathlib import Path
 
 import pytest
 
+sys.modules.setdefault("rustbpe", types.ModuleType("rustbpe"))
+
 from nanochat.swift_stub_engine import (
     SwiftStubEngine,
+    build_swift_request_telemetry,
+    choose_swift_backend,
     parse_timing,
     resolve_preferred_manifest,
     swift_decode_supported,
@@ -46,7 +52,7 @@ class FakeProcess:
 
     def wait(self, timeout=None):
         if self.wait_timeout:
-            raise subprocess.TimeoutExpired("fake", timeout)
+            raise subprocess.TimeoutExpired("fake", 0 if timeout is None else timeout)
         return 0
 
     def kill(self):
@@ -71,6 +77,110 @@ def test_swift_decode_supported_is_greedy_only():
     assert swift_decode_supported(temperature=0.0, top_k=0)
     assert swift_decode_supported(temperature=0, top_k=None)
     assert not swift_decode_supported(temperature=0.6, top_k=50)
+
+
+def test_choose_swift_backend_auto_routes_only_long_greedy_requests(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "mlx.json"
+    write_manifest(manifest_path)
+
+    monkeypatch.setattr(
+        "nanochat.swift_stub_engine.resolve_preferred_manifest",
+        lambda *args, **kwargs: manifest_path,
+    )
+
+    short = choose_swift_backend(
+        tmp_path,
+        source="base",
+        model_tag=None,
+        step=None,
+        explicit_manifest_path=None,
+        allow_auto=True,
+        temperature=0.0,
+        top_k=0,
+        max_tokens=32,
+        min_output_tokens=64,
+    )
+    long = choose_swift_backend(
+        tmp_path,
+        source="base",
+        model_tag=None,
+        step=None,
+        explicit_manifest_path=None,
+        allow_auto=True,
+        temperature=0.0,
+        top_k=0,
+        max_tokens=128,
+        min_output_tokens=64,
+    )
+
+    assert not short.use_swift
+    assert short.reason_code == "pytorch_swift_short_output"
+    assert long.use_swift
+    assert long.reason_code == "swift_auto_long_output"
+    assert long.manifest_path == str(manifest_path)
+
+
+def test_choose_swift_backend_explicit_manifest_overrides_threshold_but_not_compatibility(tmp_path):
+    manifest_path = tmp_path / "mlx.json"
+    write_manifest(manifest_path)
+
+    explicit = choose_swift_backend(
+        tmp_path,
+        source="base",
+        model_tag=None,
+        step=None,
+        explicit_manifest_path=str(manifest_path),
+        allow_auto=True,
+        temperature=0.0,
+        top_k=0,
+        max_tokens=8,
+        min_output_tokens=64,
+    )
+    incompatible = choose_swift_backend(
+        tmp_path,
+        source="base",
+        model_tag=None,
+        step=None,
+        explicit_manifest_path=str(manifest_path),
+        allow_auto=True,
+        temperature=0.7,
+        top_k=50,
+        max_tokens=128,
+        min_output_tokens=64,
+    )
+
+    assert explicit.use_swift
+    assert explicit.reason_code == "swift_explicit_manifest_override"
+    assert not incompatible.use_swift
+    assert incompatible.reason_code == "pytorch_swift_incompatible_sampling"
+
+
+def test_build_swift_request_telemetry_normalizes_memory_and_reuse():
+    telemetry = build_swift_request_telemetry(
+        {
+            "device": "gpu",
+            "load": "10.5ms",
+            "ttft": "41.0ms",
+            "avg_decode": "28.4ms",
+            "tokens_decoded": "32",
+            "active_memory_gb": "12.500",
+            "peak_memory_gb": "14.250",
+            "cache_memory_gb": "3.125",
+        },
+        worker_reuse_count=2,
+    )
+
+    assert telemetry == {
+        "device": "gpu",
+        "load_ms": 10.5,
+        "ttft_ms": 41.0,
+        "decode_ms_per_token": 28.4,
+        "tokens_decoded": 32,
+        "active_memory_gb": 12.5,
+        "peak_memory_gb": 14.25,
+        "cache_memory_gb": 3.125,
+        "persistent_worker_reuse_count": 2,
+    }
 
 
 def test_resolve_preferred_manifest_uses_largest_model_and_latest_step(tmp_path, monkeypatch):
@@ -100,8 +210,8 @@ def test_swift_stub_engine_handles_repeated_requests_and_updates_timing(tmp_path
     fake_process = FakeProcess(
         [
             '{"status":"ready"}\n',
-            '{"ok":true,"generated_token_ids":[7,8],"timing":{"avg_decode":"28.4ms","tokens_decoded":"2"}}\n',
-            '{"ok":true,"generated_token_ids":[9],"timing":{"avg_decode":"29.1ms","tokens_decoded":"1"}}\n',
+            '{"ok":true,"generated_token_ids":[7,8],"timing":{"ttft":"40.0ms","avg_decode":"28.4ms","tokens_decoded":"2","active_memory_gb":"12.500","peak_memory_gb":"14.250","cache_memory_gb":"3.125"}}\n',
+            '{"ok":true,"generated_token_ids":[9],"timing":{"ttft":"39.5ms","avg_decode":"29.1ms","tokens_decoded":"1","active_memory_gb":"11.750","peak_memory_gb":"13.000","cache_memory_gb":"2.875"}}\n',
         ]
     )
 
@@ -114,7 +224,25 @@ def test_swift_stub_engine_handles_repeated_requests_and_updates_timing(tmp_path
 
     assert first == [([7], [1]), ([8], [1])]
     assert second == [([9], [1])]
-    assert engine.last_timing == {"avg_decode": "29.1ms", "tokens_decoded": "1"}
+    assert engine.last_timing == {
+        "ttft": "39.5ms",
+        "avg_decode": "29.1ms",
+        "tokens_decoded": "1",
+        "active_memory_gb": "11.750",
+        "peak_memory_gb": "13.000",
+        "cache_memory_gb": "2.875",
+    }
+    assert engine.last_request_telemetry == {
+        "device": None,
+        "load_ms": None,
+        "ttft_ms": 39.5,
+        "decode_ms_per_token": 29.1,
+        "tokens_decoded": 1,
+        "active_memory_gb": 11.75,
+        "peak_memory_gb": 13.0,
+        "cache_memory_gb": 2.875,
+        "persistent_worker_reuse_count": 1,
+    }
 
     requests = [json.loads(line) for line in fake_process.stdin.getvalue().splitlines()]
     assert requests[0]["prompt_tokens"] == [1, 2, 3]

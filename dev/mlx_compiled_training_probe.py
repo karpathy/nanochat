@@ -36,6 +36,7 @@ import mlx
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
+from dev.mlx_compile_utils import capture_training_state, iter_optimizer_state
 
 class Tiny(nn.Module):
     def __init__(self):
@@ -80,6 +81,7 @@ import mlx
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
+from dev.mlx_compile_utils import capture_training_state, iter_optimizer_state
 
 class Tiny(nn.Module):
     def __init__(self):
@@ -94,6 +96,7 @@ optimizer = optim.AdamW(learning_rate=0.1)
 x = mx.array([[2.0]], dtype=mx.float32)
 y = mx.array([[0.0]], dtype=mx.float32)
 loss_and_grad = nn.value_and_grad(model, lambda batch, targets: mx.mean(mx.square(model(batch) - targets)))
+captured_state = capture_training_state(model, optimizer)
 
 def step(batch, targets):
     loss, grads = loss_and_grad(batch, targets)
@@ -102,14 +105,14 @@ def step(batch, targets):
 
 compiled_step = mx.compile(
     step,
-    inputs=[model.state, optimizer.state],
-    outputs=[model.state, optimizer.state],
+    inputs=captured_state,
+    outputs=captured_state,
 )
 losses = []
 weights = []
 for _ in range(3):
     loss, weight = compiled_step(x, y)
-    mx.eval(loss, weight, model.parameters(), optimizer.state)
+    mx.eval(loss, weight, model.parameters(), *iter_optimizer_state(optimizer))
     losses.append(float(loss))
     weights.append(float(weight.item()))
 

@@ -223,9 +223,13 @@ func timingDict(deviceLabel: String, loadTimeMs: Double, prefillTimeMs: Double, 
     [
         "device": deviceLabel,
         "load": String(format: "%.1fms", loadTimeMs),
+        "ttft": String(format: "%.1fms", prefillTimeMs),
         "prefill": String(format: "%.1fms", prefillTimeMs),
         "avg_decode": String(format: "%.2fms", avgDecodeMs),
         "tokens_decoded": String(tokensDecoded),
+        "active_memory_gb": String(format: "%.3f", Double(Memory.activeMemory) / pow(1024.0, 3.0)),
+        "peak_memory_gb": String(format: "%.3f", Double(Memory.peakMemory) / pow(1024.0, 3.0)),
+        "cache_memory_gb": String(format: "%.3f", Double(Memory.cacheMemory) / pow(1024.0, 3.0)),
     ]
 }
 
@@ -531,6 +535,7 @@ func generateTokenIds(
     loadTimeMs: Double,
     deviceLabel: String
 ) throws -> (generatedTokenIds: [Int], logitsShape: [Int], timing: [String: String]) {
+    Memory.resetPeakMemory()
     let cache = KVCache(nLayers: model.config.nLayer, maxTokens: promptTokens.count + maxNewTokens)
     let prefillStart = CFAbsoluteTimeGetCurrent()
     let promptArray = MLXArray(promptTokens.map(Int32.init), [1, promptTokens.count])

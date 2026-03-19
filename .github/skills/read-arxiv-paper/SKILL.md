@@ -3,7 +3,7 @@ name: read-arxiv-paper
 description: Use this skill when asked to read, summarize, or extract implementation ideas from an arXiv paper given an arXiv URL or ID.
 ---
 
-This skill is agent-neutral and is intended to work for Claude, GitHub Copilot, or any coding agent that can read files and run shell commands.
+This skill is agent-neutral and is intended to work for GitHub Copilot, Claude, or any coding agent that can read files and run shell commands.
 
 You may be given an arXiv ID or an arXiv URL, for example:
 

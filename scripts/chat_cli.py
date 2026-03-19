@@ -9,7 +9,12 @@ import torch
 from nanochat.common import compute_init, autodetect_device_type
 from nanochat.engine import Engine
 from nanochat.checkpoint_manager import load_model
-from nanochat.swift_stub_engine import SwiftStubEngine, repo_root, resolve_preferred_manifest, swift_decode_supported
+from nanochat.swift_stub_engine import (
+    SWIFT_AUTO_MIN_OUTPUT_TOKENS,
+    SwiftStubEngine,
+    choose_swift_backend,
+    repo_root,
+)
 from nanochat.tokenizer import get_tokenizer
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,55 +31,46 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--swift-device', type=str, default='gpu', choices=['cpu', 'gpu'], help='Execution device for the Swift MLX stub')
     parser.add_argument('--swift-rebuild', action='store_true', help='Rebuild the Swift stub before first use')
     parser.add_argument('--no-swift-auto', action='store_true', help='Disable automatic use of a matching MLX export manifest when one is available')
+    parser.add_argument('--swift-min-output-tokens', type=int, default=SWIFT_AUTO_MIN_OUTPUT_TOKENS, help='Minimum expected output tokens required for automatic Swift routing')
     return parser
 
 
 def select_backend(args):
-    selected_swift_manifest = args.swift_manifest
-    backend_message = None
+    routing = choose_swift_backend(
+        repo_root(),
+        source=args.source,
+        model_tag=args.model_tag,
+        step=args.step,
+        explicit_manifest_path=args.swift_manifest,
+        allow_auto=not args.no_swift_auto,
+        temperature=args.temperature,
+        top_k=args.top_k,
+        max_tokens=args.max_tokens,
+        min_output_tokens=args.swift_min_output_tokens,
+    )
 
-    if selected_swift_manifest is None and not args.no_swift_auto:
-        auto_manifest = resolve_preferred_manifest(
-            repo_root(),
-            source=args.source,
-            model_tag=args.model_tag,
-            step=args.step,
-        )
-        if auto_manifest is not None:
-            if swift_decode_supported(temperature=args.temperature, top_k=args.top_k):
-                selected_swift_manifest = str(auto_manifest)
-                backend_message = f"Using auto-discovered Swift MLX export: {auto_manifest}"
-            else:
-                backend_message = (
-                    f"Found MLX export {auto_manifest}, but keeping the PyTorch engine because "
-                    "the Swift path currently supports greedy decoding only."
-                )
-
-    if selected_swift_manifest is None:
+    if not routing.use_swift:
         device_type = autodetect_device_type() if args.device_type == "" else args.device_type
         ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
         model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
         engine = Engine(model, tokenizer)
-        return engine, tokenizer, None, backend_message
+        return engine, tokenizer, None, routing
 
     tokenizer = get_tokenizer()
     engine = SwiftStubEngine(
         tokenizer,
-        selected_swift_manifest,
+        routing.manifest_path,
         device=args.swift_device,
         rebuild=args.swift_rebuild,
     )
-    if backend_message is None:
-        backend_message = f"Using Swift MLX export: {selected_swift_manifest}"
-    return engine, tokenizer, selected_swift_manifest, backend_message
+    return engine, tokenizer, routing.manifest_path, routing
 
 
 def main():
     args = build_parser().parse_args()
-    engine, tokenizer, selected_swift_manifest, backend_message = select_backend(args)
+    engine, tokenizer, selected_swift_manifest, routing = select_backend(args)
 
-    if backend_message is not None:
-        print(backend_message)
+    print(f"[backend] selected={routing.backend} reason={routing.reason_code} {routing.reason_detail}")
 
     # Special tokens for the chat state machine
     bos = tokenizer.get_bos_token_id()
@@ -142,14 +138,17 @@ def main():
             response_tokens.append(assistant_end)
         conversation_tokens.extend(response_tokens)
 
-        if selected_swift_manifest is not None and getattr(engine, "last_timing", None):
-            timing = engine.last_timing
+        if selected_swift_manifest is not None and getattr(engine, "last_request_telemetry", None):
+            telemetry = engine.last_request_telemetry
             print(
-                f"[swift timing] device={timing.get('device', '?')} "
-                f"load={timing.get('load', '?')} "
-                f"prefill={timing.get('prefill', '?')} "
-                f"avg_decode={timing.get('avg_decode', '?')} "
-                f"tokens_decoded={timing.get('tokens_decoded', '?')}"
+                f"[swift telemetry] device={telemetry.get('device', '?')} "
+                f"ttft={telemetry.get('ttft_ms', '?')}ms "
+                f"decode={telemetry.get('decode_ms_per_token', '?')}ms/token "
+                f"active={telemetry.get('active_memory_gb', '?')}GB "
+                f"peak={telemetry.get('peak_memory_gb', '?')}GB "
+                f"cache={telemetry.get('cache_memory_gb', '?')}GB "
+                f"reuse={telemetry.get('persistent_worker_reuse_count', '?')} "
+                f"tokens_decoded={telemetry.get('tokens_decoded', '?')}"
             )
 
         # In the prompt mode, we only want a single response and exit

@@ -4,10 +4,15 @@ import json
 import os
 import subprocess
 import threading
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from nanochat.checkpoint_manager import find_largest_model, find_last_step
 from nanochat.common import get_base_dir
+
+
+SWIFT_AUTO_MIN_OUTPUT_TOKENS = 64
 
 
 def repo_root() -> Path:
@@ -56,6 +61,168 @@ def swift_decode_supported(*, temperature: float, top_k: int | None) -> bool:
     return temperature in (0, 0.0) and top_k in (None, 0)
 
 
+def _parse_duration_ms(value: str | None) -> float | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    if stripped.endswith("ms"):
+        stripped = stripped[:-2]
+    try:
+        return float(stripped)
+    except ValueError:
+        return None
+
+
+def _parse_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    try:
+        return float(stripped)
+    except ValueError:
+        return None
+
+
+def _parse_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    try:
+        return int(stripped)
+    except ValueError:
+        return None
+
+
+def build_swift_request_telemetry(
+    timing: Mapping[str, str] | None,
+    *,
+    worker_reuse_count: int,
+) -> dict[str, float | int | str | None] | None:
+    if timing is None:
+        return None
+    return {
+        "device": timing.get("device"),
+        "load_ms": _parse_duration_ms(timing.get("load")),
+        "ttft_ms": _parse_duration_ms(timing.get("ttft") or timing.get("prefill")),
+        "decode_ms_per_token": _parse_duration_ms(timing.get("avg_decode")),
+        "tokens_decoded": _parse_int(timing.get("tokens_decoded")),
+        "active_memory_gb": _parse_float(timing.get("active_memory_gb")),
+        "peak_memory_gb": _parse_float(timing.get("peak_memory_gb")),
+        "cache_memory_gb": _parse_float(timing.get("cache_memory_gb")),
+        "persistent_worker_reuse_count": worker_reuse_count,
+    }
+
+
+@dataclass(frozen=True)
+class SwiftRoutingDecision:
+    use_swift: bool
+    manifest_path: str | None
+    backend: str
+    reason_code: str
+    reason_detail: str
+
+
+def choose_swift_backend(
+    root: Path,
+    *,
+    source: str,
+    model_tag: str | None,
+    step: int | None,
+    explicit_manifest_path: str | None,
+    allow_auto: bool,
+    temperature: float,
+    top_k: int | None,
+    max_tokens: int,
+    min_output_tokens: int = SWIFT_AUTO_MIN_OUTPUT_TOKENS,
+) -> SwiftRoutingDecision:
+    decode_supported = swift_decode_supported(temperature=temperature, top_k=top_k)
+
+    if explicit_manifest_path is not None:
+        if not decode_supported:
+            return SwiftRoutingDecision(
+                use_swift=False,
+                manifest_path=None,
+                backend="pytorch",
+                reason_code="pytorch_swift_incompatible_sampling",
+                reason_detail=(
+                    "Explicit Swift manifest was ignored because the current Swift path only supports "
+                    "greedy decoding with temperature=0 and top_k=0."
+                ),
+            )
+        return SwiftRoutingDecision(
+            use_swift=True,
+            manifest_path=explicit_manifest_path,
+            backend="swift",
+            reason_code="swift_explicit_manifest_override",
+            reason_detail="Using the explicitly requested Swift MLX export manifest.",
+        )
+
+    if not allow_auto:
+        return SwiftRoutingDecision(
+            use_swift=False,
+            manifest_path=None,
+            backend="pytorch",
+            reason_code="pytorch_swift_auto_disabled",
+            reason_detail="Automatic Swift MLX routing is disabled for this run.",
+        )
+
+    auto_manifest = resolve_preferred_manifest(
+        root,
+        source=source,
+        model_tag=model_tag,
+        step=step,
+    )
+    if auto_manifest is None:
+        return SwiftRoutingDecision(
+            use_swift=False,
+            manifest_path=None,
+            backend="pytorch",
+            reason_code="pytorch_no_matching_swift_export",
+            reason_detail="No matching MLX export manifest was found for automatic Swift routing.",
+        )
+
+    if not decode_supported:
+        return SwiftRoutingDecision(
+            use_swift=False,
+            manifest_path=None,
+            backend="pytorch",
+            reason_code="pytorch_swift_incompatible_sampling",
+            reason_detail=(
+                f"Keeping the PyTorch engine because Swift auto-routing requires greedy decoding and this request uses "
+                f"temperature={temperature} top_k={top_k}."
+            ),
+        )
+
+    if max_tokens < min_output_tokens:
+        return SwiftRoutingDecision(
+            use_swift=False,
+            manifest_path=None,
+            backend="pytorch",
+            reason_code="pytorch_swift_short_output",
+            reason_detail=(
+                f"Keeping the PyTorch engine because expected output length {max_tokens} is below the Swift auto-routing "
+                f"threshold of {min_output_tokens} tokens."
+            ),
+        )
+
+    return SwiftRoutingDecision(
+        use_swift=True,
+        manifest_path=str(auto_manifest),
+        backend="swift",
+        reason_code="swift_auto_long_output",
+        reason_detail=(
+            f"Using Swift MLX because greedy-compatible output length {max_tokens} meets the auto-routing threshold "
+            f"of {min_output_tokens} tokens."
+        ),
+    )
+
+
 def resolve_preferred_manifest(root: Path, *, source: str, model_tag: str | None, step: int | None) -> Path | None:
     checkpoint_dir_by_source = {
         "base": "base_checkpoints",
@@ -66,7 +233,11 @@ def resolve_preferred_manifest(root: Path, *, source: str, model_tag: str | None
     if source_dir is None:
         return None
 
-    checkpoints_dir = Path(get_base_dir()) / source_dir
+    base_dir = get_base_dir()
+    if base_dir is None:
+        return None
+
+    checkpoints_dir = Path(base_dir) / source_dir
     if not checkpoints_dir.exists():
         return None
 
@@ -137,6 +308,8 @@ class SwiftStubEngine:
         self.device = device
         self.rebuild = rebuild
         self.last_timing: dict[str, str] | None = None
+        self.last_request_telemetry: dict[str, float | int | str | None] | None = None
+        self.request_count = 0
 
         if not self.manifest.exists():
             raise FileNotFoundError(f"Manifest not found: {self.manifest}")
@@ -191,19 +364,27 @@ class SwiftStubEngine:
             "stop_token_ids": self._default_stop_token_ids(),
         }
         with self._lock:
-            if self._process.stdin is None or self._process.stdout is None:
+            process = self._process
+            if process is None:
+                raise RuntimeError("Swift worker is not running")
+            if process.stdin is None or process.stdout is None:
                 raise RuntimeError("Swift worker pipes are unavailable")
-            self._process.stdin.write(json.dumps(request) + "\n")
-            self._process.stdin.flush()
-            response_line = self._process.stdout.readline()
+            process.stdin.write(json.dumps(request) + "\n")
+            process.stdin.flush()
+            response_line = process.stdout.readline()
             if not response_line:
-                stderr = self._process.stderr.read() if self._process.stderr is not None else ""
+                stderr = process.stderr.read() if process.stderr is not None else ""
                 raise RuntimeError(stderr.strip() or "Swift worker terminated unexpectedly")
 
         response = json.loads(response_line)
         if not response.get("ok", False):
             raise RuntimeError(response.get("error") or "Swift worker request failed")
         self.last_timing = response.get("timing")
+        self.request_count += 1
+        self.last_request_telemetry = build_swift_request_telemetry(
+            self.last_timing,
+            worker_reuse_count=max(self.request_count - 1, 0),
+        )
         return response.get("generated_token_ids", [])
 
     def close(self) -> None:
