@@ -12,7 +12,7 @@ from nanochat.checkpoint_manager import find_largest_model, find_last_step
 from nanochat.common import get_base_dir
 
 
-SWIFT_AUTO_MIN_OUTPUT_TOKENS = 64
+SWIFT_AUTO_MIN_OUTPUT_TOKENS = 48
 
 
 def repo_root() -> Path:

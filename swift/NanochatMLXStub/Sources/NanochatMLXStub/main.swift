@@ -535,7 +535,7 @@ func generateTokenIds(
     loadTimeMs: Double,
     deviceLabel: String
 ) throws -> (generatedTokenIds: [Int], logitsShape: [Int], timing: [String: String]) {
-    Memory.resetPeakMemory()
+    Memory.peakMemory = 0
     let cache = KVCache(nLayers: model.config.nLayer, maxTokens: promptTokens.count + maxNewTokens)
     let prefillStart = CFAbsoluteTimeGetCurrent()
     let promptArray = MLXArray(promptTokens.map(Int32.init), [1, promptTokens.count])
