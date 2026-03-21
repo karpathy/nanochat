@@ -16,6 +16,31 @@ wandb/
 runs/mlx_exports/
 runs/mlx_logs/
 
+# Model weights and downloadable data — never commit these
+*.safetensors
+*.gguf
+*.ggml
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.npz
+*.npy
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.parquet
+*.arrow
+
+# Dataset archives
+*.jsonl
+data/
+datasets/
+checkpoints/
+weights/
+models/
+
 # Swift/Xcode build artifacts
 swift/Build/
 swift/NanochatMLXStub/.build/
