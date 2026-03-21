@@ -21,6 +21,7 @@ if not (REPO / "nanochat").exists():
 sys.path.insert(0, str(REPO))
 from dev.mlx_gpt_prototype import MLXGPTPrototype, MLXGPTConfig
 from nanochat.tokenizer import get_tokenizer
+from nanochat.common import get_mlx_memory_stats
 
 
 def parse_args() -> argparse.Namespace:
@@ -166,12 +167,16 @@ def main():
     if not args.skip_python:
         print("Loading Python MLX model...")
         model = load_python_model(manifest_path)
-        print(f"Model params: {model.num_params():,}")
+        mem_after_load = get_mlx_memory_stats(reset_peak=True)
+        print(f"Model params: {model.num_params():,}  "
+              f"(active={mem_after_load['active_gb']:.2f}GB "
+              f"cache={mem_after_load['cache_gb']:.2f}GB)")
 
         for i in range(args.warmup_runs):
             tokens, _ = python_mlx_greedy_generate(model, prompt_tokens, args.max_new_tokens)
             print(f"  warmup {i + 1}: first token = {tokens[0]}")
 
+        mx.reset_peak_memory()
         python_decode_times_all = []
         for i in range(args.timed_runs):
             tokens, decode_times = python_mlx_greedy_generate(model, prompt_tokens, args.max_new_tokens)
@@ -180,7 +185,11 @@ def main():
             print(f"  run {i + 1}: avg_decode={avg:.2f}ms ({len(decode_times)} steps)")
 
         python_avg = sum(python_decode_times_all) / len(python_decode_times_all)
+        mem_python = get_mlx_memory_stats()
         print(f"\nPython MLX avg decode: {python_avg:.2f}ms/token (no KV-cache, full recompute)")
+        print(f"  MLX memory: active={mem_python['active_gb']:.2f}GB  "
+              f"peak={mem_python['peak_gb']:.2f}GB  "
+              f"cache={mem_python['cache_gb']:.2f}GB")
         print(f"  First generated token: {tokens[0]}")
         print()
 
