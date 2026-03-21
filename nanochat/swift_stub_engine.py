@@ -10,6 +10,13 @@ from typing import Mapping
 
 from nanochat.checkpoint_manager import find_largest_model, find_last_step
 from nanochat.common import get_base_dir
+from nanochat.swift_build import (
+    build_products_dir,
+    bundle_path,
+    ensure_stub_is_built,
+    package_dir,
+    stub_binary_path,
+)
 
 
 SWIFT_AUTO_MIN_OUTPUT_TOKENS = 48
@@ -17,46 +24,6 @@ SWIFT_AUTO_MIN_OUTPUT_TOKENS = 48
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
-
-
-def package_dir(root: Path) -> Path:
-    return root / "swift" / "NanochatMLXStub"
-
-
-def build_products_dir(root: Path) -> Path:
-    return root / "swift" / "Build" / "Products" / "Debug"
-
-
-def stub_binary_path(root: Path) -> Path:
-    return build_products_dir(root) / "nanochat-mlx-stub"
-
-
-def bundle_path(root: Path) -> Path:
-    return build_products_dir(root) / "mlx-swift_Cmlx.bundle"
-
-
-def _stub_build_inputs(root: Path) -> list[Path]:
-    package_root = package_dir(root)
-    inputs = [package_root / "Package.swift", package_root / "Package.resolved"]
-    sources_dir = package_root / "Sources"
-    if sources_dir.exists():
-        inputs.extend(path for path in sources_dir.rglob("*.swift") if path.is_file())
-    return [path for path in inputs if path.exists()]
-
-
-def _stub_build_is_fresh(root: Path) -> bool:
-    binary = stub_binary_path(root)
-    bundle = bundle_path(root)
-    if not binary.exists() or not bundle.exists():
-        return False
-
-    inputs = _stub_build_inputs(root)
-    if not inputs:
-        return False
-
-    newest_input_mtime = max(path.stat().st_mtime for path in inputs)
-    oldest_output_mtime = min(binary.stat().st_mtime, bundle.stat().st_mtime)
-    return oldest_output_mtime >= newest_input_mtime
 
 
 def exports_dir(root: Path) -> Path:
@@ -276,24 +243,6 @@ def resolve_preferred_manifest(root: Path, *, source: str, model_tag: str | None
     if is_valid_manifest_file(candidate):
         return candidate
     return None
-
-
-def ensure_stub_is_built(root: Path, *, rebuild: bool) -> None:
-    if not rebuild and _stub_build_is_fresh(root):
-        return
-
-    command = [
-        "xcodebuild",
-        "-scheme",
-        "NanochatMLXStub",
-        "-destination",
-        "platform=macOS",
-        "-derivedDataPath",
-        ".derived",
-        "clean",
-        "build",
-    ]
-    subprocess.run(command, cwd=package_dir(root), check=True)
 
 
 def parse_generated_tokens(stdout: str) -> list[int]:

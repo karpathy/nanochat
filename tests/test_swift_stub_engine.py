@@ -223,7 +223,7 @@ def test_ensure_stub_is_built_skips_clean_build_when_outputs_are_fresh(tmp_path,
     def fake_run(*args, **kwargs):
         calls.append((args, kwargs))
 
-    monkeypatch.setattr("nanochat.swift_stub_engine.subprocess.run", fake_run)
+    monkeypatch.setattr("nanochat.swift_build.subprocess.run", fake_run)
 
     ensure_stub_is_built(tmp_path, rebuild=False)
 
@@ -242,7 +242,7 @@ def test_ensure_stub_is_built_forces_clean_build_when_sources_are_newer(tmp_path
     def fake_run(command, *, cwd, check):
         calls.append((command, cwd, check))
 
-    monkeypatch.setattr("nanochat.swift_stub_engine.subprocess.run", fake_run)
+    monkeypatch.setattr("nanochat.swift_build.subprocess.run", fake_run)
 
     ensure_stub_is_built(tmp_path, rebuild=False)
 
