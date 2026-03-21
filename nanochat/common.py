@@ -10,6 +10,11 @@ import torch
 import torch.distributed as dist
 from filelock import FileLock
 
+try:
+    import mlx.core as _mlx
+except ImportError:
+    _mlx = None
+
 # The dtype used for compute (matmuls, activations). Master weights stay fp32 for optimizer precision.
 # Linear layers cast their weights to this dtype in forward, replacing torch.amp.autocast.
 # Override with NANOCHAT_DTYPE env var: "bfloat16", "float16", "float32"
@@ -111,6 +116,28 @@ def get_mps_memory_stats(*, budget_frac: float = 0.9) -> dict[str, float | bool]
         "budget_headroom_gb": budget_limit_gb - driver_gb,
         "exceeds_budget": bool(recommended and driver_gb > budget_limit_gb),
     }
+
+def get_mlx_memory_stats(*, reset_peak: bool = False) -> dict[str, float]:
+    """Return MLX allocator telemetry (active, peak, cache memory in GB).
+
+    All values are zero if ``mlx.core`` is not importable (e.g. on CUDA-only
+    machines).  Pass ``reset_peak=True`` to call ``mx.reset_peak_memory()``
+    *after* sampling so the next call reflects the next interval's peak.
+    """
+    if _mlx is None:
+        return {"active_gb": 0.0, "peak_gb": 0.0, "cache_gb": 0.0}
+
+    active = _mlx.get_active_memory()
+    peak = _mlx.get_peak_memory()
+    cache = _mlx.get_cache_memory()
+    if reset_peak:
+        _mlx.reset_peak_memory()
+    return {
+        "active_gb": bytes_to_gb(active),
+        "peak_gb": bytes_to_gb(peak),
+        "cache_gb": bytes_to_gb(cache),
+    }
+
 
 def get_base_dir():
     # co-locate nanochat intermediates with other cached data in ~/.cache (by default)
