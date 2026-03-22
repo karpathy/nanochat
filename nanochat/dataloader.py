@@ -1,11 +1,10 @@
 """
-Distributed dataloaders for pretraining.
+Distributed dataloader for pretraining.
 
-BOS-aligned bestfit:
-   - Every row starts with BOS token
-   - Documents packed using best-fit algorithm to minimize cropping
-   - When no document fits remaining space, crops a document to fill exactly
-   - 100% utilization (no padding), ~35% tokens cropped at T=2048
+Varlen 1D packing:
+   - Packs documents into 1D buffer with cu_seqlens for per-document attention isolation
+   - No cropping, no padding: every token is used exactly once
+   - Yields (inputs_1d, targets_1d, cu_seqlens) for flash_attn_varlen_func
 
 Compared to the original tokenizing_distributed_data_loader:
 BOS-aligned loses ~35% of tokens to cropping, but ensures that
@@ -71,31 +70,43 @@ def _document_batches(split, resume_state_dict, tokenizer_batch_size):
         epoch += 1
 
 
-def tokenizing_distributed_data_loader_with_state_bos_bestfit(
-    tokenizer, B, T, split,
+
+# =============================================================================
+# 1D packed varlen dataloader
+# =============================================================================
+# Packs documents into a single flat buffer of B*T tokens with cu_seqlens marking
+# document boundaries for flash_attn_varlen_func. Each document gets its own
+# attention context. Greedy packing: documents are added sequentially until the
+# buffer is full. Only the last document in each micro-batch gets cropped.
+#
+# Requires specificying a fixed maximum number of docs supported per batch. 
+# The dataloader will append additional documents to the final segment if needed,
+# resulting in cross-document attention bleeding, but that hasn't been a problem
+# in practice. 
+# It's recommended to keep max_num_docs tight rather than padding it conservatively
+# because an oversized `cu_seqlens` tensor will hurt FlashAttention performance 
+# somewhat.
+
+def tokenizing_distributed_data_loader_varlen(
+    tokenizer, B, T, split, max_num_docs,
     tokenizer_threads=4, tokenizer_batch_size=128,
     device="cuda", resume_state_dict=None,
-    buffer_size=1000
 ):
     """
-    BOS-aligned dataloader with Best-Fit Cropping.
+    1D packed varlen dataloader for use with flash_attn_varlen_func.
 
-    Reduces token waste compared to simple greedy cropping by searching a buffer
-    for documents that fit well, while maintaining 100% utilization (no padding).
-
-    Algorithm for each row:
-    1. From buffered docs, pick the LARGEST doc that fits entirely
-    2. Repeat until no doc fits
-    3. When nothing fits, crop a doc to fill remaining space exactly
-
-    Key properties:
-    - Every row starts with BOS
-    - 100% utilization (no padding, every token is trained on)
-    - Approximately 35% of all tokens are discarded due to cropping
+    Yields (inputs, targets, cu_seqlens, state_dict) where:
+    - inputs: 1D long tensor of shape (B*T,)
+    - targets: 1D long tensor of shape (B*T,), shifted by 1
+    - cu_seqlens: int32 tensor of shape (max_num_docs,), cumulative doc lengths
+      padded with total_tokens for unused slots (ghost segments of length 0)
+    - state_dict: {"pq_idx", "rg_idx", "epoch"} for checkpoint resume
     """
     assert split in ["train", "val"], "split must be 'train' or 'val'"
 
-    row_capacity = T + 1
+    total_tokens = B * T
+    buffer_capacity = total_tokens + 1  # +1 so the last input position has a target
+
     batches = _document_batches(split, resume_state_dict, tokenizer_batch_size)
     bos_token = tokenizer.get_bos_token_id()
     doc_buffer = []
@@ -105,62 +116,139 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
         nonlocal pq_idx, rg_idx, epoch
         doc_batch, (pq_idx, rg_idx, epoch) = next(batches)
         token_lists = tokenizer.encode(doc_batch, prepend=bos_token, num_threads=tokenizer_threads)
-        for tokens in token_lists:
-            doc_buffer.append(tokens)
+        doc_buffer.extend(token_lists)
 
-    # Pre-allocate buffers once: layout is [inputs (B*T) | targets (B*T)]
-    # This gives us contiguous views and a single HtoD transfer
+    # Pre-allocate all buffers once
     use_cuda = device == "cuda"
-    row_buffer = torch.empty((B, row_capacity), dtype=torch.long) # for building rows without creating Python lists
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda) # staging area (CPU)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device) # on-device buffer
-    cpu_inputs = cpu_buffer[:B * T].view(B, T) # a few views into these buffers just for convenience
-    cpu_targets = cpu_buffer[B * T:].view(B, T)
-    inputs = gpu_buffer[:B * T].view(B, T)
-    targets = gpu_buffer[B * T:].view(B, T)
+    pack_buffer = torch.empty(buffer_capacity, dtype=torch.long)        # 1D packing workspace
+    cpu_buffer = torch.empty(2 * total_tokens, dtype=torch.long, pin_memory=use_cuda)
+    gpu_buffer = torch.empty(2 * total_tokens, dtype=torch.long, device=device)
+    cpu_inputs = cpu_buffer[:total_tokens]
+    cpu_targets = cpu_buffer[total_tokens:]
+    inputs = gpu_buffer[:total_tokens]
+    targets = gpu_buffer[total_tokens:]
+    cu_seqlens_cpu = torch.empty(max_num_docs, dtype=torch.int32)
+    cu_seqlens_gpu = torch.empty(max_num_docs, dtype=torch.int32, device=device)
 
+    warned = False
+    warned_seqlen = False
     while True:
-        for row_idx in range(B):
-            pos = 0
-            while pos < row_capacity:
-                # Ensure buffer has documents
-                while len(doc_buffer) < buffer_size:
-                    refill_buffer()
+        # Greedily pack documents into a single 1D buffer
+        pos = 0
+        doc_count = 0
+        cu_seqlens_cpu[0] = 0
 
-                remaining = row_capacity - pos
+        while pos < buffer_capacity:
+            while len(doc_buffer) == 0:
+                refill_buffer()
 
-                # Find largest doc that fits entirely
-                best_idx = -1
-                best_len = 0
-                for i, doc in enumerate(doc_buffer):
-                    doc_len = len(doc)
-                    if doc_len <= remaining and doc_len > best_len:
-                        best_idx = i
-                        best_len = doc_len
+            doc = doc_buffer.pop(0)
+            doc_len = min(len(doc), T)             # truncate to max_seq_len
+            remaining = buffer_capacity - pos
+            use_len = min(doc_len, remaining)      # crop last doc to fill exactly
 
-                if best_idx >= 0:
-                    doc = doc_buffer.pop(best_idx)
-                    doc_len = len(doc)
-                    row_buffer[row_idx, pos:pos + doc_len] = torch.tensor(doc, dtype=torch.long)
-                    pos += doc_len
-                else:
-                    # No doc fits - crop shortest in buffer to fill remaining and minimize waste
-                    shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                    doc = doc_buffer.pop(shortest_idx)
-                    row_buffer[row_idx, pos:pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
-                    pos += remaining
+            pack_buffer[pos:pos + use_len] = torch.tensor(doc[:use_len], dtype=torch.long)
+            pos += use_len
+            if doc_count < max_num_docs - 1:
+                doc_count += 1
+                cu_seqlens_cpu[doc_count] = min(pos, total_tokens)
+            else:
+                if not warned:
+                    print(f"Warning: too many documents for cu_seqlens size ({max_num_docs}), "
+                          f"merging remaining docs (cross-document attention bleeding)")
+                    warned = True
+                merged_len = min(pos, total_tokens) - cu_seqlens_cpu[doc_count].item()
+                if merged_len > T and not warned_seqlen:
+                    print(f"Warning: merged segment length ({merged_len}) exceeds max_seq_len ({T}). "
+                          f"Increase max_num_docs to avoid silent attention truncation.")
+                    warned_seqlen = True
 
-        # Copy to pinned CPU buffer, then single HtoD transfer
-        cpu_inputs.copy_(row_buffer[:, :-1])
-        cpu_targets.copy_(row_buffer[:, 1:])
+        # Ensure the final document boundary always points to the end of the batch
+        cu_seqlens_cpu[doc_count] = total_tokens
+
+        # Pad remaining cu_seqlens slots (ghost segments of length 0)
+        cu_seqlens_cpu[doc_count + 1:] = total_tokens
+
+        # Split into inputs/targets (standard next-token prediction shift)
+        cpu_inputs.copy_(pack_buffer[:total_tokens])
+        cpu_targets.copy_(pack_buffer[1:total_tokens + 1])
 
         state_dict = {"pq_idx": pq_idx, "rg_idx": rg_idx, "epoch": epoch}
 
-        # Single HtoD copy into persistent GPU buffer and yield
+        # H2D transfer: single copy for tokens, small copy for cu_seqlens
         gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
-        yield inputs, targets, state_dict
+        cu_seqlens_gpu.copy_(cu_seqlens_cpu, non_blocking=use_cuda)
+        yield inputs, targets, cu_seqlens_gpu, state_dict
 
-def tokenizing_distributed_data_loader_bos_bestfit(*args, **kwargs):
-    """Helper that omits state_dict from yields."""
-    for inputs, targets, state_dict in tokenizing_distributed_data_loader_with_state_bos_bestfit(*args, **kwargs):
-        yield inputs, targets
+
+# =============================================================================
+# SFT varlen dataloader (replay from pre-packed batch plans)
+# =============================================================================
+
+def sft_data_loader_varlen(
+    conversations, batch_plan, B, T, max_num_docs, bos_token,
+    device="cuda", cycle=False,
+):
+    """
+    Replay dataloader for SFT: constructs 1D-packed varlen batches from
+    pre-computed batch plans (see tokenize_and_pack_sft in chat_sft.py).
+
+    Args:
+        conversations: list of (ids, mask) tuples (pre-tokenized)
+        batch_plan: list of lists of conversation indices
+        B, T: batch dimensions (total_tokens = B * T)
+        max_num_docs: cu_seqlens tensor size (exact max from pre-packing)
+        bos_token: BOS token id for padding
+        device: target device
+        cycle: if True, repeat the batch plan indefinitely (for val eval)
+    """
+    total_tokens = B * T
+    buffer_capacity = total_tokens + 1
+    use_cuda = torch.device(device).type == "cuda"
+
+    pack_buffer = torch.empty(buffer_capacity, dtype=torch.long)
+    mask_buffer = torch.empty(buffer_capacity, dtype=torch.int8)
+    cpu_buffer = torch.empty(2 * total_tokens, dtype=torch.long, pin_memory=use_cuda)
+    gpu_buffer = torch.empty(2 * total_tokens, dtype=torch.long, device=device)
+    cpu_inputs = cpu_buffer[:total_tokens]
+    cpu_targets = cpu_buffer[total_tokens:]
+    inputs = gpu_buffer[:total_tokens]
+    targets = gpu_buffer[total_tokens:]
+    cu_seqlens_cpu = torch.empty(max_num_docs, dtype=torch.int32)
+    cu_seqlens_gpu = torch.empty(max_num_docs, dtype=torch.int32, device=device)
+
+    while True:
+        for conv_indices in batch_plan:
+            pos = 0
+            doc_count = 0
+            cu_seqlens_cpu[0] = 0
+
+            for conv_idx in conv_indices:
+                ids, mask = conversations[conv_idx]
+                conv_len = len(ids)
+                pack_buffer[pos:pos + conv_len] = torch.tensor(ids, dtype=torch.long)
+                mask_buffer[pos:pos + conv_len] = torch.tensor(mask, dtype=torch.int8)
+                pos += conv_len
+                doc_count += 1
+                cu_seqlens_cpu[doc_count] = min(pos, total_tokens)
+
+            if pos < buffer_capacity:
+                remaining = buffer_capacity - pos
+                pack_buffer[pos:pos + remaining] = bos_token
+                mask_buffer[pos:pos + remaining] = 0
+                doc_count += 1
+                cu_seqlens_cpu[doc_count] = total_tokens
+
+            cu_seqlens_cpu[doc_count + 1:] = total_tokens
+
+            cpu_inputs.copy_(pack_buffer[:total_tokens])
+            cpu_targets.copy_(pack_buffer[1:total_tokens + 1])
+            target_mask = mask_buffer[1:total_tokens + 1]
+            cpu_targets[target_mask == 0] = -1
+
+            gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
+            cu_seqlens_gpu.copy_(cu_seqlens_cpu, non_blocking=use_cuda)
+            yield inputs, targets, cu_seqlens_gpu
+
+        if not cycle:
+            break

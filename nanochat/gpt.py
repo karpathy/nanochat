@@ -79,7 +79,7 @@ class CausalSelfAttention(nn.Module):
         self.ve_gate_channels = 12
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache):
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, cu_seqlens=None, max_seq_len=None):
         B, T, C = x.size()
 
         # Project the input to get queries, keys, and values
@@ -103,10 +103,7 @@ class CausalSelfAttention(nn.Module):
 
         # Flash Attention (FA3 on Hopper+, PyTorch SDPA fallback elsewhere)
         # window_size is (left, right) tuple: (N, 0) for causal, (-1, 0) for full context
-        if kv_cache is None:
-            # Training: causal attention with optional sliding window
-            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
-        else:
+        if kv_cache is not None:
             # Inference: use flash_attn_with_kvcache which handles cache management
             k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
             y = flash_attn.flash_attn_with_kvcache(
@@ -119,6 +116,15 @@ class CausalSelfAttention(nn.Module):
             # Advance position after last layer processes
             if self.layer_idx == kv_cache.n_layers - 1:
                 kv_cache.advance(T)
+        else:
+            # Varlen: packed 1D sequence with per-document attention isolation
+            assert cu_seqlens is not None
+            y = flash_attn.flash_attn_varlen_func(
+                q[0], k[0], v[0],
+                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=max_seq_len, max_seqlen_k=max_seq_len,
+                causal=True, window_size=window_size)
+            y = y.unsqueeze(0)
 
         # Re-assemble the heads and project back to residual stream
         y = y.contiguous().view(B, T, -1)
@@ -145,8 +151,8 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache):
-        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, cu_seqlens=None, max_seq_len=None):
+        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache, cu_seqlens, max_seq_len)
         x = x + self.mlp(norm(x))
         return x
 
@@ -189,10 +195,11 @@ class GPT(nn.Module):
         kv_dim = config.n_kv_head * head_dim
         self.value_embeds = nn.ModuleDict({str(i): nn.Embedding(padded_vocab_size, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
         # To support meta device initialization, we init the rotary embeddings here, but it's just "fake" meta tensors only.
-        # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
-        # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
-        # In the future we can dynamically grow the cache, for now it's fine.
-        self.rotary_seq_len = config.sequence_len * 10 # 10X over-compute should be enough, TODO make nicer?
+        # Rotary embeddings are small in memory, so we over-compute generously. With varlen
+        # training the full micro-batch is one sequence (T = batch_size * seq_len), so we need
+        # enough headroom for that. 64X covers batch sizes up to 64, and the assert in forward
+        # will catch if we ever exceed.
+        self.rotary_seq_len = config.sequence_len * 64
         head_dim = config.n_embd // config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
@@ -408,7 +415,18 @@ class GPT(nn.Module):
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+    def forward(self, idx, targets=None, cu_seqlens=None, kv_cache=None, loss_reduction='mean'):
+        if cu_seqlens is not None:
+            assert idx.ndim == 1
+            idx = idx.unsqueeze(0)
+            if targets is not None:
+                targets = targets.unsqueeze(0)
+            max_seq_len = self.config.sequence_len
+        elif kv_cache is not None:
+            max_seq_len = None
+        else:
+            raise ValueError("GPT.forward requires either cu_seqlens or kv_cache")
+
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
@@ -451,7 +469,7 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+            x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, cu_seqlens, max_seq_len)
             if i == backout_layer:
                 x_backout = x
         # Subtract mid-layer residual to remove low-level features before logit projection
@@ -489,10 +507,11 @@ class GPT(nn.Module):
         if temperature > 0:
             rng = torch.Generator(device=device)
             rng.manual_seed(seed)
-        ids = torch.tensor([tokens], dtype=torch.long, device=device) # add batch dim
+        ids = torch.tensor(tokens, dtype=torch.long, device=device)  # 1D, no batch dim
         for _ in range(max_tokens):
-            logits = self.forward(ids) # (B, T, vocab_size)
-            logits = logits[:, -1, :] # (B, vocab_size)
+            cu_seqlens = torch.tensor([0, ids.size(0)], dtype=torch.int32, device=device)
+            logits = self.forward(ids, cu_seqlens=cu_seqlens)  # (1, T, vocab_size)
+            logits = logits[:, -1, :]  # (1, vocab_size)
             if top_k is not None and top_k > 0:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float('Inf')
@@ -502,6 +521,6 @@ class GPT(nn.Module):
                 next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
             else:
                 next_ids = torch.argmax(logits, dim=-1, keepdim=True)
-            ids = torch.cat((ids, next_ids), dim=1)
+            ids = torch.cat((ids, next_ids.squeeze(0)))  # stay 1D
             token = next_ids.item()
             yield token

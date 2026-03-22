@@ -1,14 +1,14 @@
 """
-Test Flash Attention unified interface - verify FA3 and SDPA produce identical results.
+Test Flash Attention unified interface - verify FA (FA3/FA2) and SDPA produce identical results.
 
 Run: python -m pytest tests/test_attention_fallback.py -v -s
 
 Note on test structure:
     Tests are split into two classes due to dtype/device constraints:
 
-    1. TestFA3VsSDPA: Comparison tests that run both FA3 and SDPA on the same inputs
-       and verify they produce identical results. These require a Hopper GPU (FA3 only
-       works on sm90+) and use bfloat16 (FA3 doesn't support float32).
+    1. TestFA3VsSDPA: Comparison tests that run both FA and SDPA on the same inputs
+       and verify they produce identical results. These require an Ampere+ GPU
+       (FA3 on Hopper, FA2 on Ampere/Ada) and use bfloat16.
 
     2. TestSDPAOnly: Tests that only exercise the SDPA fallback path. These can run
        on any device (CUDA, CPU, MPS) with the appropriate dtype for that device.
@@ -16,24 +16,29 @@ Note on test structure:
 import torch
 import pytest
 import nanochat.flash_attention as fa_module
-from nanochat.flash_attention import flash_attn, HAS_FA3
+from nanochat.flash_attention import flash_attn, HAS_FA
 from nanochat.engine import KVCache
 
 
 def set_impl(impl):
-    """Set the implementation override ('fa3', 'sdpa', or None for auto) and re-resolve USE_FA3."""
+    """Set the implementation override ('fa3', 'fa2', 'sdpa', or None for auto) and re-resolve USE_FA."""
     fa_module._override_impl = impl
-    fa_module.USE_FA3 = fa_module._resolve_use_fa3()
+    fa_module.USE_FA = fa_module._resolve_use_fa()
 
 
 def run_both_impls(fn):
-    """Run a function with both FA3 and SDPA, return both outputs."""
-    set_impl('fa3')
-    out_fa3 = fn()
+    """Run a function with both FA (FA3 or FA2) and SDPA, return both outputs."""
+    set_impl('fa')
+    out_fa = fn()
     set_impl('sdpa')
     out_sdpa = fn()
     set_impl(None)  # reset
-    return out_fa3, out_sdpa
+    return out_fa, out_sdpa
+
+
+def make_cu_seqlens(B, T, device):
+    """Create cu_seqlens for B documents each of length T."""
+    return torch.arange(0, (B + 1) * T, T, dtype=torch.int32, device=device)
 
 
 def assert_close(t1, t2, name, atol=1e-2, rtol=1e-2):
@@ -48,9 +53,9 @@ def assert_close(t1, t2, name, atol=1e-2, rtol=1e-2):
 # =============================================================================
 # FA3 vs SDPA comparison tests (require Hopper GPU)
 # =============================================================================
-@pytest.mark.skipif(not HAS_FA3, reason="FA3 required to compare implementations")
+@pytest.mark.skipif(not HAS_FA, reason="FA required to compare implementations")
 class TestFA3VsSDPA:
-    """Compare FA3 and SDPA produce identical results. Requires Hopper GPU."""
+    """Compare FA and SDPA produce identical results. Requires Ampere+ GPU."""
 
     DEVICE = "cuda"
     DTYPE = torch.bfloat16
@@ -58,12 +63,15 @@ class TestFA3VsSDPA:
     def test_basic_causal(self):
         """Basic causal attention."""
         B, T, H, D = 2, 64, 4, 32
-        q = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        k = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        v = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        q = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        cu_seqlens = make_cu_seqlens(B, T, self.DEVICE)
 
         def run():
-            return flash_attn.flash_attn_func(q, k, v, causal=True, window_size=(T, 0))
+            return flash_attn.flash_attn_varlen_func(q, k, v,
+                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=T, max_seqlen_k=T, causal=True, window_size=(T, 0))
 
         y_fa3, y_sdpa = run_both_impls(run)
         max_diff, mean_diff = assert_close(y_fa3, y_sdpa, "basic_causal")
@@ -72,12 +80,15 @@ class TestFA3VsSDPA:
     def test_full_context(self):
         """Full context (window_size=-1)."""
         B, T, H, D = 2, 128, 4, 32
-        q = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        k = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        v = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        q = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        cu_seqlens = make_cu_seqlens(B, T, self.DEVICE)
 
         def run():
-            return flash_attn.flash_attn_func(q, k, v, causal=True, window_size=(-1, -1))
+            return flash_attn.flash_attn_varlen_func(q, k, v,
+                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=T, max_seqlen_k=T, causal=True, window_size=(-1, -1))
 
         y_fa3, y_sdpa = run_both_impls(run)
         max_diff, mean_diff = assert_close(y_fa3, y_sdpa, "full_context")
@@ -87,12 +98,15 @@ class TestFA3VsSDPA:
         """Sliding window attention."""
         B, T, H, D = 2, 128, 4, 32
         window = 32
-        q = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        k = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        v = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        q = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        cu_seqlens = make_cu_seqlens(B, T, self.DEVICE)
 
         def run():
-            return flash_attn.flash_attn_func(q, k, v, causal=True, window_size=(window, 0))
+            return flash_attn.flash_attn_varlen_func(q, k, v,
+                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=T, max_seqlen_k=T, causal=True, window_size=(window, 0))
 
         y_fa3, y_sdpa = run_both_impls(run)
         max_diff, mean_diff = assert_close(y_fa3, y_sdpa, "sliding_window")
@@ -104,12 +118,15 @@ class TestFA3VsSDPA:
         n_heads = 8
         n_kv_heads = 2
 
-        q = torch.randn(B, T, n_heads, D, device=self.DEVICE, dtype=self.DTYPE)
-        k = torch.randn(B, T, n_kv_heads, D, device=self.DEVICE, dtype=self.DTYPE)
-        v = torch.randn(B, T, n_kv_heads, D, device=self.DEVICE, dtype=self.DTYPE)
+        q = torch.randn(B * T, n_heads, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B * T, n_kv_heads, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B * T, n_kv_heads, D, device=self.DEVICE, dtype=self.DTYPE)
+        cu_seqlens = make_cu_seqlens(B, T, self.DEVICE)
 
         def run():
-            return flash_attn.flash_attn_func(q, k, v, causal=True, window_size=(T, 0))
+            return flash_attn.flash_attn_varlen_func(q, k, v,
+                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=T, max_seqlen_k=T, causal=True, window_size=(T, 0))
 
         y_fa3, y_sdpa = run_both_impls(run)
         max_diff, mean_diff = assert_close(y_fa3, y_sdpa, "gqa")
@@ -118,12 +135,15 @@ class TestFA3VsSDPA:
     def test_larger_model(self):
         """Larger dimensions closer to real model."""
         B, T, H, D = 4, 256, 12, 64
-        q = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        k = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        v = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        q = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        cu_seqlens = make_cu_seqlens(B, T, self.DEVICE)
 
         def run():
-            return flash_attn.flash_attn_func(q, k, v, causal=True, window_size=(-1, -1))
+            return flash_attn.flash_attn_varlen_func(q, k, v,
+                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=T, max_seqlen_k=T, causal=True, window_size=(-1, -1))
 
         y_fa3, y_sdpa = run_both_impls(run)
         max_diff, mean_diff = assert_close(y_fa3, y_sdpa, "larger_model")
@@ -215,21 +235,24 @@ class TestFA3VsSDPA:
     def test_backward_gradients_match(self):
         """Verify gradients are similar between FA3 and SDPA."""
         B, T, H, D = 2, 32, 4, 16
+        cu_seqlens = make_cu_seqlens(B, T, self.DEVICE)
 
-        q_data = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        k_data = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        v_data = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        q_data = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        k_data = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v_data = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
 
         def run():
             q = q_data.clone().requires_grad_(True)
             k = k_data.clone().requires_grad_(True)
             v = v_data.clone().requires_grad_(True)
-            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=(T, 0))
+            y = flash_attn.flash_attn_varlen_func(q, k, v,
+                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=T, max_seqlen_k=T, causal=True, window_size=(T, 0))
             loss = y.sum()
             loss.backward()
             return y.detach(), q.grad.detach(), k.grad.detach(), v.grad.detach()
 
-        set_impl('fa3')
+        set_impl('fa')
         y_fa3, q_grad_fa3, k_grad_fa3, v_grad_fa3 = run()
         set_impl('sdpa')
         y_sdpa, q_grad_sdpa, k_grad_sdpa, v_grad_sdpa = run()
@@ -261,13 +284,16 @@ class TestSDPAOnly:
         """Test SDPA forward pass produces valid output."""
         set_impl('sdpa')
         B, T, H, D = 2, 64, 4, 32
-        q = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        k = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
-        v = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        q = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        cu_seqlens = make_cu_seqlens(B, T, self.DEVICE)
 
-        y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=(T, 0))
+        y = flash_attn.flash_attn_varlen_func(q, k, v,
+            cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+            max_seqlen_q=T, max_seqlen_k=T, causal=True, window_size=(T, 0))
 
-        assert y.shape == (B, T, H, D)
+        assert y.shape == (B * T, H, D)
         assert not torch.isnan(y).any(), "Output contains NaN"
         set_impl(None)
 
@@ -275,11 +301,14 @@ class TestSDPAOnly:
         """Test gradients flow through SDPA."""
         set_impl('sdpa')
         B, T, H, D = 2, 32, 4, 16
-        q = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE, requires_grad=True)
-        k = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE, requires_grad=True)
-        v = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE, requires_grad=True)
+        q = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE, requires_grad=True)
+        k = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE, requires_grad=True)
+        v = torch.randn(B * T, H, D, device=self.DEVICE, dtype=self.DTYPE, requires_grad=True)
+        cu_seqlens = make_cu_seqlens(B, T, self.DEVICE)
 
-        y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=(T, 0))
+        y = flash_attn.flash_attn_varlen_func(q, k, v,
+            cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+            max_seqlen_q=T, max_seqlen_k=T, causal=True, window_size=(T, 0))
         loss = y.sum()
         loss.backward()
 
@@ -340,23 +369,23 @@ class TestSDPAOnly:
 class TestOverrideMechanism:
     """Test that the override mechanism works correctly."""
 
-    @pytest.mark.skipif(not HAS_FA3, reason="FA3 required")
-    def test_override_fa3(self):
-        """Test that override='fa3' uses FA3."""
-        set_impl('fa3')
-        assert fa_module.USE_FA3 == True
+    @pytest.mark.skipif(not HAS_FA, reason="FA required")
+    def test_override_fa(self):
+        """Test that override='fa' uses FA."""
+        set_impl('fa')
+        assert fa_module.USE_FA == True
         set_impl(None)
 
     def test_override_sdpa(self):
         """Test that override='sdpa' uses SDPA."""
         set_impl('sdpa')
-        assert fa_module.USE_FA3 == False
+        assert fa_module.USE_FA == False
         set_impl(None)
 
     def test_override_auto(self):
         """Test that override=None uses auto-detection."""
         set_impl(None)
-        assert fa_module.USE_FA3 == HAS_FA3
+        assert fa_module.USE_FA == HAS_FA
 
 
 if __name__ == "__main__":
@@ -366,7 +395,7 @@ if __name__ == "__main__":
         print(f"CUDA device: {torch.cuda.get_device_name()}")
         major, minor = torch.cuda.get_device_capability()
         print(f"Compute capability: {major}.{minor}")
-    print(f"HAS_FA3: {HAS_FA3}")
+    print(f"HAS_FA: {HAS_FA}")
     print()
 
     pytest.main([__file__, "-v", "-s"])
