@@ -334,6 +334,8 @@ smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
 step = 0
+skipped_batches = 0 # count of micro-batches skipped due to no valid targets
+warned_about_skips = False # whether we've warned the user about skipped batches
 while True:
     flops_so_far = num_flops_per_token * args.total_batch_size * step
 
@@ -430,13 +432,33 @@ while True:
     synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
-        loss = model(x, y)
-        train_loss = loss.detach() # for logging
-        loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
-        if scaler is not None:
-            scaler.scale(loss).backward()
+        # Check if this micro-batch has any valid (non-masked) targets
+        # In SFT, targets are -1 for "User" portions; loss is only computed on "Assistant" responses
+        # If all targets are -1, cross_entropy with reduction='mean' returns NaN (division by zero)
+        has_valid_targets = (y != -1).any()
+        
+        if has_valid_targets:
+            loss = model(x, y)
+            train_loss = loss.detach() # for logging
+            loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
+            if scaler is not None:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
         else:
-            loss.backward()
+            # Skip this micro-batch: no valid targets, would cause NaN
+            # Set train_loss to 0 for logging (this micro-batch contributes nothing)
+            train_loss = torch.tensor(0.0, device=device)
+            # Note: We don't call .backward() here, so this micro-batch contributes zero gradient
+            # This is correct: there's nothing to learn from a fully-masked batch
+            skipped_batches += 1
+            # Warn user once if skipping becomes frequent (>5% of batches in first 100 steps)
+            if not warned_about_skips and step < 100 and skipped_batches > (step * grad_accum_steps * 0.05):
+                print0(f"WARNING: Skipping micro-batches with no valid targets ({skipped_batches} so far).")
+                print0(f"  This is normal with small device-batch-size, but if it happens frequently,")
+                print0(f"  consider increasing --device-batch-size to reduce wasted computation.")
+                warned_about_skips = True
+        
         x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
         progress = max(progress, approx_progress) # only increase progress monotonically
     # step the optimizer
