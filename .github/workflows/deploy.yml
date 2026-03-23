@@ -1,0 +1,30 @@
+name: Deploy samosaChaat to EC2
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'nanochat/ui.html'
+      - 'nanochat/logo.svg'
+      - 'scripts/chat_web.py'
+      - 'scripts/chat_cli.py'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/nanochat
+            git fetch origin master
+            git reset --hard origin/master
+            sudo systemctl restart samosachaat.service
+            echo "Deploy complete - samosaChaat restarted"
