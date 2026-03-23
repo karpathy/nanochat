@@ -4,8 +4,7 @@ on:
   push:
     branches: [master]
     paths:
-      - 'nanochat/ui.html'
-      - 'nanochat/logo.svg'
+      - 'nanochat/**'
       - 'scripts/chat_web.py'
       - 'scripts/chat_cli.py'
 
