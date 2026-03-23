@@ -59,7 +59,7 @@ MAX_TOP_K = 200
 MIN_MAX_TOKENS = 1
 MAX_MAX_TOKENS = 4096
 
-parser = argparse.ArgumentParser(description='NanoChat Web Server')
+parser = argparse.ArgumentParser(description='samosaChaat Web Server')
 parser.add_argument('-n', '--num-gpus', type=int, default=1, help='Number of GPUs to use (default: 1)')
 parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|rl")
 parser.add_argument('-t', '--temperature', type=float, default=0.8, help='Default temperature for generation')
@@ -216,7 +216,7 @@ def validate_chat_request(request: ChatRequest):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load models on all GPUs on startup."""
-    print("Loading nanochat models across GPUs...")
+    print("Loading samosaChaat models across GPUs...")
     app.state.worker_pool = WorkerPool(num_gpus=args.num_gpus)
     await app.state.worker_pool.initialize(args.source, model_tag=args.model_tag, step=args.step)
     print(f"Server ready at http://localhost:{args.port}")
@@ -248,7 +248,7 @@ async def root():
 
 @app.get("/logo.svg")
 async def logo():
-    """Serve the NanoChat logo for favicon and header."""
+    """Serve the samosaChaat logo for favicon and header."""
     logo_path = os.path.join("nanochat", "logo.svg")
     return FileResponse(logo_path, media_type="image/svg+xml")
 
@@ -402,6 +402,6 @@ async def stats():
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"Starting NanoChat Web Server")
+    print(f"Starting samosaChaat Web Server")
     print(f"Temperature: {args.temperature}, Top-k: {args.top_k}, Max tokens: {args.max_tokens}")
     uvicorn.run(app, host=args.host, port=args.port)
