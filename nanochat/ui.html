@@ -403,22 +403,61 @@
         .new-conversation-btn:hover { background-color: var(--cream); border-color: var(--warm-grey); color: var(--brown); }
 
         /* ===== RESPONSIVE ===== */
+        /* --- Tablet --- */
         @media (max-width: 700px) {
             .landing-nav { padding: 0.8rem 1rem; }
             .nav-right .social-text { display: none; }
             .hero-hindi { font-size: 2.5rem; }
             .hero-english { font-size: 1.6rem; }
-            .illust-left svg { width: 140px; height: auto; }
-            .illust-right svg.kettle-svg { width: 140px; height: auto; }
+            .illust-left { left: 2%; }
+            .illust-right { right: 2%; }
+            .illust-left svg { width: 130px; height: auto; }
+            .illust-right svg.kettle-svg { width: 130px; height: auto; }
             .kettle-steam { display: none; }
             .doodle { display: none; }
             .landing-footer { padding: 0.6rem 1rem; font-size: 0.85rem; }
+            .chat-wrapper { padding: 1.5rem 1rem 2rem; }
+            .message.user .message-content { max-width: 80%; }
         }
+
+        /* --- Mobile --- */
         @media (max-width: 480px) {
-            .hero-hindi { font-size: 2rem; }
-            .hero-english { font-size: 1.3rem; }
-            .illust-left svg { width: 110px; }
-            .illust-right svg.kettle-svg { width: 110px; }
+            .landing-nav { padding: 0.6rem 0.8rem; }
+            .nav-brand { font-size: 1.15rem; }
+            .toran-wrap svg { width: 36px; height: 75px; }
+            .hero { padding: 1rem 0.5rem 0; }
+            .hero-hindi { font-size: 1.8rem; }
+            .hero-english { font-size: 1.2rem; }
+            .illust-left { left: 1%; bottom: 8%; }
+            .illust-right { right: 1%; bottom: 8%; }
+            .illust-left svg { width: 90px; }
+            .illust-right svg.kettle-svg { width: 90px; }
+            .explore-tag, .chai-label { font-size: 0.95rem; padding: 2px 12px; }
+            .input-container { padding: 0.6rem 0.5rem; padding-bottom: calc(0.6rem + env(safe-area-inset-bottom)); }
+            .input-wrapper { gap: 0.5rem; }
+            .chat-input { min-height: 46px; font-size: 0.95rem; padding: 0.6rem 0.8rem; }
+            .send-button { width: 46px; height: 46px; }
+            .chat-wrapper { padding: 1rem 0.75rem 1.5rem; }
+            .message.user .message-content { max-width: 85%; padding: 0.6rem 0.8rem; font-size: 0.95rem; }
+            .message.assistant .message-content { font-size: 0.95rem; }
+            .landing-footer {
+                flex-direction: column;
+                gap: 0.3rem;
+                text-align: center;
+                padding: 0.6rem 0.8rem;
+                font-size: 0.8rem;
+            }
+            .new-conversation-btn { width: 28px; height: 28px; }
+            .inference-badge { font-size: 0.8rem; padding: 1px 8px; }
+        }
+
+        /* --- Small phones --- */
+        @media (max-width: 360px) {
+            .hero-hindi { font-size: 1.5rem; }
+            .hero-english { font-size: 1rem; }
+            .illust-left svg { width: 70px; }
+            .illust-right svg.kettle-svg { width: 70px; }
+            .explore-tag, .chai-label { font-size: 0.85rem; }
         }
     </style>
 </head>
