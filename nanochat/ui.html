@@ -3,82 +3,380 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>samosaChaat</title>
+    <title>समोसा आचाट — samosaChaat</title>
     <link rel="icon" type="image/svg+xml" href="/logo.svg">
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;600;700;800&family=Caveat:wght@400;600;700&family=Great+Vibes&display=swap" rel="stylesheet">
     <style>
         :root {
             color-scheme: light;
+            --gold: #e8a838;
+            --brown: #8b4d0a;
+            --cream: #fff8e7;
+            --green-chutney: #2d8a4e;
+            --red-chutney: #c0392b;
+            --warm-grey: #d4c4a0;
+            --light-cream: #fffdf5;
         }
 
-        * {
-            box-sizing: border-box;
-        }
-
-        html, body{
-            height: 100%;
-            margin: 0;
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; }
 
         body {
-            font-family: ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
+            font-family: 'Caveat', cursive, sans-serif;
             background-color: #ffffff;
             color: #111827;
             min-height: 100dvh;
-            margin: 0;
+            overflow-x: hidden;
+        }
+
+        /* ===== PAGE TRANSITIONS ===== */
+        .page {
+            transition: opacity 0.45s ease;
+            opacity: 1;
+        }
+        .page-hidden { opacity: 0; pointer-events: none; }
+
+        /* ===== LANDING PAGE ===== */
+        .landing-page {
             display: flex;
             flex-direction: column;
+            min-height: 100vh;
+            position: relative;
+            overflow: hidden;
         }
 
-        .header {
-            background-color: #ffffff;
-            padding: 1.25rem 1.5rem;
+        /* --- Navbar --- */
+        .landing-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 1.1rem 2.2rem;
+            position: relative;
+            z-index: 10;
+        }
+        .nav-left {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+        .nav-left .home-icon { cursor: pointer; transition: transform 0.2s; }
+        .nav-left .home-icon:hover { transform: scale(1.08); }
+        .nav-brand {
+            font-family: 'Caveat', cursive;
+            font-size: 1.35rem;
+            font-weight: 600;
+            color: #333;
+            text-decoration: none;
+            position: relative;
+        }
+        .nav-brand::after {
+            content: '';
+            position: absolute;
+            bottom: -2px; left: 0;
+            width: 100%; height: 1.5px;
+            background: #555;
+            border-radius: 1px;
+            transform: rotate(-0.5deg);
+        }
+        .nav-right {
+            display: flex;
+            align-items: center;
+            gap: 1.2rem;
+            font-family: 'Caveat', cursive;
+            font-size: 1.05rem;
+            color: #555;
+            padding-top: 0.3rem;
+        }
+        .nav-right a {
+            color: #555;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .nav-right a:hover { color: var(--brown); }
+        .nav-right .cart-icon { cursor: pointer; transition: transform 0.2s; }
+        .nav-right .cart-icon:hover { transform: scale(1.1); }
+
+        /* --- Toran (center navbar) --- */
+        .toran-wrap {
+            position: absolute;
+            left: 50%;
+            top: 0;
+            transform: translateX(-50%);
+            transform-origin: top center;
+            animation: pendulum 3s ease-in-out infinite alternate;
+            z-index: 5;
         }
 
-        .header-left {
+        /* --- Hero --- */
+        .hero {
+            text-align: center;
+            padding: 1.5rem 1rem 0;
+            flex-shrink: 0;
+        }
+        .hero-hindi {
+            font-family: 'Baloo 2', cursive;
+            font-weight: 800;
+            font-size: clamp(3rem, 7vw, 5.5rem);
+            color: #1a1a1a;
+            line-height: 1.1;
+            transform: rotate(-1deg);
+            margin-bottom: -0.35em;
+            position: relative;
+            z-index: 2;
+        }
+        .hero-english {
+            font-family: 'Great Vibes', cursive;
+            font-weight: 400;
+            font-size: clamp(2rem, 5vw, 3.8rem);
+            color: rgba(30,30,30,0.55);
+            line-height: 1;
+            transform: rotate(0.5deg);
+            position: relative;
+            z-index: 1;
+            margin-top: -0.1em;
+        }
+
+        /* --- Illustrations row --- */
+        .illustrations {
+            flex: 1;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            padding: 0 6% 0.5rem;
+            min-height: 200px;
+        }
+        .illust-left {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            cursor: pointer;
+            transition: transform 0.3s;
+        }
+        .illust-left:hover { transform: scale(1.03); }
+        .illust-left .samosa-svg {
+            animation: float 2.5s ease-in-out infinite;
+        }
+        .explore-tag {
+            font-family: 'Caveat', cursive;
+            font-size: 1.15rem;
+            color: #5a3e1b;
+            background: #f5edd6;
+            padding: 3px 18px;
+            border: 1px solid #d4c4a0;
+            transform: rotate(-3deg);
+            box-shadow: 1px 2px 5px rgba(0,0,0,0.08);
+            margin-top: 6px;
+            display: inline-block;
+            border-radius: 2px;
+        }
+        .illust-right {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+        }
+        .illust-right .kettle-wrap {
+            animation: wobble 3s ease-in-out infinite;
+            position: relative;
+        }
+        .kettle-steam {
+            position: absolute;
+            top: -40px;
+            right: -10px;
+            pointer-events: none;
+        }
+        .steam-wisp { transform-box: fill-box; transform-origin: bottom center; }
+        .steam-w1 { animation: steamFloat 2.8s ease-in-out infinite; }
+        .steam-w2 { animation: steamFloat 2.8s ease-in-out infinite 0.7s; }
+        .steam-w3 { animation: steamFloat 2.8s ease-in-out infinite 1.4s; }
+        .chai-label {
+            font-family: 'Caveat', cursive;
+            font-size: 1.15rem;
+            color: #5a3e1b;
+            background: #f5edd6;
+            padding: 3px 18px;
+            border: 1px solid #d4c4a0;
+            transform: rotate(2deg);
+            box-shadow: 1px 2px 5px rgba(0,0,0,0.08);
+            margin-top: 6px;
+            display: inline-block;
+            border-radius: 2px;
+        }
+
+        /* --- Ambient doodles --- */
+        .doodle {
+            position: absolute;
+            pointer-events: none;
+            opacity: 0.35;
+            z-index: 0;
+        }
+        .doodle-1 { top: 18%; right: 6%; transform: rotate(25deg); }
+        .doodle-2 { bottom: 28%; left: 3%; transform: rotate(-15deg); }
+        .doodle-3 { top: 45%; right: 3%; transform: rotate(140deg); }
+        .doodle-4 { bottom: 18%; left: 42%; transform: rotate(10deg); }
+        .doodle-5 { top: 32%; left: 7%; transform: rotate(-40deg); }
+
+        /* --- Footer --- */
+        .landing-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.8rem 2.2rem;
+            font-family: 'Caveat', cursive;
+            font-size: 0.95rem;
+            color: #999;
+        }
+        .landing-footer a {
+            color: #999;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .landing-footer a:hover { color: #666; }
+
+        /* ===== ANIMATIONS ===== */
+        @keyframes pendulum {
+            0%   { transform: translateX(-50%) rotate(-4deg); }
+            100% { transform: translateX(-50%) rotate(4deg); }
+        }
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50%      { transform: translateY(-8px); }
+        }
+        @keyframes wobble {
+            0%, 100% { transform: rotate(-1.5deg); }
+            50%      { transform: rotate(1.5deg); }
+        }
+        @keyframes steamFloat {
+            0%   { opacity: 0;   transform: translateY(4px) scaleX(0.8); }
+            35%  { opacity: 0.5; }
+            70%  { opacity: 0.35; }
+            100% { opacity: 0;   transform: translateY(-18px) scaleX(1.4); }
+        }
+
+        /* ===== CHAT PAGE ===== */
+        .chat-page {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* --- Chat header --- */
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.8rem 1.5rem;
+            border-bottom: 1px solid #f0e8d8;
+            background: #ffffff;
+            position: relative;
+        }
+        .chat-header-left {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+        .chat-home-btn {
+            background: none; border: none; cursor: pointer; padding: 2px;
+            display: flex; align-items: center;
+            transition: transform 0.2s;
+        }
+        .chat-home-btn:hover { transform: scale(1.1); }
+        .chat-header h1 {
+            font-family: 'Caveat', cursive;
+            font-size: 1.35rem;
+            font-weight: 600;
+            color: #333;
+        }
+        .chat-toran {
+            position: absolute;
+            left: 50%;
+            top: 0;
+            transform: translateX(-50%);
+            transform-origin: top center;
+            animation: pendulum 3s ease-in-out infinite alternate;
+        }
+        .chat-header-right {
             display: flex;
             align-items: center;
             gap: 0.75rem;
         }
-
-        .header-logo {
-            height: 32px;
-            width: auto;
+        .inference-badge {
+            font-family: 'Caveat', cursive;
+            font-size: 0.9rem;
+            padding: 2px 10px;
+            border-radius: 12px;
+            border: 1px solid var(--warm-grey);
+            color: var(--brown);
+            background: var(--light-cream);
         }
-
-        .header h1 {
-            font-size: 1.25rem;
-            font-weight: 600;
-            margin: 0;
-            color: #111827;
+        .inference-badge.local {
+            border-color: var(--green-chutney);
+            color: var(--green-chutney);
+            background: #eafaf0;
         }
-
         .new-conversation-btn {
-            width: 32px;
-            height: 32px;
-            padding: 0;
-            border: 1px solid #e5e7eb;
+            width: 32px; height: 32px; padding: 0;
+            border: 1px solid #e0d5c0;
             border-radius: 0.5rem;
             background-color: #ffffff;
-            color: #6b7280;
+            color: #8b7355;
             cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            display: flex; align-items: center; justify-content: center;
             transition: all 0.2s ease;
         }
-
         .new-conversation-btn:hover {
-            background-color: #f3f4f6;
-            border-color: #d1d5db;
-            color: #374151;
+            background-color: var(--cream);
+            border-color: var(--warm-grey);
+            color: var(--brown);
         }
 
+        /* --- Download banner --- */
+        .download-banner {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.5rem 1.5rem;
+            background: var(--light-cream);
+            border-bottom: 1px solid #f0e8d8;
+            font-family: 'Caveat', cursive;
+            font-size: 1rem;
+            color: var(--brown);
+        }
+        .progress-track {
+            flex: 1;
+            height: 6px;
+            background: #efe6d0;
+            border-radius: 3px;
+            overflow: hidden;
+            max-width: 220px;
+        }
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--gold), #d4940a);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+        .download-cancel {
+            background: none; border: none;
+            font-family: 'Caveat', cursive;
+            font-size: 0.95rem;
+            color: var(--red-chutney);
+            cursor: pointer;
+            padding: 2px 6px;
+        }
+        .download-cancel:hover { text-decoration: underline; }
+        .download-done {
+            color: var(--green-chutney);
+            font-weight: 600;
+        }
+
+        /* --- Chat container --- */
         .chat-container {
             flex: 1;
             overflow-y: auto;
             background-color: #ffffff;
         }
-
         .chat-wrapper {
             max-width: 48rem;
             margin: 0 auto;
@@ -88,27 +386,23 @@
             gap: 0.75rem;
         }
 
+        /* --- Messages --- */
         .message {
             display: flex;
             justify-content: flex-start;
             margin-bottom: 0.5rem;
             color: #0d0d0d;
         }
-
-        .message.assistant {
-            justify-content: flex-start;
-        }
-
-        .message.user {
-            justify-content: flex-end;
-        }
+        .message.assistant { justify-content: flex-start; }
+        .message.user { justify-content: flex-end; }
 
         .message-content {
             white-space: pre-wrap;
-            line-height: 1.6;
+            line-height: 1.65;
             max-width: 100%;
+            font-family: ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+            font-size: 1rem;
         }
-
         .message.assistant .message-content {
             background: transparent;
             border: none;
@@ -118,116 +412,32 @@
             margin-left: -0.5rem;
             transition: background-color 0.2s ease;
         }
-
         .message.assistant .message-content:hover {
-            background-color: #f9fafb;
+            background-color: var(--light-cream);
         }
-
         .message.user .message-content {
-            background-color: #f3f4f6;
+            background-color: var(--cream);
+            border: 1px solid #f0e0b8;
             border-radius: 1.25rem;
             padding: 0.8rem 1rem;
             max-width: 65%;
             cursor: pointer;
-            transition: background-color 0.2s ease;
+            transition: background-color 0.2s ease, border-color 0.2s ease;
         }
-
         .message.user .message-content:hover {
-            background-color: #e5e7eb;
+            background-color: #fff0d0;
+            border-color: var(--gold);
         }
-
         .message.console .message-content {
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'Courier New', monospace;
             font-size: 0.875rem;
-            background-color: #fafafa;
+            background-color: var(--light-cream);
+            border: 1px solid #f0e8d8;
             padding: 0.75rem 1rem;
-            color: #374151;
+            color: #5a3e1b;
             max-width: 80%;
-        }
-
-        .input-container {
-            background-color: #ffffff;
-            padding: 1rem;
-            padding-bottom: calc(1rem + env(safe-area-inset-bottom))
-        }
-
-        .input-wrapper {
-            max-width: 48rem;
-            margin: 0 auto;
-            display: flex;
-            gap: 0.75rem;
-            align-items: flex-end;
-        }
-
-        .chat-input {
-            flex: 1;
-            padding: 0.8rem 1rem;
-            border: 1px solid #d1d5db;
             border-radius: 0.75rem;
-            background-color: #ffffff;
-            color: #111827;
-            font-size: 1rem;
-            line-height: 1.5;
-            resize: none;
-            outline: none;
-            min-height: 54px;
-            max-height: 200px;
-            transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
-
-        .chat-input::placeholder {
-            color: #9ca3af;
-        }
-
-        .chat-input:focus {
-            border-color: #2563eb;
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-        }
-
-        .send-button {
-            flex-shrink: 0;
-            padding: 0;
-            width: 54px;
-            height: 54px;
-            border: 1px solid #111827;
-            border-radius: 0.75rem;
-            background-color: #111827;
-            color: #ffffff;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-        }
-
-        .send-button:hover:not(:disabled) {
-            background-color: #2563eb;
-            border-color: #2563eb;
-        }
-
-        .send-button:disabled {
-            cursor: not-allowed;
-            border-color: #d1d5db;
-            background-color: #e5e7eb;
-            color: #9ca3af;
-        }
-
-        .typing-indicator {
-            display: inline-block;
-            color: #6b7280;
-            letter-spacing: 0.15em;
-        }
-
-        .typing-indicator::after {
-            content: '···';
-            animation: typing 1.4s infinite;
-        }
-
-        @keyframes typing {
-            0%, 60%, 100% { opacity: 0.2; }
-            30% { opacity: 1; }
-        }
-
         .error-message {
             background-color: #fee2e2;
             border: 1px solid #fecaca;
@@ -236,27 +446,365 @@
             border-radius: 0.75rem;
             margin-top: 0.5rem;
         }
+
+        /* --- Steam typing indicator --- */
+        .steam-typing-wrap {
+            display: inline-flex;
+            align-items: flex-end;
+            height: 28px;
+            padding: 0 4px;
+        }
+        .steam-typing-wrap .st {
+            width: 3px;
+            border-radius: 2px;
+            background: var(--warm-grey);
+            margin: 0 3px;
+            animation: steamType 1.6s ease-in-out infinite;
+            transform-origin: bottom;
+        }
+        .steam-typing-wrap .st:nth-child(1) { height: 14px; animation-delay: 0s; }
+        .steam-typing-wrap .st:nth-child(2) { height: 18px; animation-delay: 0.25s; }
+        .steam-typing-wrap .st:nth-child(3) { height: 12px; animation-delay: 0.5s; }
+        .steam-typing-wrap .st:nth-child(4) { height: 16px; animation-delay: 0.75s; }
+
+        @keyframes steamType {
+            0%, 100% { opacity: 0.25; transform: scaleY(0.6); }
+            50%      { opacity: 0.8;  transform: scaleY(1); }
+        }
+
+        /* --- Input --- */
+        .input-container {
+            background-color: #ffffff;
+            padding: 1rem;
+            padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+            border-top: 1px solid #f0e8d8;
+        }
+        .input-wrapper {
+            max-width: 48rem;
+            margin: 0 auto;
+            display: flex;
+            gap: 0.75rem;
+            align-items: flex-end;
+        }
+        .chat-input {
+            flex: 1;
+            padding: 0.8rem 1rem;
+            border: 1px solid var(--warm-grey);
+            border-radius: 0.75rem;
+            background-color: #ffffff;
+            color: #111827;
+            font-family: ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+            font-size: 1rem;
+            line-height: 1.5;
+            resize: none;
+            outline: none;
+            min-height: 54px;
+            max-height: 200px;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .chat-input::placeholder { color: #b8a88a; }
+        .chat-input:focus {
+            border-color: var(--gold);
+            box-shadow: 0 0 0 3px rgba(232, 168, 56, 0.15);
+        }
+        .send-button {
+            flex-shrink: 0;
+            padding: 0;
+            width: 54px; height: 54px;
+            border: 1px solid var(--gold);
+            border-radius: 0.75rem;
+            background-color: var(--gold);
+            color: #ffffff;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+        }
+        .send-button:hover:not(:disabled) {
+            background-color: #d4940a;
+            border-color: #d4940a;
+        }
+        .send-button:disabled {
+            cursor: not-allowed;
+            border-color: #e0d5c0;
+            background-color: #efe6d0;
+            color: #c4b090;
+        }
+
+        /* ===== RESPONSIVE ===== */
+        @media (max-width: 700px) {
+            .landing-nav { padding: 0.8rem 1rem; }
+            .nav-right .social-text { display: none; }
+            .hero-hindi { font-size: 2.5rem; }
+            .hero-english { font-size: 1.6rem; }
+            .illustrations { padding: 0 3% 0.5rem; }
+            .illust-left svg, .illust-right svg.kettle-svg { width: 140px; height: auto; }
+            .kettle-steam { display: none; }
+            .doodle { display: none; }
+            .landing-footer { padding: 0.6rem 1rem; font-size: 0.85rem; }
+            .chat-toran { display: none; }
+        }
+        @media (max-width: 480px) {
+            .hero-hindi { font-size: 2rem; }
+            .hero-english { font-size: 1.3rem; }
+            .illust-left svg, .illust-right svg.kettle-svg { width: 110px; }
+            .chat-header h1 { font-size: 1.1rem; }
+        }
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="header-left">
+
+<!-- ============================================================ -->
+<!--                      LANDING PAGE                            -->
+<!-- ============================================================ -->
+<div id="landing-page" class="page landing-page">
+
+    <!-- Navbar -->
+    <nav class="landing-nav">
+        <div class="nav-left">
+            <!-- Hand-drawn house icon -->
+            <svg class="home-icon" onclick="navigateToChat()" viewBox="0 0 30 30" width="30" height="30" fill="none" stroke="#444" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4,16 L15.2,5 L26,16"/>
+                <path d="M7,14.5 L7,26 L23,26 L23,14.5"/>
+                <rect x="12" y="19" width="6" height="7" rx="0.5"/>
+                <rect x="8.5" y="16" width="3" height="2.8" rx="0.3"/>
+                <rect x="18.5" y="16" width="3" height="2.8" rx="0.3"/>
+            </svg>
+            <a class="nav-brand" href="#">Samosa Aachaat</a>
+        </div>
+
+        <!-- Toran - lemon mirchi (pendulum animation) -->
+        <div class="toran-wrap">
+            <svg viewBox="0 0 50 105" width="48" height="100" fill="none">
+                <!-- String -->
+                <line x1="25" y1="0" x2="25" y2="88" stroke="#555" stroke-width="1"/>
+                <!-- Chilli 1 left -->
+                <path d="M23,16 C18,22 13,34 14,46 C14,49 16,50 18,47 C20,43 22,28 23,20Z" fill="#2E8B57" stroke="#1a6b3a" stroke-width="0.4"/>
+                <path d="M23,16 L22,11" stroke="#5a7c4f" stroke-width="1.4" stroke-linecap="round"/>
+                <!-- Chilli 2 right -->
+                <path d="M27,20 C32,26 37,38 36,50 C36,53 34,54 32,51 C30,47 28,32 27,24Z" fill="#34A85A" stroke="#228B44" stroke-width="0.4"/>
+                <path d="M27,20 L28,15" stroke="#5a7c4f" stroke-width="1.4" stroke-linecap="round"/>
+                <!-- Chilli 3 left-down -->
+                <path d="M23,35 C17,42 13,52 15,61 C15,64 17,64 19,62 C21,58 22,45 23,39Z" fill="#2E8B57" stroke="#1a6b3a" stroke-width="0.4"/>
+                <path d="M23,35 L22,31" stroke="#5a7c4f" stroke-width="1.3" stroke-linecap="round"/>
+                <!-- Chilli 4 right-down (smaller) -->
+                <path d="M27,42 C31,47 34,54 33,61 C33,63 31,63 30,61 C29,58 28,49 27,45Z" fill="#34A85A" stroke="#228B44" stroke-width="0.4"/>
+                <path d="M27,42 L28,39" stroke="#5a7c4f" stroke-width="1.2" stroke-linecap="round"/>
+                <!-- Lemon -->
+                <ellipse cx="25" cy="80" rx="11" ry="9" fill="#F4D03F"/>
+                <ellipse cx="25" cy="80" rx="8.5" ry="7" fill="#F7DC6F" opacity="0.55"/>
+                <ellipse cx="25" cy="71.5" rx="2.5" ry="3" fill="#D4AC0D"/>
+            </svg>
+        </div>
+
+        <div class="nav-right">
+            <a href="https://instagram.com/samosachaat.art" class="social-text" target="_blank" rel="noopener">@samosachaat</a>
+            <!-- Cart/bag icon -->
+            <svg class="cart-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#555" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5,8 L5,21 L19,21 L19,8"/>
+                <path d="M9,8 L9,5.5 Q9,2 12,2 Q15,2 15,5.5 L15,8"/>
+            </svg>
+        </div>
+    </nav>
+
+    <!-- Hero -->
+    <section class="hero">
+        <h1 class="hero-hindi">समोसा आचाट</h1>
+        <h2 class="hero-english">Samosa Aachaat</h2>
+    </section>
+
+    <!-- Illustrations -->
+    <section class="illustrations">
+        <!-- Samosa (left) -->
+        <div class="illust-left" onclick="navigateToChat()" title="Start chatting">
+            <svg class="samosa-svg" viewBox="0 0 220 195" width="230" height="200">
+                <defs>
+                    <linearGradient id="samosaG" x1="30%" y1="0%" x2="80%" y2="100%">
+                        <stop offset="0%" stop-color="#edb44c"/>
+                        <stop offset="35%" stop-color="#d4940a"/>
+                        <stop offset="75%" stop-color="#b87a08"/>
+                        <stop offset="100%" stop-color="#8b5e0a"/>
+                    </linearGradient>
+                    <linearGradient id="samosaHighlight" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#f5d080" stop-opacity="0.5"/>
+                        <stop offset="100%" stop-color="#d4940a" stop-opacity="0"/>
+                    </linearGradient>
+                    <filter id="samosaSh">
+                        <feDropShadow dx="1" dy="3" stdDeviation="3" flood-color="#00000015"/>
+                    </filter>
+                </defs>
+                <!-- Shadow -->
+                <ellipse cx="108" cy="178" rx="58" ry="7" fill="#00000008"/>
+                <!-- Main body -->
+                <path d="M108,18 C88,18 38,72 28,128 C24,150 35,168 55,170 L162,170 C182,168 192,150 188,128 C178,72 128,18 108,18Z" fill="url(#samosaG)" filter="url(#samosaSh)"/>
+                <!-- Highlight sheen -->
+                <path d="M108,18 C88,18 38,72 28,128 C24,150 35,168 55,170 L162,170 C182,168 192,150 188,128 C178,72 128,18 108,18Z" fill="url(#samosaHighlight)"/>
+                <!-- Fold lines -->
+                <path d="M108,28 Q102,65 92,105 Q87,128 82,148" stroke="#a06808" stroke-width="1.2" fill="none" opacity="0.35"/>
+                <path d="M108,28 Q114,65 124,105 Q129,128 134,148" stroke="#a06808" stroke-width="1.2" fill="none" opacity="0.35"/>
+                <!-- Crimp edge top -->
+                <path d="M90,50 Q95,47 100,50 Q105,53 110,50 Q115,47 120,50 Q125,53 128,50" stroke="#8b5e0a" stroke-width="1" fill="none" opacity="0.3"/>
+                <!-- Crimp edge bottom -->
+                <path d="M55,170 Q80,164 108,166 Q136,168 162,170" stroke="#8b5e0a" stroke-width="1.5" fill="none" opacity="0.4"/>
+                <!-- Specular highlight -->
+                <path d="M88,50 Q94,68 96,90" stroke="#f5d080" stroke-width="2.5" fill="none" opacity="0.35" stroke-linecap="round"/>
+                <!-- Chutney blob -->
+                <ellipse cx="185" cy="158" rx="14" ry="9" fill="#2d8a4e" opacity="0.65"/>
+                <ellipse cx="183" cy="156" rx="9" ry="5.5" fill="#3aa85e" opacity="0.45"/>
+                <!-- Crumbs -->
+                <circle cx="60" cy="175" r="2" fill="#c4940a" opacity="0.3"/>
+                <circle cx="165" cy="176" r="1.5" fill="#c4940a" opacity="0.25"/>
+                <circle cx="145" cy="180" r="1.8" fill="#b87a08" opacity="0.2"/>
+            </svg>
+            <span class="explore-tag">Explore</span>
+        </div>
+
+        <!-- Chai Kettle (right) -->
+        <div class="illust-right">
+            <div class="kettle-wrap">
+                <!-- Steam wisps -->
+                <svg class="kettle-steam" viewBox="0 0 60 55" width="60" height="55">
+                    <g class="steam-w1">
+                        <path d="M15,48 Q10,36 18,26 Q26,16 18,4" stroke="#aaa" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.4"/>
+                    </g>
+                    <g class="steam-w2">
+                        <path d="M30,48 Q36,36 28,26 Q20,16 28,4" stroke="#bbb" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.3"/>
+                    </g>
+                    <g class="steam-w3">
+                        <path d="M45,48 Q40,36 46,28 Q52,18 44,6" stroke="#aaa" stroke-width="1.5" fill="none" stroke-linecap="round" opacity="0.3"/>
+                    </g>
+                </svg>
+
+                <!-- Kettle -->
+                <svg class="kettle-svg" viewBox="0 0 200 185" width="210" height="190">
+                    <defs>
+                        <linearGradient id="kettleG" x1="20%" y1="0%" x2="80%" y2="100%">
+                            <stop offset="0%" stop-color="#d4a543"/>
+                            <stop offset="45%" stop-color="#b8862a"/>
+                            <stop offset="100%" stop-color="#8b6914"/>
+                        </linearGradient>
+                        <radialGradient id="kettleHL" cx="35%" cy="38%">
+                            <stop offset="0%" stop-color="#e8c860" stop-opacity="0.4"/>
+                            <stop offset="100%" stop-color="#d4a543" stop-opacity="0"/>
+                        </radialGradient>
+                        <filter id="kettleSh">
+                            <feDropShadow dx="1" dy="3" stdDeviation="3" flood-color="#00000012"/>
+                        </filter>
+                    </defs>
+                    <!-- Shadow -->
+                    <ellipse cx="95" cy="178" rx="55" ry="6" fill="#00000008"/>
+                    <!-- Body -->
+                    <path d="M28,118 C28,155 55,175 98,175 C141,175 168,155 168,118 C168,92 152,78 142,73 L54,73 C44,78 28,92 28,118Z" fill="url(#kettleG)" filter="url(#kettleSh)"/>
+                    <path d="M28,118 C28,155 55,175 98,175 C141,175 168,155 168,118 C168,92 152,78 142,73 L54,73 C44,78 28,92 28,118Z" fill="url(#kettleHL)"/>
+                    <!-- Neck -->
+                    <rect x="58" y="54" width="80" height="19" rx="3" fill="#a07828"/>
+                    <!-- Lid -->
+                    <path d="M54,57 Q98,42 142,57" fill="#a07828" stroke="#8b6914" stroke-width="0.8"/>
+                    <!-- Lid knob -->
+                    <circle cx="98" cy="44" r="5" fill="#8b6914" stroke="#705510" stroke-width="0.8"/>
+                    <!-- Handle -->
+                    <path d="M56,52 Q38,18 98,10 Q158,18 140,52" stroke="#8b6914" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+                    <path d="M56,52 Q38,18 98,10 Q158,18 140,52" stroke="#c4a040" stroke-width="1.5" fill="none" stroke-linecap="round" opacity="0.3"/>
+                    <!-- Spout -->
+                    <path d="M163,98 Q178,90 182,76 Q184,70 180,66" stroke="#a07828" stroke-width="6" fill="none" stroke-linecap="round"/>
+                    <path d="M163,98 Q178,90 182,76 Q184,70 180,66" stroke="#c4a040" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.25"/>
+                    <!-- Decorative bands -->
+                    <ellipse cx="98" cy="112" rx="66" ry="2.5" fill="#c4a040" opacity="0.25"/>
+                    <ellipse cx="98" cy="128" rx="64" ry="2" fill="#c4a040" opacity="0.18"/>
+                    <!-- Engravings -->
+                    <path d="M58,103 Q63,98 68,103 Q73,108 78,103" stroke="#705510" stroke-width="0.7" fill="none" opacity="0.25"/>
+                    <path d="M118,103 Q123,98 128,103 Q133,108 138,103" stroke="#705510" stroke-width="0.7" fill="none" opacity="0.25"/>
+                    <!-- Body highlight -->
+                    <path d="M55,95 Q60,110 62,130" stroke="#e8c860" stroke-width="3" fill="none" opacity="0.2" stroke-linecap="round"/>
+                </svg>
+            </div>
+            <span class="chai-label">Chai</span>
+        </div>
+    </section>
+
+    <!-- Ambient doodles -->
+    <div class="doodle doodle-1">
+        <svg viewBox="0 0 28 14" width="32" height="16"><path d="M2,7 C2,3 8,1 14,2 C20,3 26,7 26,10 C26,12 24,13 22,12 C18,10 10,5 6,6 C4,6.5 2,9 2,7Z" fill="#34A85A" opacity="0.7"/></svg>
+    </div>
+    <div class="doodle doodle-2">
+        <svg viewBox="0 0 18 18" width="20" height="20"><circle cx="9" cy="9" r="7" fill="#F4D03F" opacity="0.6"/><circle cx="9" cy="9" r="5" fill="#F7DC6F" opacity="0.35"/></svg>
+    </div>
+    <div class="doodle doodle-3">
+        <svg viewBox="0 0 24 12" width="28" height="14"><path d="M2,6 C2,3 6,1 12,2 C18,3 22,6 22,9 C22,11 20,11 18,10 C14,8 8,4 4,5 C3,5.5 2,7.5 2,6Z" fill="#2E8B57" opacity="0.6"/></svg>
+    </div>
+    <div class="doodle doodle-4">
+        <svg viewBox="0 0 16 16" width="16" height="16"><circle cx="8" cy="8" r="6" fill="#F4D03F" opacity="0.45"/></svg>
+    </div>
+    <div class="doodle doodle-5">
+        <svg viewBox="0 0 22 11" width="24" height="12"><path d="M2,5 C2,2 6,1 11,2 C16,3 20,5 20,8 C20,10 18,10 16,9 C12,7 8,3 4,4.5 C3,5 2,7 2,5Z" fill="#34A85A" opacity="0.55"/></svg>
+    </div>
+
+    <!-- Footer -->
+    <footer class="landing-footer">
+        <span>&copy; 2026 samosaachaat.art</span>
+        <span style="font-size:0.85rem; color:#bbb;">Built on <a href="https://github.com/karpathy/nanochat" target="_blank" rel="noopener" style="color:#b8a88a;">nanochat</a> by Andrej Karpathy</span>
+        <a href="#">Terms and Policies</a>
+    </footer>
+</div>
+
+
+<!-- ============================================================ -->
+<!--                       CHAT PAGE                              -->
+<!-- ============================================================ -->
+<div id="chat-page" class="page chat-page" style="display:none">
+
+    <!-- Download banner (hidden until WebGPU engine calls API) -->
+    <div id="downloadBanner" class="download-banner" style="display:none">
+        <span id="downloadText">Downloading model for faster local inference...</span>
+        <div class="progress-track">
+            <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <span id="downloadPercent"></span>
+        <button id="downloadCancel" class="download-cancel" onclick="window.samosaChaat._cancelDownload && window.samosaChaat._cancelDownload()">Cancel</button>
+    </div>
+
+    <!-- Chat header -->
+    <header class="chat-header">
+        <div class="chat-header-left">
+            <button class="chat-home-btn" onclick="navigateToLanding()" title="Back to home">
+                <svg viewBox="0 0 26 26" width="24" height="24" fill="none" stroke="#666" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4,14 L13,5 L22,14"/>
+                    <path d="M6.5,12.5 L6.5,22 L19.5,22 L19.5,12.5"/>
+                    <rect x="10.5" y="16" width="5" height="6" rx="0.4"/>
+                </svg>
+            </button>
+            <h1>samosaChaat</h1>
+        </div>
+
+        <!-- Mini toran -->
+        <div class="chat-toran">
+            <svg viewBox="0 0 30 55" width="22" height="42" fill="none">
+                <line x1="15" y1="0" x2="15" y2="46" stroke="#888" stroke-width="0.8"/>
+                <path d="M14,10 C11,14 9,20 9.5,26 C9.5,28 11,28 12,26 C13,24 13.5,16 14,12Z" fill="#2E8B57" opacity="0.8"/>
+                <path d="M16,13 C19,17 21,23 20.5,29 C20.5,31 19,31 18,29 C17,27 16.5,19 16,15Z" fill="#34A85A" opacity="0.8"/>
+                <path d="M14,24 C11,28 9,33 10,37 C10,38.5 11.5,38.5 12.5,37 C13.5,35 14,30 14,26Z" fill="#2E8B57" opacity="0.8"/>
+                <ellipse cx="15" cy="44" rx="6" ry="5" fill="#F4D03F"/>
+                <ellipse cx="15" cy="44" rx="4.5" ry="3.8" fill="#F7DC6F" opacity="0.5"/>
+            </svg>
+        </div>
+
+        <div class="chat-header-right">
+            <span id="inferenceMode" class="inference-badge">Cloud</span>
             <button class="new-conversation-btn" onclick="newConversation()" title="New Conversation (Ctrl+Shift+N)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M12 5v14"></path>
                     <path d="M5 12h14"></path>
                 </svg>
             </button>
-            <h1>samosaChaat</h1>
         </div>
-    </div>
+    </header>
 
+    <!-- Chat messages -->
     <div class="chat-container" id="chatContainer">
         <div class="chat-wrapper" id="chatWrapper">
-            <!-- Messages will be added here -->
         </div>
     </div>
 
+    <!-- Input -->
     <div class="input-container">
         <div class="input-wrapper">
             <textarea
@@ -274,128 +822,201 @@
             </button>
         </div>
     </div>
+</div>
 
-    <script>
-        const API_URL = '';
-        const chatContainer = document.getElementById('chatContainer');
-        const chatWrapper = document.getElementById('chatWrapper');
-        const chatInput = document.getElementById('chatInput');
-        const sendButton = document.getElementById('sendButton');
 
-        let messages = [];
-        let isGenerating = false;
-        let currentTemperature = 0.8;
-        let currentTopK = 50;
+<script>
+    // ================================================================
+    //  NAVIGATION
+    // ================================================================
+    function navigateToChat() {
+        const landing = document.getElementById('landing-page');
+        const chat = document.getElementById('chat-page');
+        landing.classList.add('page-hidden');
+        setTimeout(() => {
+            landing.style.display = 'none';
+            chat.style.display = 'flex';
+            chat.classList.remove('page-hidden');
+            requestAnimationFrame(() => {
+                chat.style.opacity = '1';
+                chatInput.focus();
+            });
+        }, 450);
+        history.pushState({ page: 'chat' }, '', '#chat');
+    }
 
-        chatInput.addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 200) + 'px';
-            sendButton.disabled = !this.value.trim() || isGenerating;
-        });
+    function navigateToLanding() {
+        const landing = document.getElementById('landing-page');
+        const chat = document.getElementById('chat-page');
+        chat.classList.add('page-hidden');
+        setTimeout(() => {
+            chat.style.display = 'none';
+            landing.style.display = 'flex';
+            landing.classList.remove('page-hidden');
+            requestAnimationFrame(() => { landing.style.opacity = '1'; });
+        }, 450);
+        history.pushState({ page: 'landing' }, '', window.location.pathname);
+    }
 
-        function handleKeyDown(event) {
-            if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                sendMessage();
+    // Handle browser back/forward
+    window.addEventListener('popstate', () => {
+        const landing = document.getElementById('landing-page');
+        const chat = document.getElementById('chat-page');
+        if (window.location.hash === '#chat') {
+            landing.style.display = 'none';
+            landing.classList.remove('page-hidden');
+            chat.style.display = 'flex';
+            chat.classList.remove('page-hidden');
+            chat.style.opacity = '1';
+        } else {
+            chat.style.display = 'none';
+            chat.classList.remove('page-hidden');
+            landing.style.display = 'flex';
+            landing.classList.remove('page-hidden');
+            landing.style.opacity = '1';
+        }
+    });
+
+    // On load: check hash
+    (function initPage() {
+        if (window.location.hash === '#chat') {
+            document.getElementById('landing-page').style.display = 'none';
+            const chat = document.getElementById('chat-page');
+            chat.style.display = 'flex';
+            chat.style.opacity = '1';
+        }
+    })();
+
+
+    // ================================================================
+    //  CHAT FUNCTIONALITY
+    // ================================================================
+    const API_URL = '';
+    const chatContainer = document.getElementById('chatContainer');
+    const chatWrapper = document.getElementById('chatWrapper');
+    const chatInput = document.getElementById('chatInput');
+    const sendButton = document.getElementById('sendButton');
+
+    let messages = [];
+    let isGenerating = false;
+    let currentTemperature = 0.8;
+    let currentTopK = 50;
+
+    // Auto-expand textarea
+    chatInput.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+        sendButton.disabled = !this.value.trim() || isGenerating;
+    });
+
+    function handleKeyDown(event) {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            sendMessage();
+        }
+    }
+
+    // Ctrl+Shift+N for new conversation
+    document.addEventListener('keydown', function(event) {
+        if (event.ctrlKey && event.shiftKey && event.key === 'N') {
+            event.preventDefault();
+            if (!isGenerating) {
+                newConversation();
             }
         }
+    });
 
-        document.addEventListener('keydown', function(event) {
-            // Ctrl+Shift+N for new conversation
-            if (event.ctrlKey && event.shiftKey && event.key === 'N') {
-                event.preventDefault();
-                if (!isGenerating) {
-                    newConversation();
+    function newConversation() {
+        messages = [];
+        chatWrapper.innerHTML = '';
+        chatInput.value = '';
+        chatInput.style.height = 'auto';
+        sendButton.disabled = false;
+        isGenerating = false;
+        chatInput.focus();
+    }
+
+    function addMessage(role, content, messageIndex = null) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${role}`;
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        contentDiv.textContent = content;
+
+        if (role === 'user' && messageIndex !== null) {
+            contentDiv.setAttribute('data-message-index', messageIndex);
+            contentDiv.setAttribute('title', 'Click to edit and restart from here');
+            contentDiv.addEventListener('click', function() {
+                if (!isGenerating) editMessage(messageIndex);
+            });
+        }
+
+        if (role === 'assistant' && messageIndex !== null) {
+            contentDiv.setAttribute('data-message-index', messageIndex);
+            contentDiv.setAttribute('title', 'Click to regenerate this response');
+            contentDiv.addEventListener('click', function() {
+                if (!isGenerating) regenerateMessage(messageIndex);
+            });
+        }
+
+        messageDiv.appendChild(contentDiv);
+        chatWrapper.appendChild(messageDiv);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+        return contentDiv;
+    }
+
+    function editMessage(messageIndex) {
+        if (messageIndex < 0 || messageIndex >= messages.length) return;
+        const messageToEdit = messages[messageIndex];
+        if (messageToEdit.role !== 'user') return;
+
+        chatInput.value = messageToEdit.content;
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 200) + 'px';
+
+        messages = messages.slice(0, messageIndex);
+
+        const allMessages = chatWrapper.querySelectorAll('.message');
+        for (let i = messageIndex; i < allMessages.length; i++) {
+            allMessages[i].remove();
+        }
+
+        sendButton.disabled = false;
+        chatInput.focus();
+    }
+
+    async function generateAssistantResponse() {
+        isGenerating = true;
+        sendButton.disabled = true;
+
+        const assistantContent = addMessage('assistant', '');
+        // Steam-wisp typing indicator
+        assistantContent.innerHTML = '<div class="steam-typing-wrap"><div class="st"></div><div class="st"></div><div class="st"></div><div class="st"></div></div>';
+
+        try {
+            // Check inference mode
+            if (window.samosaChaat._mode === 'local' && window.samosaChaat.generateLocal) {
+                // Local WebGPU inference
+                let fullResponse = '';
+                assistantContent.textContent = '';
+                for await (const token of window.samosaChaat.generateLocal(messages)) {
+                    fullResponse += token;
+                    assistantContent.textContent = fullResponse;
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
                 }
-            }
-        });
-
-        function newConversation() {
-            messages = [];
-            chatWrapper.innerHTML = '';
-            chatInput.value = '';
-            chatInput.style.height = 'auto';
-            sendButton.disabled = false;
-            isGenerating = false;
-            chatInput.focus();
-        }
-
-        function addMessage(role, content, messageIndex = null) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${role}`;
-
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-            contentDiv.textContent = content;
-
-            // Add click handler for user messages to enable editing
-            if (role === 'user' && messageIndex !== null) {
-                contentDiv.setAttribute('data-message-index', messageIndex);
-                contentDiv.setAttribute('title', 'Click to edit and restart from here');
-                contentDiv.addEventListener('click', function() {
-                    if (!isGenerating) {
-                        editMessage(messageIndex);
-                    }
+                const assistantMessageIndex = messages.length;
+                messages.push({ role: 'assistant', content: fullResponse });
+                assistantContent.setAttribute('data-message-index', assistantMessageIndex);
+                assistantContent.setAttribute('title', 'Click to regenerate this response');
+                assistantContent.addEventListener('click', function() {
+                    if (!isGenerating) regenerateMessage(assistantMessageIndex);
                 });
-            }
-
-            // Add click handler for assistant messages to enable regeneration
-            if (role === 'assistant' && messageIndex !== null) {
-                contentDiv.setAttribute('data-message-index', messageIndex);
-                contentDiv.setAttribute('title', 'Click to regenerate this response');
-                contentDiv.addEventListener('click', function() {
-                    if (!isGenerating) {
-                        regenerateMessage(messageIndex);
-                    }
-                });
-            }
-
-            messageDiv.appendChild(contentDiv);
-            chatWrapper.appendChild(messageDiv);
-
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-            return contentDiv;
-        }
-
-        function editMessage(messageIndex) {
-            // Find the message in the messages array
-            if (messageIndex < 0 || messageIndex >= messages.length) return;
-
-            const messageToEdit = messages[messageIndex];
-            if (messageToEdit.role !== 'user') return;
-
-            // Copy message content to input
-            chatInput.value = messageToEdit.content;
-            chatInput.style.height = 'auto';
-            chatInput.style.height = Math.min(chatInput.scrollHeight, 200) + 'px';
-
-            // Remove this message and all subsequent messages from the array
-            messages = messages.slice(0, messageIndex);
-
-            // Remove message elements from DOM starting from messageIndex
-            const allMessages = chatWrapper.querySelectorAll('.message');
-            for (let i = messageIndex; i < allMessages.length; i++) {
-                allMessages[i].remove();
-            }
-
-            // Enable send button and focus input
-            sendButton.disabled = false;
-            chatInput.focus();
-        }
-
-        async function generateAssistantResponse() {
-            isGenerating = true;
-            sendButton.disabled = true;
-
-            const assistantContent = addMessage('assistant', '');
-            assistantContent.innerHTML = '<span class="typing-indicator"></span>';
-
-            try {
+            } else {
+                // Cloud inference (SSE streaming)
                 const response = await fetch(`${API_URL}/chat/completions`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         messages: messages,
                         temperature: currentTemperature,
@@ -429,8 +1050,7 @@
                                     assistantContent.textContent = fullResponse;
                                     chatContainer.scrollTop = chatContainer.scrollHeight;
                                 }
-                            } catch (e) {
-                            }
+                            } catch (e) {}
                         }
                     }
                 }
@@ -438,129 +1058,182 @@
                 const assistantMessageIndex = messages.length;
                 messages.push({ role: 'assistant', content: fullResponse });
 
-                // Add click handler to regenerate this assistant message
                 assistantContent.setAttribute('data-message-index', assistantMessageIndex);
                 assistantContent.setAttribute('title', 'Click to regenerate this response');
                 assistantContent.addEventListener('click', function() {
-                    if (!isGenerating) {
-                        regenerateMessage(assistantMessageIndex);
-                    }
+                    if (!isGenerating) regenerateMessage(assistantMessageIndex);
                 });
-
-            } catch (error) {
-                console.error('Error:', error);
-                assistantContent.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
-            } finally {
-                isGenerating = false;
-                sendButton.disabled = !chatInput.value.trim();
             }
+        } catch (error) {
+            console.error('Error:', error);
+            assistantContent.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+        } finally {
+            isGenerating = false;
+            sendButton.disabled = !chatInput.value.trim();
+        }
+    }
+
+    async function regenerateMessage(messageIndex) {
+        if (messageIndex < 0 || messageIndex >= messages.length) return;
+        const messageToRegenerate = messages[messageIndex];
+        if (messageToRegenerate.role !== 'assistant') return;
+
+        messages = messages.slice(0, messageIndex);
+
+        const allMessages = chatWrapper.querySelectorAll('.message');
+        for (let i = messageIndex; i < allMessages.length; i++) {
+            allMessages[i].remove();
         }
 
-        async function regenerateMessage(messageIndex) {
-            // Find the message in the messages array
-            if (messageIndex < 0 || messageIndex >= messages.length) return;
+        await generateAssistantResponse();
+    }
 
-            const messageToRegenerate = messages[messageIndex];
-            if (messageToRegenerate.role !== 'assistant') return;
+    function handleSlashCommand(command) {
+        const parts = command.trim().split(/\s+/);
+        const cmd = parts[0].toLowerCase();
+        const arg = parts[1];
 
-            // Remove this message and all subsequent messages from the array
-            messages = messages.slice(0, messageIndex);
-
-            // Remove message elements from DOM starting from messageIndex
-            const allMessages = chatWrapper.querySelectorAll('.message');
-            for (let i = messageIndex; i < allMessages.length; i++) {
-                allMessages[i].remove();
-            }
-
-            // Regenerate the assistant response
-            await generateAssistantResponse();
-        }
-
-        function handleSlashCommand(command) {
-            const parts = command.trim().split(/\s+/);
-            const cmd = parts[0].toLowerCase();
-            const arg = parts[1];
-
-            if (cmd === '/temperature') {
-                if (arg === undefined) {
-                    addMessage('console', `Current temperature: ${currentTemperature}`);
+        if (cmd === '/temperature') {
+            if (arg === undefined) {
+                addMessage('console', `Current temperature: ${currentTemperature}`);
+            } else {
+                const temp = parseFloat(arg);
+                if (isNaN(temp) || temp < 0 || temp > 2) {
+                    addMessage('console', 'Invalid temperature. Must be between 0.0 and 2.0');
                 } else {
-                    const temp = parseFloat(arg);
-                    if (isNaN(temp) || temp < 0 || temp > 2) {
-                        addMessage('console', 'Invalid temperature. Must be between 0.0 and 2.0');
-                    } else {
-                        currentTemperature = temp;
-                        addMessage('console', `Temperature set to ${currentTemperature}`);
-                    }
+                    currentTemperature = temp;
+                    addMessage('console', `Temperature set to ${currentTemperature}`);
                 }
-                return true;
-            } else if (cmd === '/topk') {
-                if (arg === undefined) {
-                    addMessage('console', `Current top-k: ${currentTopK}`);
+            }
+            return true;
+        } else if (cmd === '/topk') {
+            if (arg === undefined) {
+                addMessage('console', `Current top-k: ${currentTopK}`);
+            } else {
+                const topk = parseInt(arg);
+                if (isNaN(topk) || topk < 1 || topk > 200) {
+                    addMessage('console', 'Invalid top-k. Must be between 1 and 200');
                 } else {
-                    const topk = parseInt(arg);
-                    if (isNaN(topk) || topk < 1 || topk > 200) {
-                        addMessage('console', 'Invalid top-k. Must be between 1 and 200');
-                    } else {
-                        currentTopK = topk;
-                        addMessage('console', `Top-k set to ${currentTopK}`);
-                    }
+                    currentTopK = topk;
+                    addMessage('console', `Top-k set to ${currentTopK}`);
                 }
-                return true;
-            } else if (cmd === '/clear') {
-                newConversation();
-                return true;
-            } else if (cmd === '/help') {
-                addMessage('console',
-                    'Available commands:\n' +
-                    '/temperature - Show current temperature\n' +
-                    '/temperature <value> - Set temperature (0.0-2.0)\n' +
-                    '/topk - Show current top-k\n' +
-                    '/topk <value> - Set top-k (1-200)\n' +
-                    '/clear - Clear conversation\n' +
-                    '/help - Show this help message'
-                );
-                return true;
             }
-            return false;
+            return true;
+        } else if (cmd === '/clear') {
+            newConversation();
+            return true;
+        } else if (cmd === '/help') {
+            addMessage('console',
+                'Available commands:\n' +
+                '/temperature - Show current temperature\n' +
+                '/temperature <value> - Set temperature (0.0-2.0)\n' +
+                '/topk - Show current top-k\n' +
+                '/topk <value> - Set top-k (1-200)\n' +
+                '/clear - Clear conversation\n' +
+                '/help - Show this help message'
+            );
+            return true;
         }
+        return false;
+    }
 
-        async function sendMessage() {
-            const message = chatInput.value.trim();
-            if (!message || isGenerating) return;
+    async function sendMessage() {
+        const message = chatInput.value.trim();
+        if (!message || isGenerating) return;
 
-            // Handle slash commands
-            if (message.startsWith('/')) {
-                chatInput.value = '';
-                chatInput.style.height = 'auto';
-                handleSlashCommand(message);
-                return;
-            }
-
+        if (message.startsWith('/')) {
             chatInput.value = '';
             chatInput.style.height = 'auto';
-
-            const userMessageIndex = messages.length;
-            messages.push({ role: 'user', content: message });
-            addMessage('user', message, userMessageIndex);
-
-            await generateAssistantResponse();
+            handleSlashCommand(message);
+            return;
         }
 
-        sendButton.disabled = false;
+        chatInput.value = '';
+        chatInput.style.height = 'auto';
 
-        // Autofocus the chat input on page load
+        const userMessageIndex = messages.length;
+        messages.push({ role: 'user', content: message });
+        addMessage('user', message, userMessageIndex);
+
+        await generateAssistantResponse();
+    }
+
+    sendButton.disabled = false;
+
+
+    // ================================================================
+    //  WEBGPU INTEGRATION HOOKS
+    // ================================================================
+    window.samosaChaat = {
+        _mode: 'cloud',
+
+        setInferenceMode(mode) {
+            this._mode = mode;
+            const badge = document.getElementById('inferenceMode');
+            if (mode === 'local') {
+                badge.textContent = 'Local GPU';
+                badge.classList.add('local');
+            } else {
+                badge.textContent = 'Cloud';
+                badge.classList.remove('local');
+            }
+        },
+
+        updateDownloadProgress(loaded, total) {
+            const banner = document.getElementById('downloadBanner');
+            const fill = document.getElementById('progressFill');
+            const pct = document.getElementById('downloadPercent');
+            const text = document.getElementById('downloadText');
+
+            banner.style.display = 'flex';
+            const percent = Math.round((loaded / total) * 100);
+            fill.style.width = percent + '%';
+            const loadedMB = (loaded / 1048576).toFixed(0);
+            const totalMB = (total / 1048576).toFixed(0);
+            text.textContent = `Downloading model for faster local inference... ${loadedMB}/${totalMB} MB`;
+            pct.textContent = `(${percent}%)`;
+        },
+
+        onModelReady() {
+            const banner = document.getElementById('downloadBanner');
+            const text = document.getElementById('downloadText');
+            const fill = document.getElementById('progressFill');
+            const pct = document.getElementById('downloadPercent');
+            const cancel = document.getElementById('downloadCancel');
+
+            fill.style.width = '100%';
+            pct.textContent = '';
+            text.innerHTML = '<span class="download-done">Model loaded on your GPU — responses are now local!</span>';
+            cancel.style.display = 'none';
+
+            this.setInferenceMode('local');
+
+            setTimeout(() => { banner.style.display = 'none'; }, 4000);
+        },
+
+        generateLocal: null,
+        _cancelDownload: null
+    };
+
+
+    // ================================================================
+    //  INIT
+    // ================================================================
+    // Focus chat input if on chat page
+    if (window.location.hash === '#chat') {
         chatInput.focus();
+    }
 
-        fetch(`${API_URL}/health`)
-            .then(response => response.json())
-            .then(data => {
-                console.log('Engine status:', data);
-            })
-            .catch(error => {
-                console.error('Engine not available:', error);
+    // Health check
+    fetch(`${API_URL}/health`)
+        .then(response => response.json())
+        .then(data => { console.log('Engine status:', data); })
+        .catch(error => {
+            console.error('Engine not available:', error);
+            if (window.location.hash === '#chat') {
                 chatWrapper.innerHTML = '<div class="error-message">Engine not running. Please start engine.py first.</div>';
-            });
-    </script>
+            }
+        });
+</script>
 </body>
 </html>
