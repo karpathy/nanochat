@@ -270,6 +270,7 @@ class RustBPETokenizer:
         - ids: list[int] is a list of token ids of this rendered conversation
         - mask: list[int] of same length, mask = 1 for tokens that the Assistant is expected to train on.
         """
+        from nanochat.tools import serialize_tool_call, serialize_tool_result
         # ids, masks that we will return and a helper function to help build them up.
         ids, mask = [], []
         def add_tokens(token_ids, mask_val):
@@ -327,14 +328,29 @@ class RustBPETokenizer:
                         if part["type"] == "text":
                             # string part => simply add the tokens
                             add_tokens(value_ids, 1)
-                        elif part["type"] == "python":
+                        elif part["type"] in {"python", "tool_call"}:
                             # python tool call => add the tokens inside <|python_start|> and <|python_end|>
+                            if part["type"] == "tool_call":
+                                payload = serialize_tool_call(
+                                    tool_name=part["tool_name"],
+                                    arguments=part.get("arguments") or {},
+                                )
+                                value_ids = self.encode(payload)
                             add_tokens(python_start, 1)
                             add_tokens(value_ids, 1)
                             add_tokens(python_end, 1)
-                        elif part["type"] == "python_output":
+                        elif part["type"] in {"python_output", "tool_result"}:
                             # python output => add the tokens inside <|output_start|> and <|output_end|>
                             # none of these tokens are supervised because the tokens come from Python at test time
+                            if part["type"] == "tool_result":
+                                payload = serialize_tool_result(
+                                    tool_name=part["tool_name"],
+                                    output=part.get("output"),
+                                    success=part.get("success", True),
+                                    error=part.get("error"),
+                                    metadata=part.get("metadata"),
+                                )
+                                value_ids = self.encode(payload)
                             add_tokens(output_start, 0)
                             add_tokens(value_ids, 0)
                             add_tokens(output_end, 0)

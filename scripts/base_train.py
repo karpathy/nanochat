@@ -33,6 +33,7 @@ from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from nanochat.flash_attention import HAS_FA3
+from nanochat.tools import DEFAULT_TOOL_SCHEMA
 from scripts.base_eval import evaluate_core
 print_banner()
 
@@ -481,9 +482,12 @@ while True:
             optimizer.state_dict(), # optimizer state
             { # metadata saved as json
                 "step": step,
+                "stage": "base",
                 "val_bpb": val_bpb, # loss at last step
                 "model_config": model_config_kwargs,
                 "user_config": user_config, # inputs to the training script
+                "tool_schema": DEFAULT_TOOL_SCHEMA,
+                "source_hf_repo": os.environ.get("NANOCHAT_SOURCE_HF_REPO"),
                 "device_batch_size": args.device_batch_size,
                 "max_seq_len": args.max_seq_len,
                 "total_batch_size": total_batch_size,

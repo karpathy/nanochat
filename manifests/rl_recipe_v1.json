@@ -1,0 +1,26 @@
+{
+  "name": "rl_recipe_v1",
+  "goal": "Lightweight tool-tuning stage after SFT.",
+  "seed_eval_data": "seed_data/tool_eval_seed.jsonl",
+  "reward_components": [
+    "valid tool call",
+    "correct tool choice",
+    "answer contains expected answer fragment",
+    "citation required when using web_search",
+    "penalty for unnecessary tool calls"
+  ],
+  "external_templates": [
+    {
+      "repo_id": "nvidia/Nemotron-RL-Agentic-Conversational-Tool-Use-Pivot-v1",
+      "role": "tool_use_structure"
+    },
+    {
+      "repo_id": "nvidia/Nemotron-RL-Agentic-Function-Calling-Pivot-v1",
+      "role": "function_call_structure"
+    }
+  ],
+  "notes": [
+    "Keep RL narrow; do not turn this into broad RLHF.",
+    "Use the local tool eval dataset for dry runs before GPU."
+  ]
+}

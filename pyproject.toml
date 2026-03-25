@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 dependencies = [
     "datasets>=4.0.0",
     "fastapi>=0.117.1",
+    "huggingface_hub>=0.34.4",
     "ipykernel>=7.1.0",
     "kernels>=0.11.7",
     "matplotlib>=3.10.8",

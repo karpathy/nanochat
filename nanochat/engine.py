@@ -13,70 +13,10 @@ The whole thing is made as efficient as possible.
 
 import torch
 import torch.nn.functional as F
-import signal
-import warnings
-from contextlib import contextmanager
 from collections import deque
 from nanochat.common import compute_init, autodetect_device_type, COMPUTE_DTYPE
 from nanochat.checkpoint_manager import load_model
-
-# -----------------------------------------------------------------------------
-# Calculator tool helpers
-@contextmanager
-def timeout(duration, formula):
-    def timeout_handler(signum, frame):
-        raise Exception(f"'{formula}': timed out after {duration} seconds")
-
-    signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(duration)
-    yield
-    signal.alarm(0)
-
-def eval_with_timeout(formula, max_time=3):
-    try:
-        with timeout(max_time, formula):
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                return eval(formula, {"__builtins__": {}}, {})
-    except Exception as e:
-        signal.alarm(0)
-        # print(f"Warning: Failed to eval {formula}, exception: {e}") # it's ok ignore wrong calculator usage
-        return None
-
-def use_calculator(expr):
-    """
-    Evaluate a Python expression safely.
-    Supports both math expressions and string operations like .count()
-    """
-    # Remove commas from numbers
-    expr = expr.replace(",", "")
-
-    # Check if it's a pure math expression (old behavior)
-    if all([x in "0123456789*+-/.() " for x in expr]):
-        if "**" in expr:  # disallow power operator
-            return None
-        return eval_with_timeout(expr)
-
-    # Check if it's a string operation we support
-    # Allow: strings (single/double quotes), .count(), letters, numbers, spaces, parens
-    allowed_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'\"()._ "
-    if not all([x in allowed_chars for x in expr]):
-        return None
-
-    # Disallow dangerous patterns
-    dangerous_patterns = ['__', 'import', 'exec', 'eval', 'compile', 'open', 'file',
-                         'input', 'raw_input', 'globals', 'locals', 'vars', 'dir',
-                         'getattr', 'setattr', 'delattr', 'hasattr']
-    expr_lower = expr.lower()
-    if any(pattern in expr_lower for pattern in dangerous_patterns):
-        return None
-
-    # Only allow .count() method for now (can expand later)
-    if '.count(' not in expr:
-        return None
-
-    # Evaluate with timeout
-    return eval_with_timeout(expr)
+from nanochat.tools import build_default_tool_registry, parse_tool_call_payload
 
 # -----------------------------------------------------------------------------
 class KVCache:
@@ -162,15 +102,16 @@ class RowState:
     def __init__(self, current_tokens=None):
         self.current_tokens = current_tokens or [] # Current token sequence for this row
         self.forced_tokens = deque() # Queue of tokens to force inject
-        self.in_python_block = False # Whether we are inside a python block
-        self.python_expr_tokens = [] # Tokens of the current python expression
+        self.in_tool_block = False # Whether we are inside a tool-call block
+        self.tool_payload_tokens = [] # Tokens of the current tool-call payload
         self.completed = False # Whether this row has completed generation
 
 class Engine:
 
-    def __init__(self, model, tokenizer):
+    def __init__(self, model, tokenizer, tools=None):
         self.model = model
         self.tokenizer = tokenizer # needed for tool use
+        self.tools = tools or build_default_tool_registry()
 
     @torch.inference_mode()
     def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
@@ -255,21 +196,34 @@ class Engine:
                     state.completed = True
                 # Handle tool logic
                 if next_token == python_start:
-                    state.in_python_block = True
-                    state.python_expr_tokens = []
-                elif next_token == python_end and state.in_python_block:
-                    state.in_python_block = False
-                    if state.python_expr_tokens:
-                        expr = self.tokenizer.decode(state.python_expr_tokens)
-                        result = use_calculator(expr)
-                        if result is not None:
-                            result_tokens = self.tokenizer.encode(str(result))
+                    state.in_tool_block = True
+                    state.tool_payload_tokens = []
+                elif next_token == python_end and state.in_tool_block:
+                    state.in_tool_block = False
+                    if state.tool_payload_tokens:
+                        payload_text = self.tokenizer.decode(state.tool_payload_tokens)
+                        invocation = parse_tool_call_payload(payload_text)
+                        result = self.tools.execute(invocation.tool_name, invocation.arguments)
+                        legacy_calculator_call = (
+                            invocation.tool_name == "calculator"
+                            and invocation.raw_text.strip()
+                            and not invocation.raw_text.strip().startswith("{")
+                        )
+                        if legacy_calculator_call:
+                            if result.success and isinstance(result.output, dict) and "value" in result.output:
+                                result_text = str(result.output["value"])
+                            else:
+                                result_text = result.error or ""
+                        else:
+                            result_text = result.to_payload()[:4096]
+                        if result_text:
+                            result_tokens = self.tokenizer.encode(result_text)
                             state.forced_tokens.append(output_start)
                             state.forced_tokens.extend(result_tokens)
                             state.forced_tokens.append(output_end)
-                    state.python_expr_tokens = []
-                elif state.in_python_block:
-                    state.python_expr_tokens.append(next_token)
+                    state.tool_payload_tokens = []
+                elif state.in_tool_block:
+                    state.tool_payload_tokens.append(next_token)
 
             # Yield the token column
             yield token_column, token_masks

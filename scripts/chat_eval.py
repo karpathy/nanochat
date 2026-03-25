@@ -22,6 +22,7 @@ from tasks.mmlu import MMLU
 from tasks.arc import ARC
 from tasks.gsm8k import GSM8K
 from tasks.spellingbee import SpellingBee
+from tasks.tool_json import ToolJSON
 
 # -----------------------------------------------------------------------------
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
@@ -156,8 +157,10 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
 
 def run_chat_eval(task_name, model, tokenizer, engine,
                    batch_size=1, num_samples=1, max_new_tokens=512, temperature=0.0, top_k=50,
-                   max_problems=None):
+                   max_problems=None, tool_jsonl=None):
     # Create the evaluation object
+    if task_name == "ToolJSON" and not tool_jsonl:
+        raise ValueError("ToolJSON evaluation requires --tool-jsonl")
     task_module = {
         'HumanEval': HumanEval,
         'MMLU': partial(MMLU, subset="all", split="test"),
@@ -165,6 +168,7 @@ def run_chat_eval(task_name, model, tokenizer, engine,
         'ARC-Challenge': partial(ARC, subset="ARC-Challenge", split="test"),
         'GSM8K': partial(GSM8K, subset="main", split="test"),
         'SpellingBee': partial(SpellingBee, size=256, split="test"),
+        'ToolJSON': partial(ToolJSON, filepath=tool_jsonl),
     }[task_name]
     task_object = task_module()
     # Run the evaluation
@@ -191,6 +195,7 @@ if __name__ == "__main__":
     parser.add_argument('-g', '--model-tag', type=str, default=None, help='Model tag to load')
     parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
     parser.add_argument('-x', '--max-problems', type=int, default=None, help='Max problems to evaluate')
+    parser.add_argument('--tool-jsonl', type=str, default=None, help='Tool JSONL dataset path used when task-name includes ToolJSON')
     parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
     args = parser.parse_args()
 
@@ -224,6 +229,7 @@ if __name__ == "__main__":
             temperature=args.temperature,
             top_k=args.top_k,
             max_problems=args.max_problems,
+            tool_jsonl=args.tool_jsonl,
         )
         results[task_name] = acc
         print0(f"{task_name} accuracy: {100 * acc:.2f}%")
