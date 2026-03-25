@@ -21,6 +21,7 @@ Examples:
 """
 import os
 import csv
+import math
 import time
 import json
 import yaml
@@ -35,7 +36,7 @@ from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir,
 from nanochat.tokenizer import HuggingFaceTokenizer, get_token_bytes
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
-from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
+from nanochat.dataloader import tokenizing_distributed_data_loader_varlen
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 
@@ -48,12 +49,56 @@ class ModelWrapper:
         self.model = model
         self.max_seq_len = max_seq_len
 
-    def __call__(self, input_ids, targets=None, loss_reduction='mean'):
+    def __call__(self, input_ids, targets=None, cu_seqlens=None, loss_reduction='mean'):
+        if cu_seqlens is not None:
+            return self._forward_varlen(input_ids, targets, cu_seqlens, loss_reduction)
         logits = self.model(input_ids).logits
         if targets is None:
             return logits
         loss = torch.nn.functional.cross_entropy(
             logits.view(-1, logits.size(-1)),
+            targets.view(-1),
+            ignore_index=-1,
+            reduction=loss_reduction
+        )
+        return loss
+
+    def _forward_varlen(self, input_ids, targets, cu_seqlens, loss_reduction):
+        """Unpack 1D varlen to padded (B, T), forward through HF model, repack to (1, total_T, V)."""
+        device = input_ids.device
+        doc_lens = cu_seqlens[1:] - cu_seqlens[:-1]
+        num_docs = (doc_lens > 0).sum().item()
+        max_doc_len = doc_lens.max().item()
+
+        # Unpack: 1D -> padded (num_docs, max_doc_len)
+        batched = torch.zeros(num_docs, max_doc_len, dtype=input_ids.dtype, device=device)
+        doc_idx = 0
+        for i in range(len(doc_lens)):
+            length = doc_lens[i].item()
+            if length == 0:
+                continue
+            start = cu_seqlens[i].item()
+            batched[doc_idx, :length] = input_ids[start:start + length]
+            doc_idx += 1
+
+        logits = self.model(batched).logits  # (num_docs, max_doc_len, V)
+
+        # Repack: padded (num_docs, max_doc_len, V) -> (1, total_T, V)
+        total_T = input_ids.size(0)
+        packed = torch.empty(1, total_T, logits.size(-1), dtype=logits.dtype, device=device)
+        doc_idx = 0
+        for i in range(len(doc_lens)):
+            length = doc_lens[i].item()
+            if length == 0:
+                continue
+            start = cu_seqlens[i].item()
+            packed[0, start:start + length] = logits[doc_idx, :length]
+            doc_idx += 1
+
+        if targets is None:
+            return packed
+        loss = torch.nn.functional.cross_entropy(
+            packed.view(-1, packed.size(-1)),
             targets.view(-1),
             ignore_index=-1,
             reduction=loss_reduction
@@ -269,8 +314,10 @@ def main():
             print0(f"Adjusted split_tokens to {args.split_tokens} (must be divisible by {tokens_per_step})")
         steps = args.split_tokens // tokens_per_step
 
+        avg_num_docs = args.device_batch_size * sequence_len // 400
+        max_num_docs = math.ceil(avg_num_docs / 16) * 16
         for split_name in ["train", "val"]:
-            loader = tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, sequence_len, split_name, device=device)
+            loader = tokenizing_distributed_data_loader_varlen(tokenizer, args.device_batch_size, sequence_len, split_name, max_num_docs=max_num_docs, device=device)
             bpb = evaluate_bpb(model, loader, steps, token_bytes)
             bpb_results[split_name] = bpb
             print0(f"{split_name} bpb: {bpb:.6f}")

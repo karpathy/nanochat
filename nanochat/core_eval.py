@@ -101,15 +101,6 @@ def find_common_length(token_sequences, direction='left'):
     return min_len
 
 
-def stack_sequences(tokens, pad_token_id):
-    """Stack up a list of token sequences, pad to longest on the right"""
-    bsz, seq_len = len(tokens), max(len(x) for x in tokens)
-    input_ids = torch.full((bsz, seq_len), pad_token_id, dtype=torch.long)
-    for i, x in enumerate(tokens):
-        input_ids[i, :len(x)] = torch.tensor(x, dtype=torch.long)
-    return input_ids
-
-
 def batch_sequences_mc(tokenizer, prompts):
     # In multiple choice, contexts are the same but the continuation is different (common prefix)
     tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
@@ -142,26 +133,31 @@ def batch_sequences_lm(tokenizer, prompts):
 
 
 @torch.no_grad()
-def forward_model(model, input_ids):
+def forward_model(model, tokens_list, device):
     """
-    Take BxT tensor of token ids, return BxT tensor of losses and argmax predictions.
-    The last column of losses is set to nan because we don't have autoregressive targets there.
+    Pack token sequences into varlen, forward, extract per-sequence losses and predictions.
+    Returns (losses_list, preds_list) where each element corresponds to one input sequence.
+    The last element of each loss vector is nan (no autoregressive target there).
     """
-    batch_size, seq_len = input_ids.size()
-    outputs = model(input_ids)
-    # Roll the tensor to the left by one position to get the (autoregressive) target ids
-    target_ids = torch.roll(input_ids, shifts=-1, dims=1)
-    # Calculate cross entropy at all positions
-    losses = torch.nn.functional.cross_entropy(
-        outputs.view(batch_size * seq_len, -1),
-        target_ids.view(batch_size * seq_len),
-        reduction='none'
-    ).view(batch_size, seq_len)
-    # Set the last column to be nan because there is no autoregressive loss there
-    losses[:, -1] = float('nan')
-    # Get the argmax predictions at each position
-    predictions = outputs.argmax(dim=-1)
-    return losses, predictions
+    packed = torch.cat([torch.tensor(t, dtype=torch.long, device=device) for t in tokens_list])
+    cu_seqlens = torch.zeros(len(tokens_list) + 1, dtype=torch.int32, device=device)
+    for i, t in enumerate(tokens_list):
+        cu_seqlens[i + 1] = cu_seqlens[i] + len(t)
+
+    outputs = model(packed, cu_seqlens=cu_seqlens).squeeze(0)  # (total_T, V)
+
+    losses_list = []
+    preds_list = []
+    for i in range(len(tokens_list)):
+        s, e = cu_seqlens[i].item(), cu_seqlens[i + 1].item()
+        doc_logits = outputs[s:e]
+        doc_tokens = packed[s:e]
+        doc_targets = torch.roll(doc_tokens, -1)
+        doc_losses = torch.nn.functional.cross_entropy(doc_logits[:-1], doc_targets[:-1], reduction='none')
+        doc_losses = torch.cat([doc_losses, torch.tensor([float('nan')], device=device)])
+        losses_list.append(doc_losses)
+        preds_list.append(doc_logits.argmax(dim=-1))
+    return losses_list, preds_list
 
 
 @torch.no_grad()
@@ -212,26 +208,21 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
                 new_end_idxs.append(e)
         tokens, start_idxs, end_idxs = new_tokens, new_start_idxs, new_end_idxs
 
-    # Stack up all the sequences into a batch
-    pad_token_id = tokenizer.get_bos_token_id() # use BOS as pad token is ok
-    input_ids = stack_sequences(tokens, pad_token_id)
-    input_ids = input_ids.to(device)
-
-    # Forward the model, get the autoregressive loss and argmax prediction at each token
-    losses, predictions = forward_model(model, input_ids)
+    # Forward the model with varlen packing (no padding waste)
+    losses_list, preds_list = forward_model(model, tokens, device)
 
     # See if the losses/predictions come out correctly
     if task_type == 'language_modeling':
         # language modeling task is currently always batch size 1
         si = start_idxs[0]
         ei = end_idxs[0]
-        # predictions[i] predict input_ids[i+1] autoregressively
-        predicted_tokens = predictions[0, si-1:ei-1]
-        actual_tokens = input_ids[0, si:ei]
+        # preds_list[i][j] predicts tokens[i][j+1] autoregressively
+        predicted_tokens = preds_list[0][si-1:ei-1]
+        actual_tokens = torch.tensor(tokens[0][si:ei], device=device)
         is_correct = torch.all(predicted_tokens == actual_tokens).item()
     elif task_type in ['multiple_choice', 'schema']:
         # For MC/schema: find the option with lowest average loss
-        mean_losses = [losses[i, si-1:ei-1].mean().item()
+        mean_losses = [losses_list[i][si-1:ei-1].mean().item()
                         for i, (si, ei) in enumerate(zip(start_idxs, end_idxs))]
         pred_idx = mean_losses.index(min(mean_losses))
         is_correct = pred_idx == item['gold']

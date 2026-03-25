@@ -89,7 +89,6 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
 
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     device = model.get_device()
-    bos = tokenizer.get_bos_token_id() # use BOS as pad token is ok, these positions are ignored
 
     # We'll process batches of independent problems at a time because there is no sampling needed
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
@@ -102,17 +101,18 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
     for i in range(ddp_rank, num_batches, ddp_world_size):
         i0, i1 = i * batch_size, min((i + 1) * batch_size, num_problems)
 
-        # Prepare the batch of problems. They might all be of different length, so we pad/collate them.
+        # Prepare the batch of problems and pack into varlen (no padding waste)
         conversations = [task_object[ii] for ii in range(i0, i1)]
         prompt_ids = [tokenizer.render_for_completion(conversation) for conversation in conversations] # TODO: remake the way this works
-        max_length = max(len(ids) for ids in prompt_ids)
         answer_time_positions = [len(ids) - 1 for ids in prompt_ids] # where the last token is (and the predicted answer)
-        padded_prompt_ids = [ids + [bos] * (max_length - len(ids)) for ids in prompt_ids]
-        prompt_ids = torch.tensor(padded_prompt_ids, dtype=torch.long, device=device)
+        packed = torch.cat([torch.tensor(ids, dtype=torch.long, device=device) for ids in prompt_ids])
+        cu_seqlens = torch.zeros(len(prompt_ids) + 1, dtype=torch.int32, device=device)
+        for j, ids in enumerate(prompt_ids):
+            cu_seqlens[j + 1] = cu_seqlens[j] + len(ids)
 
         # Get the logits for the whole batch of conversations in parallel (efficiency win here)
         with torch.no_grad():
-            logits = model(prompt_ids) # (B, T, V)
+            logits = model(packed, cu_seqlens=cu_seqlens).squeeze(0)  # (total_T, V)
 
         # Focus on the available answer on just the letters corresponding to choices
         # Note that this helps the evaluation a lot because it specifically narrows the focus to only the available letters
@@ -130,7 +130,7 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
                 letter_ids.append(letter_to_id_cache[letter])
             # focus logits just down to the answer position and the available letters of the answer
             answer_pos = answer_time_positions[idx]
-            focus_logits = logits[idx, answer_pos, letter_ids]
+            focus_logits = logits[cu_seqlens[idx].item() + answer_pos, letter_ids]
             # get the argmax letter (the predicted answer)
             argmax_letter_id = focus_logits.argmax(dim=-1).item()
             predicted_letter = letters[argmax_letter_id]

@@ -84,7 +84,6 @@ print0(f"Calculated number of steps: {num_steps}")
 
 @torch.no_grad()
 def get_batch():
-    assistant_end = tokenizer.encode_special("<|assistant_end|>") # ok to use this token, it's only for padding and isn't used in the loss.
     rank_indices = range(ddp_rank, len(train_task), ddp_world_size) # each rank is responsible for different examples in the training data
     for example_idx in itertools.cycle(rank_indices):
 
@@ -125,25 +124,30 @@ def get_batch():
             reward = train_task.reward(conversation, generated_text)
             rewards.append(reward)
 
-        # Pad the sequences so that their lengths (in time) match
-        max_length = max(len(seq) for seq in generated_token_sequences)
-        padded_generated_token_sequences = [seq + [assistant_end] * (max_length - len(seq)) for seq in generated_token_sequences]
-        padded_masks = [mask + [0] * (max_length - len(mask)) for mask in masks]
-        # Stack up the sequences and masks into PyTorch tensors
-        ids = torch.tensor(padded_generated_token_sequences, dtype=torch.long, device=device)
-        mask_ids = torch.tensor(padded_masks, dtype=torch.long, device=device)
-        # Generate autoregressive inputs and targets to the Transformer
-        inputs = ids[:, :-1]
-        targets = ids[:, 1:].clone() # clone to avoid in-place modification:
-        targets[mask_ids[:, 1:] == 0] = -1 # <-- inplace modification right here. -1 is the ignore index
+        # Pack the sequences into a 1D buffer (varlen packing, no padding needed)
+        # Generate autoregressive inputs and targets for each sequence
+        input_seqs = []
+        target_seqs = []
+        for seq, mask in zip(generated_token_sequences, masks):
+            seq_t = torch.tensor(seq, dtype=torch.long, device=device)
+            mask_t = torch.tensor(mask, dtype=torch.long, device=device)
+            input_seqs.append(seq_t[:-1])
+            tgt = seq_t[1:].clone() # clone to avoid in-place modification:
+            tgt[mask_t[1:] == 0] = -1 # <-- inplace modification right here. -1 is the ignore index
+            target_seqs.append(tgt)
         # NOTE also that the Engine returns mask=0 for BOTH the prompt tokens AND the tool use tokens.
         # So we will (correctly) end up not training on the prompt tokens, or the tool use forced tokens.
+        # Concatenate the sequences and masks into 1D PyTorch tensors
+        inputs = torch.cat(input_seqs)
+        targets = torch.cat(target_seqs)
+        lengths = torch.tensor([len(s) for s in input_seqs], dtype=torch.int32, device=device)
+        cu_seqlens = torch.cat([lengths.new_zeros(1), lengths.cumsum(0)]).to(torch.int32)
         rewards = torch.tensor(rewards, dtype=torch.float, device=device)
         # Calculate the advantages by simply subtracting the mean (instead of z-score (x-mu)/sigma)
         mu = rewards.mean()
         advantages = rewards - mu
-        # yield inputs/targets as (B, T) of ids and rewards as (B,) of floats
-        yield generated_token_sequences, inputs, targets, rewards, advantages
+        # yield packed 1D inputs/targets with cu_seqlens, and rewards/advantages as (B,) of floats
+        yield generated_token_sequences, inputs, targets, cu_seqlens, rewards, advantages
 
 # -----------------------------------------------------------------------------
 # Simple evaluation loop for GSM8K pass@k
@@ -247,23 +251,31 @@ for step in range(num_steps):
     sequence_lengths = []
     for example_step in range(examples_per_rank):
         # Get one batch corresponding to one example in the training dataset
-        sequences_all, inputs_all, targets_all, rewards_all, advantages_all = next(batch_iterator)
+        sequences_all, inputs_all, targets_all, cu_seqlens_all, rewards_all, advantages_all = next(batch_iterator)
         # Evaluate the loss and gradients
         model.train() # ensure the model is in train mode
         # We need one more loop because we can never exceed the device_batch_size
-        assert inputs_all.size(0) % args.device_batch_size == 0
-        num_passes = inputs_all.size(0) // args.device_batch_size
+        num_seqs = len(cu_seqlens_all) - 1
+        assert num_seqs % args.device_batch_size == 0
+        num_passes = num_seqs // args.device_batch_size
         for pass_idx in range(num_passes):
-            # Pluck out the batch for this pass
+            # Pluck out the sub-batch for this pass from the packed 1D buffer
             b0, b1 = pass_idx * args.device_batch_size, (pass_idx + 1) * args.device_batch_size
-            inputs = inputs_all[b0:b1]
-            targets = targets_all[b0:b1]
+            t0, t1 = cu_seqlens_all[b0].item(), cu_seqlens_all[b1].item()
+            inputs = inputs_all[t0:t1]
+            targets = targets_all[t0:t1]
+            cu_seqlens = cu_seqlens_all[b0:b1+1] - cu_seqlens_all[b0]
             rewards = rewards_all[b0:b1]
             advantages = advantages_all[b0:b1]
             # Calculate log probabilities. Note that the loss calculates NLL = -logp, so we negate
-            logp = -model(inputs, targets, loss_reduction='none').view_as(inputs) # (B, T)
+            logp = -model(inputs, targets, cu_seqlens=cu_seqlens, loss_reduction='none') # (T_sub,)
+            # Expand per-sequence advantages to per-token positions using cu_seqlens boundaries
+            token_advantages = torch.zeros_like(logp)
+            for i in range(b1 - b0):
+                s, e = cu_seqlens[i].item(), cu_seqlens[i+1].item()
+                token_advantages[s:e] = advantages[i]
             # Calculate the PG objective. Note that ignore_index=-1 ensures that invalid tokens have loss 0.
-            pg_obj = (logp * advantages.unsqueeze(-1)).sum()
+            pg_obj = (logp * token_advantages).sum()
             # normalize by the number of valid tokens, number of passes, and examples_per_rank
             num_valid = (targets >= 0).sum().clamp(min=1)
             pg_obj = pg_obj / (num_valid * num_passes * examples_per_rank)

@@ -200,3 +200,36 @@ This commit is special because all of the improvements that went into [this comm
 ## Run 6
 
 Achieved Mar 14, 2026 on commit `a825e63`. Exactly the same launch command as Run 4 except `--target-param-data-ratio=8`. Improvements in the architecture are allowing us to train shorter and shorter time. Instead of an undertrained d24 I attempted to train an overtrained d22 but it was worse. This set of changes came from autoresearch round 2, where I asked it to reference the modded-nanogpt repo for inspiration. So the exploration tried out a number of ideas and in particular found a way to incorporate the backout and smear in such a way that they are helpful (I had previously tried them manually a long time ago and they caused regressions). The smear idea in particular is a little bit heavier and bloaty because it is essentially an "early fusion" of context across tokens, producing a kind of a bigram input into the network and allowing it to focus on higher ngrams earlier. But for this reason the code gets a bit more complex and required some changes to inference. I verified with a unit test that the Engine inference is correct compared to the naive inference of `GPT.generate()`. The average of 5 runs was CORE 0.262634 and each of them lasted 1.65 hours (99 minutes).
+
+## Run 7
+
+Achieved Mar 22, 2026 on commit `a075166`. Launch command (same as `runs/speedrun.sh`):
+
+```
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+    --depth=24 \
+    --run="d24-varlen" \
+    --model-tag="d24-varlen" \
+    --device-batch-size=16 \
+    --sample-every=-1 \
+    --save-every=-1 \
+    --core-metric-max-per-task=-1 \
+    --core-metric-every=999999 \
+    --target-param-data-ratio=8 \
+    --fp8
+```
+
+Result:
+
+```
+step 05567/05568 (99.98%) | loss: 2.388741 | lrm: 0.05 | dt: 1048.30ms | tok/sec: 1,000,264 | bf16_mfu: 60.37 | epoch: 1 pq: 117 rg: 64 | total time: 97.38m | eta: 0.0m
+Step 05568 | Validation bpb: 0.724772
+Step 05568 | CORE metric: 0.2614
+Peak memory usage: 52865.94MiB
+Total training time: 97.38m
+Minimum validation bpb: 0.724772
+```
+
+The big change in this run is switching nanochat's entire pre-training attention path from standard batched attention to FlashAttention's variable-length packed attention (`flash_attn_varlen_func` with `cu_seqlens`). Each document now attends only to itself, which saves compute by not calculating attention scores across document boundaries. The dataloader is also simplified: the old bestfit bin-packing is replaced by greedy 1D packing where only the final document in each micro-batch is truncated. See the PR description in [dev/PULL_REQUEST.md](PULL_REQUEST.md) for full details.
+
+Previous record was 1.65 hours / 99 minutes (Run 6), so 1.62 hours / 97.38 minutes is ~1.8% speed improvement. Model checkpoint: [ChrisMcCormick/nanochat-varlen-d24-2026-03-22](https://huggingface.co/ChrisMcCormick/nanochat-varlen-d24-2026-03-22).
