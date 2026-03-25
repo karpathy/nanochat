@@ -31,6 +31,7 @@ from tasks.mmlu import MMLU
 from tasks.smoltalk import SmolTalk
 from tasks.customjson import CustomJSON
 from tasks.spellingbee import SimpleSpelling, SpellingBee
+from nanochat.tools import DEFAULT_TOOL_SCHEMA
 
 # -----------------------------------------------------------------------------
 # CLI arguments
@@ -66,6 +67,8 @@ parser.add_argument("--chatcore-max-sample", type=int, default=24, help="max pro
 # Data mixture
 parser.add_argument("--mmlu-epochs", type=int, default=3, help="number of epochs of MMLU in training mixture (teaches Multiple Choice)")
 parser.add_argument("--gsm8k-epochs", type=int, default=4, help="number of epochs of GSM8K in training mixture (teaches Math and Tool Use)")
+parser.add_argument("--extra-train-jsonl", type=str, default="", help="comma-separated JSONL conversation files to append to the SFT train mixture")
+parser.add_argument("--extra-val-jsonl", type=str, default="", help="comma-separated JSONL conversation files to append to the SFT val mixture")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
@@ -162,6 +165,8 @@ for group in optimizer.param_groups:
 
 # SFT data mixture and DataLoader
 identity_conversations_filepath = os.path.join(base_dir, "identity_conversations.jsonl")
+extra_train_jsonl = [path for path in args.extra_train_jsonl.split(",") if path]
+extra_val_jsonl = [path for path in args.extra_val_jsonl.split(",") if path]
 train_tasks = [
     SmolTalk(split="train"), # 460K rows of general conversations
     CustomJSON(filepath=identity_conversations_filepath), # 1000 rows of synthetic identity conversations
@@ -171,13 +176,17 @@ train_tasks = [
     SimpleSpelling(size=200000, split="train"), # 200K rows of Simple Spelling (e.g. spell the word 'apple')
     SpellingBee(size=80000, split="train"), # 80K rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
 ]
+train_tasks.extend(CustomJSON(filepath=path) for path in extra_train_jsonl)
 train_dataset = TaskMixture(train_tasks)
-print0(f"Training mixture: {len(train_dataset):,} rows (MMLU x{args.mmlu_epochs}, GSM8K x{args.gsm8k_epochs})")
+print0(
+    f"Training mixture: {len(train_dataset):,} rows "
+    f"(MMLU x{args.mmlu_epochs}, GSM8K x{args.gsm8k_epochs}, extra_jsonl={len(extra_train_jsonl)})"
+)
 val_dataset = TaskMixture([
     SmolTalk(split="test"), # 24K rows in test set
     MMLU(subset="all", split="test", stop=5200), # 14K rows in test set, use only 5.2K to match the train ratios
     GSM8K(subset="main", split="test", stop=420), # 1.32K rows in test set, use only 420 to match the train ratios
-]) # total: 24K + 14K + 1.32K ~= 39K rows
+] + [CustomJSON(filepath=path) for path in extra_val_jsonl]) # total: 24K + 14K + 1.32K ~= 39K rows plus custom validation
 # DataLoader is defined here, it emits inputs, targets : 2D tensors of shape (device_batch_size, max_seq_len)
 # A big problem is that we don't know the final num_iterations in advance. So we create
 # these two global variables and update them from within the data generator.
@@ -406,6 +415,7 @@ while True:
             optimizer.state_dict(),
             {
                 "step": step,
+                "stage": "sft",
                 "val_bpb": val_bpb, # loss at last step
                 "model_config": {
                     "sequence_len": args.max_seq_len,
@@ -417,6 +427,10 @@ while True:
                     "window_pattern": model.config.window_pattern,
                 },
                 "user_config": user_config, # inputs to the training script
+                "tool_schema": DEFAULT_TOOL_SCHEMA,
+                "source_hf_repo": meta.get("source_hf_repo"),
+                "extra_train_jsonl": extra_train_jsonl,
+                "extra_val_jsonl": extra_val_jsonl,
             },
             rank=ddp_rank,
         )

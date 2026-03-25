@@ -25,6 +25,7 @@ import torch.distributed as dist
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type
 from nanochat.checkpoint_manager import save_checkpoint, load_model
 from nanochat.engine import Engine
+from nanochat.tools import DEFAULT_TOOL_SCHEMA
 from tasks.gsm8k import GSM8K
 
 # -----------------------------------------------------------------------------
@@ -317,7 +318,12 @@ for step in range(num_steps):
             model.state_dict(),
             None, # note: we don't bother to save the optimizer state
             {
+                "step": step,
+                "stage": "rl",
                 "model_config": model_config_kwargs,
+                "user_config": user_config,
+                "tool_schema": DEFAULT_TOOL_SCHEMA,
+                "source_hf_repo": meta.get("source_hf_repo"),
             }
         )
         print(f"✅ Saved model checkpoint to {checkpoint_dir}")

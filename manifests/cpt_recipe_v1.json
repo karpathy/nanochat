@@ -1,0 +1,31 @@
+{
+  "name": "cpt_recipe_v1",
+  "goal": "Continue pretraining nanochat-d24 on a safe, high-value mixture for a 48-hour run.",
+  "backbone_dataset": {
+    "repo_id": "karpathy/climbmix-400b-shuffle",
+    "role": "primary",
+    "notes": "Use ClimbMix as the main pretraining backbone because it is already the best-performing dataset in this fork."
+  },
+  "optional_augmentations": [
+    {
+      "repo_id": "nvidia/Nemotron-Pretraining-Code-v2",
+      "role": "code",
+      "notes": "Selective code augmentation only."
+    },
+    {
+      "repo_id": "nvidia/Nemotron-CC-Math-v1",
+      "role": "math_science",
+      "notes": "Selective math/science augmentation only."
+    },
+    {
+      "repo_id": "nvidia/Nemotron-Pretraining-Specialized-v1.1",
+      "role": "specialized_web",
+      "notes": "Use sparingly for targeted specialization."
+    }
+  ],
+  "do_not_do": [
+    "Do not replace ClimbMix wholesale.",
+    "Do not attempt architecture changes during this 48-hour continuation run.",
+    "Do not rely on continued pretraining for current-events freshness."
+  ]
+}

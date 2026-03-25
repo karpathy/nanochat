@@ -1,0 +1,32 @@
+{
+  "name": "sft_recipe_v1",
+  "goal": "Teach instruction following, tool routing, grounded web answers, and calculator usage.",
+  "base_mixture": [
+    {
+      "source": "existing_nanochat",
+      "notes": "Keep the existing chat mixture in scripts/chat_sft.py as the base."
+    },
+    {
+      "source": "local_seed_data",
+      "path": "seed_data/tool_sft_seed.jsonl",
+      "notes": "Seed examples for direct answers, calculator, and web_search."
+    }
+  ],
+  "external_templates": [
+    {
+      "repo_id": "nvidia/Nemotron-Instruction-Following-Chat-v1",
+      "role": "instruction_following"
+    },
+    {
+      "collection": "nvidia/nemotron-post-training-v3",
+      "role": "agentic_templates"
+    }
+  ],
+  "target_behaviors": [
+    "Answer directly when no tool is needed.",
+    "Use calculator for exact numeric computation.",
+    "Use web_search for recency and external facts.",
+    "Cite URLs when the response depends on retrieved web content.",
+    "Avoid unnecessary tool calls."
+  ]
+}
