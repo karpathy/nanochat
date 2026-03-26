@@ -55,7 +55,7 @@ parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding 
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
-parser.add_argument("--target-param-data-ratio", type=float, default=10.5, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
+parser.add_argument("--target-param-data-ratio", type=float, default=12, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
 # Optimization
 parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size. good number to reduce to 16,8,4,... if you OOM on VRAM.")
 parser.add_argument("--total-batch-size", type=int, default=-1, help="total batch size in tokens. decent numbers are e.g. 524288. (-1 = auto-compute optimal)")
@@ -218,12 +218,13 @@ def disable_fp8(model):
         return
 
     # Swap Float8Linear -> Linear (our custom class that casts weights to match input dtype)
+    # Use device="meta" to avoid VRAM spike - the weight tensor will be swapped in afterwards
     for parent, attr_name, fp8_module in fp8_locations:
         linear = Linear(
             fp8_module.in_features,
             fp8_module.out_features,
             bias=fp8_module.bias is not None,
-            device=fp8_module.weight.device,
+            device="meta",  # Use meta device to avoid unnecessary VRAM allocation
             dtype=fp8_module.weight.dtype,
         )
         linear.weight = fp8_module.weight  # share, don't copy
