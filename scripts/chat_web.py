@@ -150,11 +150,6 @@ class ChatRequest(BaseModel):
     max_tokens: Optional[int] = None
     top_k: Optional[int] = None
 
-def build_conversation_tokens(tokenizer, messages: List[ChatMessage], sequence_len: int):
-    """Render the request with the tokenizer's guarded prompt builder."""
-    conversation = {"messages": [message.model_dump() for message in messages]}
-    return tokenizer.render_for_assistant_reply(conversation, max_tokens=sequence_len)
-
 def validate_chat_request(request: ChatRequest):
     """Validate chat request to prevent abuse."""
     # Check number of messages
@@ -186,42 +181,13 @@ def validate_chat_request(request: ChatRequest):
             detail=f"Total conversation is too long. Maximum {MAX_TOTAL_CONVERSATION_LENGTH} characters allowed"
         )
 
-    # Validate role values and ordering
-    allowed_roles = ["system", "user", "assistant"]
+    # Validate role values
     for i, message in enumerate(request.messages):
-        if message.role not in allowed_roles:
+        if message.role not in ["user", "assistant"]:
             raise HTTPException(
                 status_code=400,
                 detail=f"Message {i} has invalid role. Must be 'user', 'assistant', or 'system'"
             )
-    if request.messages[0].role == "system":
-        if len(request.messages) < 2 or request.messages[1].role != "user":
-            raise HTTPException(
-                status_code=400,
-                detail="A system message must be followed by a user message"
-            )
-        start_idx = 1
-    elif request.messages[0].role == "user":
-        start_idx = 0
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="The first message must be from 'user' or 'system'"
-        )
-
-    for i, message in enumerate(request.messages[start_idx:], start=start_idx):
-        expected_role = "user" if (i - start_idx) % 2 == 0 else "assistant"
-        if message.role != expected_role:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Message {i} must be from '{expected_role}'"
-            )
-
-    if request.messages[-1].role != "user":
-        raise HTTPException(
-            status_code=400,
-            detail="The last message must be from 'user'"
-        )
 
     # Validate temperature
     if request.temperature is not None:
@@ -354,12 +320,25 @@ async def chat_completions(request: ChatRequest):
     worker = await worker_pool.acquire_worker()
 
     try:
-        # Build conversation tokens using the tokenizer helper so prompt length stays bounded
-        conversation_tokens = build_conversation_tokens(
-            worker.tokenizer,
-            request.messages,
-            worker.engine.model.config.sequence_len,
-        )
+        # Build conversation tokens
+        bos = worker.tokenizer.get_bos_token_id()
+        user_start = worker.tokenizer.encode_special("<|user_start|>")
+        user_end = worker.tokenizer.encode_special("<|user_end|>")
+        assistant_start = worker.tokenizer.encode_special("<|assistant_start|>")
+        assistant_end = worker.tokenizer.encode_special("<|assistant_end|>")
+
+        conversation_tokens = [bos]
+        for message in request.messages:
+            if message.role == "user":
+                conversation_tokens.append(user_start)
+                conversation_tokens.extend(worker.tokenizer.encode(message.content))
+                conversation_tokens.append(user_end)
+            elif message.role == "assistant":
+                conversation_tokens.append(assistant_start)
+                conversation_tokens.extend(worker.tokenizer.encode(message.content))
+                conversation_tokens.append(assistant_end)
+
+        conversation_tokens.append(assistant_start)
 
         # Streaming response with worker release after completion
         response_tokens = []

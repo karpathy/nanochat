@@ -364,17 +364,7 @@ class RustBPETokenizer:
                 tokens.append(f"{GRAY}({token_id}){RESET}")
         return '|'.join(tokens)
 
-    def render_for_assistant_reply(self, conversation, max_tokens=2048):
-        """
-        Render a conversation that ends with a user turn and prime the Assistant for reply.
-        """
-        assert max_tokens >= 1, "max_tokens must reserve space for <|assistant_start|>"
-        ids, mask = self.render_conversation(conversation, max_tokens=max_tokens - 1)
-        assistant_start = self.encode_special("<|assistant_start|>")
-        ids.append(assistant_start)
-        return ids
-
-    def render_for_completion(self, conversation, max_tokens=2048):
+    def render_for_completion(self, conversation):
         """
         Used during Reinforcement Learning. In that setting, we want to
         render the conversation priming the Assistant for a completion.
@@ -386,7 +376,13 @@ class RustBPETokenizer:
         assert messages[-1]["role"] == "assistant", "Last message must be from the Assistant"
         messages.pop() # remove the last message (of the Assistant) inplace
 
-        return self.render_for_assistant_reply(conversation, max_tokens=max_tokens)
+        # Now tokenize the conversation
+        ids, mask = self.render_conversation(conversation)
+
+        # Finally, to prime the Assistant for a completion, append the Assistant start token
+        assistant_start = self.encode_special("<|assistant_start|>")
+        ids.append(assistant_start)
+        return ids
 
 # -----------------------------------------------------------------------------
 # nanochat-specific convenience functions
