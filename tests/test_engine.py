@@ -4,8 +4,10 @@ Test Engine class. Example run:
 python -m pytest tests/test_engine.py -v
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 import torch
-from nanochat.engine import KVCache, Engine
+from nanochat.engine import KVCache, Engine, use_calculator
 from dataclasses import dataclass
 
 
@@ -265,3 +267,11 @@ def test_different_seeds_introduce_variation_when_temperature_nonzero():
 
     # Sanity check: sampling actually introduces variation
     assert len(outputs) > 1, "All seeds produced the same output which is statistically highly improbable."
+
+
+def test_use_calculator_works_off_main_thread():
+    """Calculator evaluation should not rely on process-global signal handlers."""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = executor.submit(use_calculator, "40 + 2").result(timeout=2)
+
+    assert result == 42

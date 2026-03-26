@@ -11,36 +11,81 @@ Notes:
 The whole thing is made as efficient as possible.
 """
 
+import ast
+import operator
+
 import torch
 import torch.nn.functional as F
-import signal
-import warnings
-from contextlib import contextmanager
 from collections import deque
 from nanochat.common import compute_init, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
-@contextmanager
-def timeout(duration, formula):
-    def timeout_handler(signum, frame):
-        raise Exception(f"'{formula}': timed out after {duration} seconds")
+_BINARY_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+}
 
-    signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(duration)
-    yield
-    signal.alarm(0)
+_UNARY_OPERATORS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
+
+
+def _eval_calculator_ast(node):
+    """Evaluate a restricted expression tree for the inline calculator tool."""
+    if isinstance(node, ast.Expression):
+        return _eval_calculator_ast(node.body)
+
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, (int, float, str)):
+            return node.value
+        raise ValueError(f"Unsupported constant: {type(node.value).__name__}")
+
+    if isinstance(node, ast.BinOp):
+        op = _BINARY_OPERATORS.get(type(node.op))
+        if op is None:
+            raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
+        left = _eval_calculator_ast(node.left)
+        right = _eval_calculator_ast(node.right)
+        if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
+            raise ValueError("Binary operators only support numeric operands")
+        return op(left, right)
+
+    if isinstance(node, ast.UnaryOp):
+        op = _UNARY_OPERATORS.get(type(node.op))
+        if op is None:
+            raise ValueError(f"Unsupported unary operator: {type(node.op).__name__}")
+        operand = _eval_calculator_ast(node.operand)
+        if not isinstance(operand, (int, float)):
+            raise ValueError("Unary operators only support numeric operands")
+        return op(operand)
+
+    if isinstance(node, ast.Call):
+        if node.keywords:
+            raise ValueError("Keyword arguments are not supported")
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != "count":
+            raise ValueError("Only string .count() calls are supported")
+        if len(node.args) != 1:
+            raise ValueError("count() expects exactly one argument")
+        value = _eval_calculator_ast(node.func.value)
+        needle = _eval_calculator_ast(node.args[0])
+        if not isinstance(value, str) or not isinstance(needle, str):
+            raise ValueError("count() only supports string receivers and arguments")
+        return value.count(needle)
+
+    raise ValueError(f"Unsupported expression node: {type(node).__name__}")
+
 
 def eval_with_timeout(formula, max_time=3):
     try:
-        with timeout(max_time, formula):
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                return eval(formula, {"__builtins__": {}}, {})
-    except Exception as e:
-        signal.alarm(0)
-        # print(f"Warning: Failed to eval {formula}, exception: {e}") # it's ok ignore wrong calculator usage
+        tree = ast.parse(formula, mode="eval")
+        return _eval_calculator_ast(tree)
+    except Exception:
+        # print(f"Warning: Failed to eval {formula}") # it's ok ignore wrong calculator usage
         return None
 
 def use_calculator(expr):
@@ -48,14 +93,12 @@ def use_calculator(expr):
     Evaluate a Python expression safely.
     Supports both math expressions and string operations like .count()
     """
-    # Remove commas from numbers
-    expr = expr.replace(",", "")
-
     # Check if it's a pure math expression (old behavior)
-    if all([x in "0123456789*+-/.() " for x in expr]):
-        if "**" in expr:  # disallow power operator
+    math_expr = expr.replace(",", "")
+    if all([x in "0123456789*+-/.() " for x in math_expr]):
+        if "**" in math_expr:  # disallow power operator
             return None
-        return eval_with_timeout(expr)
+        return eval_with_timeout(math_expr)
 
     # Check if it's a string operation we support
     # Allow: strings (single/double quotes), .count(), letters, numbers, spaces, parens
