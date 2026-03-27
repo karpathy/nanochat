@@ -27,6 +27,22 @@ See [dev/LEADERBOARD.md](dev/LEADERBOARD.md) for more docs on how to interpret a
 
 ## Getting started
 
+### Setup
+
+nanochat uses [uv](https://docs.astral.sh/uv/) for dependency management. To install:
+
+```bash
+uv sync --extra gpu    # Use for CUDA (A100/H100/etc.)
+uv sync --extra cpu    # (or) Use for CPU-only / MPS
+source .venv/bin/activate
+```
+
+For development (adds pytest, matplotlib, ipykernel, transformers, etc.):
+
+```bash
+uv sync --extra gpu --group dev
+```
+
 ### Reproduce and talk to GPT-2
 
 The most fun you can have is to train your own GPT-2 and talk to it. The entire pipeline to do so is contained in the single file [runs/speedrun.sh](runs/speedrun.sh), which is designed to be run on an 8XH100 GPU node. Boot up a new 8XH100 GPU box from your favorite provider (e.g. I use and like [Lambda](https://lambda.ai/service/gpu-cloud)), and kick off the training script:
