@@ -16,11 +16,54 @@ Fallback to the original if you have very limited data AND long documents:
 https://github.com/karpathy/nanochat/blob/3c3a3d7/nanochat/dataloader.py#L78-L117
 """
 
+from bisect import bisect_left, bisect_right, insort
+
 import torch
 import pyarrow.parquet as pq
 
 from nanochat.common import get_dist_info
 from nanochat.dataset import list_parquet_files
+
+
+class _LengthBucketBuffer:
+    """Document buffer keyed by length for O(log n) best-fit lookups."""
+
+    def __init__(self):
+        self.docs_by_len = {}
+        self.sorted_lengths = []
+        self.num_docs = 0
+
+    def __len__(self):
+        return self.num_docs
+
+    def append(self, doc):
+        doc_len = doc.size(0)
+        bucket = self.docs_by_len.get(doc_len)
+        if bucket is None:
+            bucket = []
+            self.docs_by_len[doc_len] = bucket
+            insort(self.sorted_lengths, doc_len)
+        bucket.append(doc)
+        self.num_docs += 1
+
+    def pop_largest_fitting(self, max_len):
+        idx = bisect_right(self.sorted_lengths, max_len) - 1
+        if idx < 0:
+            return None
+        return self._pop_from_length(self.sorted_lengths[idx])
+
+    def pop_shortest(self):
+        assert self.num_docs > 0, "Cannot pop from an empty document buffer"
+        return self._pop_from_length(self.sorted_lengths[0])
+
+    def _pop_from_length(self, doc_len):
+        bucket = self.docs_by_len[doc_len]
+        doc = bucket.pop()
+        if not bucket:
+            del self.docs_by_len[doc_len]
+            del self.sorted_lengths[bisect_left(self.sorted_lengths, doc_len)]
+        self.num_docs -= 1
+        return doc
 
 def _document_batches(split, resume_state_dict, tokenizer_batch_size):
     """
@@ -98,7 +141,7 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
     row_capacity = T + 1
     batches = _document_batches(split, resume_state_dict, tokenizer_batch_size)
     bos_token = tokenizer.get_bos_token_id()
-    doc_buffer = []
+    doc_buffer = _LengthBucketBuffer()
     pq_idx, rg_idx, epoch = 0, 0, 1
 
     def refill_buffer():
@@ -106,7 +149,7 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
         doc_batch, (pq_idx, rg_idx, epoch) = next(batches)
         token_lists = tokenizer.encode(doc_batch, prepend=bos_token, num_threads=tokenizer_threads)
         for tokens in token_lists:
-            doc_buffer.append(tokens)
+            doc_buffer.append(torch.tensor(tokens, dtype=torch.long))
 
     # Pre-allocate buffers once: layout is [inputs (B*T) | targets (B*T)]
     # This gives us contiguous views and a single HtoD transfer
@@ -129,25 +172,15 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
 
                 remaining = row_capacity - pos
 
-                # Find largest doc that fits entirely
-                best_idx = -1
-                best_len = 0
-                for i, doc in enumerate(doc_buffer):
-                    doc_len = len(doc)
-                    if doc_len <= remaining and doc_len > best_len:
-                        best_idx = i
-                        best_len = doc_len
-
-                if best_idx >= 0:
-                    doc = doc_buffer.pop(best_idx)
-                    doc_len = len(doc)
-                    row_buffer[row_idx, pos:pos + doc_len] = torch.tensor(doc, dtype=torch.long)
+                doc = doc_buffer.pop_largest_fitting(remaining)
+                if doc is not None:
+                    doc_len = doc.size(0)
+                    row_buffer[row_idx, pos:pos + doc_len].copy_(doc)
                     pos += doc_len
                 else:
                     # No doc fits - crop shortest in buffer to fill remaining and minimize waste
-                    shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
-                    doc = doc_buffer.pop(shortest_idx)
-                    row_buffer[row_idx, pos:pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
+                    doc = doc_buffer.pop_shortest()
+                    row_buffer[row_idx, pos:pos + remaining].copy_(doc[:remaining])
                     pos += remaining
 
         # Copy to pinned CPU buffer, then single HtoD transfer
