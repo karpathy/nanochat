@@ -172,10 +172,20 @@ class Engine:
         self.model = model
         self.tokenizer = tokenizer # needed for tool use
 
+    def _truncate_tokens_for_context(self, tokens):
+        max_context = self.model.config.sequence_len
+        if len(tokens) <= max_context:
+            return tokens
+        bos = self.tokenizer.get_bos_token_id()
+        if tokens[0] == bos and max_context > 0:
+            return [bos] + tokens[-(max_context - 1):]
+        return tokens[-max_context:]
+
     @torch.inference_mode()
     def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
         """Same as generate, but does single prefill and then clones the KV cache."""
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
+        tokens = self._truncate_tokens_for_context(tokens)
         device = self.model.get_device()
         # NOTE: setting the dtype here and in this way is an ugly hack.
         # Currently the repo assumes that cuda -> bfloat16 and everything else -> float32.
@@ -285,6 +295,7 @@ class Engine:
         Returns a list of token sequences (list of lists of ints).
         Terminal tokens (assistant_end, bos) are not included in the results.
         """
+        tokens = self._truncate_tokens_for_context(tokens)
         assistant_end = self.tokenizer.encode_special("<|assistant_end|>")
         bos = self.tokenizer.get_bos_token_id()
         results = [tokens.copy() for _ in range(num_samples)]
