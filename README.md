@@ -1,5 +1,7 @@
 # nanochat
 
+[![gitcgr](https://gitcgr.com/badge/karpathy/nanochat.svg)](https://gitcgr.com/karpathy/nanochat)
+
 ![nanochat logo](dev/nanochat.png)
 ![scaling laws](dev/scaling_laws_jan26.png)
 
