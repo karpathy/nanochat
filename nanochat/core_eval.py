@@ -177,7 +177,11 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
     if num_fewshot > 0:
         rng = random.Random(1234 + idx)
         available_indices = [i for i in range(len(data)) if i != idx]
-        fewshot_indices = rng.sample(available_indices, num_fewshot)
+        effective_fewshot = min(num_fewshot, len(available_indices))
+        if effective_fewshot < num_fewshot:
+            print(f"  Warning: task has only {len(available_indices)} examples "
+                  f"(need {num_fewshot} for few-shot), using {effective_fewshot}")
+        fewshot_indices = rng.sample(available_indices, effective_fewshot)
         fewshot_examples = [data[i] for i in fewshot_indices]
 
     # Render prompts and batch sequences based on task type
