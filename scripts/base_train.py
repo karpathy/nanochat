@@ -266,6 +266,8 @@ def get_scaling_params(m):
     scaling_params = params_counts['transformer_matrices'] + params_counts['lm_head']
     return scaling_params
 num_scaling_params = get_scaling_params(model)
+if args.target_param_data_ratio == 0:
+    raise ValueError("--target-param-data-ratio must be > 0 or -1 to disable, but got 0")
 target_tokens = int(args.target_param_data_ratio * num_scaling_params) # optimal tokens for the model we are about to train
 
 # Our reference model is d12, this is where a lot of hyperparameters are tuned and then transfered to higher depths (muP style)
