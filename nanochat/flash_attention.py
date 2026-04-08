@@ -1,8 +1,8 @@
 """
-Unified Flash Attention interface with automatic FA3/SDPA switching.
+Unified Flash Attention interface with automatic FA3/FlexAttention/SDPA switching.
 
 Exports `flash_attn` module that matches the FA3 API exactly, but falls back
-to PyTorch SDPA on non-Hopper GPUs (including Blackwell), MPS, and CPU.
+to FlexAttention (block-sparse sliding window) or PyTorch SDPA.
 
 Usage (drop-in replacement for FA3):
     from nanochat.flash_attention import flash_attn
@@ -41,8 +41,22 @@ def _load_flash_attention_3():
 _fa3 = _load_flash_attention_3()
 HAS_FA3 = _fa3 is not None
 
-# Override for testing: set to 'fa3', 'sdpa', or None (auto)
+# =============================================================================
+# Detection: FlexAttention (PyTorch 2.5+, block-sparse sliding window)
+# =============================================================================
+_flex = None
+try:
+    from torch.nn.attention.flex_attention import flex_attention, create_block_mask
+    _flex = torch.compile(flex_attention)
+except ImportError:
+    create_block_mask = None
+HAS_FLEX = _flex is not None
+
+# Override for testing: set to 'fa3', 'flex', 'sdpa', or None (auto)
 _override_impl = None
+
+# Mask cache for FlexAttention block masks and SDPA dense masks
+_mask_cache = {}
 
 
 def _resolve_use_fa3():
@@ -50,7 +64,7 @@ def _resolve_use_fa3():
     if _override_impl == 'fa3':
         assert HAS_FA3, "Cannot override to FA3: not available on this hardware"
         return True
-    if _override_impl == 'sdpa':
+    if _override_impl in ('sdpa', 'flex'):
         return False
     if HAS_FA3:
         # FA3 Hopper kernels only support bf16 and fp8; fp16/fp32 must use SDPA fallback
@@ -61,6 +75,19 @@ def _resolve_use_fa3():
     return False
 
 USE_FA3 = _resolve_use_fa3()
+
+def _resolve_use_flex():
+    """Decide once whether to use FlexAttention for sliding window."""
+    if _override_impl == 'flex':
+        assert HAS_FLEX, "Cannot override to FlexAttention: need PyTorch 2.5+"
+        return True
+    if _override_impl == 'sdpa' or USE_FA3:
+        return False
+    return HAS_FLEX
+
+USE_FLEX = _resolve_use_flex()
+
+ATTN_BACKEND = 'fa3' if USE_FA3 else ('flex' if USE_FLEX else 'sdpa')
 
 
 # =============================================================================
@@ -119,13 +146,33 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
     if USE_FA3:
         return _fa3.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
 
-    # SDPA fallback: transpose (B, T, H, D) -> (B, H, T, D)
+    # FlexAttention and SDPA expect (B, H, T, D)
+    B, T = q.shape[:2]
     q = q.transpose(1, 2)
     k = k.transpose(1, 2)
     v = v.transpose(1, 2)
     enable_gqa = q.size(1) != k.size(1)
-    y = _sdpa_attention(q, k, v, window_size, enable_gqa)
-    return y.transpose(1, 2)  # back to (B, T, H, D)
+    w = window_size[0]
+
+    # Full causal (no sliding window) — just use SDPA is_causal, it's fast everywhere
+    if w < 0 or w >= T:
+        return F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa).transpose(1, 2)
+
+    # Sliding window — FlexAttention with block sparsity (fast), or SDPA with dense mask (slow)
+    if USE_FLEX:
+        key = (B, q.size(1), T, w, q.device)
+        if key not in _mask_cache:
+            _mask_cache[key] = create_block_mask(
+                lambda b, h, qi, ki: (qi >= ki) & (qi - ki <= w),
+                B, q.size(1), T, T, device=q.device)
+        return _flex(q, k, v, block_mask=_mask_cache[key], enable_gqa=enable_gqa).transpose(1, 2)
+
+    # SDPA fallback: materialize the full T*T bool mask (O(T^2) memory)
+    key = (T, w, q.device)
+    if key not in _mask_cache:
+        ix = torch.arange(T, device=q.device)
+        _mask_cache[key] = (ix <= ix.unsqueeze(1)) & (ix.unsqueeze(1) - ix <= w)
+    return F.scaled_dot_product_attention(q, k, v, attn_mask=_mask_cache[key], enable_gqa=enable_gqa).transpose(1, 2)
 
 
 def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=None,
