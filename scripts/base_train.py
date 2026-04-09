@@ -412,6 +412,34 @@ print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_l
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 
+# Profiling hooks (env-var controlled, no-op by default)
+_profile_start = int(os.environ.get("NANOCHAT_PROFILE_START", -1))
+_profile_stop = int(os.environ.get("NANOCHAT_PROFILE_STOP", -1))
+_profile_exit = int(os.environ.get("NANOCHAT_PROFILE_EXIT", -1))
+_torch_profile_dir = os.environ.get("NANOCHAT_TORCH_PROFILE_DIR", "")
+if _profile_start >= 0:
+    print0(f"Profiling: start at step {_profile_start}, stop at step {_profile_stop}, exit at step {_profile_exit}")
+
+# PyTorch profiler (env-var controlled)
+_torch_profiler = None
+if _torch_profile_dir and _profile_start >= 0:
+    from torch.profiler import profile, ProfilerActivity, schedule, tensorboard_trace_handler
+    os.makedirs(_torch_profile_dir, exist_ok=True)
+    _torch_profiler = profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        schedule=schedule(
+            wait=_profile_start,
+            warmup=0,
+            active=(_profile_stop - _profile_start + 1) if _profile_stop >= 0 else 1,
+            repeat=1,
+        ),
+        on_trace_ready=tensorboard_trace_handler(_torch_profile_dir),
+        record_shapes=True,
+        with_stack=True,
+    )
+    _torch_profiler.start()
+    print0(f"PyTorch profiler: tracing steps {_profile_start}-{_profile_stop}, output to {_torch_profile_dir}")
+
 # Go!
 while True:
     last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
@@ -504,6 +532,10 @@ while True:
 
     # -------------------------------------------------------------------------
     # single training step
+    if step == _profile_start:
+        print0(f">>> CUDA profiler START at step {step}")
+        synchronize()
+        torch.cuda.cudart().cudaProfilerStart()
     # evaluate the gradient
     synchronize()
     t0 = time.time()
@@ -579,9 +611,27 @@ while True:
         }
         wandb_run.log(log_data)
 
+    # profiling stop
+    if step == _profile_stop:
+        synchronize()
+        torch.cuda.cudart().cudaProfilerStop()
+        print0(f">>> CUDA profiler STOP after step {step}")
+
+    # PyTorch profiler step
+    if _torch_profiler is not None:
+        _torch_profiler.step()
+
     # state update
     first_step_of_run = (step == 0) or (resuming and step == args.resume_from_step)
     step += 1
+
+    # profiling early exit (checked after step increment)
+    if _profile_exit >= 0 and step > _profile_exit:
+        if _torch_profiler is not None:
+            _torch_profiler.stop()
+            print0(f">>> PyTorch profiler stopped, traces written to {_torch_profile_dir}")
+        print0(f">>> Early exit after step {_profile_exit} (profiling done)")
+        break
 
     # The garbage collector is sadly a little bit overactive and for some poorly understood reason,
     # it spends ~500ms scanning for cycles quite frequently, just to end up cleaning up very few tiny objects each time.
