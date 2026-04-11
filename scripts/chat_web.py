@@ -33,6 +33,7 @@ Abuse Prevention:
 import argparse
 import json
 import os
+import sys
 import torch
 import asyncio
 import logging
@@ -59,18 +60,29 @@ MAX_TOP_K = 200
 MIN_MAX_TOKENS = 1
 MAX_MAX_TOKENS = 4096
 
-parser = argparse.ArgumentParser(description='NanoChat Web Server')
-parser.add_argument('-n', '--num-gpus', type=int, default=1, help='Number of GPUs to use (default: 1)')
-parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|rl")
-parser.add_argument('-t', '--temperature', type=float, default=0.8, help='Default temperature for generation')
-parser.add_argument('-k', '--top-k', type=int, default=50, help='Default top-k sampling parameter')
-parser.add_argument('-m', '--max-tokens', type=int, default=512, help='Default max tokens for generation')
-parser.add_argument('-g', '--model-tag', type=str, default=None, help='Model tag to load')
-parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
-parser.add_argument('-p', '--port', type=int, default=8000, help='Port to run the server on')
-parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
-parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind the server to')
-args = parser.parse_args()
+def build_parser():
+    parser = argparse.ArgumentParser(description='NanoChat Web Server')
+    parser.add_argument('-n', '--num-gpus', type=int, default=1, help='Number of GPUs to use (default: 1)')
+    parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|rl")
+    parser.add_argument('-t', '--temperature', type=float, default=0.8, help='Default temperature for generation')
+    parser.add_argument('-k', '--top-k', type=int, default=50, help='Default top-k sampling parameter')
+    parser.add_argument('-m', '--max-tokens', type=int, default=512, help='Default max tokens for generation')
+    parser.add_argument('-g', '--model-tag', type=str, default=None, help='Model tag to load')
+    parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
+    parser.add_argument('-p', '--port', type=int, default=8000, help='Port to run the server on')
+    parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
+    parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind the server to')
+    return parser
+
+
+def parse_args(argv=None):
+    parser = build_parser()
+    if argv is None:
+        argv = sys.argv[1:]
+    return parser.parse_args(argv)
+
+
+args = parse_args()
 
 # Configure logging for conversation traffic
 logging.basicConfig(
@@ -186,7 +198,7 @@ def validate_chat_request(request: ChatRequest):
         if message.role not in ["user", "assistant"]:
             raise HTTPException(
                 status_code=400,
-                detail=f"Message {i} has invalid role. Must be 'user', 'assistant', or 'system'"
+                detail=f"Message {i} has invalid role. Must be 'user' or 'assistant'"
             )
 
     # Validate temperature
