@@ -36,7 +36,7 @@ from nanochat.common import (
 )
 from nanochat.dataloader import tokenizing_distributed_data_loader
 from nanochat.engine import Engine
-from nanochat.flash_attention import USE_FA3, HAS_FA3
+from nanochat.flash_attention import USE_FA3
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.tokenizer import get_token_bytes, get_tokenizer
@@ -68,6 +68,7 @@ parser.add_argument("--use-bias-balancing", action="store_true", help="enable bi
 parser.add_argument("--bias-update-speed", type=float, default=0.0005, help="SMEBU learning rate (lambda)")
 parser.add_argument("--bias-momentum", type=float, default=0.5, help="SMEBU momentum factor (beta)")
 parser.add_argument("--bias-kappa", type=float, default=2.0, help="SMEBU tanh saturation speed (kappa)")
+parser.add_argument("--gemm-backend", type=str, default="stk", choices=["stk", "triton"], help="MoE GEMM backend: stk (megablocks) or triton (persistent kernel)")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -177,6 +178,7 @@ model_config_kwargs = dict(
     bias_update_speed=args.bias_update_speed,
     bias_momentum=args.bias_momentum,
     bias_kappa=args.bias_kappa,
+    gemm_backend=args.gemm_backend,
 )
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
@@ -238,7 +240,7 @@ base_dir = get_base_dir()
 train_loader = tokenizing_distributed_data_loader(
     device_batch_size, max_seq_len, split="train", device=device
 )
-build_val_loader = lambda: tokenizing_distributed_data_loader(
+def build_val_loader(): return tokenizing_distributed_data_loader(
     device_batch_size, max_seq_len, split="val", device=device
 )
 x, y = next(train_loader)  # kick off load of the very first batch of data
@@ -270,6 +272,7 @@ def get_muon_momentum(it):
 # -----------------------------------------------------------------------------
 # Training loop
 min_val_bpb = float("inf")
+val_bpb = float("inf")
 smooth_train_loss = 0  # EMA of training loss
 ema_beta = 0.9  # EMA decay factor
 total_training_time = 0  # total wall-clock time of training
@@ -287,7 +290,7 @@ for step in range(num_iterations + 1):
     flops_so_far = num_flops_per_token * total_batch_size * step
 
     # once in a while: evaluate the val bpb (all ranks participate)
-    if last_step or step % eval_every == 0:
+    if eval_every > 0 and (last_step or step % eval_every == 0):
         model.eval()
         val_loader = build_val_loader()
         eval_steps = eval_tokens // (device_batch_size * max_seq_len * ddp_world_size)
@@ -326,7 +329,7 @@ for step in range(num_iterations + 1):
         model.train()
 
     # once in a while: sample from the model (only on master process)
-    if master_process and (last_step or (step > 0 and step % sample_every == 0)):
+    if master_process and sample_every > 0 and (last_step or (step > 0 and step % sample_every == 0)):
         model.eval()
         prompts = [
             "The capital of France is",
@@ -389,6 +392,11 @@ for step in range(num_iterations + 1):
         group["momentum"] = muon_momentum
     for opt in optimizers:
         opt.step()
+    # Mark transposed weight caches stale after optimizer updates weights
+    if args.gemm_backend == "triton":
+        for block in model.transformer.h:
+            if hasattr(block.mlp, '_weights_stale'):
+                block.mlp._weights_stale = True
     model.zero_grad(set_to_none=True)
     synchronize()
     t1 = time.time()
@@ -450,7 +458,7 @@ print0(f"Total training time: {total_training_time / 60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
 # Log to report
-from nanochat.report import get_report
+from nanochat.report import get_report  # noqa: E402
 
 get_report().log(
     section="Base model training",

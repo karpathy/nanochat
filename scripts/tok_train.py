@@ -91,7 +91,7 @@ with open(token_bytes_path, "wb") as f:
 print(f"Saved token_bytes to {token_bytes_path}")
 
 # Log to report
-from nanochat.report import get_report
+from nanochat.report import get_report  # noqa: E402
 token_bytes_nonzero = (token_bytes[token_bytes > 0]).to(dtype=torch.float32)
 get_report().log(section="Tokenizer training", data=[
     vars(args), # argparse command line arguments

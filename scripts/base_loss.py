@@ -66,7 +66,7 @@ if ddp_rank == 0:
         samples.append(sample_str)
 
 # Log to report
-from nanochat.report import get_report
+from nanochat.report import get_report  # noqa: E402
 get_report().log(section="Base model loss", data=[
     {
         "train bpb": bpb_results["train"],

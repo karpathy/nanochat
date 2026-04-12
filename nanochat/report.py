@@ -19,7 +19,7 @@ def run_command(cmd):
         if result.returncode == 0:
             return result.stdout.strip()
         return None
-    except:
+    except Exception:
         return None
 
 def get_git_info():
@@ -225,7 +225,7 @@ def extract_timestamp(content, prefix):
             time_str = line.split(":", 1)[1].strip()
             try:
                 return datetime.datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            except:
+            except (ValueError, IndexError):
                 pass
     return None
 
@@ -354,7 +354,7 @@ class Report:
             else:
                 out_file.write("Total wall clock time: unknown\n")
         # also cp the report.md file to current directory
-        print(f"Copying report.md to current directory for convenience")
+        print("Copying report.md to current directory for convenience")
         shutil.copy(report_file, "report.md")
         return report_file
 

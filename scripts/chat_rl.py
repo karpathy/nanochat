@@ -270,7 +270,7 @@ for step in range(num_steps):
         print(f"Saved model checkpoint to {checkpoint_dir}")
 
 # Log to report
-from nanochat.report import get_report
+from nanochat.report import get_report  # noqa: E402
 get_report().log(section="Chat RL", data=[user_config])
 
 wandb_run.finish()

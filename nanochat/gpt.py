@@ -28,7 +28,7 @@ from megablocks import ops
 from megablocks.layers.relu_squared import relu_squared
 
 from nanochat.adamw import DistAdamW
-from nanochat.common import COMPUTE_DTYPE, get_dist_info, print0
+from nanochat.common import COMPUTE_DTYPE, get_dist_info
 from nanochat.flash_attention import flash_attn
 from nanochat.muon import DistMuon, Muon
 from nanochat.topology_var import topology_var
@@ -62,6 +62,7 @@ class GPTConfig:
     bias_update_speed: float = 0.0005  # λ in SMEBU
     bias_momentum: float = 0.5  # β in SMEBU — smooths updates over time
     bias_kappa: float = 2.0  # κ in SMEBU — tanh saturation speed
+    gemm_backend: str = "stk"  # "stk" (megablocks sparse) or "triton" (persistent kernel)
 
 
 def norm(x):
@@ -156,6 +157,10 @@ class MoEMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        self.gemm_backend = config.gemm_backend
+        if self.gemm_backend == "triton":
+            from nanochat.grouped_gemm import grouped_gemm_autograd
+            self._triton_gmm = grouped_gemm_autograd
         self.num_experts = sum(count for count, _ in config.expert_sizes)
         self.num_active_experts = config.num_active_experts
         self.norm_topk_prob = config.norm_topk_prob
@@ -198,6 +203,12 @@ class MoEMLP(nn.Module):
 
         nn.init.trunc_normal_(self.w1, mean=0.0, std=0.02, a=-0.06, b=0.06)
         nn.init.trunc_normal_(self.w2, mean=0.0, std=0.02, a=-0.06, b=0.06)
+
+        # Pre-transposed weight cache for triton backend (refreshed once per optimizer step)
+        if self.gemm_backend == "triton":
+            self._w_up_t = None  # [N*G, n_embd]
+            self._w_down_t = None  # [n_embd*G, N]
+            self._weights_stale = True
 
         # need this for megablocks ops
         self.sort_end_bit = max(int(math.ceil(math.log2(self.num_experts))), 1)
@@ -395,33 +406,67 @@ class MoEMLP(nn.Module):
                 # 6. Apply
                 self.expert_bias += self.expert_bias_momentum
 
-        # Compute bins for gather/scatter
-        bins = ops.inclusive_cumsum(tokens_per_expert, 0).contiguous()
+        if self.gemm_backend == "triton":
+            # Persistent kernel path: no padding, no topology, no stk
+            M = batch_size * seq_len
+            flat_token_ids = torch.arange(M, device=x.device).unsqueeze(1).expand(
+                -1, self.num_active_experts
+            ).reshape(-1)
+            sorted_token_ids = flat_token_ids[indices.long()]
+            x_sorted = x_flat[sorted_token_ids]
 
-        # Build topology dynamically each forward (like dMoE)
-        padded_bins, topology = self._create_topology(x_flat, tokens_per_expert)
+            # Use cached transposed weights (refreshed once per optimizer step)
+            if self._weights_stale or self._w_up_t is None:
+                expert_dim = self.expert_widths[0]
+                G = self.num_experts
+                self._w_up_t = self.w1.to(x.dtype).T.contiguous()  # [N*G, n_embd]
+                self._w_down_t = (self.w2.to(x.dtype).view(G, expert_dim, n_embd)
+                                  .permute(0, 2, 1).contiguous()
+                                  .view(n_embd * G, expert_dim))
+                self._weights_stale = False
+            w_up = self._w_up_t
+            w_down = self._w_down_t
 
-        x_permuted = ops.padded_gather(
-            x_flat, indices, bin_ids, bins, padded_bins, self.num_active_experts
-        )
-        x_permuted = stk.ops.sdd(x_permuted, self.w1, topology)
-        x_permuted = relu_squared(x_permuted)
-        x_permuted = stk.ops.dsd(x_permuted, self.w2)
-        x_permuted = ops.padded_scatter(
-            x_permuted,
-            indices,
-            bin_ids,
-            top_k_weights_flat,
-            bins,
-            padded_bins,
-            self.num_active_experts,
-        )
-        output = rearrange(
-            x_permuted,
-            "(batch_size seq_len) n_embd -> batch_size seq_len n_embd",
-            batch_size=batch_size,
-            seq_len=seq_len,
-        )
+            hidden = self._triton_gmm(x_sorted, w_up, tokens_per_expert.int())
+            hidden = F.relu(hidden).square()
+            out = self._triton_gmm(hidden, w_down, tokens_per_expert.int())
+
+            # Scatter back with routing weights
+            sorted_weights = top_k_weights_flat[indices.long()]
+            weighted_out = out * sorted_weights.unsqueeze(-1)
+            output_flat = torch.zeros(M, n_embd, device=x.device, dtype=x.dtype)
+            output_flat.scatter_add_(
+                0, sorted_token_ids.unsqueeze(-1).expand_as(weighted_out), weighted_out
+            )
+            output = output_flat.view(batch_size, seq_len, n_embd)
+        else:
+            # Existing megablocks/stk path
+            bins = ops.inclusive_cumsum(tokens_per_expert, 0).contiguous()
+
+            # Build topology dynamically each forward (like dMoE)
+            padded_bins, topology = self._create_topology(x_flat, tokens_per_expert)
+
+            x_permuted = ops.padded_gather(
+                x_flat, indices, bin_ids, bins, padded_bins, self.num_active_experts
+            )
+            x_permuted = stk.ops.sdd(x_permuted, self.w1, topology)
+            x_permuted = relu_squared(x_permuted)
+            x_permuted = stk.ops.dsd(x_permuted, self.w2)
+            x_permuted = ops.padded_scatter(
+                x_permuted,
+                indices,
+                bin_ids,
+                top_k_weights_flat,
+                bins,
+                padded_bins,
+                self.num_active_experts,
+            )
+            output = rearrange(
+                x_permuted,
+                "(batch_size seq_len) n_embd -> batch_size seq_len n_embd",
+                batch_size=batch_size,
+                seq_len=seq_len,
+            )
 
         router_z_loss = torch.logsumexp(router_logits, dim=-1).pow(2).mean()
 
@@ -769,13 +814,13 @@ class GPT(nn.Module):
                 // num_experts
             )
             nparams = nparams - inactive_moe
-        l, h, q, t = (
+        nl, h, q, t = (
             self.config.n_layer,
             self.config.n_head,
             self.config.n_embd // self.config.n_head,
             self.config.sequence_len,
         )
-        num_flops_per_token = 6 * (nparams - nparams_embedding) + 12 * l * h * q * t
+        num_flops_per_token = 6 * (nparams - nparams_embedding) + 12 * nl * h * q * t
         return num_flops_per_token
 
     def setup_optimizers(
