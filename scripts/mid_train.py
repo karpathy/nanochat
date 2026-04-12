@@ -193,7 +193,7 @@ def mid_data_generator(split):
 
 
 train_loader = mid_data_generator("train")
-build_val_loader = lambda: mid_data_generator("val")
+def build_val_loader(): return mid_data_generator("val")
 progress = 0
 
 eval_every = args.eval_every

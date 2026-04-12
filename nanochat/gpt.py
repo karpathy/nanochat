@@ -28,7 +28,7 @@ from megablocks import ops
 from megablocks.layers.relu_squared import relu_squared
 
 from nanochat.adamw import DistAdamW
-from nanochat.common import COMPUTE_DTYPE, get_dist_info, print0
+from nanochat.common import COMPUTE_DTYPE, get_dist_info
 from nanochat.flash_attention import flash_attn
 from nanochat.muon import DistMuon, Muon
 from nanochat.topology_var import topology_var
@@ -769,13 +769,13 @@ class GPT(nn.Module):
                 // num_experts
             )
             nparams = nparams - inactive_moe
-        l, h, q, t = (
+        nl, h, q, t = (
             self.config.n_layer,
             self.config.n_head,
             self.config.n_embd // self.config.n_head,
             self.config.sequence_len,
         )
-        num_flops_per_token = 6 * (nparams - nparams_embedding) + 12 * l * h * q * t
+        num_flops_per_token = 6 * (nparams - nparams_embedding) + 12 * nl * h * q * t
         return num_flops_per_token
 
     def setup_optimizers(

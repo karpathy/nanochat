@@ -31,10 +31,10 @@ SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| 
 
 # -----------------------------------------------------------------------------
 # Generic GPT-4-style tokenizer based on HuggingFace Tokenizer
-from tokenizers import Tokenizer as HFTokenizer
-from tokenizers import pre_tokenizers, decoders, Regex
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
+from tokenizers import Tokenizer as HFTokenizer  # noqa: E402
+from tokenizers import pre_tokenizers, decoders, Regex  # noqa: E402
+from tokenizers.models import BPE  # noqa: E402
+from tokenizers.trainers import BpeTrainer  # noqa: E402
 
 class HuggingFaceTokenizer:
     """Light wrapper around HuggingFace Tokenizer for some utilities"""
@@ -148,9 +148,9 @@ class HuggingFaceTokenizer:
 
 # -----------------------------------------------------------------------------
 # Tokenizer based on rustbpe + tiktoken combo
-import pickle
-import rustbpe
-import tiktoken
+import pickle  # noqa: E402
+import rustbpe  # noqa: E402
+import tiktoken  # noqa: E402
 
 class RustBPETokenizer:
     """Light wrapper around tiktoken (for efficient inference) but train with rustbpe"""
