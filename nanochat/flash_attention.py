@@ -117,7 +117,10 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
         Output tensor of shape (B, T, H, D)
     """
     if USE_FA3:
-        return _fa3.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
+        y =  _fa3.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
+        Vn = F.normalize(v, dim=-1)
+        y = y - (y * Vn).sum(dim=-1, keepdim=True) * Vn
+        return y
 
     # SDPA fallback: transpose (B, T, H, D) -> (B, H, T, D)
     q = q.transpose(1, 2)
@@ -125,6 +128,8 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
     v = v.transpose(1, 2)
     enable_gqa = q.size(1) != k.size(1)
     y = _sdpa_attention(q, k, v, window_size, enable_gqa)
+    Vn = F.normalize(v, dim=-1)
+    y = y - (y * Vn).sum(dim=-1, keepdim=True) * Vn
     return y.transpose(1, 2)  # back to (B, T, H, D)
 
 
@@ -147,10 +152,13 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
         Output tensor of shape (B, T_new, H, D)
     """
     if USE_FA3:
-        return _fa3.flash_attn_with_kvcache(
+        y = _fa3.flash_attn_with_kvcache(
             q, k_cache, v_cache, k=k, v=v, cache_seqlens=cache_seqlens,
             causal=causal, window_size=window_size
         )
+        Vn = F.normalize(v, dim=-1)
+        y = y - (y * Vn).sum(dim=-1, keepdim=True) * Vn
+        return y
 
     # SDPA fallback: manually manage KV cache
     B, T_new, H, D = q.shape
@@ -173,6 +181,8 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
 
     enable_gqa = q_sdpa.size(1) != k_sdpa.size(1)
     y_sdpa = _sdpa_attention(q_sdpa, k_sdpa, v_sdpa, window_size, enable_gqa)
+    Vn = F.normalize(v_sdpa, dim=-1)
+    y_sdpa = y_sdpa - (y_sdpa * Vn).sum(dim=-1, keepdim=True) * Vn
 
     return y_sdpa.transpose(1, 2)  # back to (B, T, H, D)
 
