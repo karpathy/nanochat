@@ -374,10 +374,10 @@ class FastRegexTokenizer:
 
 # -----------------------------------------------------------------------------
 # HuggingFace tokenizer
-from tokenizers import Tokenizer as HFTokenizer
-from tokenizers import pre_tokenizers, decoders, Regex
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
+from tokenizers import Tokenizer as HFTokenizer  # noqa: E402
+from tokenizers import pre_tokenizers, decoders, Regex  # noqa: E402
+from tokenizers.models import BPE  # noqa: E402
+from tokenizers.trainers import BpeTrainer  # noqa: E402
 
 class HuggingFaceTokenizer:
     """Light wrapper around HuggingFace Tokenizer for some utilities"""
@@ -589,7 +589,7 @@ def test_training_performance(enwik8_large):
     assert hf_train_time > 0, "Training should take some time"
 
     # Print comparison
-    print(f"\n📊 Performance comparison:")
+    print("\n📊 Performance comparison:")
     print(f"   RustBPE: {rustbpe_train_time:.4f}s")
     print(f"   HuggingFace: {hf_train_time:.4f}s")
     print(f"   Speedup: {hf_train_time/rustbpe_train_time:.2f}x")

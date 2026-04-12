@@ -36,7 +36,7 @@ from nanochat.common import (
 )
 from nanochat.dataloader import tokenizing_distributed_data_loader
 from nanochat.engine import Engine
-from nanochat.flash_attention import USE_FA3, HAS_FA3
+from nanochat.flash_attention import USE_FA3
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.tokenizer import get_token_bytes, get_tokenizer
@@ -238,7 +238,7 @@ base_dir = get_base_dir()
 train_loader = tokenizing_distributed_data_loader(
     device_batch_size, max_seq_len, split="train", device=device
 )
-build_val_loader = lambda: tokenizing_distributed_data_loader(
+def build_val_loader(): return tokenizing_distributed_data_loader(
     device_batch_size, max_seq_len, split="val", device=device
 )
 x, y = next(train_loader)  # kick off load of the very first batch of data
@@ -450,7 +450,7 @@ print0(f"Total training time: {total_training_time / 60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
 # Log to report
-from nanochat.report import get_report
+from nanochat.report import get_report  # noqa: E402
 
 get_report().log(
     section="Base model training",

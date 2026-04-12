@@ -10,7 +10,6 @@ torchrun --nproc_per_node=8 base_eval.py
 The script will print the CORE metric to the console.
 """
 import os
-import sys
 import time
 import json
 import random
