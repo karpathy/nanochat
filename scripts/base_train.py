@@ -34,6 +34,7 @@ from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from nanochat.flash_attention import HAS_FA3
 from scripts.base_eval import evaluate_core
+from nanochat.initialize_dpi import initialize_dpi
 print_banner()
 
 # -----------------------------------------------------------------------------
@@ -48,6 +49,7 @@ parser.add_argument("--fp8", action="store_true", help="enable FP8 training (req
 parser.add_argument("--fp8-recipe", type=str, default="tensorwise", choices=["rowwise", "tensorwise"], help="FP8 scaling recipe: tensorwise (faster, recommended) or rowwise (more accurate but slower)")
 # Model architecture
 parser.add_argument("--depth", type=int, default=20, help="depth of the Transformer model")
+parser.add_argument("--dpi", action="store_true", help="enable Deterministic Pipeline Initialization (DPI)")
 parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
@@ -123,6 +125,12 @@ token_bytes = get_token_bytes(device=device)
 vocab_size = tokenizer.get_vocab_size()
 print0(f"Vocab size: {vocab_size:,}")
 
+# Initialize the DataLoaders for train/val (needed for DPI if enabled)
+# For now we assume no resume if we use DPI, or handle it simply.
+dataloader_resume_state_dict = None if args.resume_from_step == -1 else None # placeholder
+train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
+build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
+
 # -----------------------------------------------------------------------------
 # Initialize the Model
 
@@ -149,6 +157,22 @@ model_config_kwargs = asdict(model_config)
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 model.to_empty(device=device) # 2) All tensors get storage on target device but with uninitialized (garbage) data
 model.init_weights() # 3) All tensors get initialized
+
+# Deterministic Pipeline Initialization (DPI)
+if args.dpi:
+    print0("✓ Deterministic Pipeline Initialization (DPI) enabled (v16.2). Initializing...")
+    # In DDP, we perform initialization on rank 0 and broadcast the parameters to all ranks.
+    # This ensures all GPUs start with the exact same weights.
+    if master_process:
+        initialize_dpi(model, train_loader)
+    
+    if ddp:
+        print0("  Broadcasting DPI-initialized parameters to all ranks...")
+        for param in model.parameters():
+            dist.broadcast(param.data, src=0)
+        for buffer in model.buffers():
+            dist.broadcast(buffer.data, src=0)
+        dist.barrier()
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 base_dir = get_base_dir()
@@ -327,9 +351,7 @@ if scaler is not None:
 
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
-dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
-build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
+# (already initialized earlier if DPI was used)
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
@@ -358,7 +380,8 @@ print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # Learning rate schedule (linear warmup, constant, linear warmdown)
 def get_lr_multiplier(it):
-    warmup_iters = args.warmup_steps
+    # DPI v16.2 provides high initial conductivity; disable warmup to leverage immediate stability
+    warmup_iters = 0 if args.dpi else args.warmup_steps
     warmdown_iters = round(args.warmdown_ratio * num_iterations)
     if it < warmup_iters:
         return (it + 1) / warmup_iters

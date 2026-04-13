@@ -10,6 +10,7 @@ dependencies = [
     "kernels>=0.11.7",
     "psutil>=7.1.0",
     "rustbpe>=0.1.0",
+    "scikit-learn>=1.7.2",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
     "torch==2.9.1",
