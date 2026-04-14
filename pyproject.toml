@@ -12,7 +12,7 @@ dependencies = [
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
-    "torch==2.9.1",
+    "torch>=2.9.1,<=2.11.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
 ]
@@ -35,7 +35,17 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-# target torch to cuda 12.8 or CPU
+[tool.uv]
+torch-backend = "auto"
+default-groups = []
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "gpu" },
+    ],
+]
+
+# Fallback indexes for --extra gpu / --extra cpu (override auto-detection)
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
@@ -54,17 +64,8 @@ explicit = true
 
 [project.optional-dependencies]
 cpu = [
-    "torch==2.9.1",
+    "torch>=2.9.1,<=2.11.0",
 ]
 gpu = [
-    "torch==2.9.1",
-]
-
-[tool.uv]
-default-groups = []
-conflicts = [
-    [
-        { extra = "cpu" },
-        { extra = "gpu" },
-    ],
+    "torch==2.9.1",  # Stable for CUDA 12.8 (A100/H100/etc.)
 ]

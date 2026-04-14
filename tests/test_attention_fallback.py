@@ -1,10 +1,10 @@
 """
-Test Flash Attention unified interface - verify FA3 and SDPA produce identical results.
+Test Flash Attention unified interface - verify FA3, FlexAttention, and SDPA produce identical results.
 
 Run: python -m pytest tests/test_attention_fallback.py -v -s
 
 Note on test structure:
-    Tests are split into two classes due to dtype/device constraints:
+    Tests are split into classes due to dtype/device constraints:
 
     1. TestFA3VsSDPA: Comparison tests that run both FA3 and SDPA on the same inputs
        and verify they produce identical results. These require a Hopper GPU (FA3 only
@@ -12,18 +12,23 @@ Note on test structure:
 
     2. TestSDPAOnly: Tests that only exercise the SDPA fallback path. These can run
        on any device (CUDA, CPU, MPS) with the appropriate dtype for that device.
+
+    3. TestFlexAttention: Tests that exercise the FlexAttention path and cross-validate
+       against SDPA. Requires PyTorch 2.5+ with CUDA.
 """
 import torch
 import pytest
 import nanochat.flash_attention as fa_module
-from nanochat.flash_attention import flash_attn, HAS_FA3
+from nanochat.flash_attention import flash_attn, HAS_FA3, HAS_FLEX
 from nanochat.engine import KVCache
 
 
 def set_impl(impl):
-    """Set the implementation override ('fa3', 'sdpa', or None for auto) and re-resolve USE_FA3."""
+    """Set the implementation override ('fa3', 'flex', 'sdpa', or None for auto) and re-resolve."""
     fa_module._override_impl = impl
     fa_module.USE_FA3 = fa_module._resolve_use_fa3()
+    fa_module.USE_FLEX = fa_module._resolve_use_flex()
+    fa_module.ATTN_BACKEND = 'fa3' if fa_module.USE_FA3 else ('flex' if fa_module.USE_FLEX else 'sdpa')
 
 
 def run_both_impls(fn):
@@ -335,6 +340,50 @@ class TestSDPAOnly:
 
 
 # =============================================================================
+# FlexAttention tests (require PyTorch 2.5+ with CUDA)
+# =============================================================================
+@pytest.mark.skipif(not HAS_FLEX or not torch.cuda.is_available(), reason="FlexAttention + CUDA required")
+class TestFlexAttention:
+    """Test FlexAttention path and cross-validate against SDPA."""
+
+    DEVICE = "cuda"
+    DTYPE = torch.bfloat16
+
+    def _compare_with_sdpa(self, q, k, v, window_size, name):
+        """Run with flex, then sdpa, compare."""
+        set_impl('flex')
+        y_flex = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        set_impl('sdpa')
+        y_sdpa = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        set_impl(None)
+        assert y_flex.shape == y_sdpa.shape and not torch.isnan(y_flex).any()
+        d = (y_flex - y_sdpa).abs().max().item()
+        print(f"{name}: flex vs sdpa max_diff={d:.6f}")
+        assert torch.allclose(y_flex, y_sdpa, atol=1e-2, rtol=1e-2)
+
+    def test_full_causal(self):
+        B, T, H, D = 2, 64, 4, 32
+        q = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        self._compare_with_sdpa(q, k, v, (-1, -1), "full_causal")
+
+    def test_sliding_window(self):
+        B, T, H, D = 2, 128, 4, 32
+        q = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        self._compare_with_sdpa(q, k, v, (32, 0), "sliding_window")
+
+    def test_gqa(self):
+        B, T, D = 2, 64, 32
+        q = torch.randn(B, T, 8, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B, T, 2, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B, T, 2, D, device=self.DEVICE, dtype=self.DTYPE)
+        self._compare_with_sdpa(q, k, v, (-1, -1), "gqa")
+
+
+# =============================================================================
 # Override mechanism tests
 # =============================================================================
 class TestOverrideMechanism:
@@ -347,10 +396,19 @@ class TestOverrideMechanism:
         assert fa_module.USE_FA3 == True
         set_impl(None)
 
+    @pytest.mark.skipif(not HAS_FLEX, reason="FlexAttention required")
+    def test_override_flex(self):
+        """Test that override='flex' uses FlexAttention."""
+        set_impl('flex')
+        assert fa_module.USE_FLEX == True
+        assert fa_module.ATTN_BACKEND == 'flex'
+        set_impl(None)
+
     def test_override_sdpa(self):
         """Test that override='sdpa' uses SDPA."""
         set_impl('sdpa')
         assert fa_module.USE_FA3 == False
+        assert fa_module.USE_FLEX == False
         set_impl(None)
 
     def test_override_auto(self):
@@ -367,6 +425,8 @@ if __name__ == "__main__":
         major, minor = torch.cuda.get_device_capability()
         print(f"Compute capability: {major}.{minor}")
     print(f"HAS_FA3: {HAS_FA3}")
+    print(f"HAS_FLEX: {HAS_FLEX}")
+    print(f"ATTN_BACKEND: {fa_module.ATTN_BACKEND}")
     print()
 
     pytest.main([__file__, "-v", "-s"])
