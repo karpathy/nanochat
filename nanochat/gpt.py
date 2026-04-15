@@ -37,6 +37,9 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    # muP (Maximal Update Parametrization): set > 0 to enable. Value is the base/proxy width.
+    # Enables: non-zero c_proj init scaled as 1/sqrt(m_d), output logit scaling by base_width/n_embd.
+    mup_base_width: int = 0
 
 
 def norm(x):
@@ -203,20 +206,22 @@ class GPT(nn.Module):
         """
         Initialize the full model in this one function for maximum clarity.
 
-        wte (embedding):     normal, std=1.0
+        wte (embedding):     normal, std=0.8
         lm_head:             normal, std=0.001
         for each block:
             attn.c_q:        uniform, std=1/sqrt(n_embd)
             attn.c_k:        uniform, std=1/sqrt(n_embd)
             attn.c_v:        uniform, std=1/sqrt(n_embd)
-            attn.c_proj:     zeros
-            mlp.c_fc:        uniform, std=1/sqrt(n_embd)
-            mlp.c_proj:      zeros
+            attn.c_proj:     zeros (SP) or uniform (muP)
+            mlp.c_fc:        uniform, std=0.5/sqrt(n_embd)
+            mlp.c_proj:      zeros (SP) or uniform (muP)
         """
 
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=0.8)
-        torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
+        # muP uses 0.02 for stronger initial logit signal; forward-pass scaling handles width independence
+        lm_head_std = 0.02 if self.config.mup_base_width > 0 else 0.001
+        torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=lm_head_std)
 
         # Transformer blocks: uniform init with bound = sqrt(3) * std (same standard deviation as normal)
         n_embd = self.config.n_embd
@@ -225,9 +230,15 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-            torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)  # 0.4x init scale for c_fc
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            if self.config.mup_base_width > 0:
+                # muP: output projections use same scale as hidden weights (std = sigma_base/sqrt(m_d))
+                # Zero init causes attn/FFN outputs to vanish as width increases with muP LR scaling
+                torch.nn.init.uniform_(block.attn.c_proj.weight, -s, s)
+                torch.nn.init.uniform_(block.mlp.c_proj.weight, -s, s)
+            else:
+                torch.nn.init.zeros_(block.attn.c_proj.weight) # SP: projections are zero
+                torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
         # Per-layer scalars
         # Per-layer resid init: stronger residual at early layers, weaker at deep layers
@@ -266,7 +277,6 @@ class GPT(nn.Module):
                 ve.to(dtype=COMPUTE_DTYPE)
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=100000, device=None):
-        # TODO: bump base theta more? e.g. 100K is more common more recently
         # autodetect the device from model embeddings
         if device is None:
             device = self.transformer.wte.weight.device
@@ -371,7 +381,7 @@ class GPT(nn.Module):
             'total': total,
         }
 
-    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, scalar_lr=0.5):
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, scalar_lr=0.5, use_mup=False, base_width=256, muon_lr_exponent=0.0):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
 
@@ -385,16 +395,45 @@ class GPT(nn.Module):
         smear_params = [self.smear_gate.weight, self.smear_lambda, self.backout_lambda]
         assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(smear_params)
 
-        # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
-        dmodel_lr_scale = (model_dim / 768) ** -0.5
-        print0(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
+        # Compute LR scaling factors based on mode
+        if use_mup:
+            # muP for mixed Muon+AdamW optimizer:
+            #
+            # Key insight: the output logit scaling (logits *= base/width in forward()) already
+            # propagates a base/width factor into the lm_head gradient. Adam normalizes gradient
+            # magnitude via its second moment, but applying ANOTHER base/width to the LR compounds
+            # the scaling, making lm_head updates O(base²/width²) instead of O(1). So we do NOT
+            # apply width-dependent LR scaling to the output layer — the logit scaling alone suffices.
+            #
+            # For Muon (hidden weights): Polar Express orthogonalization normalizes ||update||_F ≈ 1
+            # regardless of width, making the update already O(1). No width-dependent LR scaling
+            # is needed (empirically confirmed: exponent 0 and 1 give identical transfer behavior).
+            #
+            # The muon_lr_exponent parameter is kept for experimentation but defaults to 0.
+            width_ratio = base_width / model_dim  # e.g., 128/1024 = 0.125
+            dmodel_lr_scale = 1.0     # muP: no sqrt-based scaling (width scaling handled explicitly)
+            emb_lr_scale = 1.0        # Embeddings: NO width scaling (standard muP)
+            hidden_lr_scale = width_ratio ** muon_lr_exponent  # Hidden (Muon): default 0 = no scaling
+            output_lr_scale = 1.0     # Output (AdamW): NO LR scaling (logit scaling in forward suffices)
+            assert self.config.mup_base_width == base_width, \
+                f"mup_base_width mismatch: GPTConfig has {self.config.mup_base_width}, but setup_optimizer got base_width={base_width}. " \
+                f"Set mup_base_width={base_width} in GPTConfig at construction time."
+            print0(f"muP scaling: base_width={base_width}, model_dim={model_dim}, width_ratio={width_ratio:.6f}, muon_lr_exp={muon_lr_exponent}")
+        else:
+            # Standard (SP): scale AdamW params by 1/√dmodel (tuned for 768 dim model)
+            dmodel_lr_scale = (model_dim / 768) ** -0.5
+            emb_lr_scale = dmodel_lr_scale
+            hidden_lr_scale = 1.0  # Muon params: no scaling in SP mode
+            output_lr_scale = dmodel_lr_scale
+            print0(f"Standard scaling: dmodel_lr_scale={dmodel_lr_scale:.6f}")
 
         # Build param_groups with all required fields explicit
+        # Per-group betas and weight decay tuned by Andrej for SP; muP uses same base HPs
         param_groups = [
             # AdamW groups (embeddings, lm_head, scalars)
-            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=(0.8, 0.96), eps=1e-10, weight_decay=0.01),
-            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.001),
-            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale * 0.5, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.01),
+            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * output_lr_scale, betas=(0.8, 0.96), eps=1e-10, weight_decay=0.01),
+            dict(kind='adamw', params=embedding_params, lr=embedding_lr * emb_lr_scale, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.001),
+            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * emb_lr_scale * 0.5, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.01),
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.05),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
             dict(kind='adamw', params=smear_params, lr=0.2, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0),
@@ -403,7 +442,7 @@ class GPT(nn.Module):
         for shape in sorted({p.shape for p in matrix_params}):
             group_params = [p for p in matrix_params if p.shape == shape]
             param_groups.append(dict(
-                kind='muon', params=group_params, lr=matrix_lr,
+                kind='muon', params=group_params, lr=matrix_lr * hidden_lr_scale,
                 momentum=0.95, ns_steps=5, beta2=0.9, weight_decay=weight_decay,
             ))
 
@@ -467,6 +506,11 @@ class GPT(nn.Module):
         # Forward the lm_head (compute logits)
         softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
         logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
+        if self.config.mup_base_width > 0:
+            # muP: scale output logits by base_width/n_embd (= 1/m_d).
+            # Without this, logits grow with width because the lm_head dot product sums over n_embd terms.
+            # 1/sqrt(m_d) only corrects at init; 1/m_d is required for all training steps (see Eleuther blog Fig 8-9).
+            logits = logits * (self.config.mup_base_width / self.config.n_embd)
         logits = logits[..., :self.config.vocab_size] # slice to remove padding
         logits = logits.float() # switch to fp32 for logit softcap and loss computation
         logits = softcap * torch.tanh(logits / softcap) # squash the logits
