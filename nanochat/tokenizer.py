@@ -255,6 +255,9 @@ class RustBPETokenizer:
     def decode(self, ids):
         return self.enc.decode(ids)
 
+    def decode_single_token_bytes(self, token_id):
+        return self.enc.decode_single_token_bytes(token_id)
+
     def save(self, tokenizer_dir):
         # save the encoding object to disk
         os.makedirs(tokenizer_dir, exist_ok=True)
