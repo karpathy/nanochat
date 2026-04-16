@@ -79,6 +79,12 @@ parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
+
+# Validate training horizon arguments
+if args.target_param_data_ratio == 0:
+    parser.error("--target-param-data-ratio must be positive (e.g. Chinchilla=20, nanochat default=12) or -1 to disable")
+if args.target_flops == 0:
+    parser.error("--target-flops must be positive or -1 to disable")
 # -----------------------------------------------------------------------------
 # Compute init and wandb logging
 
