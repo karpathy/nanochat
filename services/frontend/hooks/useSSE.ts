@@ -13,6 +13,8 @@ export interface StreamRequest {
   model?: string;
   temperature?: number;
   topK?: number;
+  conversationId?: string;
+  auth?: Record<string, string>;
 }
 
 export function useSSE(endpoint: string, options: SSEOptions = {}) {
@@ -33,10 +35,21 @@ export function useSSE(endpoint: string, options: SSEOptions = {}) {
       setIsStreaming(true);
 
       try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (body.auth) {
+          Object.assign(headers, body.auth);
+        }
+
         const res = await fetch(endpoint, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          headers,
+          body: JSON.stringify({
+            messages: body.messages,
+            model: body.model,
+            temperature: body.temperature,
+            topK: body.topK,
+            conversationId: body.conversationId,
+          }),
           signal: ac.signal,
         });
 

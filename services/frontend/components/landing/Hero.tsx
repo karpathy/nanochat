@@ -2,11 +2,11 @@
 
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { useSession } from 'next-auth/react';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function Hero() {
-  const { status } = useSession();
-  const ctaHref = status === 'authenticated' ? '/chat' : '/login';
+  const { authenticated } = useAuth();
+  const ctaHref = authenticated ? '/chat' : '/login';
 
   return (
     <section className="relative z-[2] text-center px-4 pt-6">

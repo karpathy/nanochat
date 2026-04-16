@@ -2,14 +2,14 @@
 
 import { useEffect } from 'react';
 import Link from 'next/link';
-import { useSession, signOut } from 'next-auth/react';
-import { Plus, PanelLeftClose, PanelLeftOpen, LogOut, ChevronDown } from 'lucide-react';
+import { Plus, PanelLeftClose, PanelLeftOpen, LogOut, ChevronDown, Trash2 } from 'lucide-react';
 import SamosaLogo from '@/components/svg/SamosaLogo';
 import { useChatStore, groupConversations, MODEL_OPTIONS } from '@/store/chatStore';
+import { useAuth } from '@/hooks/useAuth';
 import clsx from 'clsx';
 
 export default function Sidebar() {
-  const { data: session } = useSession();
+  const { user, logout } = useAuth();
   const {
     conversations,
     currentConversationId,
@@ -17,14 +17,15 @@ export default function Sidebar() {
     model,
     setModel,
     toggleSidebar,
-    newConversation,
+    createConversation,
     selectConversation,
-    hydrateMockConversations,
+    deleteConversation,
+    fetchConversations,
   } = useChatStore();
 
   useEffect(() => {
-    hydrateMockConversations();
-  }, [hydrateMockConversations]);
+    fetchConversations();
+  }, [fetchConversations]);
 
   const grouped = groupConversations(conversations);
 
@@ -54,7 +55,7 @@ export default function Sidebar() {
           <div className="px-3 py-3">
             <button
               type="button"
-              onClick={() => newConversation()}
+              onClick={() => createConversation()}
               className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-gold/60 bg-white hover:bg-cream text-brown font-medium text-sm transition-colors"
             >
               <Plus size={16} className="text-gold" />
@@ -72,12 +73,12 @@ export default function Sidebar() {
                   </div>
                   <ul className="space-y-0.5">
                     {items.map((c) => (
-                      <li key={c.id}>
+                      <li key={c.id} className="group relative">
                         <button
                           type="button"
                           onClick={() => selectConversation(c.id)}
                           className={clsx(
-                            'w-full text-left px-2.5 py-1.5 rounded text-sm truncate transition-colors',
+                            'w-full text-left px-2.5 py-1.5 rounded text-sm truncate transition-colors pr-8',
                             c.id === currentConversationId
                               ? 'bg-cream text-brown font-medium'
                               : 'text-gray-700 hover:bg-cream/70',
@@ -85,6 +86,17 @@ export default function Sidebar() {
                           title={c.title}
                         >
                           {c.title}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteConversation(c.id);
+                          }}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-cream text-gray-400 hover:text-chutney-red transition-all"
+                          aria-label={`Delete ${c.title}`}
+                        >
+                          <Trash2 size={14} />
                         </button>
                       </li>
                     ))}
@@ -121,20 +133,20 @@ export default function Sidebar() {
 
             <div className="flex items-center gap-2 pt-1">
               <div className="h-8 w-8 rounded-full bg-gold/20 text-brown flex items-center justify-center text-sm font-semibold">
-                {(session?.user?.name ?? 'G')[0].toUpperCase()}
+                {(user?.name ?? 'G')[0].toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-gray-800 truncate">
-                  {session?.user?.name ?? 'Guest'}
+                  {user?.name ?? 'Guest'}
                 </div>
                 <div className="text-xs text-gray-500 truncate">
-                  {session?.user?.email ?? 'Not signed in'}
+                  {user?.email ?? 'Not signed in'}
                 </div>
               </div>
               <button
                 type="button"
                 aria-label="Sign out"
-                onClick={() => signOut({ callbackUrl: '/' })}
+                onClick={logout}
                 className="p-1.5 rounded hover:bg-cream text-gray-500 hover:text-brown"
               >
                 <LogOut size={16} />

@@ -1,9 +1,5 @@
 'use client';
 
-import { signIn } from 'next-auth/react';
-import { useSearchParams } from 'next/navigation';
-import { useState } from 'react';
-
 function GoogleIcon() {
   return (
     <svg width={20} height={20} viewBox="0 0 48 48" aria-hidden="true">
@@ -27,40 +23,23 @@ function GitHubIcon() {
 }
 
 export default function OAuthButtons() {
-  const params = useSearchParams();
-  const callbackUrl = params.get('callbackUrl') || '/chat';
-  const [busy, setBusy] = useState<string | null>(null);
-
-  const handleSignIn = async (provider: 'google' | 'github') => {
-    setBusy(provider);
-    try {
-      await signIn(provider, { callbackUrl });
-    } finally {
-      setBusy(null);
-    }
-  };
-
   return (
     <div className="space-y-3">
-      <button
-        type="button"
-        onClick={() => handleSignIn('google')}
-        disabled={busy !== null}
-        className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-60 transition-colors font-sans text-sm font-medium text-gray-700"
+      <a
+        href="/api/auth/google"
+        className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition-colors font-sans text-sm font-medium text-gray-700"
       >
         <GoogleIcon />
-        <span>{busy === 'google' ? 'Redirecting…' : 'Continue with Google'}</span>
-      </button>
+        <span>Continue with Google</span>
+      </a>
 
-      <button
-        type="button"
-        onClick={() => handleSignIn('github')}
-        disabled={busy !== null}
-        className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-60 transition-colors font-sans text-sm font-medium text-gray-700"
+      <a
+        href="/api/auth/github"
+        className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition-colors font-sans text-sm font-medium text-gray-700"
       >
         <GitHubIcon />
-        <span>{busy === 'github' ? 'Redirecting…' : 'Continue with GitHub'}</span>
-      </button>
+        <span>Continue with GitHub</span>
+      </a>
     </div>
   );
 }

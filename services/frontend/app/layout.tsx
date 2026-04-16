@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from 'next';
 import { Baloo_2, Great_Vibes, Caveat, Inter } from 'next/font/google';
-import SessionBoundary from '@/components/SessionBoundary';
 import './globals.css';
 
 const baloo = Baloo_2({
@@ -47,7 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${baloo.variable} ${vibes.variable} ${caveat.variable} ${inter.variable}`}>
       <body className="min-h-dvh bg-white text-gray-900">
-        <SessionBoundary>{children}</SessionBoundary>
+        {children}
       </body>
     </html>
   );

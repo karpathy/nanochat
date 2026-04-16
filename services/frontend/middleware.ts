@@ -1,19 +1,12 @@
-import { auth } from '@/auth';
 import { NextResponse } from 'next/server';
 
-export default auth((req) => {
-  const { nextUrl } = req;
-  const isAuthed = !!req.auth;
-  const isChatRoute = nextUrl.pathname.startsWith('/chat');
-
-  if (isChatRoute && !isAuthed) {
-    const loginUrl = new URL('/login', nextUrl);
-    loginUrl.searchParams.set('callbackUrl', nextUrl.pathname);
-    return NextResponse.redirect(loginUrl);
-  }
+export function middleware() {
+  // Auth is checked client-side via useAuth / localStorage.
+  // Middleware is intentionally a pass-through so the
+  // /chat?access_token=... redirect from the auth service works.
   return NextResponse.next();
-});
+}
 
 export const config = {
-  matcher: ['/chat/:path*'],
+  matcher: [], // No server-side auth blocking
 };
