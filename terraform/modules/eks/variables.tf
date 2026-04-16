@@ -43,6 +43,12 @@ variable "node_desired_size" {
   default     = 2
 }
 
+variable "node_max_unavailable_percentage" {
+  description = "Max percentage of nodes unavailable during rolling update."
+  type        = number
+  default     = 33
+}
+
 variable "tags" {
   description = "Tags applied to every resource."
   type        = map(string)

@@ -50,6 +50,10 @@ module "eks" {
       instance_types = [var.node_instance_type]
       capacity_type  = "ON_DEMAND"
 
+      update_config = {
+        max_unavailable_percentage = var.node_max_unavailable_percentage
+      }
+
       labels = {
         role = "general"
       }
