@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --gold: #e8a838;
+  --brown: #8b4d0a;
+  --cream: #fff8e7;
+  --green-chutney: #2d8a4e;
+  --red-chutney: #c0392b;
+  --warm-grey: #d4c4a0;
+  --light-cream: #fffdf5;
+}
+
+html, body { height: 100%; }
+
+body {
+  @apply font-sans bg-white text-gray-900;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+/* Markdown prose tweaks inside message bubbles */
+.markdown-body > *:first-child { margin-top: 0 !important; }
+.markdown-body > *:last-child { margin-bottom: 0 !important; }
+.markdown-body pre {
+  @apply bg-slate-900 text-slate-50 rounded-lg p-4 overflow-x-auto my-2 text-sm;
+}
+.markdown-body code:not(pre code) {
+  @apply px-1 py-0.5 rounded bg-cream-light border border-cream-border text-brown text-[0.9em];
+}
+.markdown-body p { @apply my-2 leading-relaxed; }
+.markdown-body ul { @apply list-disc pl-6 my-2; }
+.markdown-body ol { @apply list-decimal pl-6 my-2; }
+.markdown-body h1 { @apply text-xl font-bold mt-4 mb-2; }
+.markdown-body h2 { @apply text-lg font-bold mt-3 mb-2; }
+.markdown-body h3 { @apply text-base font-bold mt-2 mb-1; }
+.markdown-body blockquote {
+  @apply border-l-4 border-cream-border pl-4 italic text-brown-light my-2;
+}
+.markdown-body a { @apply text-chutney-green underline hover:text-gold; }
+
+/* Scrollbar tuning */
+.nice-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.nice-scrollbar::-webkit-scrollbar-thumb { background: #e0d5c0; border-radius: 3px; }
+.nice-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--warm-grey); }
+
+/* Highlight.js minimal tweaks */
+.hljs { background: transparent; }
