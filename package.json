@@ -1,0 +1,15 @@
+{
+  "name": "samosachaat-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Root tooling for the samosaChaat monorepo (commitlint + husky).",
+  "scripts": {
+    "prepare": "husky install",
+    "commitlint": "commitlint --edit"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "husky": "^9.1.6"
+  }
+}

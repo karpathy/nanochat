@@ -1,0 +1,57 @@
+{{- if .Values.ingress.enabled -}}
+{{- $frontendSvc := include "samosachaat.svcName" (dict "root" . "svc" "frontend") -}}
+{{- $authSvc := include "samosachaat.svcName" (dict "root" . "svc" "auth") -}}
+{{- $chatApiSvc := include "samosachaat.svcName" (dict "root" . "svc" "chat-api") -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: samosachaat
+  namespace: {{ include "samosachaat.namespace" . }}
+  labels:
+    {{- include "samosachaat.labels" . | nindent 4 }}
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    {{- with .Values.ingress.acmCertArn }}
+    alb.ingress.kubernetes.io/certificate-arn: {{ . | quote }}
+    {{- end }}
+spec:
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $authSvc }}
+                port:
+                  number: {{ .Values.auth.port }}
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $chatApiSvc }}
+                port:
+                  number: {{ .Values.chatApi.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $frontendSvc }}
+                port:
+                  number: {{ .Values.frontend.port }}
+    - host: {{ .Values.ingress.grafanaHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.ingress.grafanaServiceName }}
+                port:
+                  number: {{ .Values.ingress.grafanaServicePort }}
+{{- end }}

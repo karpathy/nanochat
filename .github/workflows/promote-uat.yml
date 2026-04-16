@@ -1,0 +1,83 @@
+name: Promote to UAT
+
+on:
+  push:
+    tags:
+      - 'RC*'
+
+concurrency:
+  group: promote-uat
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  UAT_CLUSTER: samosachaat-uat
+  UAT_NAMESPACE: samosachaat-uat
+  SERVICES: frontend auth chat-api inference
+
+jobs:
+  promote:
+    name: Re-tag dev → uat and deploy
+    runs-on: ubuntu-latest
+    environment: uat
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        run: echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Re-tag dev images as uat-${{ steps.tag.outputs.name }}
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          SRC_REF: dev-latest
+          DST_REF: uat-${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          for svc in $SERVICES; do
+            repo="samosachaat/${svc}"
+            echo "Re-tagging $repo:$SRC_REF -> $repo:$DST_REF"
+            manifest=$(aws ecr batch-get-image \
+              --repository-name "$repo" \
+              --image-ids imageTag="$SRC_REF" \
+              --query 'images[0].imageManifest' \
+              --output text)
+            aws ecr put-image \
+              --repository-name "$repo" \
+              --image-tag "$DST_REF" \
+              --image-manifest "$manifest" >/dev/null
+          done
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name "$UAT_CLUSTER" \
+            --region "$AWS_REGION"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.16.2'
+
+      - name: Helm upgrade (UAT)
+        run: |
+          helm upgrade --install samosachaat helm/samosachaat \
+            -f helm/samosachaat/values-uat.yaml \
+            --set global.imageTag=uat-${{ steps.tag.outputs.name }} \
+            --namespace "$UAT_NAMESPACE" \
+            --create-namespace \
+            --wait --timeout 10m

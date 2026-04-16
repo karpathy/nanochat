@@ -1,4 +1,10 @@
-The samosaChaat application chart is scaffolded.
+samosaChaat release {{ .Release.Name }} deployed to namespace {{ include "samosachaat.namespace" . }}.
 
-Populate this chart with Deployments, Services, Ingress, Secrets, and ConfigMaps
-as the platform services are implemented.
+Image tag: {{ .Values.global.imageTag }}
+Slot: {{ default "single" .Values.deployment.slot }}
+Ingress host: {{ .Values.ingress.host }}
+
+Useful commands:
+  kubectl -n {{ include "samosachaat.namespace" . }} get pods
+  kubectl -n {{ include "samosachaat.namespace" . }} get ingress samosachaat
+  helm -n {{ include "samosachaat.namespace" . }} status {{ .Release.Name }}

@@ -1,0 +1,20 @@
+{{- if .Values.chatApi.enabled -}}
+{{- $svcName := include "samosachaat.svcName" (dict "root" . "svc" "chat-api") -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svcName }}
+  namespace: {{ include "samosachaat.namespace" . }}
+  labels:
+    {{- include "samosachaat.labels" . | nindent 4 }}
+    {{- include "samosachaat.selectorLabels" (dict "root" . "svc" "chat-api") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "samosachaat.selectorLabels" (dict "root" . "svc" "chat-api") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.chatApi.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

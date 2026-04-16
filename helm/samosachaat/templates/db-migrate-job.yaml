@@ -1,0 +1,48 @@
+{{- if .Values.dbMigrate.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: samosachaat-db-migrate
+  namespace: {{ include "samosachaat.namespace" . }}
+  labels:
+    {{- include "samosachaat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "samosachaat.labels" . | nindent 8 }}
+        app.kubernetes.io/component: db-migrate
+    spec:
+      restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: db-migrate
+          image: {{ include "samosachaat.image" (dict "root" . "svc" .Values.dbMigrate) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          workingDir: {{ .Values.dbMigrate.workingDir }}
+          command:
+            {{- toYaml .Values.dbMigrate.command | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: samosachaat-config
+            - secretRef:
+                name: samosachaat-secrets
+                optional: true
+          {{- with .Values.dbMigrate.env }}
+          env:
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- end }}
+{{- end }}

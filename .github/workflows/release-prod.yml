@@ -1,0 +1,119 @@
+name: Release to Prod (Blue/Green)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-prod
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  PROD_CLUSTER: samosachaat-prod
+  PROD_NAMESPACE: samosachaat-prod
+  SERVICES: frontend auth chat-api inference
+
+jobs:
+  release:
+    name: Blue/Green release ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        run: echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Promote uat images to prod tag
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          DST_REF: prod-${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          for svc in $SERVICES; do
+            repo="samosachaat/${svc}"
+            src=$(aws ecr describe-images \
+              --repository-name "$repo" \
+              --query 'sort_by(imageDetails,&imagePushedAt)[?starts_with(imageTags[0], `uat-`)]|[-1].imageTags[0]' \
+              --output text)
+            if [ -z "$src" ] || [ "$src" = "None" ]; then
+              echo "No uat-* image found for $repo" >&2
+              exit 1
+            fi
+            echo "Promoting $repo:$src -> $repo:$DST_REF"
+            manifest=$(aws ecr batch-get-image \
+              --repository-name "$repo" \
+              --image-ids imageTag="$src" \
+              --query 'images[0].imageManifest' \
+              --output text)
+            aws ecr put-image \
+              --repository-name "$repo" \
+              --image-tag "$DST_REF" \
+              --image-manifest "$manifest" >/dev/null
+          done
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name "$PROD_CLUSTER" \
+            --region "$AWS_REGION"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.16.2'
+
+      - name: Deploy green slot
+        run: |
+          helm upgrade --install samosachaat-green helm/samosachaat \
+            -f helm/samosachaat/values-prod.yaml \
+            --set global.imageTag=prod-${{ steps.tag.outputs.name }} \
+            --set deployment.slot=green \
+            --set ingress.enabled=false \
+            --namespace "$PROD_NAMESPACE" \
+            --create-namespace \
+            --wait --timeout 15m
+
+      - name: Smoke test green
+        run: |
+          set -euo pipefail
+          kubectl -n "$PROD_NAMESPACE" rollout status deploy/frontend-green --timeout=5m
+          kubectl -n "$PROD_NAMESPACE" run smoke-${{ github.run_id }} \
+            --rm -i --restart=Never \
+            --image=curlimages/curl:8.10.1 \
+            --command -- curl -fsS --max-time 10 \
+            http://frontend-green.${PROD_NAMESPACE}.svc.cluster.local:3000/health
+
+      - name: Swap ingress → green
+        run: |
+          helm upgrade --install samosachaat helm/samosachaat \
+            -f helm/samosachaat/values-prod.yaml \
+            --set global.imageTag=prod-${{ steps.tag.outputs.name }} \
+            --set deployment.slot=green \
+            --set ingress.enabled=true \
+            --namespace "$PROD_NAMESPACE" \
+            --wait --timeout 10m
+
+      - name: Retain blue as rollback standby
+        run: |
+          echo "Blue slot retained for rollback. To roll back:"
+          echo "  helm upgrade samosachaat helm/samosachaat \\"
+          echo "    -f helm/samosachaat/values-prod.yaml \\"
+          echo "    --set deployment.slot=blue --namespace $PROD_NAMESPACE"

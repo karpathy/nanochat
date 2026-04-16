@@ -1,0 +1,60 @@
+{{- if .Values.frontend.enabled -}}
+{{- $svcName := include "samosachaat.svcName" (dict "root" . "svc" "frontend") -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $svcName }}
+  namespace: {{ include "samosachaat.namespace" . }}
+  labels:
+    {{- include "samosachaat.labels" . | nindent 4 }}
+    {{- include "samosachaat.selectorLabels" (dict "root" . "svc" "frontend") | nindent 4 }}
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "samosachaat.selectorLabels" (dict "root" . "svc" "frontend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "samosachaat.selectorLabels" (dict "root" . "svc" "frontend") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: frontend
+          image: {{ include "samosachaat.image" (dict "root" . "svc" .Values.frontend) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: samosachaat-config
+            - secretRef:
+                name: samosachaat-secrets
+                optional: true
+          {{- with .Values.frontend.env }}
+          env:
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+{{- end }}

@@ -1,0 +1,37 @@
+name: Nightly integration
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose-integration:
+    name: docker compose integration suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run compose integration
+        run: |
+          set -euo pipefail
+          compose_files=(-f docker-compose.yml)
+          if [ -f docker-compose.test.yml ]; then
+            compose_files+=(-f docker-compose.test.yml)
+          fi
+          docker compose "${compose_files[@]}" up --build --abort-on-container-exit --exit-code-from tests
+
+      - name: Compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans

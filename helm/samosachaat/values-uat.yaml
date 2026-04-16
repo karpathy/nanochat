@@ -1,0 +1,56 @@
+## UAT overrides — 2 replicas each, medium resources.
+
+namespace:
+  name: samosachaat-uat
+
+config:
+  ENVIRONMENT: "uat"
+  LOG_LEVEL: "info"
+
+frontend:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+auth:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+chatApi:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: '1'
+      memory: 1Gi
+  hpa:
+    enabled: false
+
+inference:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
+  hpa:
+    enabled: false
+
+pdb:
+  enabled: true
+  minAvailable: 1
