@@ -24,7 +24,7 @@ class Conversation(Base):
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid(as_uuid=True),
-        sa.ForeignKey("users.id", ondelete="CASCADE"),
+        sa.ForeignKey("users.id", ondelete="CASCADE", use_alter=True),
         nullable=False,
         index=True,
     )
