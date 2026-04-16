@@ -162,12 +162,11 @@ export default function ChatWindow() {
               <PanelLeftOpen size={18} />
             </button>
           )}
-          <h1 className="font-baloo font-semibold text-lg text-gray-900">Chat Completions</h1>
-          <span className="hidden sm:inline text-xs px-2 py-0.5 rounded-full border border-warm-grey bg-cream-light text-brown">
+          <span className="text-xs px-2 py-0.5 rounded-full border border-warm-grey bg-cream-light text-brown">
             {model}
           </span>
         </div>
-        <div className="text-xs text-gray-500">
+        <div className="text-sm text-gray-600 font-medium">
           {user?.name ? `Hi, ${user.name.split(' ')[0]}` : ''}
         </div>
       </header>
