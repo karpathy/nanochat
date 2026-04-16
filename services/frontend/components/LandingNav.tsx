@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import ToranSvg from './svg/ToranSvg';
 import { useAuth } from '@/hooks/useAuth';
 
 export default function LandingNav() {
@@ -27,10 +26,6 @@ export default function LandingNav() {
         </Link>
       </div>
 
-      <div className="absolute left-1/2 top-0 origin-top transform -translate-x-1/2 animate-pendulum z-[5]">
-        <ToranSvg />
-      </div>
-
       <div className="flex items-center gap-4 font-caveat text-[1.05rem] text-gray-600 pt-1">
         <a
           href="https://instagram.com/samosachaat.art"
@@ -43,14 +38,14 @@ export default function LandingNav() {
         {authenticated ? (
           <Link
             href="/chat"
-            className="px-3 py-1 rounded-full border border-warm-grey text-brown bg-cream-light hover:bg-cream transition-colors"
+            className="px-5 py-2 rounded-full bg-gold text-white font-semibold hover:bg-gold-dark transition-colors shadow-sm"
           >
             Chat
           </Link>
         ) : (
           <Link
             href="/login"
-            className="px-3 py-1 rounded-full border border-warm-grey text-brown bg-cream-light hover:bg-cream transition-colors"
+            className="px-5 py-2 rounded-full bg-gold text-white font-semibold hover:bg-gold-dark transition-colors shadow-sm"
           >
             Sign in
           </Link>

@@ -56,7 +56,7 @@ export default function Sidebar() {
             <button
               type="button"
               onClick={() => createConversation()}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-gold/60 bg-white hover:bg-cream text-brown font-medium text-sm transition-colors"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-gold/10 border border-gold/40 hover:bg-gold/20 text-brown font-baloo font-semibold text-sm transition-colors"
             >
               <Plus size={16} className="text-gold" />
               New chat
@@ -64,46 +64,54 @@ export default function Sidebar() {
           </div>
 
           <div className="flex-1 overflow-y-auto px-2 nice-scrollbar">
-            {Object.entries(grouped).map(([group, items]) => {
-              if (items.length === 0) return null;
-              return (
-                <div key={group} className="mb-4">
-                  <div className="px-2 mb-1 text-[11px] uppercase tracking-wider text-gray-400 font-medium">
-                    {group}
+            {conversations.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full px-4 text-center py-12">
+                <div className="text-3xl mb-3 opacity-30">💬</div>
+                <p className="text-sm text-gray-400 font-medium">No conversations yet.</p>
+                <p className="text-xs text-gray-400 mt-1">Start your first chat!</p>
+              </div>
+            ) : (
+              Object.entries(grouped).map(([group, items]) => {
+                if (items.length === 0) return null;
+                return (
+                  <div key={group} className="mb-4">
+                    <div className="px-2 mb-1 text-[11px] uppercase tracking-wider text-gray-400 font-medium">
+                      {group}
+                    </div>
+                    <ul className="space-y-0.5">
+                      {items.map((c) => (
+                        <li key={c.id} className="group relative">
+                          <button
+                            type="button"
+                            onClick={() => selectConversation(c.id)}
+                            className={clsx(
+                              'w-full text-left px-2.5 py-1.5 rounded text-sm truncate transition-colors pr-8',
+                              c.id === currentConversationId
+                                ? 'bg-cream text-brown font-medium'
+                                : 'text-gray-700 hover:bg-cream/70',
+                            )}
+                            title={c.title}
+                          >
+                            {c.title}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteConversation(c.id);
+                            }}
+                            className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-cream text-gray-400 hover:text-chutney-red transition-all"
+                            aria-label={`Delete ${c.title}`}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                  <ul className="space-y-0.5">
-                    {items.map((c) => (
-                      <li key={c.id} className="group relative">
-                        <button
-                          type="button"
-                          onClick={() => selectConversation(c.id)}
-                          className={clsx(
-                            'w-full text-left px-2.5 py-1.5 rounded text-sm truncate transition-colors pr-8',
-                            c.id === currentConversationId
-                              ? 'bg-cream text-brown font-medium'
-                              : 'text-gray-700 hover:bg-cream/70',
-                          )}
-                          title={c.title}
-                        >
-                          {c.title}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteConversation(c.id);
-                          }}
-                          className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-cream text-gray-400 hover:text-chutney-red transition-all"
-                          aria-label={`Delete ${c.title}`}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
 
           <div className="px-3 py-3 border-t border-cream-border space-y-3">

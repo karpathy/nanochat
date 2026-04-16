@@ -37,7 +37,7 @@ export default function ChatInput({ value, onChange, onSubmit, onStop, isStreami
   };
 
   return (
-    <div className="sticky bottom-0 bg-white pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))] px-4">
+    <div className="sticky bottom-0 bg-white pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))] px-4 border-t border-cream-border/50 shadow-[0_-2px_8px_rgba(0,0,0,0.04)]">
       <div className="max-w-3xl mx-auto flex items-end gap-3">
         <div className="flex-1 relative">
           <textarea

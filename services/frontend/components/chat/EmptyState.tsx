@@ -1,35 +1,64 @@
 'use client';
 
-import { Sparkles, BookOpen, Code2, Smile } from 'lucide-react';
+import SamosaLogo from '@/components/svg/SamosaLogo';
 
-const CHIPS = [
-  { icon: BookOpen, label: 'Summarize a topic', prompt: 'Summarize the history of samosas in 3 paragraphs.' },
-  { icon: Sparkles, label: 'Explain a concept', prompt: 'Explain transformers to a curious beginner.' },
-  { icon: Code2, label: 'Write some code', prompt: 'Write a Python function that reverses a linked list.' },
-  { icon: Smile, label: 'Tell me a joke', prompt: 'Tell me a joke about chai.' },
+const SUGGESTIONS = [
+  {
+    icon: '📚',
+    label: 'Summarize a topic',
+    description: 'Get a concise overview of any subject',
+    prompt: 'Summarize the history of samosas in 3 paragraphs.',
+  },
+  {
+    icon: '✨',
+    label: 'Explain a concept',
+    description: 'Break down complex ideas simply',
+    prompt: 'Explain transformers to a curious beginner.',
+  },
+  {
+    icon: '💻',
+    label: 'Write some code',
+    description: 'Get help with any programming task',
+    prompt: 'Write a Python function that reverses a linked list.',
+  },
+  {
+    icon: '😄',
+    label: 'Tell me a joke',
+    description: 'Lighten the mood with some humor',
+    prompt: 'Tell me a joke about chai.',
+  },
 ];
 
 export default function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-4 text-center">
-      <h2 className="font-baloo font-bold text-3xl md:text-4xl text-gray-900 mb-2">
+    <div className="flex flex-col items-center justify-center flex-1 px-4 -mt-20">
+      {/* Small logo */}
+      <div className="w-16 h-16 mb-6 opacity-20">
+        <SamosaLogo size={64} />
+      </div>
+
+      <h2 className="font-baloo font-bold text-3xl text-gray-800 mb-2">
         How can I help you today?
       </h2>
-      <p className="font-caveat text-lg text-brown-light mb-8">
+      <p className="font-caveat text-lg text-brown/60 mb-10">
         Ask anything — a doubt, a recipe, a code snippet, or a fresh idea.
       </p>
+
+      {/* Bigger suggestion cards - 2x2 grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-xl">
-        {CHIPS.map(({ icon: Icon, label, prompt }) => (
+        {SUGGESTIONS.map((s) => (
           <button
-            key={label}
+            key={s.label}
             type="button"
-            onClick={() => onPick(prompt)}
-            className="flex items-center gap-3 px-4 py-3 rounded-xl border border-cream-border bg-cream-light hover:bg-cream text-left transition-colors"
+            onClick={() => onPick(s.prompt)}
+            className="flex items-start gap-3 p-4 rounded-xl border border-cream-border bg-white hover:bg-cream/50 hover:border-gold/30 transition-all text-left group"
           >
-            <Icon size={18} className="text-gold flex-shrink-0" />
+            <span className="text-xl mt-0.5">{s.icon}</span>
             <div>
-              <div className="text-sm font-medium text-gray-800">{label}</div>
-              <div className="text-xs text-gray-500 truncate">{prompt}</div>
+              <div className="font-medium text-sm text-gray-800 group-hover:text-brown">
+                {s.label}
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5">{s.description}</div>
             </div>
           </button>
         ))}
