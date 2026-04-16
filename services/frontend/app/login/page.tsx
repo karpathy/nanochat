@@ -1,16 +1,22 @@
+'use client';
+
 import Link from 'next/link';
 import { Suspense } from 'react';
+import { useAuth } from '@/hooks/useAuth';
 import { redirect } from 'next/navigation';
-import { auth } from '@/auth';
 import MandalaArt from '@/components/login/MandalaArt';
 import OAuthButtons from '@/components/login/OAuthButtons';
 import SamosaLogo from '@/components/svg/SamosaLogo';
 
-export const metadata = { title: 'Sign in — samosaChaat' };
+function LoginContent() {
+  const { authenticated, loading } = useAuth();
 
-export default async function LoginPage() {
-  const session = await auth();
-  if (session?.user) redirect('/chat');
+  if (loading) return null;
+  if (authenticated) {
+    redirect('/chat');
+    return null;
+  }
+
   return (
     <main className="min-h-dvh grid grid-cols-1 lg:grid-cols-2 bg-white">
       <div className="hidden lg:block lg:min-h-dvh">
@@ -30,9 +36,7 @@ export default async function LoginPage() {
           </p>
 
           <div className="mt-8">
-            <Suspense fallback={<div className="h-24" aria-hidden="true" />}>
-              <OAuthButtons />
-            </Suspense>
+            <OAuthButtons />
           </div>
 
           <div className="flex items-center gap-3 my-6" aria-hidden="true">
@@ -74,5 +78,13 @@ export default async function LoginPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="flex h-dvh items-center justify-center">Loading...</div>}>
+      <LoginContent />
+    </Suspense>
   );
 }

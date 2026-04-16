@@ -1,18 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSession } from 'next-auth/react';
 import { PanelLeftOpen } from 'lucide-react';
 import MessageBubble from './MessageBubble';
 import EmptyState from './EmptyState';
 import ChatInput from './ChatInput';
 import { useChatStore } from '@/store/chatStore';
 import { useSSE } from '@/hooks/useSSE';
+import { useAuth } from '@/hooks/useAuth';
+import { authHeaders } from '@/lib/auth-client';
 import { parseSlashCommand } from '@/lib/slashCommands';
 import type { Message } from '@/types/chat';
 
 export default function ChatWindow() {
-  const { data: session } = useSession();
+  const { user } = useAuth();
   const {
     conversations,
     currentConversationId,
@@ -21,6 +22,7 @@ export default function ChatWindow() {
     topK,
     sidebarOpen,
     toggleSidebar,
+    createConversation,
     newConversation,
     appendMessage,
     updateMessage,
@@ -67,7 +69,7 @@ export default function ChatWindow() {
         updateMessage(
           currentConversationId,
           streamingMsgId,
-          `⚠️ Error: ${err.message}. Using mock responses requires only the frontend; cloud streaming requires CHAT_API_URL.`,
+          `Error: ${err.message}. Using mock responses requires only the frontend; cloud streaming requires CHAT_API_URL.`,
         );
       }
       setStreamingMsgId(null);
@@ -75,17 +77,21 @@ export default function ChatWindow() {
     },
   });
 
-  const ensureConversation = useCallback(() => {
+  const ensureConversation = useCallback(async () => {
     if (currentConversationId) return currentConversationId;
+    // Try creating via the API first
+    const apiId = await createConversation();
+    if (apiId) return apiId;
+    // Fallback to local-only conversation (mock mode)
     return newConversation();
-  }, [currentConversationId, newConversation]);
+  }, [currentConversationId, createConversation, newConversation]);
 
   const handleSend = useCallback(
     async (rawInput?: string) => {
       const text = (rawInput ?? draft).trim();
       if (!text || isStreaming) return;
 
-      const convId = ensureConversation();
+      const convId = await ensureConversation();
 
       const slash = parseSlashCommand(text, { temperature, topK });
       if (slash.handled) {
@@ -93,7 +99,8 @@ export default function ChatWindow() {
         if (slash.setTemperature !== undefined) setTemperature(slash.setTemperature);
         if (slash.setTopK !== undefined) setTopK(slash.setTopK);
         if (slash.clear) {
-          newConversation();
+          const apiId = await createConversation();
+          if (!apiId) newConversation();
           return;
         }
         if (slash.consoleMessage) {
@@ -116,7 +123,14 @@ export default function ChatWindow() {
         .slice(0, -1)
         .map((m) => ({ role: m.role, content: m.content }));
 
-      await start({ messages: history, model, temperature, topK });
+      await start({
+        messages: history,
+        model,
+        temperature,
+        topK,
+        conversationId: convId,
+        auth: authHeaders(),
+      });
     },
     [
       draft,
@@ -128,6 +142,7 @@ export default function ChatWindow() {
       model,
       setTemperature,
       setTopK,
+      createConversation,
       newConversation,
       start,
     ],
@@ -153,7 +168,7 @@ export default function ChatWindow() {
           </span>
         </div>
         <div className="text-xs text-gray-500">
-          {session?.user?.name ? `Hi, ${session.user.name.split(' ')[0]}` : ''}
+          {user?.name ? `Hi, ${user.name.split(' ')[0]}` : ''}
         </div>
       </header>
 

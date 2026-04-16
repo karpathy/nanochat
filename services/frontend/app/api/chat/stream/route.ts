@@ -8,6 +8,7 @@ interface StreamBody {
   model?: string;
   temperature?: number;
   topK?: number;
+  conversationId?: string;
 }
 
 const encoder = new TextEncoder();
@@ -16,10 +17,13 @@ function sseEvent(data: Record<string, unknown>) {
   return encoder.encode(`data: ${JSON.stringify(data)}\n\n`);
 }
 
-async function proxyUpstream(body: StreamBody, upstreamUrl: string) {
+async function proxyUpstream(body: StreamBody, upstreamUrl: string, authHeader: string | null) {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (authHeader) headers['Authorization'] = authHeader;
+
   const upstream = await fetch(upstreamUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       messages: body.messages,
       temperature: body.temperature ?? 0.8,
@@ -83,9 +87,25 @@ export async function POST(req: NextRequest) {
   }
 
   const upstream = process.env.CHAT_API_URL;
+  const authHeader = req.headers.get('authorization');
+
   if (upstream) {
     try {
-      return await proxyUpstream(body, `${upstream.replace(/\/$/, '')}/chat/completions`);
+      // If we have a conversationId and auth, use the persisted messages endpoint
+      const convId = body.conversationId;
+      if (convId && authHeader) {
+        return await proxyUpstream(
+          body,
+          `${upstream.replace(/\/$/, '')}/api/conversations/${convId}/messages`,
+          authHeader,
+        );
+      }
+      // Fallback to direct chat completions (no persistence)
+      return await proxyUpstream(
+        body,
+        `${upstream.replace(/\/$/, '')}/chat/completions`,
+        authHeader,
+      );
     } catch (err) {
       console.warn('[chat/stream] upstream failed, falling back to mock:', err);
     }

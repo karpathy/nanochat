@@ -1,7 +1,12 @@
+'use client';
+
 import Link from 'next/link';
 import ToranSvg from './svg/ToranSvg';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function LandingNav() {
+  const { authenticated } = useAuth();
+
   return (
     <nav className="relative flex justify-between items-start px-4 md:px-9 pt-4 pb-2 z-10 flex-shrink-0">
       <div className="flex items-center gap-2">
@@ -35,12 +40,21 @@ export default function LandingNav() {
         >
           @samosachaat
         </a>
-        <Link
-          href="/login"
-          className="px-3 py-1 rounded-full border border-warm-grey text-brown bg-cream-light hover:bg-cream transition-colors"
-        >
-          Sign in
-        </Link>
+        {authenticated ? (
+          <Link
+            href="/chat"
+            className="px-3 py-1 rounded-full border border-warm-grey text-brown bg-cream-light hover:bg-cream transition-colors"
+          >
+            Chat
+          </Link>
+        ) : (
+          <Link
+            href="/login"
+            className="px-3 py-1 rounded-full border border-warm-grey text-brown bg-cream-light hover:bg-cream transition-colors"
+          >
+            Sign in
+          </Link>
+        )}
       </div>
     </nav>
   );

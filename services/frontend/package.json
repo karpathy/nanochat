@@ -10,28 +10,27 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.11.8",
+    "highlight.js": "^11.10.0",
+    "lucide-react": "^0.451.0",
     "next": "14.2.15",
-    "next-auth": "5.0.0-beta.22",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "zustand": "^4.5.5",
-    "framer-motion": "^11.11.8",
-    "lucide-react": "^0.451.0",
     "react-markdown": "^9.0.1",
-    "remark-gfm": "^4.0.0",
     "rehype-highlight": "^7.0.0",
-    "highlight.js": "^11.10.0",
-    "clsx": "^2.1.1"
+    "remark-gfm": "^4.0.0",
+    "zustand": "^4.5.5"
   },
   "devDependencies": {
     "@types/node": "^20.16.10",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "14.2.15",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
-    "typescript": "^5.6.2",
-    "eslint": "^8.57.1",
-    "eslint-config-next": "14.2.15"
+    "typescript": "^5.6.2"
   }
 }
