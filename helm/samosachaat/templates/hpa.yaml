@@ -1,0 +1,51 @@
+{{- if .Values.chatApi.hpa.enabled }}
+{{- $svcName := include "samosachaat.svcName" (dict "root" . "svc" "chat-api") }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $svcName }}
+  namespace: {{ include "samosachaat.namespace" . }}
+  labels:
+    {{- include "samosachaat.labels" . | nindent 4 }}
+    {{- include "samosachaat.selectorLabels" (dict "root" . "svc" "chat-api") | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $svcName }}
+  minReplicas: {{ .Values.chatApi.hpa.minReplicas }}
+  maxReplicas: {{ .Values.chatApi.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.chatApi.hpa.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- if .Values.inference.hpa.enabled }}
+{{- $svcName := include "samosachaat.svcName" (dict "root" . "svc" "inference") }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $svcName }}
+  namespace: {{ include "samosachaat.namespace" . }}
+  labels:
+    {{- include "samosachaat.labels" . | nindent 4 }}
+    {{- include "samosachaat.selectorLabels" (dict "root" . "svc" "inference") | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $svcName }}
+  minReplicas: {{ .Values.inference.hpa.minReplicas }}
+  maxReplicas: {{ .Values.inference.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.inference.hpa.targetCPUUtilizationPercentage }}
+{{- end }}

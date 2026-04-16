@@ -1,0 +1,62 @@
+## Production overrides — 3+ replicas, HPA enabled for chat-api/inference.
+
+namespace:
+  name: samosachaat-prod
+
+config:
+  ENVIRONMENT: "prod"
+  LOG_LEVEL: "info"
+
+frontend:
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: '1'
+      memory: 1Gi
+
+auth:
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: '1'
+      memory: 1Gi
+
+chatApi:
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 2Gi
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+inference:
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: '1'
+      memory: 2Gi
+    limits:
+      cpu: '4'
+      memory: 8Gi
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+pdb:
+  enabled: true
+  minAvailable: 1

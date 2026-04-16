@@ -1,6 +1,6 @@
 apiVersion: v2
 name: samosachaat
-description: Application chart scaffold for the samosaChaat platform.
+description: Umbrella chart for the samosaChaat platform (frontend, auth, chat-api, inference).
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

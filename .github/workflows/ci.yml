@@ -1,0 +1,185 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      auth: ${{ steps.filter.outputs.auth }}
+      chat-api: ${{ steps.filter.outputs.chat-api }}
+      inference: ${{ steps.filter.outputs.inference }}
+      terraform: ${{ steps.filter.outputs.terraform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Filter paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            frontend:
+              - 'services/frontend/**'
+            auth:
+              - 'services/auth/**'
+            chat-api:
+              - 'services/chat-api/**'
+            inference:
+              - 'services/inference/**'
+            terraform:
+              - 'terraform/**'
+
+  test-frontend:
+    name: Frontend — lint/type-check/test
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: services/frontend/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test --if-present
+
+  test-auth:
+    name: Auth — pytest
+    needs: changes
+    if: needs.changes.outputs.auth == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/auth
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv==0.4.30
+
+      - name: Sync deps
+        run: uv sync
+
+      - name: Run pytest
+        run: uv run pytest
+
+  test-chat-api:
+    name: Chat-API — pytest (postgres service)
+    needs: changes
+    if: needs.changes.outputs.chat-api == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/chat-api
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: samosachaat_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/samosachaat_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv==0.4.30
+
+      - name: Sync deps
+        run: uv sync
+
+      - name: Run pytest
+        run: uv run pytest
+
+  test-inference:
+    name: Inference — pytest
+    needs: changes
+    if: needs.changes.outputs.inference == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/inference
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv==0.4.30
+
+      - name: Sync deps
+        run: uv sync
+
+      - name: Run pytest
+        run: uv run pytest
+
+  terraform-validate:
+    name: Terraform — validate
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.9.8'
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init (no backend)
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        run: terraform validate

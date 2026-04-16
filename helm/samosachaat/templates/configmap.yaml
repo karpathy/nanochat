@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: samosachaat-config
+  namespace: {{ include "samosachaat.namespace" . }}
+  labels:
+    {{- include "samosachaat.labels" . | nindent 4 }}
+data:
+  {{- range $k, $v := .Values.config }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}

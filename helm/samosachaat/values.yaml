@@ -1,10 +1,131 @@
-image:
-  repository: ghcr.io/manmohan659/nanochat/frontend
-  tag: latest
-  pullPolicy: IfNotPresent
+## Base values for the samosaChaat umbrella chart.
+## Environment overrides live in values-{dev,uat,prod}.yaml.
 
-replicaCount: 1
+global:
+  ## Set by CI (promote-uat / release-prod) or `helm install --set global.imageTag=...`.
+  imageTag: dev-latest
+  imagePullPolicy: Always
+  ## Optional ECR / registry prefix. e.g. 1234.dkr.ecr.us-east-1.amazonaws.com
+  imageRegistry: ""
+  imagePullSecrets: []
 
-service:
-  type: ClusterIP
+namespace:
+  create: true
+  name: samosachaat
+
+## Shared env piped into every service.
+config:
+  LOG_LEVEL: "info"
+  ENVIRONMENT: "dev"
+
+## Secret names/values. Values here are placeholders; real values should come
+## from --set-file or an external secret manager.
+secrets:
+  create: true
+  data: {}
+
+## ---------------- Deployment-wide knobs ----------------
+deployment:
+  ## blue / green slot name — empty string means single-slot (dev/uat).
+  slot: ""
+
+## ---------------- Per-service definitions ----------------
+frontend:
+  enabled: true
+  image:
+    repository: samosachaat/frontend
+  replicaCount: 1
   port: 3000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    NEXT_PUBLIC_API_URL: "https://samosachaat.art/api"
+  hpa:
+    enabled: false
+
+auth:
+  enabled: true
+  image:
+    repository: samosachaat/auth
+  replicaCount: 1
+  port: 8001
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env: {}
+  hpa:
+    enabled: false
+
+chatApi:
+  enabled: true
+  image:
+    repository: samosachaat/chat-api
+  replicaCount: 1
+  port: 8002
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: '1'
+      memory: 1Gi
+  env: {}
+  hpa:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+
+inference:
+  enabled: true
+  image:
+    repository: samosachaat/inference
+  replicaCount: 1
+  port: 8003
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
+  env: {}
+  hpa:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+
+## ---------------- Ingress (AWS ALB) ----------------
+ingress:
+  enabled: true
+  host: samosachaat.art
+  grafanaHost: grafana.samosachaat.art
+  acmCertArn: ""
+  grafanaServiceName: grafana
+  grafanaServicePort: 3000
+
+## ---------------- PodDisruptionBudgets ----------------
+pdb:
+  enabled: false
+  minAvailable: 1
+
+## ---------------- DB migration Helm hook ----------------
+dbMigrate:
+  enabled: true
+  ## Uses the chat-api image to run alembic; alembic config ships with the auth
+  ## service but the image build for chat-api also includes migrations.
+  image:
+    repository: samosachaat/chat-api
+  command: ["alembic", "upgrade", "head"]
+  workingDir: /app
+  env: {}
