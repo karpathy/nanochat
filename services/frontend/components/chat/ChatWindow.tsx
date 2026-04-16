@@ -60,7 +60,7 @@ export default function ChatWindow() {
     setIsStreaming(false);
   }, []);
 
-  const streamFromApi = useCallback(async (convId: string, content: string, temp?: number, topk?: number) => {
+  const streamFromApi = useCallback(async (convId: string, assistantMsgId: string, content: string, temp?: number, topk?: number) => {
     stop();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -110,9 +110,7 @@ export default function ChatWindow() {
             }
             if (typeof data.token === 'string') {
               streamingBufferRef.current += data.token;
-              if (streamingMsgId && convId) {
-                updateMessage(convId, streamingMsgId!, streamingBufferRef.current);
-              }
+              updateMessage(convId, assistantMsgId, streamingBufferRef.current);
             }
           } catch { /* skip malformed */ }
         }
@@ -123,8 +121,8 @@ export default function ChatWindow() {
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
         console.error('[chat] stream error:', err);
-        if (streamingMsgId && currentConversationId) {
-          updateMessage(currentConversationId, streamingMsgId!, `Error: ${(err as Error).message}`);
+        if (assistantMsgId && convId) {
+          updateMessage(convId, assistantMsgId, `Error: ${(err as Error).message}`);
         }
       }
       setStreamingMsgId(null);
@@ -133,7 +131,7 @@ export default function ChatWindow() {
       setIsStreaming(false);
       abortRef.current = null;
     }
-  }, [stop, streamingMsgId, currentConversationId, updateMessage]);
+  }, [stop, updateMessage]);
 
   const ensureConversation = useCallback(async () => {
     if (currentConversationId) return currentConversationId;
@@ -174,7 +172,7 @@ export default function ChatWindow() {
       setStreamingMsgId(assistantId);
       streamingBufferRef.current = '';
 
-      await streamFromApi(convId, text, temperature, topK);
+      await streamFromApi(convId, assistantId, text, temperature, topK);
     },
     [
       draft,
