@@ -25,7 +25,8 @@ RUN uv pip install --system --no-cache \
       "httpx>=0.27.0" \
       "sse-starlette>=2.1.3" \
       "structlog>=24.4.0" \
-      "cachetools>=5.5.0"
+      "cachetools>=5.5.0" \
+      "prometheus-fastapi-instrumentator>=7.0.0"
 
 COPY src /app/src
 

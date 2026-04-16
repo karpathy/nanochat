@@ -29,7 +29,9 @@ RUN uv pip install --system --no-cache \
       "pyjwt>=2.9.0" \
       "cryptography>=43.0.0" \
       "slowapi>=0.1.9" \
-      "python-multipart>=0.0.9"
+      "python-multipart>=0.0.9" \
+      "structlog>=24.4.0" \
+      "prometheus-fastapi-instrumentator>=7.0.0"
 
 COPY src /app/src
 
