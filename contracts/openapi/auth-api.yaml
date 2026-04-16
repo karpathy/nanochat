@@ -1,0 +1,108 @@
+openapi: 3.1.0
+info:
+  title: samosaChaat Auth API
+  version: 0.1.0
+  description: >
+    Contract skeleton for the authentication service. OAuth providers, session
+    exchange, and user identity endpoints must conform to this document.
+servers:
+  - url: http://auth:8001
+paths:
+  /health:
+    get:
+      summary: Readiness probe for the auth service.
+      security: []
+      responses:
+        "200":
+          description: Auth service health.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  ready:
+                    type: boolean
+                required:
+                  - status
+                  - ready
+  /auth/oauth/{provider}/start:
+    get:
+      summary: Begin an OAuth login flow.
+      parameters:
+        - $ref: "#/components/parameters/OAuthProvider"
+      responses:
+        "302":
+          description: Redirect to the provider authorization page.
+  /auth/oauth/{provider}/callback:
+    get:
+      summary: Complete an OAuth login flow.
+      parameters:
+        - $ref: "#/components/parameters/OAuthProvider"
+        - in: query
+          name: code
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session established.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: ../schemas/user.json
+                  access_token:
+                    type: string
+                required:
+                  - user
+                  - access_token
+  /auth/me:
+    get:
+      summary: Return the authenticated user profile.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Current user profile.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/user.json
+  /auth/token/refresh:
+    post:
+      summary: Exchange a refresh token for a new access token.
+      responses:
+        "200":
+          description: Refreshed session token pair.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  expires_in:
+                    type: integer
+                required:
+                  - access_token
+                  - expires_in
+components:
+  parameters:
+    OAuthProvider:
+      in: path
+      name: provider
+      required: true
+      schema:
+        type: string
+        enum:
+          - google
+          - github
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Message",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "conversation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "role": {
+      "type": "string"
+    },
+    "content": {
+      "type": "string"
+    },
+    "token_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "model_tag": {
+      "type": "string"
+    },
+    "inference_time_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "id",
+    "conversation_id",
+    "role",
+    "content",
+    "token_count",
+    "model_tag",
+    "inference_time_ms",
+    "created_at"
+  ]
+}

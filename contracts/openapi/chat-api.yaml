@@ -1,0 +1,153 @@
+openapi: 3.1.0
+info:
+  title: samosaChaat Chat API
+  version: 0.1.0
+  description: >
+    Contract skeleton for conversations, persisted message history, and chat
+    orchestration between the frontend and inference service.
+servers:
+  - url: http://chat-api:8002
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      summary: Readiness probe for the chat API.
+      security: []
+      responses:
+        "200":
+          description: Chat API health.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  ready:
+                    type: boolean
+                required:
+                  - status
+                  - ready
+  /conversations:
+    get:
+      summary: List the current user's conversations.
+      responses:
+        "200":
+          description: Conversation collection.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: ../schemas/conversation.json
+    post:
+      summary: Create a new conversation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                model_tag:
+                  type: string
+              required:
+                - title
+                - model_tag
+      responses:
+        "201":
+          description: Conversation created.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/conversation.json
+  /conversations/{conversationId}:
+    get:
+      summary: Fetch a single conversation.
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      responses:
+        "200":
+          description: Conversation details.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/conversation.json
+    patch:
+      summary: Update mutable conversation metadata.
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                model_tag:
+                  type: string
+      responses:
+        "200":
+          description: Updated conversation.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/conversation.json
+  /conversations/{conversationId}/messages:
+    get:
+      summary: List persisted messages for a conversation.
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      responses:
+        "200":
+          description: Conversation message history.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: ../schemas/message.json
+    post:
+      summary: Append a message and begin streaming completion.
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  $ref: ../schemas/message.json
+                stream:
+                  type: boolean
+                  default: true
+              required:
+                - message
+      responses:
+        "200":
+          description: Server-sent token stream from the inference service.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+components:
+  parameters:
+    ConversationId:
+      in: path
+      name: conversationId
+      required: true
+      schema:
+        type: string
+        format: uuid
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

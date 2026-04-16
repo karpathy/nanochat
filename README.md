@@ -7,6 +7,30 @@ nanochat is the simplest experimental harness for training LLMs. It is designed 
 
 For questions about the repo, I recommend either using [DeepWiki](https://deepwiki.com/karpathy/nanochat) from Devin/Cognition to ask questions about the repo, or use the [Discussions tab](https://github.com/karpathy/nanochat/discussions), or come by the [#nanochat](https://discord.com/channels/1020383067459821711/1427295580895314031) channel on Discord.
 
+## Platform monorepo scaffold
+
+This repository now also carries the samosaChaat platform scaffold alongside the
+original nanochat training code. The new top-level directories are organized for
+service-oriented development:
+
+- `services/` contains the frontend, auth, chat API, and inference services
+- `contracts/` contains the shared OpenAPI and JSON schema contracts
+- `db/migrations/` contains PostgreSQL schema bootstrap scripts
+- `helm/` contains application and observability chart scaffolding
+- `terraform/` contains shared modules plus `dev`, `uat`, and `prod` environment scaffolding
+
+### Local platform quick start
+
+1. Copy `.env.example` to `.env` and replace the placeholder secrets.
+2. Start the local stack with `bash scripts/local-dev.sh`.
+3. Seed the local database with `bash scripts/seed-db.sh`.
+4. Open the placeholder frontend at [http://localhost:3000](http://localhost:3000).
+
+The initial scaffold keeps the service topology stable for local development.
+`services/auth`, `services/chat-api`, and `services/frontend` are placeholders
+until their dedicated implementations land; the inference service is extracted on
+the follow-up branch.
+
 ## Time-to-GPT-2 Leaderboard
 
 Presently, the main focus of development is on tuning the pretraining stage, which takes the most amount of compute. Inspired by the modded-nanogpt repo and to incentivise progress and community collaboration, nanochat maintains a leaderboard for a "GPT-2 speedrun", which is the wall-clock time required to train a nanochat model to GPT-2 grade capability, as measured by the DCLM CORE score. The [runs/speedrun.sh](runs/speedrun.sh) script always reflects the reference way to train GPT-2 grade model and talk to it. The current leaderboard looks as follows:

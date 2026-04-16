@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>samosaChaat frontend scaffold</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        background: #fff7ef;
+        color: #26170d;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at top left, rgba(255, 190, 92, 0.35), transparent 35%),
+          radial-gradient(circle at bottom right, rgba(226, 107, 74, 0.18), transparent 32%),
+          #fff7ef;
+      }
+
+      main {
+        width: min(720px, calc(100vw - 3rem));
+        padding: 2rem;
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.85);
+        box-shadow: 0 24px 60px rgba(84, 44, 22, 0.12);
+      }
+
+      h1 {
+        margin-top: 0;
+        font-size: clamp(2rem, 5vw, 3rem);
+      }
+
+      p,
+      li {
+        line-height: 1.6;
+      }
+
+      code {
+        background: #fff1df;
+        padding: 0.15rem 0.4rem;
+        border-radius: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>samosaChaat platform scaffold</h1>
+      <p>
+        The monorepo structure is in place. This placeholder frontend keeps
+        <code>docker compose up</code> usable until the real UI lands.
+      </p>
+      <ul>
+        <li>Auth service: <code>http://localhost:8001</code></li>
+        <li>Chat API: <code>http://localhost:8002</code></li>
+        <li>Inference: <code>http://localhost:8003</code></li>
+      </ul>
+    </main>
+  </body>
+</html>

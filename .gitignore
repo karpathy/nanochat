@@ -4,9 +4,17 @@ __pycache__/
 dev-ignore/
 report.md
 eval_bundle/
+models/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
 
 # Secrets
 .env
+.env.local
+.env.*.local
 
 # Local setup
 CLAUDE.md

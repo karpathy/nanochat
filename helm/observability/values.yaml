@@ -1,0 +1,8 @@
+grafana:
+  enabled: true
+
+prometheus:
+  enabled: true
+
+loki:
+  enabled: true

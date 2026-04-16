@@ -1,0 +1,98 @@
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-samosachaat}
+      POSTGRES_USER: ${POSTGRES_USER:-samosachaat_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+
+  frontend:
+    build:
+      context: ./services/frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth:8001}
+      CHAT_API_URL: ${CHAT_API_URL:-http://chat-api:8002}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+    depends_on:
+      - auth
+      - chat-api
+
+  auth:
+    build:
+      context: ./services/auth
+    restart: unless-stopped
+    ports:
+      - "${AUTH_PORT:-8001}:8001"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://samosachaat_admin:localdev@postgres:5432/samosachaat}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+    depends_on:
+      - postgres
+
+  chat-api:
+    build:
+      context: ./services/chat-api
+    restart: unless-stopped
+    ports:
+      - "${CHAT_API_PORT:-8002}:8002"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://samosachaat_admin:localdev@postgres:5432/samosachaat}
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth:8001}
+      INFERENCE_SERVICE_URL: ${INFERENCE_SERVICE_URL:-http://inference:8003}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+    depends_on:
+      - postgres
+      - auth
+      - inference
+
+  inference:
+    build:
+      context: ./services/inference
+    restart: unless-stopped
+    ports:
+      - "${INFERENCE_PORT:-8003}:8003"
+    environment:
+      MODEL_STORAGE_PATH: /models
+      DEFAULT_MODEL_TAG: ${DEFAULT_MODEL_TAG:-samosachaat-d12}
+      NANOCHAT_DTYPE: ${NANOCHAT_DTYPE:-float32}
+      HF_TOKEN: ${HF_TOKEN:-}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      NUM_WORKERS: ${NUM_WORKERS:-1}
+    volumes:
+      - ./models:/models
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
+  loki:
+    image: grafana/loki:latest
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+
+volumes:
+  pgdata:
