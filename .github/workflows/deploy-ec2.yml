@@ -1,0 +1,70 @@
+name: Deploy to EC2 (Monolith)
+
+on:
+  workflow_dispatch:          # Manual trigger from GitHub UI
+  workflow_run:               # Auto-trigger after images are built
+    workflows: ["Build & Push Dev Images"]
+    types: [completed]
+    branches: [master, main]
+
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-west-2' }}
+
+      - name: Get ECR login password
+        id: ecr
+        run: |
+          echo "password=$(aws ecr get-login-password --region ${{ vars.AWS_REGION || 'us-west-2' }})" >> $GITHUB_OUTPUT
+          echo "registry=${{ secrets.AWS_ACCOUNT_ID || '883107058766' }}.dkr.ecr.${{ vars.AWS_REGION || 'us-west-2' }}.amazonaws.com" >> $GITHUB_OUTPUT
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd /home/ubuntu
+
+            # Login to ECR
+            echo "${{ steps.ecr.outputs.password }}" | \
+              docker login --username AWS --password-stdin ${{ steps.ecr.outputs.registry }}
+
+            # Clone or update repo
+            if [ -d samosachaat ]; then
+              cd samosachaat
+              git fetch origin master
+              git reset --hard origin/master
+            else
+              git clone https://github.com/manmohan659/nanochat.git samosachaat
+              cd samosachaat
+            fi
+
+            # Set image source
+            export ECR_REGISTRY=${{ steps.ecr.outputs.registry }}
+            export IMAGE_TAG=dev-latest
+
+            # Pull and deploy
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+            # Run migrations (wait for postgres)
+            sleep 8
+            docker compose exec -T chat-api alembic upgrade head 2>/dev/null || true
+
+            echo "Deploy complete!"
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
