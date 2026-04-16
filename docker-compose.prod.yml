@@ -1,0 +1,36 @@
+## Production override for EC2 monolith deployment.
+## Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+##
+## This pulls pre-built images from ECR instead of building locally,
+## and adds nginx as reverse proxy with SSL.
+
+services:
+  frontend:
+    build: !reset null
+    image: ${ECR_REGISTRY:-883107058766.dkr.ecr.us-west-2.amazonaws.com}/samosachaat/frontend:${IMAGE_TAG:-dev-latest}
+
+  auth:
+    build: !reset null
+    image: ${ECR_REGISTRY:-883107058766.dkr.ecr.us-west-2.amazonaws.com}/samosachaat/auth:${IMAGE_TAG:-dev-latest}
+
+  chat-api:
+    build: !reset null
+    image: ${ECR_REGISTRY:-883107058766.dkr.ecr.us-west-2.amazonaws.com}/samosachaat/chat-api:${IMAGE_TAG:-dev-latest}
+
+  inference:
+    build: !reset null
+    image: ${ECR_REGISTRY:-883107058766.dkr.ecr.us-west-2.amazonaws.com}/samosachaat/inference:${IMAGE_TAG:-dev-latest}
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - frontend
+      - auth
+      - chat-api
