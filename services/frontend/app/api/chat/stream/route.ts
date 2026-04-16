@@ -18,7 +18,8 @@ function sseEvent(data: Record<string, unknown>) {
   return encoder.encode(`data: ${JSON.stringify(data)}\n\n`);
 }
 
-async function proxyUpstream(body: Record<string, unknown>, upstreamUrl: string, authHeader: string | null) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function proxyUpstream(body: any, upstreamUrl: string, authHeader: string | null) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authHeader) headers['Authorization'] = authHeader;
 
