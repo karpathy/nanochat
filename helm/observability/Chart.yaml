@@ -1,0 +1,6 @@
+apiVersion: v2
+name: observability
+description: Observability chart scaffold for Grafana, Prometheus, and Loki.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

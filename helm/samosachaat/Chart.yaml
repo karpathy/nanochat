@@ -1,0 +1,6 @@
+apiVersion: v2
+name: samosachaat
+description: Application chart scaffold for the samosaChaat platform.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

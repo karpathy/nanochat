@@ -1,0 +1,4 @@
+The observability chart scaffold is in place.
+
+Add concrete manifests for Grafana, Prometheus, Loki, dashboards, and scrape
+configuration as the platform monitoring stack is implemented.

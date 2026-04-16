@@ -1,0 +1,174 @@
+openapi: 3.1.0
+info:
+  title: samosaChaat Inference API
+  version: 0.1.0
+  description: >
+    Contract skeleton for the standalone inference microservice that streams
+    tokens and manages model weight lifecycle.
+servers:
+  - url: http://inference:8003
+paths:
+  /health:
+    get:
+      summary: Liveness and readiness probe.
+      responses:
+        "200":
+          description: Inference service health.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  ready:
+                    type: boolean
+                  current_model:
+                    type:
+                      - string
+                      - "null"
+                required:
+                  - status
+                  - ready
+  /generate:
+    post:
+      summary: Stream generated tokens as server-sent events.
+      security:
+        - internalApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateRequest"
+      responses:
+        "200":
+          description: SSE response of token chunks and done marker.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /models:
+    get:
+      summary: List available and loaded model weights.
+      security:
+        - internalApiKey: []
+      responses:
+        "200":
+          description: Model registry view.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current_model:
+                    type:
+                      - string
+                      - "null"
+                  models:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ModelInfo"
+                required:
+                  - current_model
+                  - models
+  /models/swap:
+    post:
+      summary: Drain workers and swap the loaded model weights.
+      security:
+        - internalApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model_tag:
+                  type: string
+              required:
+                - model_tag
+      responses:
+        "202":
+          description: Swap request accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  current_model:
+                    type: string
+                required:
+                  - status
+                  - current_model
+  /stats:
+    get:
+      summary: Worker pool and throughput statistics.
+      security:
+        - internalApiKey: []
+      responses:
+        "200":
+          description: Runtime worker statistics.
+          content:
+            application/json:
+              schema:
+                type: object
+components:
+  securitySchemes:
+    internalApiKey:
+      type: apiKey
+      in: header
+      name: X-Internal-API-Key
+  schemas:
+    ChatMessage:
+      type: object
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+        content:
+          type: string
+      required:
+        - role
+        - content
+    GenerateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        temperature:
+          type:
+            - number
+            - "null"
+        max_tokens:
+          type:
+            - integer
+            - "null"
+        top_k:
+          type:
+            - integer
+            - "null"
+      required:
+        - messages
+    ModelInfo:
+      type: object
+      additionalProperties: false
+      properties:
+        model_tag:
+          type: string
+        source:
+          type: string
+        path:
+          type: string
+        loaded:
+          type: boolean
+      required:
+        - model_tag
+        - source
+        - path
+        - loaded

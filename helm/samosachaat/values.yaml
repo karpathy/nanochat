@@ -1,0 +1,10 @@
+image:
+  repository: ghcr.io/manmohan659/nanochat/frontend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 3000

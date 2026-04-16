@@ -1,0 +1,4 @@
+The samosaChaat application chart is scaffolded.
+
+Populate this chart with Deployments, Services, Ingress, Secrets, and ConfigMaps
+as the platform services are implemented.
