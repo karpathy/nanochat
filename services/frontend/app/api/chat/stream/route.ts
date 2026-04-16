@@ -17,20 +17,14 @@ function sseEvent(data: Record<string, unknown>) {
   return encoder.encode(`data: ${JSON.stringify(data)}\n\n`);
 }
 
-async function proxyUpstream(body: StreamBody, upstreamUrl: string, authHeader: string | null) {
+async function proxyUpstream(body: Record<string, unknown>, upstreamUrl: string, authHeader: string | null) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authHeader) headers['Authorization'] = authHeader;
 
   const upstream = await fetch(upstreamUrl, {
     method: 'POST',
     headers,
-    body: JSON.stringify({
-      messages: body.messages,
-      temperature: body.temperature ?? 0.8,
-      top_k: body.topK ?? 50,
-      max_tokens: 512,
-      model: body.model,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!upstream.ok || !upstream.body) {
@@ -94,8 +88,17 @@ export async function POST(req: NextRequest) {
       // If we have a conversationId and auth, use the persisted messages endpoint
       const convId = body.conversationId;
       if (convId && authHeader) {
+        // Chat-api expects {content, temperature, max_tokens, top_k}
+        // Extract the last user message as the content
+        const lastUserMsg = [...body.messages].reverse().find(m => m.role === 'user');
+        const chatApiBody = {
+          content: lastUserMsg?.content ?? '',
+          temperature: body.temperature,
+          max_tokens: body.maxTokens,
+          top_k: body.topK,
+        };
         return await proxyUpstream(
-          body,
+          chatApiBody as any,
           `${upstream.replace(/\/$/, '')}/api/conversations/${convId}/messages`,
           authHeader,
         );
