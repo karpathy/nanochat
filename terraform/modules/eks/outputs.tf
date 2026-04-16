@@ -32,3 +32,8 @@ output "oidc_provider_url" {
   description = "IRSA OIDC issuer URL (without https://)."
   value       = module.eks.oidc_provider
 }
+
+output "current_node_ami_id" {
+  description = "The current EKS-optimized AMI ID used by the node group."
+  value       = data.aws_ssm_parameter.eks_ami_id.value
+}
