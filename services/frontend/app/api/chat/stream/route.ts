@@ -8,6 +8,7 @@ interface StreamBody {
   model?: string;
   temperature?: number;
   topK?: number;
+  maxTokens?: number;
   conversationId?: string;
 }
 
