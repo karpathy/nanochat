@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from .config import get_settings
 from .logging_setup import (
@@ -77,6 +78,8 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     async def health():
         return {"status": "ok", "ready": True, "service": "chat-api"}
+
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
     return app
 

@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     default_temperature: float = 0.8
     default_top_k: int = 50
     default_max_tokens: int = 512
+    log_level: str = "INFO"
 
     @property
     def resolved_device_type(self) -> str:

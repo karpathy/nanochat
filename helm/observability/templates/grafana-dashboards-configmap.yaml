@@ -1,0 +1,21 @@
+{{/*
+ConfigMap that carries every dashboard JSON from helm/observability/dashboards/
+into Grafana. The kube-prometheus-stack Grafana deployment mounts ConfigMaps
+listed under grafana.dashboardsConfigMaps (see values.yaml) at
+/var/lib/grafana/dashboards/<key>/, which the matching dashboardProvider picks
+up and loads.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: samosachaat-dashboards
+  namespace: {{ .Release.Namespace }}
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: samosachaat
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+{{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
+  {{ base $path }}: |-
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

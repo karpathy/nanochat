@@ -2,20 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import random
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
 from config import Settings, get_settings
+from logging_setup import configure_logging, get_logger
 from middleware.internal_auth import require_internal_api_key
 from services.weight_manager import WeightManager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Abuse prevention limits
 MAX_MESSAGES_PER_REQUEST = 500
@@ -169,7 +170,7 @@ class InferenceRuntime:
                 step=self.settings.default_step,
             )
         except Exception as exc:  # pragma: no cover - exercised by deployment conditions
-            logger.warning("Skipping startup model load: %s", exc)
+            logger.warning("skipping startup model load", error=str(exc))
             self.worker_pool = None
 
     async def shutdown(self) -> None:
@@ -236,6 +237,7 @@ def get_runtime(request: Request) -> InferenceRuntime:
 
 
 def create_app(settings: Settings | None = None, runtime: InferenceRuntime | None = None) -> FastAPI:
+    configure_logging()
     resolved_settings = settings or get_settings()
 
     @asynccontextmanager
@@ -284,6 +286,8 @@ def create_app(settings: Settings | None = None, runtime: InferenceRuntime | Non
     @app.get("/stats", dependencies=[Depends(require_internal_api_key)])
     async def stats(runtime: InferenceRuntime = Depends(get_runtime)):
         return runtime.stats_payload()
+
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
     return app
 

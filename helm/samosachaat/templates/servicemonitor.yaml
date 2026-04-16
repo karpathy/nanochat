@@ -1,0 +1,40 @@
+{{/*
+ServiceMonitor CRs so the Prometheus instance deployed by the observability
+chart discovers and scrapes the samosaChaat backend services. Prometheus
+selects only ServiceMonitors labelled app.kubernetes.io/part-of=samosachaat
+(see helm/observability/values.yaml -> prometheus.serviceMonitorSelector).
+
+Each backend Python service exposes /metrics via
+prometheus-fastapi-instrumentator. The frontend (Next.js) is omitted until it
+grows its own metrics endpoint.
+*/}}
+{{- $services := dict "auth" .Values.auth "chat-api" .Values.chatApi "inference" .Values.inference -}}
+{{- range $svc, $cfg := $services }}
+{{- if $cfg.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $svc }}
+  namespace: {{ include "samosachaat.namespace" $ }}
+  labels:
+    {{- include "samosachaat.labels" $ | nindent 4 }}
+    app: {{ $svc }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ include "samosachaat.namespace" $ }}
+  selector:
+    matchLabels:
+      {{- include "samosachaat.selectorLabels" (dict "root" $ "svc" $svc) | nindent 6 }}
+  endpoints:
+    - port: http
+      interval: 15s
+      path: /metrics
+      scheme: http
+      relabelings:
+        - action: replace
+          targetLabel: app
+          replacement: {{ $svc }}
+{{- end }}
+{{- end }}
