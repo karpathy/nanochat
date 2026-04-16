@@ -40,6 +40,13 @@ services:
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+      AUTH_BASE_URL: ${AUTH_BASE_URL:-http://localhost:8001}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      SESSION_SECRET: ${SESSION_SECRET:-changeme}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      REFRESH_COOKIE_NAME: ${REFRESH_COOKIE_NAME:-samosachaat_refresh}
     depends_on:
       - postgres
 
