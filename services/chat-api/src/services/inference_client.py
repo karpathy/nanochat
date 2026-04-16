@@ -84,9 +84,15 @@ class InferenceClient:
         }
 
         client = self._get_client()
+        # If the base_url already ends with a path (e.g. Modal endpoint URL),
+        # use it directly. Otherwise append /generate for the local service.
+        url = self.base_url
+        if not url.endswith("/generate"):
+            url = f"{url}/generate"
+
         async with client.stream(
             "POST",
-            f"{self.base_url}/generate",
+            url,
             headers=self.headers,
             json=payload,
         ) as response:
