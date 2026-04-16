@@ -88,13 +88,13 @@ jobs:
           python-version: '3.12'
 
       - name: Install uv
-        run: pip install uv==0.4.30
+        uses: astral-sh/setup-uv@v4
 
       - name: Sync deps
-        run: uv sync
+        run: uv sync --no-workspace
 
       - name: Run pytest
-        run: uv run pytest
+        run: uv run --no-workspace pytest
 
   test-chat-api:
     name: Chat-API — pytest (postgres service)
@@ -128,13 +128,13 @@ jobs:
           python-version: '3.12'
 
       - name: Install uv
-        run: pip install uv==0.4.30
+        uses: astral-sh/setup-uv@v4
 
       - name: Sync deps
-        run: uv sync
+        run: uv sync --no-workspace
 
       - name: Run pytest
-        run: uv run pytest
+        run: uv run --no-workspace pytest
 
   test-inference:
     name: Inference — pytest
@@ -152,13 +152,13 @@ jobs:
           python-version: '3.12'
 
       - name: Install uv
-        run: pip install uv==0.4.30
+        uses: astral-sh/setup-uv@v4
 
       - name: Sync deps
-        run: uv sync
+        run: uv sync --no-workspace
 
       - name: Run pytest
-        run: uv run pytest
+        run: uv run --no-workspace pytest
 
   terraform-validate:
     name: Terraform — validate
