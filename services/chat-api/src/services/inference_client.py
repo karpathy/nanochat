@@ -84,10 +84,11 @@ class InferenceClient:
         }
 
         client = self._get_client()
-        # If the base_url already ends with a path (e.g. Modal endpoint URL),
-        # use it directly. Otherwise append /generate for the local service.
+        # Modal endpoints have the function name in the hostname
+        # (e.g. ...-generate.modal.run) — POST to root.
+        # Local inference service needs /generate appended.
         url = self.base_url
-        if not url.endswith("/generate"):
+        if "modal.run" not in url:
             url = f"{url}/generate"
 
         async with client.stream(
