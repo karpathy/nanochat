@@ -16,6 +16,8 @@ dependencies = [
     "torch==2.9.1",
     "transformers>=4.57.3",
     "uvicorn>=0.36.0",
+    "structlog>=24.4.0",
+    "prometheus-fastapi-instrumentator>=7.0.0",
 ]
 
 [dependency-groups]

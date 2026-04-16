@@ -1,0 +1,214 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Traffic",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests per second by service",
+      "id": 1,
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 1},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "sum by (app) (rate(http_requests_total{app=~\"$app\"}[5m]))",
+          "legendFormat": "{{app}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Latency",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9},
+      "id": 101,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "p50 / p95 / p99 latency",
+      "id": 2,
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 10},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "lastNotNull"]}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "histogram_quantile(0.50, sum by (le, app) (rate(http_request_duration_seconds_bucket{app=~\"$app\"}[5m])))",
+          "legendFormat": "p50 {{app}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "histogram_quantile(0.95, sum by (le, app) (rate(http_request_duration_seconds_bucket{app=~\"$app\"}[5m])))",
+          "legendFormat": "p95 {{app}}"
+        },
+        {
+          "refId": "C",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "histogram_quantile(0.99, sum by (le, app) (rate(http_request_duration_seconds_bucket{app=~\"$app\"}[5m])))",
+          "legendFormat": "p99 {{app}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Errors",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 20},
+      "id": 102,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Error rate by service (4xx + 5xx, stacked)",
+      "id": 3,
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 21},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {"stacking": {"mode": "normal"}, "fillOpacity": 25}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "sum by (app) (rate(http_requests_total{app=~\"$app\",status=~\"4..\"}[5m]))",
+          "legendFormat": "4xx {{app}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "sum by (app) (rate(http_requests_total{app=~\"$app\",status=~\"5..\"}[5m]))",
+          "legendFormat": "5xx {{app}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Availability",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 29},
+      "id": 103,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Uptime % (last 24h) by service",
+      "id": 4,
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 30},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.95},
+              {"color": "green", "value": 0.99}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "avg_over_time(up{app=~\"$app\"}[24h])",
+          "legendFormat": "{{app}}"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["samosachaat", "application"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "Prometheus", "value": "prometheus"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "definition": "label_values(http_requests_total, app)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "app",
+        "multi": true,
+        "name": "app",
+        "options": [],
+        "query": {"qryType": 1, "query": "label_values(http_requests_total, app)", "refId": "app"},
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "samosaChaat — Application Performance",
+  "uid": "samosachaat-app-performance",
+  "version": 1,
+  "weekStart": ""
+}

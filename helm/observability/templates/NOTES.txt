@@ -1,4 +1,22 @@
-The observability chart scaffold is in place.
+samosaChaat observability stack installed.
 
-Add concrete manifests for Grafana, Prometheus, Loki, dashboards, and scrape
-configuration as the platform monitoring stack is implemented.
+Components:
+  * kube-prometheus-stack  -> Prometheus, Alertmanager, Grafana, node-exporter, kube-state-metrics
+  * loki-stack             -> Loki (logs) + Promtail (log shipping)
+
+Access:
+  Grafana is exposed at https://grafana.samosachaat.art via the samosaChaat
+  app-chart ingress. Login is OAuth-only (GitHub + Google); the local login form
+  is disabled.
+
+Required secrets in namespace {{ .Release.Namespace }}:
+  kubectl create secret generic grafana-oauth-secrets \
+    --from-literal=GITHUB_GRAFANA_CLIENT_ID=... \
+    --from-literal=GITHUB_GRAFANA_CLIENT_SECRET=... \
+    --from-literal=GOOGLE_GRAFANA_CLIENT_ID=... \
+    --from-literal=GOOGLE_GRAFANA_CLIENT_SECRET=... \
+    --from-literal=SLACK_WEBHOOK_URL=...
+
+Useful in-cluster URLs:
+  Prometheus: http://prom-kube-prometheus-stack-prometheus.{{ .Release.Namespace }}.svc:9090
+  Loki:       http://loki.{{ .Release.Namespace }}.svc:3100

@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     cookie_secure: bool = Field(default=False)
     cookie_domain: str | None = Field(default=None)
 
+    log_level: str = Field(default="INFO")
+
     @property
     def refresh_cookie_name(self) -> str:
         return "samosachaat_refresh"

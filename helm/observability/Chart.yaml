@@ -1,6 +1,17 @@
 apiVersion: v2
 name: observability
-description: Observability chart scaffold for Grafana, Prometheus, and Loki.
+description: |
+  Observability stack for the samosaChaat platform: kube-prometheus-stack
+  (Prometheus + Grafana + Alertmanager + node/kube-state exporters) and
+  loki-stack (Loki + Promtail) for metrics, alerts, dashboards, and logs.
 type: application
 version: 0.1.0
-appVersion: "0.1.0"
+appVersion: "1.0.0"
+
+dependencies:
+  - name: kube-prometheus-stack
+    version: "~62.0"
+    repository: https://prometheus-community.github.io/helm-charts
+  - name: loki-stack
+    version: "~2.10"
+    repository: https://grafana.github.io/helm-charts

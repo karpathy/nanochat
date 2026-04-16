@@ -1,8 +1,317 @@
-grafana:
-  enabled: true
+## Values for the samosaChaat observability umbrella chart.
+##
+## This chart deploys kube-prometheus-stack (Prometheus, Grafana, Alertmanager,
+## node-exporter, kube-state-metrics) and loki-stack (Loki + Promtail) into the
+## cluster. Grafana is exposed at grafana.samosachaat.art via the main ingress
+## in the samosachaat app chart (which routes to a ClusterIP service named
+## "grafana" on port 3000 in the same namespace).
 
-prometheus:
-  enabled: true
+kube-prometheus-stack:
+  fullnameOverride: prom
 
-loki:
-  enabled: true
+  ## ----------------------- Prometheus -----------------------
+  prometheus:
+    prometheusSpec:
+      ## Only scrape ServiceMonitors that belong to the samosaChaat app.
+      serviceMonitorSelector:
+        matchLabels:
+          app.kubernetes.io/part-of: samosachaat
+      serviceMonitorSelectorNilUsesHelmValues: false
+      ## Also evaluate our custom PrometheusRules.
+      ruleSelector:
+        matchLabels:
+          app.kubernetes.io/part-of: samosachaat
+      ruleSelectorNilUsesHelmValues: false
+      ## Keep 15 days of metric data on a 50Gi PVC.
+      retention: 15d
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 50Gi
+      resources:
+        requests:
+          cpu: 200m
+          memory: 1Gi
+        limits:
+          cpu: "1"
+          memory: 2Gi
+
+  ## ----------------------- Alertmanager -----------------------
+  alertmanager:
+    alertmanagerSpec:
+      storage:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 10Gi
+
+  ## ----------------------- Grafana -----------------------
+  grafana:
+    enabled: true
+    ## The main samosaChaat ingress already routes grafana.samosachaat.art
+    ## to a ClusterIP service named "grafana" port 3000 in the same namespace.
+    ## Override the generated service name so it matches.
+    fullnameOverride: grafana
+    service:
+      type: ClusterIP
+      port: 3000
+    ingress:
+      enabled: false
+
+    ## OAuth2 — no username/password, only GitHub + Google sign-in.
+    ## The referenced env vars must be provided via Grafana's extraEnvVarsSecret
+    ## (see grafana.envFromSecret below) or set in the cluster's secret store.
+    grafana.ini:
+      server:
+        root_url: https://grafana.samosachaat.art
+      auth:
+        disable_login_form: true
+      "auth.github":
+        enabled: true
+        allow_sign_up: true
+        client_id: ${GITHUB_GRAFANA_CLIENT_ID}
+        client_secret: ${GITHUB_GRAFANA_CLIENT_SECRET}
+        scopes: user:email,read:org
+        auth_url: https://github.com/login/oauth/authorize
+        token_url: https://github.com/login/oauth/access_token
+        api_url: https://api.github.com/user
+      "auth.google":
+        enabled: true
+        allow_sign_up: true
+        client_id: ${GOOGLE_GRAFANA_CLIENT_ID}
+        client_secret: ${GOOGLE_GRAFANA_CLIENT_SECRET}
+        scopes: openid email profile
+        auth_url: https://accounts.google.com/o/oauth2/auth
+        token_url: https://accounts.google.com/o/oauth2/token
+        allowed_domains: gmail.com
+
+    ## OAuth client IDs/secrets come from a Kubernetes secret mounted as env.
+    ## Expected keys: GITHUB_GRAFANA_CLIENT_ID, GITHUB_GRAFANA_CLIENT_SECRET,
+    ## GOOGLE_GRAFANA_CLIENT_ID, GOOGLE_GRAFANA_CLIENT_SECRET, SLACK_WEBHOOK_URL.
+    envFromSecret: grafana-oauth-secrets
+
+    ## Datasources — Prometheus (default) + Loki for logs.
+    datasources:
+      datasources.yaml:
+        apiVersion: 1
+        datasources:
+          - name: Prometheus
+            type: prometheus
+            uid: prometheus
+            url: http://prom-kube-prometheus-stack-prometheus.{{ .Release.Namespace }}.svc:9090
+            access: proxy
+            isDefault: true
+          - name: Loki
+            type: loki
+            uid: loki
+            url: http://loki.{{ .Release.Namespace }}.svc:3100
+            access: proxy
+            jsonData:
+              maxLines: 1000
+
+    ## Auto-provision dashboards from the dashboards ConfigMap rendered by
+    ## templates/grafana-dashboards-configmap.yaml.
+    dashboardProviders:
+      dashboardproviders.yaml:
+        apiVersion: 1
+        providers:
+          - name: samosachaat
+            orgId: 1
+            folder: samosaChaat
+            type: file
+            disableDeletion: false
+            editable: true
+            options:
+              path: /var/lib/grafana/dashboards/samosachaat
+
+    dashboardsConfigMaps:
+      samosachaat: samosachaat-dashboards
+
+    ## Unified alerting — contact points (email + slack).
+    alerting:
+      contactpoints.yaml:
+        apiVersion: 1
+        contactPoints:
+          - orgId: 1
+            name: email-alerts
+            receivers:
+              - uid: email
+                type: email
+                settings:
+                  addresses: manmohan659@gmail.com
+          - orgId: 1
+            name: slack-alerts
+            receivers:
+              - uid: slack
+                type: slack
+                settings:
+                  url: ${SLACK_WEBHOOK_URL}
+      policies.yaml:
+        apiVersion: 1
+        policies:
+          - orgId: 1
+            receiver: email-alerts
+            group_by: [alertname, severity]
+            routes:
+              - receiver: slack-alerts
+                matchers:
+                  - severity = critical
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+  ## ----------------------- Alert rules -----------------------
+  ## Prometheus will pick these up via the ruleSelector above (the generated
+  ## PrometheusRule gets labelled app.kubernetes.io/part-of: samosachaat).
+  additionalPrometheusRulesMap:
+    samosachaat-alerts:
+      groups:
+        - name: node-health
+          rules:
+            - alert: HighCPU
+              expr: avg by (instance) (rate(node_cpu_seconds_total{mode!="idle"}[5m])) > 0.8
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "CPU > 80% on {{ $labels.instance }} for 5m"
+                description: "Node {{ $labels.instance }} has had CPU usage above 80% for 5 minutes."
+
+            - alert: HighMemory
+              expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.85
+              for: 5m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Memory > 85% on {{ $labels.instance }}"
+                description: "Node {{ $labels.instance }} memory usage is above 85%."
+
+            - alert: DiskSpaceLow
+              expr: (1 - node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"}) > 0.9
+              for: 10m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Disk > 90% on {{ $labels.instance }}:{{ $labels.mountpoint }}"
+                description: "Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} is above 90% full."
+
+        - name: application
+          rules:
+            - alert: High5xxRate
+              expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.05
+              for: 2m
+              labels:
+                severity: critical
+              annotations:
+                summary: "5xx error rate > 5% across services"
+                description: "Aggregate 5xx error ratio across all services has exceeded 5% for 2 minutes."
+
+            - alert: InferenceServiceDown
+              expr: up{app="inference"} == 0
+              for: 1m
+              labels:
+                severity: critical
+              annotations:
+                summary: "Inference service is DOWN"
+                description: "Prometheus cannot scrape the inference service /metrics endpoint."
+
+            - alert: HighP99Latency
+              expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, app)) > 5
+              for: 3m
+              labels:
+                severity: warning
+              annotations:
+                summary: "p99 latency > 5s for {{ $labels.app }}"
+                description: "Service {{ $labels.app }} p99 latency has exceeded 5s for 3 minutes."
+
+## ----------------------- Loki stack -----------------------
+loki-stack:
+  loki:
+    enabled: true
+    persistence:
+      enabled: true
+      size: 50Gi
+    config:
+      limits_config:
+        retention_period: 720h
+      schema_config:
+        configs:
+          - from: "2024-01-01"
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: loki_index_
+              period: 24h
+
+  promtail:
+    enabled: true
+    config:
+      snippets:
+        pipelineStages:
+          - cri: {}
+          - json:
+              expressions:
+                level: level
+                service: service
+                trace_id: trace_id
+                user_id: user_id
+          - labels:
+              level:
+              service:
+      scrapeConfigs: |
+        - job_name: kubernetes-pods
+          pipeline_stages:
+            - cri: {}
+            - json:
+                expressions:
+                  level: level
+                  service: service
+                  trace_id: trace_id
+                  user_id: user_id
+            - labels:
+                level:
+                service:
+          kubernetes_sd_configs:
+            - role: pod
+          relabel_configs:
+            - source_labels:
+                - __meta_kubernetes_namespace
+              target_label: namespace
+            - source_labels:
+                - __meta_kubernetes_pod_name
+              target_label: pod
+            - source_labels:
+                - __meta_kubernetes_pod_label_app_kubernetes_io_name
+              target_label: app
+            - source_labels:
+                - __meta_kubernetes_pod_label_app_kubernetes_io_component
+              target_label: component
+            - source_labels:
+                - __meta_kubernetes_pod_label_app_kubernetes_io_part_of
+              target_label: part_of
+            - source_labels:
+                - __meta_kubernetes_pod_container_name
+              target_label: container
+            - action: replace
+              replacement: /var/log/pods/*$1/*.log
+              separator: /
+              source_labels:
+                - __meta_kubernetes_pod_uid
+                - __meta_kubernetes_pod_container_name
+              target_label: __path__
+
+  prometheus:
+    enabled: false
+  grafana:
+    enabled: false

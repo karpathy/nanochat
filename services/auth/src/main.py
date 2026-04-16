@@ -4,11 +4,13 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from .config import get_settings
+from .logging_setup import configure_logging
 from .rate_limit import limiter
 from .routes import oauth, session, users
 
@@ -18,6 +20,7 @@ def _rate_limit_handler(request, exc: RateLimitExceeded):
 
 
 def create_app() -> FastAPI:
+    configure_logging()
     settings = get_settings()
     app = FastAPI(title="samosaChaat Auth", version="0.1.0")
 
@@ -43,6 +46,8 @@ def create_app() -> FastAPI:
     @app.get("/auth/health")
     async def health():
         return {"status": "ok"}
+
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
     return app
 
