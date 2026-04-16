@@ -11,7 +11,7 @@ function ChatContent() {
   const { authenticated, loading } = useAuth();
 
   if (loading) {
-    return <div className="flex h-dvh items-center justify-center">Loading...</div>;
+    return <div className="flex h-dvh items-center justify-center bg-white dark:bg-ink text-gray-700 dark:text-ink-text-soft">Loading…</div>;
   }
   if (!authenticated) {
     redirect('/login');
@@ -19,7 +19,7 @@ function ChatContent() {
   }
 
   return (
-    <main className="flex h-dvh overflow-hidden">
+    <main className="flex h-dvh overflow-hidden bg-white dark:bg-ink">
       <Sidebar />
       <ChatWindow />
     </main>
@@ -28,7 +28,7 @@ function ChatContent() {
 
 export default function ChatPage() {
   return (
-    <Suspense fallback={<div className="flex h-dvh items-center justify-center">Loading...</div>}>
+    <Suspense fallback={<div className="flex h-dvh items-center justify-center bg-white dark:bg-ink text-gray-700 dark:text-ink-text-soft">Loading…</div>}>
       <ChatContent />
     </Suspense>
   );

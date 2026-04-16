@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Baloo_2, Great_Vibes, Caveat, Inter } from 'next/font/google';
+import { Baloo_2, Great_Vibes, Caveat, Inter, Fraunces } from 'next/font/google';
 import './globals.css';
 
 const baloo = Baloo_2({
@@ -29,9 +29,17 @@ const inter = Inter({
   display: 'swap',
 });
 
+const fraunces = Fraunces({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-fraunces',
+  display: 'swap',
+});
+
 export const metadata: Metadata = {
   title: 'समोसाचाट — samosaChaat',
-  description: 'Crafted with care. For India, from India. A warm, desi-flavored chat experience powered by nanochat.',
+  description:
+    'Crafted with care. For India, from India. A warm, desi-flavored chat experience powered by nanochat.',
   icons: { icon: '/logo.svg' },
 };
 
@@ -42,10 +50,25 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
+// Set theme class before paint to avoid flash
+const themeInitScript = `
+(function(){try{
+  var t=localStorage.getItem('theme');
+  if(t==='dark'){document.documentElement.classList.add('dark');}
+  else if(t==='light'){document.documentElement.classList.remove('dark');}
+}catch(e){}})();
+`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${baloo.variable} ${vibes.variable} ${caveat.variable} ${inter.variable}`}>
-      <body className="min-h-dvh bg-white text-gray-900">
+    <html
+      lang="en"
+      className={`${baloo.variable} ${vibes.variable} ${caveat.variable} ${inter.variable} ${fraunces.variable}`}
+    >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
+      <body className="min-h-dvh bg-white text-gray-900 dark:bg-ink dark:text-ink-text">
         {children}
       </body>
     </html>

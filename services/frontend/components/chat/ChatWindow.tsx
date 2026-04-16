@@ -191,24 +191,25 @@ export default function ChatWindow() {
   );
 
   return (
-    <section className="flex-1 flex flex-col min-w-0 bg-white">
-      <header className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-cream-border">
+    <section className="flex-1 flex flex-col min-w-0 bg-white dark:bg-ink">
+      <header className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-cream-border dark:border-ink-border">
         <div className="flex items-center gap-3">
           {!sidebarOpen && (
             <button
               type="button"
               onClick={toggleSidebar}
               aria-label="Open sidebar"
-              className="p-1.5 rounded hover:bg-cream text-brown-light"
+              className="p-1.5 rounded-md hover:bg-cream dark:hover:bg-ink-elev text-brown-light dark:text-ink-text-soft"
             >
               <PanelLeftOpen size={18} />
             </button>
           )}
-          <span className="text-xs px-2 py-0.5 rounded-full border border-warm-grey bg-cream-light text-brown">
+          <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border border-warm-grey dark:border-ink-border bg-cream-light dark:bg-ink-soft text-brown dark:text-ink-text-soft">
+            <span className="w-1.5 h-1.5 rounded-full bg-saffron" />
             {model}
           </span>
         </div>
-        <div className="text-sm text-gray-600 font-medium">
+        <div className="text-sm text-gray-600 dark:text-ink-text-soft font-medium">
           {user?.name ? `Hi, ${user.name.split(' ')[0]}` : ''}
         </div>
       </header>

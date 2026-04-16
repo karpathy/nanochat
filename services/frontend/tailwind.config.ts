@@ -1,6 +1,7 @@
 import type { Config } from 'tailwindcss';
 
 const config: Config = {
+  darkMode: 'class',
   content: [
     './app/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
@@ -20,13 +21,32 @@ const config: Config = {
         'chutney-red': '#c0392b',
         'warm-grey': '#d4c4a0',
         saffron: '#ff9933',
+        'saffron-soft': '#ffb063',
+        // Dark mode palette (near-black, matches the reference dark UI)
+        ink: '#0f0f10',
+        'ink-soft': '#161618',
+        'ink-elev': '#1e1e21',
+        'ink-border': '#2a2a2e',
+        'ink-text': '#e7e5e4',
+        'ink-text-soft': '#9a9797',
       },
       fontFamily: {
+        display: ['var(--font-fraunces)', 'Fraunces', 'ui-serif', 'Georgia', 'serif'],
         baloo: ['var(--font-baloo)', 'Baloo 2', 'cursive'],
         vibes: ['var(--font-vibes)', 'Great Vibes', 'cursive'],
         caveat: ['var(--font-caveat)', 'Caveat', 'cursive'],
         sans: ['var(--font-inter)', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         mono: ['Monaco', 'Menlo', 'Consolas', 'monospace'],
+      },
+      backgroundImage: {
+        'hero-glow':
+          'radial-gradient(60% 45% at 50% 0%, rgba(255,153,51,0.28) 0%, rgba(255,255,255,0) 60%), radial-gradient(50% 40% at 20% 20%, rgba(232,168,56,0.18) 0%, rgba(255,255,255,0) 70%), radial-gradient(55% 45% at 85% 30%, rgba(255,176,99,0.22) 0%, rgba(255,255,255,0) 70%)',
+        'tile-saffron':
+          'linear-gradient(180deg, #ff9933 0%, #ffb063 55%, #ffd2a0 100%)',
+        'tile-gold':
+          'linear-gradient(180deg, #e8a838 0%, #f3c678 60%, #fde6be 100%)',
+        'tile-chutney':
+          'linear-gradient(180deg, #2d8a4e 0%, #5cb17a 55%, #cfe7d6 100%)',
       },
       keyframes: {
         pendulum: {

@@ -67,7 +67,7 @@ export default function MessageBubble({ message, isStreaming }: Props) {
   if (isConsole) {
     return (
       <div className="flex justify-start mb-2 animate-fade-in">
-        <div className="font-mono text-sm bg-cream-light border border-cream-border text-brown-light px-4 py-3 rounded-xl max-w-[80%]">
+        <div className="font-mono text-sm bg-cream-light dark:bg-ink-soft border border-cream-border dark:border-ink-border text-brown-light dark:text-ink-text-soft px-4 py-3 rounded-xl max-w-[80%]">
           {message.content}
         </div>
       </div>
@@ -80,18 +80,18 @@ export default function MessageBubble({ message, isStreaming }: Props) {
         className={clsx(
           'max-w-[85%] md:max-w-[75%]',
           isUser
-            ? 'bg-cream border border-cream-border rounded-[1.25rem] px-4 py-3'
-            : 'bg-white px-2 py-1',
+            ? 'bg-cream dark:bg-ink-elev border border-cream-border dark:border-ink-border rounded-[1.25rem] px-4 py-3'
+            : 'bg-transparent px-2 py-1',
         )}
       >
         {!isUser && isStreaming && message.content.length === 0 ? (
           <SteamTyping />
         ) : isUser ? (
-          <div className="whitespace-pre-wrap leading-relaxed text-[0.95rem] text-gray-900">
+          <div className="whitespace-pre-wrap leading-relaxed text-[0.95rem] text-gray-900 dark:text-ink-text">
             {message.content}
           </div>
         ) : (
-          <div className="markdown-body text-[0.95rem] text-gray-900 leading-relaxed">
+          <div className="markdown-body text-[0.95rem] text-gray-900 dark:text-ink-text leading-relaxed">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}

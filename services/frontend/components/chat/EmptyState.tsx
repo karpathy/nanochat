@@ -1,65 +1,39 @@
 'use client';
 
-import SamosaLogo from '@/components/svg/SamosaLogo';
+import { useAuth } from '@/hooks/useAuth';
+import { BookOpen, Sparkles, Code2, Smile } from 'lucide-react';
 
 const SUGGESTIONS = [
-  {
-    icon: '📚',
-    label: 'Summarize a topic',
-    description: 'Get a concise overview of any subject',
-    prompt: 'Summarize the history of samosas in 3 paragraphs.',
-  },
-  {
-    icon: '✨',
-    label: 'Explain a concept',
-    description: 'Break down complex ideas simply',
-    prompt: 'Explain transformers to a curious beginner.',
-  },
-  {
-    icon: '💻',
-    label: 'Write some code',
-    description: 'Get help with any programming task',
-    prompt: 'Write a Python function that reverses a linked list.',
-  },
-  {
-    icon: '😄',
-    label: 'Tell me a joke',
-    description: 'Lighten the mood with some humor',
-    prompt: 'Tell me a joke about chai.',
-  },
+  { icon: BookOpen, label: 'Summarize a topic', prompt: 'Summarize the history of samosas in 3 paragraphs.' },
+  { icon: Sparkles, label: 'Explain a concept', prompt: 'Explain transformers to a curious beginner.' },
+  { icon: Code2,    label: 'Write some code',   prompt: 'Write a Python function that reverses a linked list.' },
+  { icon: Smile,    label: 'Tell me a joke',    prompt: 'Tell me a joke about chai.' },
 ];
 
 export default function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
-  return (
-    <div className="flex flex-col items-center justify-center flex-1 px-4 -mt-20">
-      {/* Small logo */}
-      <div className="w-16 h-16 mb-6 opacity-20">
-        <SamosaLogo size={64} />
-      </div>
+  const { user } = useAuth();
+  const firstName = (user?.name ?? 'friend').split(' ')[0];
 
-      <h2 className="font-baloo font-bold text-3xl text-gray-800 mb-2">
-        How can I help you today?
+  return (
+    <div className="flex flex-col items-center justify-center flex-1 px-4 py-10 text-center">
+      <h2 className="font-display font-medium text-[clamp(2.25rem,5vw,3.75rem)] leading-tight tracking-tight text-gray-900 dark:text-ink-text">
+        Hello, <span className="italic text-saffron">{firstName}</span>.
       </h2>
-      <p className="font-caveat text-lg text-brown/60 mb-10">
-        Ask anything — a doubt, a recipe, a code snippet, or a fresh idea.
+      <p className="mt-3 max-w-xl text-base md:text-lg text-gray-600 dark:text-ink-text-soft">
+        What shall we cook today — a doubt, a recipe, a code snippet, or a fresh idea?
       </p>
 
-      {/* Bigger suggestion cards - 2x2 grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-xl">
-        {SUGGESTIONS.map((s) => (
+      {/* Pill chips — pick a starter */}
+      <div className="mt-10 flex flex-wrap items-center justify-center gap-2.5 max-w-2xl">
+        {SUGGESTIONS.map(({ icon: Icon, label, prompt }) => (
           <button
-            key={s.label}
+            key={label}
             type="button"
-            onClick={() => onPick(s.prompt)}
-            className="flex items-start gap-3 p-4 rounded-xl border border-cream-border bg-white hover:bg-cream/50 hover:border-gold/30 transition-all text-left group"
+            onClick={() => onPick(prompt)}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-white dark:bg-ink-soft border border-cream-border dark:border-ink-border text-sm font-medium text-gray-700 dark:text-ink-text hover:border-saffron/60 dark:hover:border-saffron/50 hover:text-gray-900 dark:hover:text-white hover:bg-cream/50 dark:hover:bg-ink-elev transition-colors shadow-sm"
           >
-            <span className="text-xl mt-0.5">{s.icon}</span>
-            <div>
-              <div className="font-medium text-sm text-gray-800 group-hover:text-brown">
-                {s.label}
-              </div>
-              <div className="text-xs text-gray-500 mt-0.5">{s.description}</div>
-            </div>
+            <Icon size={15} className="text-saffron" />
+            {label}
           </button>
         ))}
       </div>

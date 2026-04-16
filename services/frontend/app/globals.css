@@ -13,12 +13,20 @@
   --light-cream: #fffdf5;
 }
 
+.dark {
+  color-scheme: dark;
+}
+
 html, body { height: 100%; }
 
 body {
   @apply font-sans bg-white text-gray-900;
   min-height: 100dvh;
   overflow-x: hidden;
+}
+
+.dark body {
+  @apply bg-ink text-ink-text;
 }
 
 /* Markdown prose tweaks inside message bubbles */
@@ -30,6 +38,9 @@ body {
 .markdown-body code:not(pre code) {
   @apply px-1 py-0.5 rounded bg-cream-light border border-cream-border text-brown text-[0.9em];
 }
+.dark .markdown-body code:not(pre code) {
+  @apply bg-ink-elev border-ink-border text-saffron-soft;
+}
 .markdown-body p { @apply my-2 leading-relaxed; }
 .markdown-body ul { @apply list-disc pl-6 my-2; }
 .markdown-body ol { @apply list-decimal pl-6 my-2; }
@@ -39,12 +50,22 @@ body {
 .markdown-body blockquote {
   @apply border-l-4 border-cream-border pl-4 italic text-brown-light my-2;
 }
+.dark .markdown-body blockquote {
+  @apply border-ink-border text-ink-text-soft;
+}
 .markdown-body a { @apply text-chutney-green underline hover:text-gold; }
 
 /* Scrollbar tuning */
 .nice-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
 .nice-scrollbar::-webkit-scrollbar-thumb { background: #e0d5c0; border-radius: 3px; }
 .nice-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--warm-grey); }
+.dark .nice-scrollbar::-webkit-scrollbar-thumb { background: #2a2a2e; }
+.dark .nice-scrollbar::-webkit-scrollbar-thumb:hover { background: #3a3a40; }
 
 /* Highlight.js minimal tweaks */
 .hljs { background: transparent; }
+
+/* Soft serif optical sizing for display headlines */
+.font-display {
+  font-optical-sizing: auto;
+}

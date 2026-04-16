@@ -6,11 +6,11 @@ import Doodles from '@/components/svg/Doodles';
 
 export default function LandingPage() {
   return (
-    <main className="relative flex min-h-dvh flex-col overflow-x-hidden bg-gradient-to-br from-[#fff8e7] via-white to-[#fff8e7]">
+    <main className="relative flex min-h-dvh flex-col overflow-x-hidden bg-gradient-to-br from-[#fffaf0] via-white to-[#fff5e1] dark:from-ink dark:via-ink-soft dark:to-ink">
       <Doodles />
 
-      {/* Hero section: full viewport height with warm gradient */}
-      <div className="relative min-h-dvh flex flex-col">
+      {/* Hero */}
+      <div className="relative flex flex-col">
         <LandingNav />
         <Hero />
       </div>

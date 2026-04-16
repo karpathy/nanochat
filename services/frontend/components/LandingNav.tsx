@@ -5,51 +5,58 @@ import { useAuth } from '@/hooks/useAuth';
 
 export default function LandingNav() {
   const { authenticated } = useAuth();
+  const ctaHref = authenticated ? '/chat' : '/login';
+  const ctaLabel = authenticated ? 'Open chat' : 'Try samosaChaat';
 
   return (
-    <nav className="relative flex justify-between items-start px-4 md:px-9 pt-4 pb-2 z-10 flex-shrink-0">
-      <div className="flex items-center gap-2">
-        <Link href="/" aria-label="Home" className="transition-transform hover:scale-105">
-          <svg viewBox="0 0 30 30" width={30} height={30} fill="none" stroke="#444" strokeWidth={1.3} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4,16 L15.2,5 L26,16" />
-            <path d="M7,14.5 L7,26 L23,26 L23,14.5" />
-            <rect x="12" y="19" width="6" height="7" rx="0.5" />
-            <rect x="8.5" y="16" width="3" height="2.8" rx="0.3" />
-            <rect x="18.5" y="16" width="3" height="2.8" rx="0.3" />
-          </svg>
-        </Link>
+    <nav className="relative z-20 px-4 pt-5 flex justify-center">
+      <div className="flex items-center gap-2 px-2 py-2 rounded-full bg-white/80 dark:bg-ink-soft/80 backdrop-blur-md border border-cream-border/70 dark:border-ink-border shadow-[0_8px_30px_rgba(180,120,40,0.08)] w-full max-w-3xl">
+        {/* Brand */}
         <Link
           href="/"
-          className="relative font-caveat text-[1.2rem] md:text-[1.35rem] font-semibold text-gray-800 after:content-[''] after:absolute after:-bottom-0.5 after:left-0 after:w-full after:h-[1.5px] after:bg-gray-500 after:rounded after:-rotate-[0.5deg]"
+          aria-label="samosaChaat home"
+          className="flex items-center gap-2 pl-3 pr-4 py-1.5 rounded-full hover:bg-cream/60 dark:hover:bg-ink-elev transition-colors"
         >
-          samosaChaat
+          <svg viewBox="0 0 28 28" width={22} height={22} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="text-saffron">
+            <path d="M4 22 L14 5 L24 22 Z" />
+            <circle cx="14" cy="17" r="1.4" fill="currentColor" />
+          </svg>
+          <span className="font-display text-[1.05rem] font-semibold text-gray-900 dark:text-ink-text tracking-tight">
+            samosaChaat
+          </span>
         </Link>
-      </div>
 
-      <div className="flex items-center gap-4 font-caveat text-[1.05rem] text-gray-600 pt-1">
-        <a
-          href="https://instagram.com/samosachaat.art"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="hidden sm:inline hover:text-brown transition-colors"
-        >
-          @samosachaat
-        </a>
-        {authenticated ? (
-          <Link
-            href="/chat"
-            className="px-5 py-2 rounded-full bg-gold text-white font-semibold hover:bg-gold-dark transition-colors shadow-sm"
+        {/* Center links */}
+        <div className="hidden md:flex items-center gap-1 mx-auto text-[0.85rem] font-medium uppercase tracking-[0.08em] text-gray-600 dark:text-ink-text-soft">
+          <a href="#features" className="px-3 py-2 rounded-full hover:text-gray-900 dark:hover:text-ink-text transition-colors">Why</a>
+          <a href="#how" className="px-3 py-2 rounded-full hover:text-gray-900 dark:hover:text-ink-text transition-colors">How it works</a>
+          <a
+            href="https://github.com/manmohan659/nanochat"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-2 rounded-full hover:text-gray-900 dark:hover:text-ink-text transition-colors"
           >
-            Chat
-          </Link>
-        ) : (
-          <Link
-            href="/login"
-            className="px-5 py-2 rounded-full bg-gold text-white font-semibold hover:bg-gold-dark transition-colors shadow-sm"
+            Github
+          </a>
+        </div>
+
+        {/* CTAs */}
+        <div className="ml-auto flex items-center gap-2">
+          <a
+            href="https://instagram.com/samosachaat.art"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden sm:inline-flex px-4 py-2 rounded-full text-sm font-medium text-gray-700 dark:text-ink-text-soft hover:text-gray-900 dark:hover:text-ink-text transition-colors"
           >
-            Sign in
+            @samosachaat
+          </a>
+          <Link
+            href={ctaHref}
+            className="px-5 py-2.5 rounded-full bg-gray-900 dark:bg-ink-text text-white dark:text-ink text-sm font-medium shadow-[0_8px_24px_rgba(0,0,0,0.18)] hover:shadow-[0_10px_28px_rgba(0,0,0,0.25)] hover:-translate-y-px transition-all"
+          >
+            {ctaLabel}
           </Link>
-        )}
+        </div>
       </div>
     </nav>
   );
