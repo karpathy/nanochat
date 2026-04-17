@@ -66,6 +66,12 @@ jobs:
             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
+            # Reload nginx so it picks up the new nginx.conf and re-resolves
+            # upstream IPs (auth/chat-api/frontend get fresh IPs after recreate)
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T nginx nginx -t \
+              && docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T nginx nginx -s reload \
+              || echo "nginx reload skipped (container not running yet)"
+
             # Run migrations (wait for postgres)
             sleep 8
             docker compose exec -T chat-api alembic upgrade head 2>/dev/null || true
