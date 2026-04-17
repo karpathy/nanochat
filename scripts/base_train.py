@@ -257,6 +257,10 @@ num_params = param_counts['total']
 num_flops_per_token = model.estimate_flops()
 print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
+# Validate training horizon arguments
+if args.target_param_data_ratio != -1 and args.target_param_data_ratio <= 0:
+    raise ValueError(f"--target-param-data-ratio must be > 0 or -1 to disable, got {args.target_param_data_ratio}")
+
 # 1) Use scaling laws to determine the optimal training horizon in tokens
 # The compute-optimal models satisfy the Tokens:Params ratio of --target-param-data-ratio (derived experimentally via scaling laws analysis).
 # We've already initialized the model so we have Params. Optimal Tokens is now simply target-param-data-ratio * Params
@@ -336,7 +340,7 @@ x, y, dataloader_state_dict = next(train_loader) # kick off load of the very fir
 # Calculate the number of iterations we will train for and set up the various schedulers
 
 # num_iterations: either it is given, or from target flops, or from target data:param ratio (in that order)
-assert args.num_iterations > 0 or args.target_param_data_ratio > 0 or args.target_flops > 0
+assert args.num_iterations != -1 or args.target_param_data_ratio != -1 or args.target_flops != -1.0
 if args.num_iterations > 0:
     # Override num_iterations to a specific value if given
     num_iterations = args.num_iterations
