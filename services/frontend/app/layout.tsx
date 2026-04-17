@@ -44,19 +44,19 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#fff8e7',
+  themeColor: '#0f0f10',
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
 };
 
-// Set theme class before paint to avoid flash
+// Set theme class before paint to avoid flash. Default = dark; user can flip via the toggle.
 const themeInitScript = `
 (function(){try{
   var t=localStorage.getItem('theme');
-  if(t==='dark'){document.documentElement.classList.add('dark');}
-  else if(t==='light'){document.documentElement.classList.remove('dark');}
-}catch(e){}})();
+  if(t==='light'){document.documentElement.classList.remove('dark');}
+  else{document.documentElement.classList.add('dark');}
+}catch(e){document.documentElement.classList.add('dark');}})();
 `;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
