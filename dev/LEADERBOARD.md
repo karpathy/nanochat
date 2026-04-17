@@ -6,7 +6,7 @@ The primary metric we care about is "time to GPT-2" - the wall clock time needed
 
 ## How to
 
-The script [runs/speedrun.sh](runs/speedrun.sh) always implements the current state of the art on the leaderboard.
+The script [runs/speedrun.sh](../runs/speedrun.sh) always implements the current state of the art on the leaderboard.
 
 In practice, I tune the base_train command a little bit. For example, once all the setup is configured and a tokenizer is trained, I like to do something like:
 
