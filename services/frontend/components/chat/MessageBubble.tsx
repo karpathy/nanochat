@@ -75,13 +75,12 @@ export default function MessageBubble({ message, isStreaming }: Props) {
   }
 
   return (
-    <div className={clsx('flex mb-3 animate-fade-in', isUser ? 'justify-end' : 'justify-start')}>
+    <div className={clsx('flex mb-5 animate-fade-in', isUser ? 'justify-end' : 'justify-start')}>
       <div
         className={clsx(
-          'max-w-[85%] md:max-w-[75%]',
           isUser
-            ? 'bg-cream dark:bg-ink-elev border border-cream-border dark:border-ink-border rounded-[1.25rem] px-4 py-3'
-            : 'bg-transparent px-2 py-1',
+            ? 'max-w-[85%] md:max-w-[75%] bg-cream dark:bg-ink-elev border border-cream-border dark:border-ink-border rounded-[1.25rem] px-4 py-3'
+            : 'w-full bg-transparent px-1 py-1',
         )}
       >
         {!isUser && isStreaming && message.content.length === 0 ? (
