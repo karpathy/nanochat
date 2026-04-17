@@ -20,6 +20,26 @@ mkdir -p $NANOCHAT_BASE_DIR
 
 # install uv (if not already installed)
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+if ! command -v uv &> /dev/null; then
+    # uv installation path is not in $PATH, add it. This code mimics what the
+    # uv install script does to determine the install path.
+
+    if [ -n "${XDG_BIN_HOME:-}" ]; then
+        _install_dir="$XDG_BIN_HOME"
+    elif [ -n "${XDG_DATA_HOME:-}" ]; then
+        _install_dir="$XDG_DATA_HOME/../bin"
+    else
+        if [ -n "${HOME:-}" ]; then
+            _inferred_home="$HOME"
+        elif [ -n "${USER:-}" ]; then
+            _inferred_home=$(getent passwd "$USER" | cut -d: -f6)
+        else
+            _inferred_home=$(getent passwd "$(id -un)" | cut -d: -f6)
+        fi
+        _install_dir="$_inferred_home/.local/bin"
+    fi
+    export PATH="$_install_dir:$PATH"
+fi
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
 # install the repo dependencies
