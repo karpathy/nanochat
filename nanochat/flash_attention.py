@@ -1,8 +1,9 @@
 """
-Unified Flash Attention interface with automatic FA3/SDPA switching.
+Unified Flash Attention interface with automatic FA3/FA2/SDPA switching.
 
 Exports `flash_attn` module that matches the FA3 API exactly, but falls back
 to PyTorch SDPA on non-Hopper GPUs (including Blackwell), MPS, and CPU.
+If the flash-attn package is installed, FA2 kernels are used instead of SDPA on sm80+ GPUs (FA3 wins if both are usable).
 
 Usage (drop-in replacement for FA3):
     from nanochat.flash_attention import flash_attn
@@ -38,10 +39,25 @@ def _load_flash_attention_3():
         return None
 
 
-_fa3 = _load_flash_attention_3()
-HAS_FA3 = _fa3 is not None
+def _load_flash_attention_2():
+    """Try to load Flash Attention 2 (requires flash-attn package, sm80+)."""
+    if not torch.cuda.is_available():
+        return None
+    try:
+        import flash_attn.flash_attn_interface as fa2
+        if hasattr(fa2, 'flash_attn_func') and hasattr(fa2, 'flash_attn_with_kvcache'):
+            return fa2
+        return None
+    except Exception:
+        return None
 
-# Override for testing: set to 'fa3', 'sdpa', or None (auto)
+
+_fa3 = _load_flash_attention_3()
+_fa2 = _load_flash_attention_2()
+HAS_FA3 = _fa3 is not None
+HAS_FA2 = _fa2 is not None
+
+# Override for testing: set to 'fa3', 'fa2', 'sdpa', or None (auto)
 _override_impl = None
 
 
@@ -50,6 +66,8 @@ def _resolve_use_fa3():
     if _override_impl == 'fa3':
         assert HAS_FA3, "Cannot override to FA3: not available on this hardware"
         return True
+    if _override_impl == 'fa2':
+        return False
     if _override_impl == 'sdpa':
         return False
     if HAS_FA3:
@@ -61,6 +79,23 @@ def _resolve_use_fa3():
     return False
 
 USE_FA3 = _resolve_use_fa3()
+
+
+def _resolve_use_fa2():
+    """Decide once whether to use FA2, based on availability, override, and dtype. FA3 wins if both are usable."""
+    if _override_impl == 'fa2':
+        assert HAS_FA2, "Cannot override to FA2: flash-attn package not available"
+        return True
+    if _override_impl == 'sdpa' or USE_FA3:
+        return False
+    if HAS_FA2:
+        # FA2 supports bf16 and fp16, not fp32
+        from nanochat.common import COMPUTE_DTYPE
+        if COMPUTE_DTYPE != torch.float32:
+            return True
+    return False
+
+USE_FA2 = _resolve_use_fa2()
 
 
 # =============================================================================
@@ -118,6 +153,8 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
     """
     if USE_FA3:
         return _fa3.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
+    if USE_FA2:
+        return _fa2.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
 
     # SDPA fallback: transpose (B, T, H, D) -> (B, H, T, D)
     q = q.transpose(1, 2)
@@ -148,6 +185,11 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
     """
     if USE_FA3:
         return _fa3.flash_attn_with_kvcache(
+            q, k_cache, v_cache, k=k, v=v, cache_seqlens=cache_seqlens,
+            causal=causal, window_size=window_size
+        )
+    if USE_FA2:
+        return _fa2.flash_attn_with_kvcache(
             q, k_cache, v_cache, k=k, v=v, cache_seqlens=cache_seqlens,
             causal=causal, window_size=window_size
         )
