@@ -21,6 +21,7 @@ import torch.nn.functional as F
 
 from nanochat.common import get_dist_info, print0, COMPUTE_DTYPE
 from nanochat.optim import MuonAdamW, DistMuonAdamW
+from nanochat.moe import MoE
 
 # Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
 from nanochat.flash_attention import flash_attn
@@ -37,6 +38,12 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    # MoE config. num_experts <= 1 disables MoE entirely (falls back to dense MLP).
+    num_experts: int = 1
+    top_k: int = 2
+    num_shared_experts: int = 0
+    capacity_factor: float = 1.25
+    moe_aux_loss_coef: float = 0.01
 
 
 def norm(x):
@@ -143,12 +150,18 @@ class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
-        self.mlp = MLP(config)
+        self.use_moe = config.num_experts > 1
+        self.mlp = MoE(config) if self.use_moe else MLP(config)
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
-        x = x + self.mlp(norm(x))
-        return x
+        if self.use_moe:
+            mlp_out, aux = self.mlp(norm(x))
+            x = x + mlp_out
+        else:
+            x = x + self.mlp(norm(x))
+            aux = torch.zeros((), device=x.device, dtype=torch.float32)
+        return x, aux
 
 
 class GPT(nn.Module):
@@ -226,8 +239,11 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
-            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)  # 0.4x init scale for c_fc
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            if block.use_moe:
+                block.mlp.init_weights()  # MoE does its own init (zero c_proj => zero contribution at init)
+            else:
+                torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)  # 0.4x init scale for c_fc
+                torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
         # Per-layer scalars
         # Per-layer resid init: stronger residual at early layers, weaker at deep layers
@@ -320,6 +336,9 @@ class GPT(nn.Module):
         This is ~1% off from the exact formulas of Chinchilla paper, the difference is:
         - Chinchilla counts the embedding layer as flops (? weird, it's just a lookup => we ignore)
         - Chinchilla counts exp/sum/divide in attention softmax as flops (a little sus and very tiny => we ignore)
+
+        For MoE: only top_k / num_experts of routed expert params see a given token per forward.
+        Shared experts and the router are always active (included in the active count).
         """
         nparams = sum(p.numel() for p in self.parameters())
         # Exclude non-matmul params: embeddings and per-layer scalars
@@ -327,6 +346,13 @@ class GPT(nn.Module):
         nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
                           self.resid_lambdas.numel() + self.x0_lambdas.numel() +
                           self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel())
+        # Exclude inactive MoE expert params: (num_experts - top_k) / num_experts of routed experts.
+        moe_inactive = 0
+        if self.config.num_experts > 1:
+            moe = self.transformer.h[0].mlp
+            expert_hidden = moe.expert_hidden_dim
+            inactive_per_layer = (self.config.num_experts - self.config.top_k) * 2 * self.config.n_embd * expert_hidden
+            moe_inactive = inactive_per_layer * self.config.n_layer
         h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window
         attn_flops = 0
@@ -334,7 +360,7 @@ class GPT(nn.Module):
             window = window_size[0]  # (left, right) tuple, we use left
             effective_seq = t if window < 0 else min(window, t)
             attn_flops += 12 * h * q * effective_seq
-        num_flops_per_token = 6 * (nparams - nparams_exclude) + attn_flops
+        num_flops_per_token = 6 * (nparams - nparams_exclude - moe_inactive) + attn_flops
         return num_flops_per_token
 
     def num_scaling_params(self):
@@ -346,8 +372,9 @@ class GPT(nn.Module):
         Ref: https://arxiv.org/abs/2203.15556 (Chinchilla paper)
         Ref: https://arxiv.org/abs/2001.08361 (Kaplan et al. original scaling laws paper)
 
-        Returns a dict with counts for each parameter group, so downstream analysis
-        can experiment with which combination gives the cleanest scaling laws.
+        For MoE, 'active_*' fields count only the parameters active per token
+        (top_k out of num_experts routed experts, plus shared experts).
+        Following DeepSeek convention of reporting both total and active params.
         """
         # Count each group separately (mirrors the grouping in setup_optimizers)
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
@@ -357,13 +384,27 @@ class GPT(nn.Module):
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel()
         total = wte + value_embeds + lm_head + transformer_matrices + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
+        # MoE: only top_k/num_experts fraction of routed expert params active per token.
+        # Shared experts are always active so their params stay in the active count.
+        moe_inactive = 0
+        if self.config.num_experts > 1:
+            moe = self.transformer.h[0].mlp
+            expert_hidden = moe.expert_hidden_dim
+            routed_params_per_layer = self.config.num_experts * 2 * self.config.n_embd * expert_hidden
+            inactive_per_layer = routed_params_per_layer * (self.config.num_experts - self.config.top_k) // self.config.num_experts
+            moe_inactive = inactive_per_layer * self.config.n_layer
+        active_transformer_matrices = transformer_matrices - moe_inactive
+        active_total = total - moe_inactive
         return {
             'wte': wte,
             'value_embeds': value_embeds,
             'lm_head': lm_head,
             'transformer_matrices': transformer_matrices,
+            'active_transformer_matrices': active_transformer_matrices,
             'scalars': scalars,
+            'moe_inactive': moe_inactive,
             'total': total,
+            'active_total': active_total,
         }
 
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, scalar_lr=0.5):
@@ -448,10 +489,13 @@ class GPT(nn.Module):
         n_layer = self.config.n_layer
         backout_layer = n_layer // 2  # cache at halfway point
         x_backout = None
+        # Accumulate MoE aux loss across layers (zero-valued for dense blocks).
+        aux_loss_total = torch.zeros((), device=x.device, dtype=torch.float32)
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+            x, block_aux = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+            aux_loss_total = aux_loss_total + block_aux
             if i == backout_layer:
                 x_backout = x
         # Subtract mid-layer residual to remove low-level features before logit projection
@@ -470,7 +514,8 @@ class GPT(nn.Module):
             # training: given the targets, compute and return the loss
             # TODO experiment with chunked cross-entropy?
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
-            return loss
+            # Always return (ce_loss, aux_loss) pair. Caller sums them for backward and logs them separately.
+            return loss, aux_loss_total
         else:
             # inference: just return the logits directly
             return logits

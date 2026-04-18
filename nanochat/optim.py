@@ -12,6 +12,12 @@ import torch.distributed as dist
 from torch import Tensor
 from nanochat.common import COMPUTE_DTYPE
 
+# Allow more unique shape specializations in the fused Muon/AdamW kernels. Each unique
+# (num_params, *shape) tuple triggers a specialization; MoE introduces extra shapes
+# (router, routed experts, shared experts) beyond the dense transformer's handful.
+# 64 is comfortably above what nanochat needs even with MoE at depth 26+.
+torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 64)
+
 # -----------------------------------------------------------------------------
 """
 Good old AdamW optimizer, fused kernel.
@@ -248,9 +254,15 @@ class MuonAdamW(torch.optim.Optimizer):
             state["momentum_buffer"] = torch.zeros(num_params, *shape, dtype=dtype, device=device)
         momentum_buffer = state["momentum_buffer"]
 
-        # Second momentum buffer is factored, either per-row or per-column
+        # Second momentum buffer is factored, either per-row or per-column.
+        # Generalized for params of rank >= 2: leading dims (before last 2) are preserved
+        # so each (last-2-dims) slice gets its own factored buffer. This lets Muon process
+        # 3D params like MoE expert stacks (E, D, 4D) as E independent 2D matrices.
         if "second_momentum_buffer" not in state:
-            state_shape = (num_params, shape[-2], 1) if shape[-2] >= shape[-1] else (num_params, 1, shape[-1])
+            if shape[-2] >= shape[-1]:
+                state_shape = (num_params,) + tuple(shape[:-1]) + (1,)
+            else:
+                state_shape = (num_params,) + tuple(shape[:-2]) + (1, shape[-1])
             state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
         second_momentum_buffer = state["second_momentum_buffer"]
         red_dim = -1 if shape[-2] >= shape[-1] else -2
@@ -466,7 +478,10 @@ class DistMuonAdamW(torch.optim.Optimizer):
         if "momentum_buffer" not in state:
             state["momentum_buffer"] = torch.zeros(chunk_size, *shape, dtype=dtype, device=device)
         if "second_momentum_buffer" not in state:
-            state_shape = (chunk_size, shape[-2], 1) if shape[-2] >= shape[-1] else (chunk_size, 1, shape[-1])
+            if shape[-2] >= shape[-1]:
+                state_shape = (chunk_size,) + tuple(shape[:-1]) + (1,)
+            else:
+                state_shape = (chunk_size,) + tuple(shape[:-2]) + (1, shape[-1])
             state["second_momentum_buffer"] = torch.zeros(state_shape, dtype=dtype, device=device)
         red_dim = -1 if shape[-2] >= shape[-1] else -2
 

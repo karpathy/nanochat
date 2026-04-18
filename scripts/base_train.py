@@ -52,6 +52,12 @@ parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = de
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+# MoE (num_experts <= 1 disables MoE entirely; expert_hidden auto-scales to keep active FFN ~= dense)
+parser.add_argument("--num-experts", type=int, default=1, help="number of routed MoE experts (1 = dense MLP)")
+parser.add_argument("--top-k", type=int, default=2, help="number of experts activated per token")
+parser.add_argument("--num-shared-experts", type=int, default=0, help="DeepSeek-style always-active shared experts")
+parser.add_argument("--capacity-factor", type=float, default=1.25, help="per-expert capacity = ceil(cf * top_k * N / E); overflow tokens drop")
+parser.add_argument("--moe-aux-loss-coef", type=float, default=0.01, help="Switch-style load-balancing aux loss coefficient")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -137,6 +143,10 @@ def build_model_meta(depth):
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        num_experts=args.num_experts, top_k=args.top_k,
+        num_shared_experts=args.num_shared_experts,
+        capacity_factor=args.capacity_factor,
+        moe_aux_loss_coef=args.moe_aux_loss_coef,
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -262,8 +272,10 @@ print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 # We've already initialized the model so we have Params. Optimal Tokens is now simply target-param-data-ratio * Params
 def get_scaling_params(m):
     # As for which params to use exactly, transformer matrices + lm_head gives cleanest scaling laws (see dev/LOG.md Jan 27, 2026)
+    # For MoE, use active params (only top_k routed experts + shared, not all experts).
+    # Dense collapses to active == total so this is backwards-compatible.
     params_counts = m.num_scaling_params()
-    scaling_params = params_counts['transformer_matrices'] + params_counts['lm_head']
+    scaling_params = params_counts['active_transformer_matrices'] + params_counts['lm_head']
     return scaling_params
 num_scaling_params = get_scaling_params(model)
 target_tokens = int(args.target_param_data_ratio * num_scaling_params) # optimal tokens for the model we are about to train
@@ -507,14 +519,17 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+    aux_loss_accum = 0.0  # accumulate aux loss across micro-steps for logging
     for micro_step in range(grad_accum_steps):
-        loss = model(x, y)
-        train_loss = loss.detach() # for logging
-        loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
+        ce_loss, aux_loss = model(x, y)
+        total_loss = ce_loss + aux_loss  # MoE aux flows into backward; aux is 0 for dense
+        train_loss = ce_loss.detach()  # for logging, CE only (comparable across dense/MoE)
+        aux_loss_accum += aux_loss.detach()
+        total_loss = total_loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         if scaler is not None:
-            scaler.scale(loss).backward()
+            scaler.scale(total_loss).backward()
         else:
-            loss.backward()
+            total_loss.backward()
         x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
     # step the optimizer
     lrm = get_lr_multiplier(step)
@@ -566,11 +581,13 @@ while True:
     epoch = f"{dataloader_state_dict['epoch']} pq: {dataloader_state_dict['pq_idx']} rg: {dataloader_state_dict['rg_idx']}"
     print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
     if step % 100 == 0:
+        aux_loss_avg = (aux_loss_accum / max(1, grad_accum_steps)).item() if torch.is_tensor(aux_loss_accum) else float(aux_loss_accum)
         log_data = {
             "step": step,
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
             "train/loss": debiased_smooth_loss,
+            "train/aux_loss": aux_loss_avg,
             "train/lrm": lrm,
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,

@@ -261,7 +261,8 @@ for step in range(num_steps):
             rewards = rewards_all[b0:b1]
             advantages = advantages_all[b0:b1]
             # Calculate log probabilities. Note that the loss calculates NLL = -logp, so we negate
-            logp = -model(inputs, targets, loss_reduction='none').view_as(inputs) # (B, T)
+            ce_loss2d, _ = model(inputs, targets, loss_reduction='none')  # discard MoE aux
+            logp = -ce_loss2d.view_as(inputs) # (B, T)
             # Calculate the PG objective. Note that ignore_index=-1 ensures that invalid tokens have loss 0.
             pg_obj = (logp * advantages.unsqueeze(-1)).sum()
             # normalize by the number of valid tokens, number of passes, and examples_per_rank

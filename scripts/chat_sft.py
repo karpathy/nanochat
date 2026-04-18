@@ -430,8 +430,9 @@ while True:
     synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
-        loss = model(x, y)
-        train_loss = loss.detach() # for logging
+        ce_loss, aux_loss = model(x, y)
+        loss = ce_loss + aux_loss
+        train_loss = ce_loss.detach() # for logging (ce only, comparable to dense)
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         if scaler is not None:
             scaler.scale(loss).backward()
