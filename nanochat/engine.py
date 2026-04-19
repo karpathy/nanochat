@@ -102,11 +102,14 @@ class KVCache:
         self.cache_seqlens = torch.zeros(batch_size, dtype=torch.int32, device=device)
         # Previous token's normalized embedding for smear (set by model forward pass)
         self.prev_embedding = None
+        # Engram N-gram history: (B, max_ngram-1) tensor of recent token IDs
+        self.ngram_history = None
 
     def reset(self):
         """Reset cache to empty state."""
         self.cache_seqlens.zero_()
         self.prev_embedding = None
+        self.ngram_history = None
 
     def get_pos(self):
         """Get current position (assumes all batch elements at same position)."""
@@ -135,6 +138,9 @@ class KVCache:
         # Copy smear state: expand batch=1 prev_embedding to num_samples
         if other.prev_embedding is not None:
             self.prev_embedding = other.prev_embedding.expand(self.batch_size, -1, -1).clone()
+        # Copy Engram N-gram history: expand batch=1 to num_samples
+        if other.ngram_history is not None:
+            self.ngram_history = other.ngram_history.expand(self.batch_size, -1).clone()
 
 # -----------------------------------------------------------------------------
 @torch.inference_mode()

@@ -52,6 +52,14 @@ parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = de
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+# Engram: conditional memory via N-gram hash lookup
+parser.add_argument("--engram", action="store_true", help="enable Engram conditional memory")
+parser.add_argument("--engram-ngram-size", type=int, default=3, help="max N-gram order (2+3=bigram+trigram)")
+parser.add_argument("--engram-n-heads", type=int, default=4, help="hash heads per N-gram order")
+parser.add_argument("--engram-embed-dim", type=int, default=128, help="embedding dim per hash head")
+parser.add_argument("--engram-table-size", type=int, default=0, help="hash table size (0=auto)")
+parser.add_argument("--engram-layer-ids", type=str, default="", help="comma-separated layer IDs for Engram (empty=auto)")
+parser.add_argument("--engram-kernel-size", type=int, default=4, help="depthwise causal conv kernel size")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -133,10 +141,15 @@ def build_model_meta(depth):
     base_dim = depth * args.aspect_ratio
     model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
     num_heads = model_dim // args.head_dim
+    engram_layer_ids = tuple(int(x) for x in args.engram_layer_ids.split(",")) if args.engram_layer_ids else ()
     config = GPTConfig(
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        engram_enabled=args.engram, engram_ngram_size=args.engram_ngram_size,
+        engram_n_heads=args.engram_n_heads, engram_embed_dim=args.engram_embed_dim,
+        engram_table_size=args.engram_table_size, engram_layer_ids=engram_layer_ids,
+        engram_kernel_size=args.engram_kernel_size,
     )
     with torch.device("meta"):
         model_meta = GPT(config)
