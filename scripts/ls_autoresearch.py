@@ -456,6 +456,7 @@ def make_config(tag: str, preset: str) -> dict[str, Any]:
             "remote_results_dir": default_remote_results(tag),
             "remote_command_prefix": ["/home/jrmolnia/.local/bin/uv", "run", "--extra", "gpu"],
             "remote_python": "python",
+            "bootstrap_dataset_train_shards": 1,
             "branch": current_branch(),
             "sync_excludes": [
                 ".git",
@@ -591,6 +592,43 @@ def ssh_capture(config: dict[str, Any], remote_command: str, log_path: Path) -> 
     with log_path.open("w") as handle:
         proc = subprocess.run(ssh_cmd, stdout=handle, stderr=subprocess.STDOUT, text=True, check=False)
     return proc.returncode
+
+
+def ssh_run(config: dict[str, Any], remote_command: str) -> subprocess.CompletedProcess[str]:
+    ssh_key = expand_path(config["ssh_key"])
+    return subprocess.run(
+        [
+            "ssh",
+            "-i",
+            ssh_key,
+            config["remote_host"],
+            remote_command,
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def ensure_remote_dataset(config: dict[str, Any]) -> None:
+    train_shards = int(config.get("bootstrap_dataset_train_shards", 0))
+    if train_shards <= 0:
+        return
+    remote_base = shlex.quote(config["remote_cache_dir"])
+    remote_repo = shlex.quote(config["remote_repo_dir"])
+    prefix = shell_join(config.get("remote_command_prefix", []))
+    remote_cmd = (
+        f"cd {remote_repo} && "
+        f"export PYTHONPATH=. && "
+        f"export NANOCHAT_BASE_DIR={remote_base} && "
+        f"if [ ! -f {remote_base}/base_data_climbmix/shard_00000.parquet ] || "
+        f"[ ! -f {remote_base}/base_data_climbmix/shard_06542.parquet ]; then "
+        f"{prefix} {shlex.quote(config['remote_python'])} -m nanochat.dataset -n {train_shards} -w 1; "
+        f"fi"
+    )
+    proc = ssh_run(config, remote_cmd)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "failed to prepare remote dataset")
 
 
 def rsync_remote_paths(
@@ -754,6 +792,7 @@ def run_suite(args: argparse.Namespace) -> None:
     commit_short = current_commit(short=True)
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     rsync_repo(config)
+    ensure_remote_dataset(config)
     remote_run_dir = local_remote_run_dir(run_dir, run_id)
     remote_run_dir.mkdir(parents=True, exist_ok=True)
 
