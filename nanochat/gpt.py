@@ -12,8 +12,8 @@ Notable features:
 - Flash Attention 3 integration
 """
 
-from functools import partial
 from dataclasses import dataclass
+import math
 
 import torch
 import torch.nn as nn
@@ -37,6 +37,15 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    # Experimental architecture knobs. Defaults preserve the upstream model.
+    architecture: str = "transformer" # transformer|lsrecurrent
+    linear_impl: str = "dense" # dense|ls
+    ls_num_blocks: int = 16
+    ls_rank: int = 128
+    lsrec_h_dim: int = 0 # 0 => n_embd
+    lsrec_n_iter: int = 4
+    lsrec_n_mem: int = 0
+    lsrec_log_dt_init: float = -2.3
 
 
 def norm(x):
@@ -47,7 +56,166 @@ class Linear(nn.Linear):
     Replaces autocast: master weights stay fp32 for optimizer precision,
     but matmuls run in the activation dtype (typically bf16 from embeddings)."""
     def forward(self, x):
-        return F.linear(x, self.weight.to(dtype=x.dtype))
+        bias = None if self.bias is None else self.bias.to(dtype=x.dtype)
+        return F.linear(x, self.weight.to(dtype=x.dtype), bias)
+
+
+def _find_common_num_blocks(in_f: int, out_f: int, desired: int) -> int:
+    nb = max(1, min(int(desired), in_f, out_f))
+    while nb > 1 and (in_f % nb != 0 or out_f % nb != 0):
+        nb -= 1
+    return nb
+
+
+def _find_dynamic_num_blocks(in_f: int, out_f: int, min_blocks: int, target_block_size: int = 64) -> int:
+    widest_shared = max(1, min(in_f, out_f))
+    desired = max(int(min_blocks), widest_shared // max(1, int(target_block_size)))
+    return _find_common_num_blocks(in_f, out_f, desired)
+
+
+class LSLinear(nn.Module):
+    """Low-rank + block-diagonal linear layer.
+
+    y = blockdiag(W_1, ..., W_k) x + A B x
+    The sparse block weights stay as 2D parameters so nanochat's Muon grouping
+    can treat them like ordinary matrices.
+    """
+    def __init__(self, in_features, out_features, num_blocks, rank, bias=False):
+        super().__init__()
+        assert in_features % num_blocks == 0 and out_features % num_blocks == 0, (
+            f"{in_features},{out_features} must divide by num_blocks={num_blocks}"
+        )
+        self.in_features = in_features
+        self.out_features = out_features
+        self.num_blocks = num_blocks
+        self.rank = min(rank, min(in_features, out_features))
+        self.block_in = in_features // num_blocks
+        self.block_out = out_features // num_blocks
+        self.sparse_weight = nn.Parameter(torch.empty(num_blocks * self.block_out, self.block_in))
+        self.A = nn.Parameter(torch.empty(out_features, self.rank))
+        self.B = nn.Parameter(torch.empty(self.rank, in_features))
+        self.register_parameter("bias", nn.Parameter(torch.empty(out_features)) if bias else None)
+
+    @property
+    def weight(self):
+        # Convenience for code paths that only need shape/device information.
+        return self.sparse_weight
+
+    def forward(self, x):
+        dtype = x.dtype
+        shape = x.shape
+        x_flat = x.reshape(-1, self.in_features)
+        w = self.sparse_weight.to(dtype=dtype).reshape(self.num_blocks, self.block_out, self.block_in)
+        x_b = x_flat.reshape(-1, self.num_blocks, self.block_in).transpose(0, 1)
+        y = torch.bmm(w, x_b.transpose(-1, -2)).transpose(-1, -2)
+        y = y.transpose(0, 1).reshape(-1, self.out_features)
+        y = y + (x_flat @ self.B.to(dtype=dtype).t()) @ self.A.to(dtype=dtype).t()
+        if self.bias is not None:
+            y = y + self.bias.to(dtype=dtype)
+        return y.reshape(*shape[:-1], self.out_features)
+
+
+class BlockDiagonalLinear(nn.Module):
+    """Pure block-diagonal linear layer with a BMM forward path."""
+    def __init__(self, in_features, out_features, num_blocks, bias=False):
+        super().__init__()
+        assert in_features % num_blocks == 0 and out_features % num_blocks == 0, (
+            f"{in_features},{out_features} must divide by num_blocks={num_blocks}"
+        )
+        self.in_features = in_features
+        self.out_features = out_features
+        self.num_blocks = num_blocks
+        self.block_in = in_features // num_blocks
+        self.block_out = out_features // num_blocks
+        self.sparse_weight = nn.Parameter(torch.empty(num_blocks * self.block_out, self.block_in))
+        self.register_parameter("bias", nn.Parameter(torch.empty(out_features)) if bias else None)
+
+    def forward(self, x):
+        dtype = x.dtype
+        shape = x.shape
+        x_flat = x.reshape(-1, self.in_features)
+        w = self.sparse_weight.to(dtype=dtype).reshape(self.num_blocks, self.block_out, self.block_in)
+        x_b = x_flat.reshape(-1, self.num_blocks, self.block_in).transpose(0, 1)
+        y = torch.bmm(w, x_b.transpose(-1, -2)).transpose(-1, -2)
+        y = y.transpose(0, 1).reshape(-1, self.out_features)
+        if self.bias is not None:
+            y = y + self.bias.to(dtype=dtype)
+        return y.reshape(*shape[:-1], self.out_features)
+
+
+class LowRankLinear(nn.Module):
+    """Low-rank linear layer y = (x B^T) A^T."""
+    def __init__(self, in_features, out_features, rank):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.rank = rank
+        self.A = nn.Parameter(torch.empty(out_features, rank))
+        self.B = nn.Parameter(torch.empty(rank, in_features))
+
+    def forward(self, x):
+        dtype = x.dtype
+        return (x @ self.B.to(dtype=dtype).t()) @ self.A.to(dtype=dtype).t()
+
+
+def make_blockdiag_linear(in_features, out_features, min_blocks, bias=False):
+    nb = _find_dynamic_num_blocks(in_features, out_features, min_blocks)
+    return BlockDiagonalLinear(in_features, out_features, nb, bias=bias)
+
+
+def make_linear(config, in_features, out_features, bias=False, use_ls=True):
+    if config.linear_impl == "ls" and use_ls:
+        nb = _find_dynamic_num_blocks(in_features, out_features, config.ls_num_blocks)
+        rank = min(config.ls_rank, min(in_features, out_features) // 2)
+        return LSLinear(in_features, out_features, nb, rank, bias=bias)
+    return Linear(in_features, out_features, bias=bias)
+
+
+def _init_ls_uniform(layer, bound):
+    w = layer.sparse_weight.data.reshape(layer.num_blocks, layer.block_out, layer.block_in)
+    for i in range(layer.num_blocks):
+        torch.nn.init.uniform_(w[i], -bound, bound)
+    torch.nn.init.zeros_(layer.A)
+    torch.nn.init.kaiming_uniform_(layer.B, a=math.sqrt(5))
+
+
+def _init_ls_normal(layer, std):
+    w = layer.sparse_weight.data.reshape(layer.num_blocks, layer.block_out, layer.block_in)
+    for i in range(layer.num_blocks):
+        torch.nn.init.normal_(w[i], mean=0.0, std=std)
+    torch.nn.init.zeros_(layer.A)
+    torch.nn.init.kaiming_uniform_(layer.B, a=math.sqrt(5))
+
+
+def init_linear(layer, mode, scale):
+    if isinstance(layer, LSLinear):
+        if mode == "uniform":
+            _init_ls_uniform(layer, scale)
+        else:
+            _init_ls_normal(layer, scale)
+    else:
+        if mode == "uniform":
+            torch.nn.init.uniform_(layer.weight, -scale, scale)
+        else:
+            torch.nn.init.normal_(layer.weight, mean=0.0, std=scale)
+        if layer.bias is not None:
+            torch.nn.init.zeros_(layer.bias)
+
+
+def init_blockdiag(layer, mode, scale):
+    w = layer.sparse_weight.data.reshape(layer.num_blocks, layer.block_out, layer.block_in)
+    for i in range(layer.num_blocks):
+        if mode == "uniform":
+            torch.nn.init.uniform_(w[i], -scale, scale)
+        else:
+            torch.nn.init.normal_(w[i], mean=0.0, std=scale)
+    if layer.bias is not None:
+        torch.nn.init.zeros_(layer.bias)
+
+
+def init_lowrank_zero(layer):
+    torch.nn.init.zeros_(layer.A)
+    torch.nn.init.kaiming_uniform_(layer.B, a=math.sqrt(5))
 
 
 def has_ve(layer_idx, n_layer):
@@ -72,10 +240,10 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
-        self.c_q = Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
-        self.c_k = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
-        self.c_v = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
-        self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
+        self.c_q = make_linear(config, self.n_embd, self.n_head * self.head_dim, bias=False)
+        self.c_k = make_linear(config, self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+        self.c_v = make_linear(config, self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+        self.c_proj = make_linear(config, self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 12
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
@@ -129,8 +297,8 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.c_fc = make_linear(config, config.n_embd, 4 * config.n_embd, bias=False)
+        self.c_proj = make_linear(config, 4 * config.n_embd, config.n_embd, bias=False)
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -222,12 +390,12 @@ class GPT(nn.Module):
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5 # sqrt(3) multiplier makes sure Uniform achieves the same std as Normal
         for block in self.transformer.h:
-            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
-            torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-            torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
-            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)  # 0.4x init scale for c_fc
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            init_linear(block.attn.c_q, "uniform", s) # weights use Uniform to avoid outliers
+            init_linear(block.attn.c_k, "uniform", s)
+            init_linear(block.attn.c_v, "uniform", s)
+            init_linear(block.attn.c_proj, "uniform", 0.0) # projections are zero
+            init_linear(block.mlp.c_fc, "uniform", s * 0.4)  # 0.4x init scale for c_fc
+            init_linear(block.mlp.c_proj, "uniform", 0.0)
 
         # Per-layer scalars
         # Per-layer resid init: stronger residual at early layers, weaker at deep layers
@@ -510,3 +678,225 @@ class GPT(nn.Module):
             ids = torch.cat((ids, next_ids), dim=1)
             token = next_ids.item()
             yield token
+
+
+class LSRecurrentScanDrivenBlock(nn.Module):
+    """Hybrid LS recurrent block with temporal scan and closed-form depth drive."""
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        h_dim = config.lsrec_h_dim or config.n_embd
+        self.h_dim = h_dim
+        self.n_embd = config.n_embd
+        self.drop_prob = 0.0
+
+        self.b_seq = make_blockdiag_linear(config.n_embd, h_dim, config.ls_num_blocks)
+        self.log_A_seq = nn.Parameter(torch.zeros(h_dim))
+        self.log_dt_seq = nn.Parameter(torch.full((h_dim,), config.lsrec_log_dt_init))
+
+        self.b_depth = make_blockdiag_linear(config.n_embd, h_dim, config.ls_num_blocks)
+        self.n_mem = max(0, min(config.lsrec_n_mem, h_dim))
+        self.n_forg = h_dim - self.n_mem
+        if self.n_forg > 0:
+            self.log_A_depth = nn.Parameter(torch.zeros(self.n_forg))
+            self.log_dt_depth = nn.Parameter(torch.full((self.n_forg,), config.lsrec_log_dt_init))
+
+        self.w_post = make_blockdiag_linear(2 * config.n_embd + h_dim, h_dim, config.ls_num_blocks)
+        self.w_local = make_blockdiag_linear(h_dim, config.n_embd, config.ls_num_blocks)
+        self.w_lowrank = LowRankLinear(h_dim, config.n_embd, config.ls_rank)
+
+    def a_bar_seq(self):
+        A = -torch.exp(self.log_A_seq)
+        dt = torch.exp(self.log_dt_seq)
+        return torch.exp(A * dt)
+
+    def a_bar_depth(self):
+        if self.n_forg == 0:
+            ref = next(self.parameters())
+            return torch.ones(self.h_dim, device=ref.device, dtype=torch.float32)
+        A = -torch.exp(self.log_A_depth)
+        dt = torch.exp(self.log_dt_depth)
+        a = torch.exp(A * dt)
+        if self.n_mem == 0:
+            return a
+        return torch.cat([torch.ones(self.n_mem, device=a.device, dtype=a.dtype), a], dim=0)
+
+    @staticmethod
+    def geom_gain(a, K):
+        one_minus_a = 1 - a
+        safe_denom = one_minus_a.clamp_min(1e-8)
+        return torch.where(
+            one_minus_a.abs() < 1e-6,
+            torch.full_like(a, float(K)),
+            (1 - a.pow(K)) / safe_denom,
+        )
+
+    _geom_gain = geom_gain
+
+    def causal_scan(self, drive):
+        _B, T, _D = drive.shape
+        a = self.a_bar_seq().to(device=drive.device, dtype=torch.float32)
+        steps = torch.arange(T, device=drive.device, dtype=torch.float32)
+        kernel = torch.exp(torch.log(a.clamp_min(1e-6)).unsqueeze(1) * steps.unsqueeze(0))
+        n_fft = 1 << ((2 * T - 1).bit_length())
+        drive_f = drive.float().transpose(1, 2)
+        y = torch.fft.irfft(
+            torch.fft.rfft(drive_f, n=n_fft, dim=-1)
+            * torch.fft.rfft(kernel, n=n_fft, dim=-1).unsqueeze(0),
+            n=n_fft,
+            dim=-1,
+        )[..., :T]
+        return y.transpose(1, 2).to(drive.dtype)
+
+    _causal_scan_conv = causal_scan
+
+    def forward(self, x, active_k):
+        K = int(active_k) if active_k is not None else 1
+        e = norm(x)
+        shifted_e = F.pad(e[:, :-1], (0, 0, 1, 0))
+        h_seq = self.causal_scan(F.silu(self.b_seq(e)))
+
+        a_depth = self.a_bar_depth().to(device=x.device, dtype=torch.float32)
+        gain = self.geom_gain(a_depth, K).to(x.dtype)
+        h_depth = gain * F.silu(self.b_depth(e))
+
+        h = h_seq + h_depth
+        r = F.silu(self.w_post(torch.cat([norm(h), e, shifted_e], dim=-1)))
+        x = x + self.w_local(r) + self.w_lowrank(r)
+        return x
+
+
+class LSRecurrentScanDrivenGPT(nn.Module):
+    """Scan-driven LSRecurrent language model for transformer-replacement experiments."""
+    def __init__(self, config, pad_vocab_size_to=64):
+        super().__init__()
+        self.config = config
+        padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
+        if padded_vocab_size != config.vocab_size:
+            print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} for efficiency")
+        self.transformer = nn.ModuleDict({
+            "wte": nn.Embedding(padded_vocab_size, config.n_embd),
+            "wpe": nn.Embedding(config.sequence_len, config.n_embd),
+            "h": nn.ModuleList([LSRecurrentScanDrivenBlock(config, layer_idx) for layer_idx in range(config.n_layer)]),
+        })
+        self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
+        self.active_k = config.lsrec_n_iter
+
+    @torch.no_grad()
+    def init_weights(self):
+        torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=0.8)
+        torch.nn.init.normal_(self.transformer.wpe.weight, mean=0.0, std=0.02)
+        torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
+        s = 3**0.5 * self.config.n_embd**-0.5
+        out_std = self.config.n_embd ** -0.5
+        for block in self.transformer.h:
+            init_blockdiag(block.b_seq, "uniform", s)
+            init_blockdiag(block.b_depth, "uniform", s)
+            init_blockdiag(block.w_post, "uniform", s)
+            init_blockdiag(block.w_local, "normal", out_std)
+            init_lowrank_zero(block.w_lowrank)
+            block.log_A_seq.zero_()
+            block.log_dt_seq.fill_(self.config.lsrec_log_dt_init)
+            if block.n_forg > 0:
+                block.log_A_depth.zero_()
+                block.log_dt_depth.fill_(self.config.lsrec_log_dt_init)
+        if COMPUTE_DTYPE != torch.float16:
+            self.transformer.wte.to(dtype=COMPUTE_DTYPE)
+            self.transformer.wpe.to(dtype=COMPUTE_DTYPE)
+
+    def get_device(self):
+        return self.transformer.wte.weight.device
+
+    def estimate_flops(self):
+        nparams = sum(p.numel() for p in self.parameters())
+        nparams_exclude = self.transformer.wte.weight.numel() + self.transformer.wpe.weight.numel()
+        return 6 * (nparams - nparams_exclude)
+
+    def num_scaling_params(self):
+        wte = sum(p.numel() for p in self.transformer.wte.parameters())
+        wpe = sum(p.numel() for p in self.transformer.wpe.parameters())
+        lm_head = sum(p.numel() for p in self.lm_head.parameters())
+        recurrent_matrices = sum(p.numel() for p in self.transformer.h.parameters())
+        total = wte + wpe + lm_head + recurrent_matrices
+        assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
+        return {
+            "wte": wte,
+            "wpe": wpe,
+            "value_embeds": 0,
+            "lm_head": lm_head,
+            "transformer_matrices": recurrent_matrices,
+            "scalars": 0,
+            "total": total,
+        }
+
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, scalar_lr=0.5):
+        model_dim = self.config.n_embd
+        ddp, rank, local_rank, world_size = get_dist_info()
+        recurrent_params = list(self.transformer.h.parameters())
+        matrix_params = [p for p in recurrent_params if p.ndim >= 2]
+        dynamics_params = [p for p in recurrent_params if p.ndim < 2]
+        embedding_params = list(self.transformer.wte.parameters()) + list(self.transformer.wpe.parameters())
+        lm_head_params = list(self.lm_head.parameters())
+        assert len(list(self.parameters())) == len(matrix_params) + len(dynamics_params) + len(embedding_params) + len(lm_head_params)
+        dmodel_lr_scale = (model_dim / 768) ** -0.5
+        print0(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
+        param_groups = [
+            dict(kind="adamw", params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=(0.8, 0.96), eps=1e-10, weight_decay=0.01),
+            dict(kind="adamw", params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.001),
+            dict(kind="adamw", params=dynamics_params, lr=scalar_lr * 0.01, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0),
+        ]
+        for shape in sorted({p.shape for p in matrix_params}):
+            group_params = [p for p in matrix_params if p.shape == shape]
+            param_groups.append(dict(kind="muon", params=group_params, lr=matrix_lr, momentum=0.95, ns_steps=5, beta2=0.9, weight_decay=weight_decay))
+        optimizer = (DistMuonAdamW if ddp else MuonAdamW)(param_groups)
+        for group in optimizer.param_groups:
+            group["initial_lr"] = group["lr"]
+        return optimizer
+
+    def forward(self, idx, targets=None, kv_cache=None, loss_reduction="mean"):
+        if kv_cache is not None:
+            raise NotImplementedError("LSRecurrentGPT does not support KV-cache inference")
+        B, T = idx.size()
+        positions = torch.arange(T, device=idx.device).unsqueeze(0)
+        x = self.transformer.wte(idx) + self.transformer.wpe(positions)
+        x = norm(x.to(COMPUTE_DTYPE))
+        for block in self.transformer.h:
+            x = block(x, self.active_k)
+        x = norm(x)
+        logits = self.lm_head(x)[..., :self.config.vocab_size].float()
+        softcap = 15
+        logits = softcap * torch.tanh(logits / softcap)
+        if targets is None:
+            return logits
+        return F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+
+    @torch.inference_mode()
+    def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
+        assert isinstance(tokens, list)
+        device = self.get_device()
+        rng = None
+        if temperature > 0:
+            rng = torch.Generator(device=device)
+            rng.manual_seed(seed)
+        ids = torch.tensor([tokens], dtype=torch.long, device=device)
+        for _ in range(max_tokens):
+            logits = self.forward(ids[:, -self.config.sequence_len:])[:, -1, :]
+            if top_k is not None and top_k > 0:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float("Inf")
+            if temperature > 0:
+                probs = F.softmax(logits / temperature, dim=-1)
+                next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
+            else:
+                next_ids = torch.argmax(logits, dim=-1, keepdim=True)
+            ids = torch.cat((ids, next_ids), dim=1)
+            yield next_ids.item()
+
+
+def build_model_from_config(config, pad_vocab_size_to=64):
+    if config.architecture == "transformer":
+        return GPT(config, pad_vocab_size_to=pad_vocab_size_to)
+    if config.architecture in ("lsrecurrent", "lsrecurrent-scan-driven"):
+        if config.linear_impl != "ls":
+            raise ValueError("LSRecurrent scan-driven requires linear_impl='ls'")
+        return LSRecurrentScanDrivenGPT(config, pad_vocab_size_to=pad_vocab_size_to)
+    raise ValueError(f"Unknown architecture: {config.architecture}")

@@ -9,7 +9,7 @@ import logging
 import torch
 
 from nanochat.common import get_base_dir
-from nanochat.gpt import GPT, GPTConfig
+from nanochat.gpt import GPTConfig, build_model_from_config
 from nanochat.tokenizer import get_tokenizer
 from nanochat.common import setup_default_logging
 
@@ -26,6 +26,14 @@ def _patch_missing_config_keys(model_config_kwargs):
     if "window_pattern" not in model_config_kwargs:
         model_config_kwargs["window_pattern"] = "L"
         log0(f"Patching missing window_pattern in model config to 'L'")
+    model_config_kwargs.setdefault("architecture", "transformer")
+    model_config_kwargs.setdefault("linear_impl", "dense")
+    model_config_kwargs.setdefault("ls_num_blocks", 16)
+    model_config_kwargs.setdefault("ls_rank", 128)
+    model_config_kwargs.setdefault("lsrec_h_dim", 0)
+    model_config_kwargs.setdefault("lsrec_n_iter", 4)
+    model_config_kwargs.setdefault("lsrec_n_mem", 0)
+    model_config_kwargs.setdefault("lsrec_log_dt_init", -2.3)
 
 def _patch_missing_keys(model_data, model_config):
     """Add default values for new parameters that may be missing in old checkpoints."""
@@ -98,7 +106,7 @@ def build_model(checkpoint_dir, step, device, phase):
     model_config = GPTConfig(**model_config_kwargs)
     _patch_missing_keys(model_data, model_config)
     with torch.device("meta"):
-        model = GPT(model_config)
+        model = build_model_from_config(model_config)
     # Load the model state
     model.to_empty(device=device)
     model.init_weights() # note: this is dumb, but we need to init the rotary embeddings. TODO: fix model re-init
