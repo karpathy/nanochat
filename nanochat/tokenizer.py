@@ -391,7 +391,7 @@ def get_tokenizer():
     from nanochat.common import get_base_dir
     base_dir = get_base_dir()
     tokenizer_dir = os.path.join(base_dir, "tokenizer")
-    # return HuggingFaceTokenizer.from_directory(tokenizer_dir)
+    _bootstrap_tokenizer_dir(tokenizer_dir)
     return RustBPETokenizer.from_directory(tokenizer_dir)
 
 def get_token_bytes(device="cpu"):
@@ -399,8 +399,29 @@ def get_token_bytes(device="cpu"):
     from nanochat.common import get_base_dir
     base_dir = get_base_dir()
     tokenizer_dir = os.path.join(base_dir, "tokenizer")
+    _bootstrap_tokenizer_dir(tokenizer_dir)
     token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
-    assert os.path.exists(token_bytes_path), f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"
     with open(token_bytes_path, "rb") as f:
         token_bytes = torch.load(f, map_location=device)
     return token_bytes
+
+
+def _bootstrap_tokenizer_dir(tokenizer_dir):
+    pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
+    token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
+    if os.path.exists(pickle_path) and os.path.exists(token_bytes_path):
+        return
+
+    tokenizer = RustBPETokenizer.from_pretrained("cl100k_base")
+    tokenizer.save(tokenizer_dir)
+
+    import torch
+
+    vocab_size = tokenizer.get_vocab_size()
+    special_set = set(tokenizer.get_special_tokens())
+    token_bytes = []
+    for token_id in range(vocab_size):
+        token_str = tokenizer.decode([token_id])
+        token_bytes.append(0 if token_str in special_set else len(token_str.encode("utf-8")))
+    with open(token_bytes_path, "wb") as f:
+        torch.save(torch.tensor(token_bytes, dtype=torch.int32, device="cpu"), f)
