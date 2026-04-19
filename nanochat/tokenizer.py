@@ -194,7 +194,13 @@ class RustBPETokenizer:
         pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
         with open(pickle_path, "rb") as f:
             enc = pickle.load(f)
-        return cls(enc, "<|bos|>")
+        for bos_token in ("<|bos|>", "<|endoftext|>"):
+            try:
+                enc.encode_single_token(bos_token)
+                return cls(enc, bos_token)
+            except KeyError:
+                continue
+        raise KeyError("No supported BOS token found in tokenizer encoding")
 
     @classmethod
     def from_pretrained(cls, tiktoken_name):
