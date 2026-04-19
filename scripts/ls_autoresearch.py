@@ -373,7 +373,7 @@ def preset_short_train(tag: str) -> dict[str, Any]:
             {
                 "name": "lsres_k4_train",
                 "kind": "base_train",
-                "description": "Short real-data LSRes K4/nmem128 train",
+                "description": "Short real-data LSRes K4/nmem128 dt-3.25 train",
                 "metric_name": "min_val_bpb",
                 "command": common
                 + [
@@ -388,7 +388,7 @@ def preset_short_train(tag: str) -> dict[str, Any]:
                     "--lsrec-n-mem",
                     "128",
                     "--lsrec-log-dt-init",
-                    "-3.5",
+                    "-3.25",
                 ],
             },
             {
