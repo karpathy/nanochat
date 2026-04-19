@@ -421,7 +421,11 @@ def _bootstrap_tokenizer_dir(tokenizer_dir):
     special_set = set(tokenizer.get_special_tokens())
     token_bytes = []
     for token_id in range(vocab_size):
-        token_str = tokenizer.decode([token_id])
+        try:
+            token_str = tokenizer.decode([token_id])
+        except KeyError:
+            token_bytes.append(0)
+            continue
         token_bytes.append(0 if token_str in special_set else len(token_str.encode("utf-8")))
     with open(token_bytes_path, "wb") as f:
         torch.save(torch.tensor(token_bytes, dtype=torch.int32, device="cpu"), f)
