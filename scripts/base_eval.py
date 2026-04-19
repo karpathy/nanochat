@@ -67,7 +67,10 @@ class ModelWrapper:
 def load_hf_model(hf_path: str, device):
     """Load a HuggingFace model and tokenizer."""
     print0(f"Loading HuggingFace model from: {hf_path}")
-    from transformers import AutoModelForCausalLM
+    try:
+        from transformers import AutoModelForCausalLM
+    except ImportError as exc:
+        raise ImportError("Missing HF dependencies, install the extra 'hf'") from exc
     model = AutoModelForCausalLM.from_pretrained(hf_path)
     model.to(device)
     model.eval()
