@@ -371,23 +371,6 @@ def preset_short_train(tag: str) -> dict[str, Any]:
         "primary_experiment": "lsres_k4_train",
         "experiments": [
             {
-                "name": "lslinear_train",
-                "kind": "base_train",
-                "description": "Short real-data LSLinear train",
-                "metric_name": "min_val_bpb",
-                "command": common
-                + [
-                    "--architecture",
-                    "transformer",
-                    "--linear-impl",
-                    "ls",
-                    "--ls-num-blocks",
-                    "16",
-                    "--ls-rank",
-                    "128",
-                ],
-            },
-            {
                 "name": "lsres_k4_train",
                 "kind": "base_train",
                 "description": "Short real-data LSRes K4/nmem128 train",
