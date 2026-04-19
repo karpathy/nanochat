@@ -454,7 +454,8 @@ def make_config(tag: str, preset: str) -> dict[str, Any]:
             "remote_repo_dir": default_remote_repo(tag),
             "remote_cache_dir": default_remote_cache(tag),
             "remote_results_dir": default_remote_results(tag),
-            "remote_python": "/home/jrmolnia/slowbenchmark/.venv/bin/python",
+            "remote_command_prefix": ["/home/jrmolnia/.local/bin/uv", "run", "--extra", "gpu"],
+            "remote_python": "python",
             "branch": current_branch(),
             "sync_excludes": [
                 ".git",
@@ -518,17 +519,17 @@ def load_run(tag: str) -> tuple[Path, dict[str, Any], dict[str, Any]]:
 
 
 def replace_placeholders(parts: list[str], config: dict[str, Any], run_id: str, experiment_name: str) -> list[str]:
-    replacements = {
-        "{python}": config["remote_python"],
-        "{tag}": config["tag"],
-        "{run_id}": run_id,
-        "{experiment}": experiment_name,
-    }
     out = []
     for part in parts:
-        value = part
-        for old, new in replacements.items():
-            value = value.replace(old, new)
+        if part == "{python}":
+            out.extend(config.get("remote_command_prefix", []))
+            out.append(config["remote_python"])
+            continue
+        value = (
+            part.replace("{tag}", config["tag"])
+            .replace("{run_id}", run_id)
+            .replace("{experiment}", experiment_name)
+        )
         out.append(value)
     return out
 
