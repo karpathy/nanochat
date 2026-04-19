@@ -54,6 +54,7 @@ explicit = true
 
 [project.optional-dependencies]
 cpu = [
+    "setuptools>=65.0.0",
     "torch==2.9.1",
 ]
 gpu = [
