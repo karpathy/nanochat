@@ -24,7 +24,7 @@ from contextlib import contextmanager
 import wandb
 import torch
 import torch.distributed as dist
-
+from nanochat.paramgolf_dataloader import pg_token_batch_loader, pg_token_batch_loader_with_state
 from nanochat.gpt import GPT, GPTConfig, Linear
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
@@ -56,6 +56,8 @@ parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding 
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
 parser.add_argument("--target-param-data-ratio", type=float, default=12, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
+parser.add_argument("--dataset-kind", type=str, default="nanochat", choices=["nanochat", "paramgolf"])
+parser.add_argument("--pg-data-path", type=str, default="../parameter-golf/data/datasets/fineweb10B_sp1024")
 # Optimization
 parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size. good number to reduce to 16,8,4,... if you OOM on VRAM.")
 parser.add_argument("--total-batch-size", type=int, default=-1, help="total batch size in tokens. decent numbers are e.g. 524288. (-1 = auto-compute optimal)")
@@ -328,7 +330,41 @@ if scaler is not None:
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
+if args.dataset_kind == "nanochat":
+    train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
+        tokenizer=tokenizer,
+        B=args.device_batch_size,
+        T=args.max_seq_len,
+        split="train",
+        device=device,
+        resume_state_dict=dataloader_resume_state_dict,
+    )
+    val_loader = tokenizing_distributed_data_loader_bos_bestfit(
+        tokenizer=tokenizer,
+        B=args.device_batch_size,
+        T=args.max_seq_len,
+        split="val",
+        device=device,
+    )
+
+elif args.dataset_kind == "paramgolf":
+    train_loader = pg_token_batch_loader_with_state(
+        data_path=args.pg_data_path,
+        B=args.device_batch_size,
+        T=args.max_seq_len,
+        split="train",
+        device=device,
+    )
+    val_loader = pg_token_batch_loader(
+        data_path=args.pg_data_path,
+        B=args.device_batch_size,
+        T=args.max_seq_len,
+        split="val",
+        device=device,
+    )
+
+else:
+    raise ValueError(f"Unknown dataset kind: {args.dataset_kind}")
 build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
@@ -563,7 +599,10 @@ while True:
         eta_str = f" | eta: {eta_seconds/60:.1f}m"
     else:
         eta_str = ""
-    epoch = f"{dataloader_state_dict['epoch']} pq: {dataloader_state_dict['pq_idx']} rg: {dataloader_state_dict['rg_idx']}"
+    if dataloader_state_dict is None:
+        epoch = "paramgolf shard loader"
+    else:
+        epoch = f"{dataloader_state_dict['epoch']} pq: {dataloader_state_dict['pq_idx']} rg: {dataloader_state_dict['rg_idx']}"
     print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
     if step % 100 == 0:
         log_data = {
