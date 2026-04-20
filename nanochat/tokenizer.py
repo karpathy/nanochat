@@ -35,6 +35,108 @@ from tokenizers import Tokenizer as HFTokenizer
 from tokenizers import pre_tokenizers, decoders, Regex
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
+import sentencepiece as spm
+
+class SentencePieceTokenizer:
+
+    def __init__(self, sp, bos_token_id=None):
+        self.sp = sp
+        self.bos_token_id = bos_token_id if bos_token_id is not None else self._infer_bos_token_id()
+
+    @classmethod
+    def from_model_file(cls, model_path):
+        sp = spm.SentencePieceProcessor()
+        sp.load(model_path)
+        return cls(sp)
+
+    @classmethod
+    def from_directory(cls, tokenizer_dir):
+        candidates = [
+            os.path.join(tokenizer_dir, "tokenizer.model"),
+            os.path.join(tokenizer_dir, "fineweb_1024_bpe.model"),
+            os.path.join(tokenizer_dir, "fineweb_4096_bpe.model"),
+            os.path.join(tokenizer_dir, "fineweb_8192_bpe.model"),
+        ]
+        model_path = None
+        for p in candidates:
+            if os.path.exists(p):
+                model_path = p
+                break
+
+        if model_path is None:
+            model_files = [f for f in os.listdir(tokenizer_dir) if f.endswith(".model")]
+            assert model_files, f"No .model file found in {tokenizer_dir}"
+            model_path = os.path.join(tokenizer_dir, model_files[0])
+
+        return cls.from_model_file(model_path)
+
+    def _infer_bos_token_id(self):
+        bos_id = self.sp.bos_id()
+        if bos_id is not None and bos_id >= 0:
+            return bos_id
+
+        for tok in ["<|bos|>", "<s>", "<bos>", "<|endoftext|>"]:
+            tid = self.sp.piece_to_id(tok)
+            if tid >= 0:
+                return tid
+
+        return None
+
+    def get_vocab_size(self):
+        return self.sp.get_piece_size()
+
+    def get_special_tokens(self):
+        toks = []
+        for i in range(self.get_vocab_size()):
+            piece = self.sp.id_to_piece(i)
+            if piece.startswith("<") and piece.endswith(">"):
+                toks.append(piece)
+        return toks
+
+    def id_to_token(self, idx):
+        return self.sp.id_to_piece(int(idx))
+
+    def encode_special(self, text):
+        tid = self.sp.piece_to_id(text)
+        return tid if tid >= 0 else None
+
+    def get_bos_token_id(self):
+        return self.bos_token_id
+
+    def _encode_one(self, text, prepend=None, append=None):
+        assert isinstance(text, str)
+        ids = []
+
+        if prepend is not None:
+            prepend_id = prepend if isinstance(prepend, int) else self.encode_special(prepend)
+            if prepend_id is not None:
+                ids.append(prepend_id)
+
+        ids.extend(self.sp.encode(text, out_type=int))
+
+        if append is not None:
+            append_id = append if isinstance(append, int) else self.encode_special(append)
+            if append_id is not None:
+                ids.append(append_id)
+
+        return ids
+
+    def encode(self, text, *args, **kwargs):
+        if isinstance(text, str):
+            return self._encode_one(text, *args, **kwargs)
+        elif isinstance(text, list):
+            return [self._encode_one(t, *args, **kwargs) for t in text]
+        else:
+            raise ValueError(f"Invalid input type: {type(text)}")
+
+    def __call__(self, *args, **kwargs):
+        return self.encode(*args, **kwargs)
+
+    def decode(self, ids):
+        return self.sp.decode(list(map(int, ids)))
+
+    def save(self, tokenizer_dir):
+        raise NotImplementedError("Saving SentencePiece tokenizer not implemented in nanochat boilerplate.")
 
 class HuggingFaceTokenizer:
     """Light wrapper around HuggingFace Tokenizer for some utilities"""
@@ -391,8 +493,16 @@ def get_tokenizer():
     from nanochat.common import get_base_dir
     base_dir = get_base_dir()
     tokenizer_dir = os.path.join(base_dir, "tokenizer")
-    # return HuggingFaceTokenizer.from_directory(tokenizer_dir)
-    return RustBPETokenizer.from_directory(tokenizer_dir)
+    tokenizer_kind = os.environ.get("NANOCHAT_TOKENIZER_KIND", "rustbpe").lower()
+
+    if tokenizer_kind == "rustbpe":
+        return RustBPETokenizer.from_directory(tokenizer_dir)
+    elif tokenizer_kind == "hf":
+        return HuggingFaceTokenizer.from_directory(tokenizer_dir)
+    elif tokenizer_kind == "sentencepiece":
+        return SentencePieceTokenizer.from_directory(tokenizer_dir)
+    else:
+        raise ValueError(f"Unknown tokenizer kind: {tokenizer_kind}")
 
 def get_token_bytes(device="cpu"):
     import torch
