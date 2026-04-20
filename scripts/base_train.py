@@ -365,7 +365,20 @@ elif args.dataset_kind == "paramgolf":
 
 else:
     raise ValueError(f"Unknown dataset kind: {args.dataset_kind}")
-build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
+if args.dataset_kind == "nanochat":
+    build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(
+        tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device
+    )
+elif args.dataset_kind == "paramgolf":
+    build_val_loader = lambda: pg_token_batch_loader(
+        data_path=args.pg_data_path,
+        B=args.device_batch_size,
+        T=args.max_seq_len,
+        split="val",
+        device=device,
+    )
+else:
+    raise ValueError(f"Unknown dataset kind: {args.dataset_kind}")
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
