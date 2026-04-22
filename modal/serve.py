@@ -293,12 +293,20 @@ class Inference:
             )
         except Exception:
             needs_search, rewritten = False, ""
-        # Explicit user toggle wins — always force when force_web_search is True
+        # Explicit user toggle forces — BUT never for identity/meta queries.
+        # Model's SFT training has the correct identity answer; Tavily returns
+        # irrelevant junk (Tyler the Creator, personality quiz results, etc).
         if force_web_search and query_for_classify:
-            needs_search = True
-            if not rewritten:
-                # if classifier didn't rewrite, do a minimal cleanup
-                rewritten = query_for_classify.strip().rstrip("?.!") + " 2026"
+            try:
+                from _query_classifier import _is_identity_or_meta
+                _identity_q = _is_identity_or_meta(query_for_classify)
+            except Exception:
+                _identity_q = False
+            if not _identity_q:
+                needs_search = True
+                if not rewritten:
+                    rewritten = query_for_classify.strip().rstrip("?.!") + " 2026"
+            # if identity, leave needs_search as whatever contextual returned (False)
         if needs_search and rewritten:
             preface = "I'll look that up for you. "
             tool_call_json = json.dumps(
@@ -311,10 +319,14 @@ class Inference:
                 result_text = tool_result.to_payload()[:4096]
             except Exception as exc:
                 result_text = json.dumps({"error": str(exc)[:500]})
+            # Grounding suffix: anchors the model to the fresh tool output
+            # instead of spinning up training-data priors. The model continues
+            # from this phrase and therefore bases its answer on the result.
             forced_prefix_text = (
                 preface
                 + "<|python_start|>" + tool_call_json + "<|python_end|>"
                 + "<|output_start|>" + result_text + "<|output_end|>\n"
+                + "Based on the search results above, "
             )
             tokens.extend(self.tokenizer.encode(forced_prefix_text))
         else:
@@ -339,6 +351,7 @@ class Inference:
                     preface
                     + "<|python_start|>" + calc_call_json + "<|python_end|>"
                     + "<|output_start|>" + calc_result_text + "<|output_end|>\n"
+                    + "The result is "
                 )
                 tokens.extend(self.tokenizer.encode(forced_prefix_text))
 
