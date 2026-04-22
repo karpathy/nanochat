@@ -7,13 +7,12 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   LogOut,
-  ChevronDown,
   Trash2,
   Sun,
   Moon,
 } from 'lucide-react';
 import SamosaLogo from '@/components/svg/SamosaLogo';
-import { useChatStore, groupConversations, MODEL_OPTIONS } from '@/store/chatStore';
+import { useChatStore, groupConversations } from '@/store/chatStore';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import clsx from 'clsx';
@@ -25,8 +24,6 @@ export default function Sidebar() {
     conversations,
     currentConversationId,
     sidebarOpen,
-    model,
-    setModel,
     toggleSidebar,
     createConversation,
     selectConversation,
@@ -128,30 +125,6 @@ export default function Sidebar() {
           </div>
 
           <div className="px-3 py-3 border-t border-cream-border dark:border-ink-border space-y-3">
-            <div>
-              <label htmlFor="model-select" className="block text-[11px] uppercase tracking-wider text-gray-400 dark:text-ink-text-soft mb-1">
-                Model
-              </label>
-              <div className="relative">
-                <select
-                  id="model-select"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  className="w-full appearance-none px-3 py-2 pr-8 rounded-xl border border-cream-border dark:border-ink-border bg-white dark:bg-ink text-sm text-gray-800 dark:text-ink-text focus:outline-none focus:border-saffron"
-                >
-                  {MODEL_OPTIONS.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  size={14}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 dark:text-ink-text-soft pointer-events-none"
-                />
-              </div>
-            </div>
-
             <div className="flex items-center gap-2 pt-1">
               <div className="h-9 w-9 rounded-full bg-gradient-to-br from-saffron to-gold text-white flex items-center justify-center text-sm font-semibold shadow-sm">
                 {(user?.name ?? 'G')[0].toUpperCase()}
