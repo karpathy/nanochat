@@ -17,10 +17,30 @@ type Segment =
   | { kind: 'tool_call'; content: string; closed: boolean }
   | { kind: 'tool_result'; content: string; closed: boolean };
 
+function sanitizeModelOutput(s: string): string {
+  // Strip training-artifact leaks the small model sometimes emits:
+  //  - HTML bold/italic tags from <b>/<i>/<strong>/<em> that were never meant to render
+  //  - Stray leading "<" (a dangling tool marker that was never closed — cosmetic only)
+  //  - Leading "Answer:" / "Response:" labels that are training-data prefixes
+  //  - Markdown image references whose payload is clearly placeholder text (e.g. [something image])
+  //  - Duplicate paragraphs the model sometimes emits verbatim after <|output_end|>
+  s = s.replace(/<\/?(?:b|i|strong|em|u|small|big|code)\s*>/gi, '');
+  // stray standalone "<" on its own line
+  s = s.replace(/^\s*<\s*$/gm, '');
+  // leading "Answer:" / "Response:" labels at start of a line
+  s = s.replace(/^\s*(?:Answer|Response|Final answer|Reply)\s*:\s*/gim, '');
+  // placeholder-image markdown e.g. ![Diary entry for samosa history]
+  s = s.replace(/!\[[^\]]*?\](?!\()/g, '');
+  // normalize double newlines
+  s = s.replace(/\n{3,}/g, '\n\n');
+  return s.trim();
+}
+
 function parseSegments(raw: string): Segment[] {
-  // First pass: strip orphan tool markers (end-tag without open-tag, or any
-  // stray marker outside a pair) that the model sometimes emits as loop
-  // artifacts — otherwise they leak into the message body as raw text.
+  // Sanitize first — remove HTML tag leaks / stray Answer: / orphan "<"
+  raw = sanitizeModelOutput(raw);
+  // Then strip orphan tool markers (end without open) that the model sometimes
+  // emits as loop artifacts.
   raw = stripOrphanMarkers(raw);
 
   const segs: Segment[] = [];
