@@ -313,20 +313,32 @@ class Inference:
                 {"arguments": {"query": rewritten, "top_k": 1}, "tool": "web_search"},
                 separators=(",", ":"),
             )
+            # Extract the cleanest snippet from the Tavily result so the grounding
+            # suffix includes the ACTUAL content (not a meta reference to it).
+            grounding_snippet = ""
             try:
                 invocation = self._parse_tool_call(tool_call_json)
                 tool_result = self.tool_registry.execute(invocation.tool_name, invocation.arguments)
                 result_text = tool_result.to_payload()[:4096]
+                # dig out the first result's snippet for the grounding suffix
+                tr_out = getattr(tool_result, "output", None)
+                if isinstance(tr_out, dict):
+                    results = tr_out.get("results") or []
+                    if results and isinstance(results[0], dict):
+                        grounding_snippet = (results[0].get("snippet") or "").strip()[:400]
             except Exception as exc:
                 result_text = json.dumps({"error": str(exc)[:500]})
-            # Grounding suffix: anchors the model to the fresh tool output
-            # instead of spinning up training-data priors. The model continues
-            # from this phrase and therefore bases its answer on the result.
+            # Grounding suffix: seed the model with the actual snippet text so its
+            # next tokens continue from real content — not meta-commentary on the JSON.
+            if grounding_snippet:
+                suffix = "Here's what I found: " + grounding_snippet + "\n\n"
+            else:
+                suffix = "Based on the search results above, "
             forced_prefix_text = (
                 preface
                 + "<|python_start|>" + tool_call_json + "<|python_end|>"
                 + "<|output_start|>" + result_text + "<|output_end|>\n"
-                + "Based on the search results above, "
+                + suffix
             )
             tokens.extend(self.tokenizer.encode(forced_prefix_text))
         else:
