@@ -18,16 +18,19 @@ type Segment =
   | { kind: 'tool_result'; content: string; closed: boolean };
 
 function parseSegments(raw: string): Segment[] {
+  // First pass: strip orphan tool markers (end-tag without open-tag, or any
+  // stray marker outside a pair) that the model sometimes emits as loop
+  // artifacts — otherwise they leak into the message body as raw text.
+  raw = stripOrphanMarkers(raw);
+
   const segs: Segment[] = [];
   let i = 0;
-  // marker -> [openTag, closeTag, kind]
   const markers: Array<[string, string, Segment['kind']]> = [
     ['<think>', '</think>', 'think'],
     ['<|python_start|>', '<|python_end|>', 'tool_call'],
     ['<|output_start|>', '<|output_end|>', 'tool_result'],
   ];
   while (i < raw.length) {
-    // find the nearest opening marker
     let bestOpen = -1;
     let bestMarker: [string, string, Segment['kind']] | null = null;
     for (const m of markers) {
@@ -50,7 +53,73 @@ function parseSegments(raw: string): Segment[] {
       i = closeIdx + closeTag.length;
     }
   }
-  return segs;
+
+  return dedupeAndClean(segs);
+}
+
+function stripOrphanMarkers(s: string): string {
+  // Walk the string left-to-right. For each opening marker we encounter, keep
+  // it only if its matching close exists somewhere after it. For each close
+  // marker encountered without a preceding open, drop it.
+  const pairs: Array<[string, string]> = [
+    ['<think>', '</think>'],
+    ['<|python_start|>', '<|python_end|>'],
+    ['<|output_start|>', '<|output_end|>'],
+  ];
+  for (const [open, close] of pairs) {
+    // Remove any close-tag that has no preceding open-tag
+    const openPositions: number[] = [];
+    let idx = 0;
+    while (true) {
+      const p = s.indexOf(open, idx);
+      if (p === -1) break;
+      openPositions.push(p);
+      idx = p + open.length;
+    }
+    const closePositions: number[] = [];
+    idx = 0;
+    while (true) {
+      const p = s.indexOf(close, idx);
+      if (p === -1) break;
+      closePositions.push(p);
+      idx = p + close.length;
+    }
+    // drop close tags that appear before any open tag
+    const firstOpen = openPositions[0] ?? Infinity;
+    const orphanCloses = closePositions.filter((c) => c < firstOpen);
+    if (orphanCloses.length) {
+      // remove each orphan close (work in reverse so indices stay valid)
+      for (const c of orphanCloses.reverse()) {
+        s = s.slice(0, c) + s.slice(c + close.length);
+      }
+    }
+  }
+  return s;
+}
+
+function dedupeAndClean(segs: Segment[]): Segment[] {
+  const out: Segment[] = [];
+  let lastResultKey: string | null = null;
+  for (const seg of segs) {
+    // collapse consecutive duplicate tool_result segments (model re-emits the
+    // same block as a training artifact)
+    if (seg.kind === 'tool_result') {
+      const key = seg.content.replace(/\s+/g, ' ').trim();
+      if (key === lastResultKey) continue;
+      lastResultKey = key;
+    } else {
+      lastResultKey = null;
+    }
+    // drop plain-text segments that are just leftover tool-marker fragments
+    if (seg.kind === 'text') {
+      const t = seg.content.replace(/<\|?(?:python|output)_(?:start|end)\|?>/g, '').trim();
+      if (!t) continue;
+      out.push({ kind: 'text', content: seg.content.replace(/<\|?(?:python|output)_(?:start|end)\|?>/g, '') });
+      continue;
+    }
+    out.push(seg);
+  }
+  return out;
 }
 
 function ThinkBlock({ content, closed }: { content: string; closed: boolean }) {
