@@ -17,10 +17,6 @@ services:
     build: !reset null
     image: ${ECR_REGISTRY:-883107058766.dkr.ecr.us-west-2.amazonaws.com}/samosachaat/chat-api:${IMAGE_TAG:-dev-latest}
 
-  inference:
-    build: !reset null
-    image: ${ECR_REGISTRY:-883107058766.dkr.ecr.us-west-2.amazonaws.com}/samosachaat/inference:${IMAGE_TAG:-dev-latest}
-
   nginx:
     image: nginx:alpine
     restart: unless-stopped
