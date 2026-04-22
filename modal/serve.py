@@ -264,8 +264,14 @@ class Inference:
             if msg.get("role") == "user":
                 last_user = msg.get("content", "")
                 break
+        # chat-api inlines the system prompt into the first user message as
+        # "{SYS_PROMPT}\n\n{actual_user_question}". Strip the sys prefix for
+        # the classifier so Tavily gets a clean query.
+        query_for_classify = last_user
+        if "\n\n" in query_for_classify:
+            query_for_classify = query_for_classify.rsplit("\n\n", 1)[-1].strip()
         try:
-            needs_search, rewritten = self._needs_web_search(last_user)
+            needs_search, rewritten = self._needs_web_search(query_for_classify)
         except Exception:
             needs_search, rewritten = False, ""
         if needs_search and rewritten:
