@@ -365,9 +365,9 @@ class TavilySearchBackend:
                     'api_key': self.api_key,
                     'query': query,
                     'max_results': max(1, min(int(top_k), 8)),
-                    'include_answer': False,
+                    'include_answer': True,
                     'include_raw_content': False,
-                    'search_depth': 'basic',
+                    'search_depth': 'advanced',
                 },
                 timeout=self.timeout,
             )
@@ -375,15 +375,23 @@ class TavilySearchBackend:
             data = r.json()
         except Exception:
             return []
-        return [
-            SearchHit(
+        direct_answer = (data.get('answer') or '').strip()
+        hits: list[SearchHit] = []
+        # Surface Tavily's synthesized answer as the first hit so a 1.4B model
+        # can parrot a clean, grounded sentence instead of fighting with noisy snippets.
+        if direct_answer:
+            hits.append(SearchHit(
+                url='https://tavily.com/answer',
+                title='Tavily direct answer',
+                snippet=direct_answer,
+            ))
+        for h in data.get('results', [])[: max(0, top_k - (1 if direct_answer else 0))]:
+            hits.append(SearchHit(
                 url=h.get('url', ''),
                 title=h.get('title', ''),
                 snippet=h.get('content', ''),
-            )
-            for h in data.get('results', [])[:top_k]
-        ]
-
+            ))
+        return hits
 
 
 class CloudflareBrowserRenderingClient:
