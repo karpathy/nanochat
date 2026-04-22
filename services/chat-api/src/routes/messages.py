@@ -28,6 +28,7 @@ class SendMessageRequest(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1, le=4096)
     top_k: int | None = Field(default=None, ge=0, le=200)
     thinking_mode: bool = Field(default=False)
+    force_web_search: bool = Field(default=False)
 
 
 class RegenerateRequest(BaseModel):
@@ -35,6 +36,7 @@ class RegenerateRequest(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1, le=4096)
     top_k: int | None = Field(default=None, ge=0, le=200)
     thinking_mode: bool = Field(default=False)
+    force_web_search: bool = Field(default=False)
 
 
 # System prompts: tools are always implicitly available via the model's SFT training.
@@ -101,6 +103,7 @@ async def _stream_and_persist(
     first_message: bool,
     first_message_preview: str | None,
     settings: Settings,
+    force_web_search: bool = False,
 ) -> AsyncIterator[dict]:
     """Generator that streams inference SSE events to the client and, after the
     stream closes, persists the full assistant message in a fresh DB session.
@@ -119,6 +122,7 @@ async def _stream_and_persist(
             temperature=temperature,
             max_tokens=max_tokens,
             top_k=top_k,
+            force_web_search=force_web_search,
         ) as response:
             async for event in proxy_inference_stream(response, on_complete=_capture):
                 yield event
@@ -238,6 +242,7 @@ async def send_message(
         first_message=first_message,
         first_message_preview=first_preview,
         settings=settings,
+        force_web_search=body.force_web_search,
     )
     return EventSourceResponse(generator, media_type="text/event-stream")
 
@@ -293,5 +298,6 @@ async def regenerate(
         first_message=False,
         first_message_preview=None,
         settings=settings,
+        force_web_search=body.force_web_search,
     )
     return EventSourceResponse(generator, media_type="text/event-stream")

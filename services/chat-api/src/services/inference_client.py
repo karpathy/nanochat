@@ -63,6 +63,7 @@ class InferenceClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         top_k: int | None = None,
+        force_web_search: bool = False,
     ) -> AsyncIterator[httpx.Response]:
         temperature = (
             temperature
@@ -81,6 +82,7 @@ class InferenceClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "top_k": top_k,
+            "force_web_search": force_web_search,
         }
 
         client = self._get_client()

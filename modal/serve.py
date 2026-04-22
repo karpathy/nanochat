@@ -229,6 +229,7 @@ class Inference:
         temperature = min(max(request.get("temperature", 0.8), 0.0), 2.0)
         max_tokens = min(max(request.get("max_tokens", 512), 1), 2048)
         top_k = min(max(request.get("top_k", 50), 0), 200)
+        force_web_search = bool(request.get("force_web_search", False))
 
         # Build token sequence from messages
         tokens = []
@@ -274,6 +275,12 @@ class Inference:
             needs_search, rewritten = self._needs_web_search(query_for_classify)
         except Exception:
             needs_search, rewritten = False, ""
+        # Explicit user toggle wins — always force when force_web_search is True
+        if force_web_search and query_for_classify:
+            needs_search = True
+            if not rewritten:
+                # if classifier didn't rewrite, do a minimal cleanup
+                rewritten = query_for_classify.strip().rstrip("?.!") + " 2026"
         if needs_search and rewritten:
             preface = "I'll look that up for you. "
             tool_call_json = json.dumps(
