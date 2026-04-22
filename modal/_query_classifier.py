@@ -195,6 +195,171 @@ def needs_web_search(text: str) -> Tuple[bool, str]:
     return False, ""
 
 
+# ---------------------------------------------------------------------------
+# Context-aware classifier — resolves pronouns (him/her/it/they/this/that)
+# against the conversation history so "tell me more about him" after a turn
+# about Narendra Modi becomes "tell me more about Narendra Modi 2026".
+# ---------------------------------------------------------------------------
+
+# Follow-up phrasings that obviously depend on prior context — these should
+# trigger search ONLY if we can resolve the subject from history.
+_FOLLOWUP_PATTERNS = re.compile(
+    r"""
+    ^\s*(?:
+        tell\s+me\s+more(?:\s+about\s+(?:him|her|it|them|this|that))?
+      | more\s+about\s+(?:him|her|it|them)
+      | what\s+(?:else|more)\s+about\s+(?:him|her|it|them)
+      | (?:and|what\s+about)\s+(?:him|her|it|them)
+      | anything\s+else\s+(?:about\s+(?:him|her|it|them))?
+      | what(?:'| i)s\s+(?:his|her|their|its)\s+\w+
+      | (?:his|her|their|its)\s+\w+\s*\?*
+      | (?:what|how)\s+about\s+(?:his|her|their|its)\s+\w+
+    )\s*[?.!]*\s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_PRONOUN_RX = re.compile(r"\b(him|her|it|them|this|that|he|she|they|his|hers|their|its)\b", re.IGNORECASE)
+
+# Extract proper-noun phrases (one-or-more Capitalized tokens in a row)
+_PROPER_NOUN_RX = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b")
+
+# Words that look like Proper Nouns but are sentence-starters or function words
+# (we drop these when extracting entities)
+_NON_ENTITY_WORDS = {
+    "I", "He", "She", "They", "It", "We", "You", "This", "That", "These", "Those",
+    "The", "A", "An", "And", "Or", "But", "So", "As", "If", "When", "Where", "Why",
+    "How", "What", "Who", "Which", "Whose", "Whom", "My", "Your", "His", "Her", "Its",
+    "Their", "Our", "Is", "Are", "Was", "Were", "Be", "Been", "Being", "Have", "Has",
+    "Had", "Do", "Does", "Did", "Will", "Would", "Should", "Could", "Can", "May",
+    "Might", "Must", "Shall", "Answer", "Question", "Hello", "Hi", "Hey", "Yes", "No",
+    "Okay", "Ok", "Thanks", "Thank", "Please", "Sorry", "Sure", "Maybe", "Perhaps",
+    "Of", "In", "On", "At", "For", "With", "From", "To", "Into", "About", "Like",
+    "January", "February", "March", "April", "May", "June", "July", "August",
+    "September", "October", "November", "December",
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+}
+
+
+def _clean_entity(cand: str) -> str:
+    """Strip leading/trailing function words from an entity phrase."""
+    toks = cand.split()
+    # drop leading/trailing function tokens
+    while toks and toks[0] in _NON_ENTITY_WORDS:
+        toks = toks[1:]
+    while toks and toks[-1] in _NON_ENTITY_WORDS:
+        toks = toks[:-1]
+    return " ".join(toks)
+
+
+def _extract_entity_from_text(text: str) -> str:
+    """First non-filter capitalized phrase in the text (most likely the subject)."""
+    if not text:
+        return ""
+    for cand in _PROPER_NOUN_RX.findall(text):
+        cleaned = _clean_entity(cand)
+        if not cleaned:
+            continue
+        # reject single-token entities that are common filler words
+        if " " not in cleaned and cleaned in _NON_ENTITY_WORDS:
+            continue
+        # reject very short all-caps acronyms like "AI", "I", "US" unless they're >= 3 chars mixed case
+        if len(cleaned) < 3:
+            continue
+        return cleaned
+    return ""
+
+
+def _pick_subject_from_history(messages: list) -> str:
+    """Pick the most likely subject from conversation history.
+
+    Strategy: check the most recent USER message (excluding the current one)
+    for a proper-noun phrase. This is usually the topic the user named.
+    If no user-named entity, fall back to the first entity in the most
+    recent ASSISTANT message.
+    """
+    # walk user messages first, most recent to oldest
+    user_msgs = [m.get("content", "") for m in messages if m.get("role") == "user"]
+    for c in reversed(user_msgs):
+        if not c:
+            continue
+        entity = _extract_entity_from_text(c)
+        if entity:
+            return entity
+    # fall back to assistant messages (take first entity, which is usually the subject)
+    asst_msgs = [m.get("content", "") for m in messages if m.get("role") == "assistant"]
+    for c in reversed(asst_msgs):
+        entity = _extract_entity_from_text(c)
+        if entity:
+            return entity
+    return ""
+
+
+def _resolve_pronouns(query: str, entity: str) -> str:
+    """If query contains pronouns AND we have a subject entity, replace
+    pronouns with that entity. Otherwise return the query unchanged."""
+    if not _PRONOUN_RX.search(query):
+        return query
+    if not entity:
+        return query
+    def _sub(m: re.Match) -> str:
+        tok = m.group(1).lower()
+        if tok in ("his", "hers", "their", "its"):
+            return f"{entity}'s"
+        return entity
+    return _PRONOUN_RX.sub(_sub, query)
+
+
+def needs_web_search_contextual(
+    messages: list[dict],
+    last_user_override: str | None = None,
+) -> Tuple[bool, str]:
+    """Context-aware classifier. Takes the full `messages` list (last entry is
+    the current user turn), resolves pronouns against prior turns, then runs
+    the normal classifier. Returns (needs, rewritten_with_context).
+
+    `last_user_override` lets serve.py pass a pre-cleaned user text (e.g. with
+    the system-prompt prefix already stripped).
+    """
+    if not messages:
+        return False, ""
+    # find latest user message
+    last_user = last_user_override
+    if last_user is None:
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                last_user = msg.get("content", "")
+                break
+    if not last_user:
+        return False, ""
+
+    # Veto first — identity / meta / greeting etc. never need web search even
+    # if they contain pronouns.
+    if _is_identity_or_meta(last_user.strip()):
+        return False, ""
+
+    # Skip the current turn for subject extraction
+    prior = messages[:-1] if messages and messages[-1].get("role") == "user" else messages
+
+    # Also veto if the PRIOR conversation was about identity / the model itself
+    # — even a pronoun follow-up shouldn't hit Tavily in that case.
+    for m in prior[-3:]:
+        if m.get("role") == "user" and _is_identity_or_meta(m.get("content", "").strip()):
+            return False, ""
+
+    entity = _pick_subject_from_history(prior[-6:])  # last 6 turns window
+    resolved = _resolve_pronouns(last_user, entity)
+
+    # Explicit follow-up phrasing ("tell me more about him"): trigger search
+    # on the resolved query only if we actually substituted an entity.
+    is_followup = _FOLLOWUP_PATTERNS.search(last_user) is not None
+    if is_followup and resolved != last_user:
+        return True, _rewrite_query(resolved)
+
+    # Otherwise run the normal classifier on the (possibly resolved) query.
+    return needs_web_search(resolved)
+
+
 def _rewrite_query(text: str) -> str:
     """Clean up the query for Tavily — expand contractions, normalize 'present'->'current',
     strip filler, add a year anchor."""
