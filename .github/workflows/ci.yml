@@ -91,10 +91,10 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Sync deps
-        run: uv sync --no-workspace
+        run: uv sync --no-install-workspace
 
       - name: Run pytest
-        run: uv run --no-workspace pytest
+        run: uv run pytest
 
   test-chat-api:
     name: Chat-API — pytest (postgres service)
@@ -131,10 +131,10 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Sync deps
-        run: uv sync --no-workspace
+        run: uv sync --no-install-workspace
 
       - name: Run pytest
-        run: uv run --no-workspace pytest
+        run: uv run pytest
 
   test-inference:
     name: Inference — pytest
@@ -155,10 +155,10 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Sync deps
-        run: uv sync --no-workspace
+        run: uv sync --no-install-workspace
 
       - name: Run pytest
-        run: uv run --no-workspace pytest
+        run: uv run pytest
 
   terraform-validate:
     name: Terraform — validate

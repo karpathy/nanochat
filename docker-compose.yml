@@ -59,28 +59,12 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://samosachaat_admin:localdev@postgres:5432/samosachaat}
       AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth:8001}
-      INFERENCE_SERVICE_URL: ${INFERENCE_SERVICE_URL:-http://inference:8003}
+      # External inference (Modal, etc.). Set in `.env` — see `.env.example`.
+      INFERENCE_SERVICE_URL: ${INFERENCE_SERVICE_URL}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
     depends_on:
       - postgres
       - auth
-      - inference
-
-  inference:
-    build:
-      context: ./services/inference
-    restart: unless-stopped
-    ports:
-      - "${INFERENCE_PORT:-8003}:8003"
-    environment:
-      MODEL_STORAGE_PATH: /models
-      DEFAULT_MODEL_TAG: ${DEFAULT_MODEL_TAG:-samosachaat-d12}
-      NANOCHAT_DTYPE: ${NANOCHAT_DTYPE:-float32}
-      HF_TOKEN: ${HF_TOKEN:-}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
-      NUM_WORKERS: ${NUM_WORKERS:-1}
-    volumes:
-      - ./models:/models
 
   grafana:
     image: grafana/grafana:latest

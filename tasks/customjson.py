@@ -7,6 +7,31 @@ import os
 import json
 from tasks.common import Task
 
+
+def _validate_assistant_content(content, message_index):
+    """Assistant turns may be a plain string or a list of parts (tools / GSM8K-style)."""
+    if isinstance(content, str):
+        return
+    if not isinstance(content, list):
+        raise AssertionError(f"Message {message_index}: assistant content must be str or list, got {type(content)}")
+    for j, part in enumerate(content):
+        if not isinstance(part, dict):
+            raise AssertionError(f"Message {message_index} part {j}: expected dict, got {type(part)}")
+        ptype = part.get("type")
+        if ptype == "text":
+            assert "text" in part, f"Message {message_index} part {j}: text part missing 'text'"
+        elif ptype in ("tool_call", "python"):
+            assert "text" in part or part.get("tool_name"), (
+                f"Message {message_index} part {j}: tool part needs 'text' or 'tool_name'"
+            )
+        elif ptype in ("tool_result", "python_output"):
+            assert "text" in part or part.get("tool_name") is not None, (
+                f"Message {message_index} part {j}: result part missing 'text' or 'tool_name'"
+            )
+        else:
+            raise AssertionError(f"Message {message_index} part {j}: unknown type {ptype!r}")
+
+
 class CustomJSON(Task):
     """
     Load conversations from a JSONL file.
@@ -47,7 +72,10 @@ class CustomJSON(Task):
                         assert "content" in message, f"Message {i} missing 'content' field"
                         expected_role = "user" if i % 2 == 0 else "assistant"
                         assert message["role"] == expected_role, f"Message {i} has role {message['role']} but should be {expected_role}"
-                        assert isinstance(message["content"], str), f"Message {i} content must be a string"
+                        if message["role"] == "user":
+                            assert isinstance(message["content"], str), f"Message {i} user content must be a string"
+                        else:
+                            _validate_assistant_content(message["content"], i)
 
                     self.conversations.append(messages)
 
@@ -62,4 +90,3 @@ class CustomJSON(Task):
             "messages": messages,
         }
         return conversation
-
