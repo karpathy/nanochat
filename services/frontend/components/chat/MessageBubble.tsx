@@ -78,10 +78,10 @@ function ToolCallBlock({ content, closed }: { content: string; closed: boolean }
   const icon = toolName === 'web_search' ? <Search size={12} /> : toolName === 'calculator' ? <Calculator size={12} /> : <Sparkles size={12} />;
   const query = parsed?.arguments ? JSON.stringify(parsed.arguments) : content;
   return (
-    <div className="my-2 rounded-lg border border-saffron/30 dark:border-saffron/40 bg-saffron/5 dark:bg-saffron/10 px-3 py-2">
+    <div className="my-2 w-full max-w-full overflow-hidden rounded-lg border border-saffron/30 dark:border-saffron/40 bg-saffron/5 dark:bg-saffron/10 px-3 py-2">
       <div className="flex items-center gap-2 text-xs font-medium text-saffron dark:text-saffron-soft uppercase tracking-wider">
         {icon}
-        <span>Calling {toolName}{closed ? '' : '…'}</span>
+        <span className="truncate">Calling {toolName}{closed ? '' : '…'}</span>
       </div>
       <div className="mt-1 text-xs font-mono text-gray-600 dark:text-ink-text-soft truncate">{query}</div>
     </div>
@@ -93,21 +93,22 @@ function ToolResultBlock({ content, closed }: { content: string; closed: boolean
   let summary = content;
   try {
     const j = JSON.parse(content);
-    if (j?.output?.results?.[0]?.snippet) summary = String(j.output.results[0].snippet).slice(0, 160);
+    if (j?.output?.answer) summary = String(j.output.answer).slice(0, 220);
+    else if (j?.output?.results?.[0]?.snippet) summary = String(j.output.results[0].snippet).slice(0, 160);
     else if (j?.output?.value !== undefined) summary = `= ${j.output.value}`;
     else if (j?.error) summary = `error: ${j.error}`;
   } catch { /* partial */ }
   return (
-    <div className="my-2 rounded-lg border border-gray-200 dark:border-ink-border bg-white/60 dark:bg-ink-elev/60">
-      <button type="button" onClick={() => setOpen(!open)} className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-gray-600 dark:text-ink-text-soft hover:bg-gray-50 dark:hover:bg-ink-soft/50">
-        <span className="flex items-center gap-2">
+    <div className="my-2 w-full max-w-full overflow-hidden rounded-lg border border-gray-200 dark:border-ink-border bg-white/60 dark:bg-ink-elev/60">
+      <button type="button" onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-600 dark:text-ink-text-soft hover:bg-gray-50 dark:hover:bg-ink-soft/50 min-w-0">
+        <span className="flex-shrink-0 inline-flex items-center gap-2">
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           <span className="uppercase tracking-wider">Result{closed ? '' : '…'}</span>
-          <span className="ml-2 truncate text-gray-500 dark:text-ink-text-soft normal-case">{summary}</span>
         </span>
+        <span className="min-w-0 flex-1 truncate text-left text-gray-500 dark:text-ink-text-soft normal-case">{summary}</span>
       </button>
       {open && (
-        <pre className="px-3 py-2 text-xs overflow-x-auto border-t border-gray-200 dark:border-ink-border">{content}</pre>
+        <pre className="px-3 py-2 text-xs whitespace-pre-wrap break-all border-t border-gray-200 dark:border-ink-border max-w-full">{content}</pre>
       )}
     </div>
   );
