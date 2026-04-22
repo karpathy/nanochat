@@ -51,6 +51,7 @@ inference_image = (
     .add_local_file("modal/_model.py", "/root/_model.py")
     .add_local_file("modal/_tokenizer.py", "/root/_tokenizer.py")
     .add_local_file("modal/_tools.py", "/root/_tools.py")
+    .add_local_file("modal/_query_classifier.py", "/root/_query_classifier.py")
 )
 
 # Persistent volume for model weights
@@ -198,8 +199,10 @@ class Inference:
         import sys as _sys
         if '/root' not in _sys.path: _sys.path.insert(0, '/root')
         from _tools import build_default_tool_registry, parse_tool_call_payload
+        from _query_classifier import needs_web_search
         self.tool_registry = build_default_tool_registry()
         self._parse_tool_call = parse_tool_call_payload
+        self._needs_web_search = needs_web_search
         # Marker tokens for tool state machine
         self.python_start_id = self.tokenizer.encode_special("<|python_start|>")[0]
         self.python_end_id = self.tokenizer.encode_special("<|python_end|>")[0]
@@ -248,6 +251,42 @@ class Inference:
         # Prompt the model to generate an assistant response
         tokens.extend(assistant_start)
 
+        # --- Forced tool use ---
+        # The model's SFT training doesn't always trigger web_search even when
+        # a question clearly needs current info (e.g. "present president" vs
+        # "current president"). We classify the last user message and, if it
+        # matches tool-worthy patterns, pre-seed the assistant turn with a real
+        # tool call + Tavily result. The model then just writes the final
+        # grounded answer instead of hallucinating from stale memory.
+        forced_prefix_text = ""
+        last_user = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                last_user = msg.get("content", "")
+                break
+        try:
+            needs_search, rewritten = self._needs_web_search(last_user)
+        except Exception:
+            needs_search, rewritten = False, ""
+        if needs_search and rewritten:
+            preface = "I'll look that up for you. "
+            tool_call_json = json.dumps(
+                {"arguments": {"query": rewritten, "top_k": 1}, "tool": "web_search"},
+                separators=(",", ":"),
+            )
+            try:
+                invocation = self._parse_tool_call(tool_call_json)
+                tool_result = self.tool_registry.execute(invocation.tool_name, invocation.arguments)
+                result_text = tool_result.to_payload()[:4096]
+            except Exception as exc:
+                result_text = json.dumps({"error": str(exc)[:500]})
+            forced_prefix_text = (
+                preface
+                + "<|python_start|>" + tool_call_json + "<|python_end|>"
+                + "<|output_start|>" + result_text + "<|output_end|>\n"
+            )
+            tokens.extend(self.tokenizer.encode(forced_prefix_text))
+
         # Truncate to fit context
         max_context = self.config.sequence_len - max_tokens
         if len(tokens) > max_context:
@@ -266,8 +305,13 @@ class Inference:
         async def stream():
             input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
             gen_ids: list[int] = []           # everything the MODEL sampled this turn
-            tool_injected = False             # once True, stop detecting further tool calls
+            tool_injected = bool(forced_prefix_text)   # forced prefix counts as an injection
             pre_injection_len = 0             # len(gen_ids) right before we start injection
+
+            # If we pre-seeded a forced tool call + result, stream it to the client
+            # now so the UI can render the tool-call / tool-result cards.
+            if forced_prefix_text:
+                yield "data: " + json.dumps({"token": forced_prefix_text, "gpu": 0}) + "\n\n"
 
             def _append_token(tid):
                 nonlocal input_ids
@@ -350,14 +394,22 @@ class Inference:
                                             break
                                     tool_injected = True
 
-                    # After injection: if the model starts emitting another <|output_start|>,
-                    # break the turn — the grounded result already streamed.
-                    elif pre_injection_len > 0 and len(gen_ids) > pre_injection_len + 20:
+                    # After injection (forced OR runtime): the model often loops and
+                    # emits another fake <|output_start|>…<|output_end|> / <|python_start|>…
+                    # block. Break the turn as soon as ANY tool-marker appears in what the
+                    # MODEL itself generated. We check the decoded text of gen_ids[pre_injection_len:].
+                    elif tool_injected and len(gen_ids) > pre_injection_len + 6:
                         try:
-                            post_text = self.tokenizer.decode(gen_ids[pre_injection_len + 10:])
+                            post_text = self.tokenizer.decode(gen_ids[pre_injection_len:])
                         except Exception:
                             post_text = ""
-                        if out_start_str in post_text:
+                        for bad in (out_start_str, out_end_str, tool_start_str, tool_end_str):
+                            if bad in post_text:
+                                break_now = True
+                                break
+                        else:
+                            break_now = False
+                        if break_now:
                             break
 
             yield "data: " + json.dumps({"done": True}) + "\n\n"
