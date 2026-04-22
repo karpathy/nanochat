@@ -16,7 +16,6 @@ export default function ChatWindow() {
   const {
     conversations,
     currentConversationId,
-    model,
     temperature,
     topK,
     sidebarOpen,
@@ -216,7 +215,7 @@ export default function ChatWindow() {
           )}
           <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border border-warm-grey dark:border-ink-border bg-cream-light dark:bg-ink-soft text-brown dark:text-ink-text-soft">
             <span className="w-1.5 h-1.5 rounded-full bg-saffron" />
-            {model}
+            samosaChaat
           </span>
         </div>
         <div className="text-sm text-gray-600 dark:text-ink-text-soft font-medium">
