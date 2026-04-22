@@ -386,23 +386,49 @@ def _rewrite_query(text: str) -> str:
 # Calculator triggers (cheap, local)
 # ---------------------------------------------------------------------------
 
-_CALC_RX = re.compile(
-    r"""
-    \b(?:calculate|compute|what\s+is|what's)\b.*?
-    (?:
-      \d[\d,\.\s]*\s*[+\-\*/x×÷]\s*\d               # basic arithmetic
-    | \d+\s*%\s+(?:of|tip|tax|discount)\s+\d        # percentage
-    | \b(?:emi|cagr|compound\s+interest|tip|discount|percent(?:age)?)\b.*\d
-    )
-    """,
-    re.IGNORECASE | re.VERBOSE,
+_BARE_EXPR_RX = re.compile(
+    r"(-?\d[\d,\.]*\s*[+\-*/×÷]\s*-?\d[\d,\.]*(?:\s*[+\-*/×÷]\s*-?\d[\d,\.]*)*)"
 )
+_PERCENT_RX = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:%|percent)\s+(?:of|tip|tax|discount|off)\s+(?:on\s+)?\$?(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_VERBAL_RX = re.compile(
+    r"(\d+(?:\.\d+)?)\s+(plus|minus|times|divided\s+by|multiplied\s+by|over)\s+(\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_WORD_OP = {
+    "plus": "+", "minus": "-", "times": "*",
+    "multiplied by": "*", "divided by": "/", "over": "/",
+}
+
+
+def _normalize_expr(expr: str) -> str:
+    e = expr.replace(",", "").replace("×", "*").replace("÷", "/")
+    e = re.sub(r"\s+", "", e)  # strip all internal whitespace
+    return e
 
 
 def needs_calculator(text: str) -> Tuple[bool, str]:
+    """Return (True, expression) if the text contains arithmetic that the
+    calculator tool should execute. `expression` is passed as-is to the
+    sandboxed evaluator (accepts +-*/ on numbers, plus helpers like
+    percent(base,rate), emi(p,r,n), cagr(s,e,y))."""
     if not text:
         return False, ""
-    m = _CALC_RX.search(text)
-    if not m:
-        return False, ""
-    return True, text.strip()
+    # 1. percentage phrasing
+    m = _PERCENT_RX.search(text)
+    if m:
+        return True, f"percent({m.group(2)},{m.group(1)})"
+    # 2. verbal arithmetic
+    m = _VERBAL_RX.search(text)
+    if m:
+        op = _WORD_OP[m.group(2).lower().replace("  ", " ").strip()]
+        return True, f"{m.group(1)}{op}{m.group(3)}"
+    # 3. bare arithmetic expression
+    m = _BARE_EXPR_RX.search(text)
+    if m:
+        return True, _normalize_expr(m.group(1))
+    return False, ""
+
+

@@ -199,11 +199,12 @@ class Inference:
         import sys as _sys
         if '/root' not in _sys.path: _sys.path.insert(0, '/root')
         from _tools import build_default_tool_registry, parse_tool_call_payload
-        from _query_classifier import needs_web_search, needs_web_search_contextual
+        from _query_classifier import needs_web_search, needs_web_search_contextual, needs_calculator
         self.tool_registry = build_default_tool_registry()
         self._parse_tool_call = parse_tool_call_payload
         self._needs_web_search = needs_web_search
         self._needs_web_search_contextual = needs_web_search_contextual
+        self._needs_calculator = needs_calculator
         # Marker tokens for tool state machine
         self.python_start_id = self.tokenizer.encode_special("<|python_start|>")[0]
         self.python_end_id = self.tokenizer.encode_special("<|python_end|>")[0]
@@ -316,6 +317,30 @@ class Inference:
                 + "<|output_start|>" + result_text + "<|output_end|>\n"
             )
             tokens.extend(self.tokenizer.encode(forced_prefix_text))
+        else:
+            # Try calculator force-inject: arithmetic in the user message?
+            try:
+                needs_calc, calc_expr = self._needs_calculator(query_for_classify)
+            except Exception:
+                needs_calc, calc_expr = False, ""
+            if needs_calc and calc_expr:
+                preface = "Let me calculate that. "
+                calc_call_json = json.dumps(
+                    {"arguments": {"expression": calc_expr}, "tool": "calculator"},
+                    separators=(",", ":"),
+                )
+                try:
+                    invocation = self._parse_tool_call(calc_call_json)
+                    calc_result = self.tool_registry.execute(invocation.tool_name, invocation.arguments)
+                    calc_result_text = calc_result.to_payload()[:2048]
+                except Exception as exc:
+                    calc_result_text = json.dumps({"error": str(exc)[:500]})
+                forced_prefix_text = (
+                    preface
+                    + "<|python_start|>" + calc_call_json + "<|python_end|>"
+                    + "<|output_start|>" + calc_result_text + "<|output_end|>\n"
+                )
+                tokens.extend(self.tokenizer.encode(forced_prefix_text))
 
         # Truncate to fit context
         max_context = self.config.sequence_len - max_tokens
