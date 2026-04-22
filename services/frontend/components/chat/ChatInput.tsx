@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { ArrowUp, Brain, Square } from 'lucide-react';
+import { ArrowUp, Brain, Globe, Square } from 'lucide-react';
 import clsx from 'clsx';
 
 interface Props {
@@ -13,9 +13,11 @@ interface Props {
   disabled?: boolean;
   thinkingMode?: boolean;
   onToggleThinking?: () => void;
+  webSearchMode?: boolean;
+  onToggleWebSearch?: () => void;
 }
 
-export default function ChatInput({ value, onChange, onSubmit, onStop, isStreaming, disabled, thinkingMode, onToggleThinking }: Props) {
+export default function ChatInput({ value, onChange, onSubmit, onStop, isStreaming, disabled, thinkingMode, onToggleThinking, webSearchMode, onToggleWebSearch }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -77,6 +79,27 @@ export default function ChatInput({ value, onChange, onSubmit, onStop, isStreami
               >
                 <Brain size={14} />
                 <span>Think</span>
+              </button>
+            </div>
+          )}
+
+          {/* Force web-search toggle */}
+          {onToggleWebSearch && (
+            <div className="self-end p-2">
+              <button
+                type="button"
+                onClick={onToggleWebSearch}
+                aria-pressed={!!webSearchMode}
+                title={webSearchMode ? 'Web search ON — every message will be searched online' : 'Force a web search for your next message'}
+                className={clsx(
+                  'h-10 px-3 rounded-full flex items-center gap-1.5 text-xs font-medium transition-all border',
+                  webSearchMode
+                    ? 'bg-emerald-500/15 dark:bg-emerald-500/20 border-emerald-500/50 text-emerald-600 dark:text-emerald-400 shadow-[0_4px_14px_rgba(16,185,129,0.15)]'
+                    : 'bg-transparent border-cream-border dark:border-ink-border text-gray-500 dark:text-ink-text-soft hover:bg-gray-50 dark:hover:bg-ink-elev',
+                )}
+              >
+                <Globe size={14} />
+                <span>Search</span>
               </button>
             </div>
           )}

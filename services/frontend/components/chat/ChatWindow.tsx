@@ -32,6 +32,7 @@ export default function ChatWindow() {
   const [draft, setDraft] = useState('');
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
   const [thinkingMode, setThinkingMode] = useState(false);
+  const [webSearchMode, setWebSearchMode] = useState(false);
   const streamingBufferRef = useRef('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -61,7 +62,7 @@ export default function ChatWindow() {
     setIsStreaming(false);
   }, []);
 
-  const streamFromApi = useCallback(async (convId: string, assistantMsgId: string, content: string, temp?: number, topk?: number, thinking?: boolean) => {
+  const streamFromApi = useCallback(async (convId: string, assistantMsgId: string, content: string, temp?: number, topk?: number, thinking?: boolean, forceSearch?: boolean) => {
     stop();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -77,7 +78,14 @@ export default function ChatWindow() {
       const res = await fetch(`/api/conversations/${convId}/messages`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ content, temperature: temp, max_tokens: 512, top_k: topk, thinking_mode: !!thinking }),
+        body: JSON.stringify({
+          content,
+          temperature: temp,
+          max_tokens: 512,
+          top_k: topk,
+          thinking_mode: !!thinking,
+          force_web_search: !!forceSearch,
+        }),
         signal: ac.signal,
       });
 
@@ -173,7 +181,7 @@ export default function ChatWindow() {
       setStreamingMsgId(assistantId);
       streamingBufferRef.current = '';
 
-      await streamFromApi(convId, assistantId, text, temperature, topK, thinkingMode);
+      await streamFromApi(convId, assistantId, text, temperature, topK, thinkingMode, webSearchMode);
     },
     [
       draft,
@@ -182,6 +190,7 @@ export default function ChatWindow() {
       temperature,
       topK,
       thinkingMode,
+      webSearchMode,
       appendMessage,
       streamFromApi,
       setTemperature,
@@ -241,6 +250,8 @@ export default function ChatWindow() {
         isStreaming={isStreaming}
         thinkingMode={thinkingMode}
         onToggleThinking={() => setThinkingMode((v) => !v)}
+        webSearchMode={webSearchMode}
+        onToggleWebSearch={() => setWebSearchMode((v) => !v)}
       />
     </section>
   );
