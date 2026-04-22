@@ -86,6 +86,66 @@ _KEYWORD_GATE = re.compile(
 
 _CATEGORY_REGEXES = [re.compile(p, re.IGNORECASE) for p in _CATEGORY_PATTERNS]
 
+# ---------------------------------------------------------------------------
+# Negative veto — queries about the model itself or its creator should NOT
+# trigger a web search. The model's SFT training has the correct grounded
+# identity answers (samosaChaat, Manmohan Sharma, socials, etc.). Sending
+# these to Tavily returns irrelevant results (Tyler the Creator, Waaree CFO, etc.)
+# ---------------------------------------------------------------------------
+_IDENTITY_VETO_PATTERNS = [
+    # self-referential questions directed at the model
+    r"\bwho\s+are\s+you\b",
+    r"\bwhat\s+are\s+you\b",
+    r"\bwhat(?:'| i)s\s+your\s+name\b",
+    r"\bintroduce\s+yourself\b",
+    r"\btell\s+me\s+about\s+yourself\b",
+    r"\bdescribe\s+yourself\b",
+    # creator / maker / trainer questions
+    r"\bwho\s+(?:is\s+)?(?:made|created|built|trained|developed|designed|coded|programmed|engineered|authored|invented|produced|fine[-\s]?tuned)\s+you\b",
+    r"\bwho(?:'|\s+i)s\s+your\s+(?:creator|creater|maker|author|developer|designer|engineer|architect|founder|builder|programmer|trainer|daddy|mom|parent|boss|owner)\b",
+    r"\bwho\s+(?:brought|gave)\s+you\s+(?:to\s+life|into\s+being|into\s+existence)\b",
+    # competitor/provenance questions (identity confusion attacks)
+    r"\bare\s+you\s+(?:chatgpt|gpt[-\s]?\d|claude|gemini|bard|llama|mistral|perplexity|copilot|sonnet|opus|haiku)\b",
+    r"\bare\s+you\s+(?:made|created|built|owned)\s+by\s+(?:openai|anthropic|google|meta|microsoft|deepmind|x\.ai)\b",
+    r"\bwhich\s+(?:company|organization|team)\s+(?:made|created|built|trained|owns)\s+you\b",
+    # samosaChaat / creator name references
+    r"\bsamosachaat\b",
+    r"\bwho(?:'|\s+i)s\s+manmohan(?:\s+sharma)?\b",
+    r"\bwho\s+is\s+manmohan\b",
+    r"\bmanmohan\s+sharma\b",
+    r"\btell\s+me\s+about\s+manmohan\b",
+    # model meta-questions
+    r"\bhow\s+(?:many|much)\s+parameters?\b",
+    r"\bwhat\s+(?:model|version|size|architecture)\s+are\s+you\b",
+    r"\bare\s+you\s+(?:open[-\s]?source|open\s+weight)\b",
+    r"\bwhere\s+(?:can\s+i\s+)?(?:find|download|get)\s+your\s+(?:weights|code|source)\b",
+    r"\bwhat\s+hardware\s+(?:were|are)\s+you\s+(?:trained|running)\b",
+    r"\bhow\s+(?:were|are)\s+you\s+trained\b",
+    r"\bwhen\s+were\s+you\s+(?:trained|released|built)\b",
+    # capability / tooling questions (not factual queries)
+    r"\bwhat\s+(?:tools|abilities|capabilities|languages)\s+(?:do\s+)?you\s+(?:have|support|speak)\b",
+    r"\bcan\s+you\s+(?:search|do|use|access)\b",
+    # greetings & social
+    r"^(?:hi|hello|hey|yo|sup|greetings|namaste|good\s+(?:morning|afternoon|evening|night))\b",
+    r"\bhow\s+are\s+you\b",
+    r"\bwhat(?:'|\s+i)s\s+up\b",
+    r"\bnice\s+to\s+meet\s+you\b",
+    # general small talk / thanks
+    r"^\s*(?:thanks?|thank\s+you|thx|ty|ok|okay|cool|nice|great|awesome|bye|goodbye)\s*[!.?]*\s*$",
+    # writing / reasoning / coding tasks (answered by the model, not the web)
+    r"\bwrite\s+(?:a|an|me)\s+(?:poem|haiku|limerick|story|essay|letter|email|code|function|script|query|sql)\b",
+    r"\bexplain\s+(?:what|how|why)\s+(?:is\s+)?(?:recursion|gradient\s+descent|backprop|attention|a\s+transformer|machine\s+learning|neural\s+network)\b",
+    r"\bsolve\b.*=",  # math equations
+]
+_IDENTITY_VETO_REGEXES = [re.compile(p, re.IGNORECASE) for p in _IDENTITY_VETO_PATTERNS]
+
+
+def _is_identity_or_meta(text: str) -> bool:
+    for rx in _IDENTITY_VETO_REGEXES:
+        if rx.search(text):
+            return True
+    return False
+
 
 def needs_web_search(text: str) -> Tuple[bool, str]:
     """Classify whether a user query likely needs a live web search.
@@ -93,12 +153,19 @@ def needs_web_search(text: str) -> Tuple[bool, str]:
     Returns (needs, rewritten_query). The rewritten_query strips filler and
     reformulates for better Tavily results (e.g. "whos the present president" ->
     "who is the current president of the United States 2026").
+
+    Identity / meta / greeting / writing-task queries are vetoed — the model's
+    SFT training has the correct grounded answer.
     """
     if not text or not isinstance(text, str):
         return False, ""
 
     stripped = text.strip()
     if len(stripped) < 3:
+        return False, ""
+
+    # Veto: identity / self-referential / meta / greeting / writing tasks
+    if _is_identity_or_meta(stripped):
         return False, ""
 
     # Any category pattern hit
