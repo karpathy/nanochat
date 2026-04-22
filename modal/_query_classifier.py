@@ -94,9 +94,9 @@ _CATEGORY_REGEXES = [re.compile(p, re.IGNORECASE) for p in _CATEGORY_PATTERNS]
 # ---------------------------------------------------------------------------
 _IDENTITY_VETO_PATTERNS = [
     # self-referential questions directed at the model
-    r"\bwho\s+are\s+you\b",
-    r"\bwhat\s+are\s+you\b",
-    r"\bwho\s+are\s+you\s+really\b",
+    r"\bwho\s+(?:r|ru|are)\s+(?:u|you)\b",
+    r"\bwhat\s+(?:r|ru|are)\s+(?:u|you)\b",
+    r"\bwho\s+(?:r|ru|are)\s+(?:u|you)\s+really\b",
     r"\bwhat(?:'|\s+i)s\s+your\s+name\b",
     r"\bintroduce\s+yourself\b",
     r"\btell\s+me\s+about\s+(?:yourself|you|you\s+first)\b",
