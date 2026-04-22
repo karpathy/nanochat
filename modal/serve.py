@@ -199,10 +199,11 @@ class Inference:
         import sys as _sys
         if '/root' not in _sys.path: _sys.path.insert(0, '/root')
         from _tools import build_default_tool_registry, parse_tool_call_payload
-        from _query_classifier import needs_web_search
+        from _query_classifier import needs_web_search, needs_web_search_contextual
         self.tool_registry = build_default_tool_registry()
         self._parse_tool_call = parse_tool_call_payload
         self._needs_web_search = needs_web_search
+        self._needs_web_search_contextual = needs_web_search_contextual
         # Marker tokens for tool state machine
         self.python_start_id = self.tokenizer.encode_special("<|python_start|>")[0]
         self.python_end_id = self.tokenizer.encode_special("<|python_end|>")[0]
@@ -271,8 +272,24 @@ class Inference:
         query_for_classify = last_user
         if "\n\n" in query_for_classify:
             query_for_classify = query_for_classify.rsplit("\n\n", 1)[-1].strip()
+        # Also strip prefixes from prior user turns so context-entity extraction
+        # doesn't pick up "samosaChaat" from the SYS_PROMPT text.
+        messages_clean = []
+        for m in messages:
+            if not m or not isinstance(m, dict):
+                continue
+            role = m.get("role")
+            content = m.get("content", "") or ""
+            if role == "user" and "\n\n" in content:
+                content = content.rsplit("\n\n", 1)[-1].strip()
+            messages_clean.append({"role": role, "content": content})
         try:
-            needs_search, rewritten = self._needs_web_search(query_for_classify)
+            # Context-aware path: resolves pronouns against prior turns so
+            # "tell me more about him" after Narendra Modi becomes a search
+            # for "tell me more about Narendra Modi 2026".
+            needs_search, rewritten = self._needs_web_search_contextual(
+                messages_clean, last_user_override=query_for_classify,
+            )
         except Exception:
             needs_search, rewritten = False, ""
         # Explicit user toggle wins — always force when force_web_search is True
