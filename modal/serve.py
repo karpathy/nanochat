@@ -20,14 +20,15 @@ import modal
 # Configuration
 # ---------------------------------------------------------------------------
 MODEL_REPO = "ManmohanSharma/nanochat-d24"
-MODEL_PT   = "chatsft_checkpoints/d24/model_000484.pt"
-META_JSON  = "chatsft_checkpoints/d24/meta_000484.json"
+MODEL_PT   = "chatsft_checkpoints/d24-sft-r6/model_000754.pt"
+META_JSON  = "chatsft_checkpoints/d24-sft-r6/meta_000754.json"
 TOKENIZER_PKL = "tokenizer/tokenizer.pkl"
 TOKEN_BYTES   = "tokenizer/token_bytes.pt"
-MODEL_TAG  = "d24-sft"
+MODEL_TAG  = "d24-sft-r6"
 GPU_TYPE   = "L4"                           # 24 GB VRAM — fits 4 GB bf16 model loaded as fp32
 VOLUME_NAME = "samosachaat-weights"
 HF_SECRET_NAME = "huggingface"              # Modal secret containing HF_TOKEN
+TAVILY_SECRET_NAME = "tavily"                # Modal secret containing TAVILY_API_KEY
 
 # ---------------------------------------------------------------------------
 # Modal app + image
@@ -42,12 +43,14 @@ inference_image = (
         "tiktoken>=0.11.0",
         "tokenizers>=0.22.0",
         "huggingface_hub>=0.25.0",
+        "requests>=2.31.0",
         "fastapi>=0.115.0",
         "uvicorn>=0.30.0",
         extra_index_url="https://download.pytorch.org/whl/cu124",
     )
     .add_local_file("modal/_model.py", "/root/_model.py")
     .add_local_file("modal/_tokenizer.py", "/root/_tokenizer.py")
+    .add_local_file("modal/_tools.py", "/root/_tools.py")
 )
 
 # Persistent volume for model weights
@@ -104,6 +107,7 @@ def download_weights():
     scaledown_window=300,            # keep warm for 5 min after last request
     # concurrency handled by @modal.concurrent below
     timeout=120,
+    secrets=[modal.Secret.from_name(TAVILY_SECRET_NAME)],
 )
 class Inference:
     model: object
@@ -190,8 +194,22 @@ class Inference:
         self.assistant_end_id = self.tokenizer.encode_special("<|assistant_end|>")[0]
         print(f"  Special token IDs: {sorted(self.special_token_ids)}")
 
+        # Initialize tool registry (Tavily web_search + calculator)
+        import sys as _sys
+        if '/root' not in _sys.path: _sys.path.insert(0, '/root')
+        from _tools import build_default_tool_registry, parse_tool_call_payload
+        self.tool_registry = build_default_tool_registry()
+        self._parse_tool_call = parse_tool_call_payload
+        # Marker tokens for tool state machine
+        self.python_start_id = self.tokenizer.encode_special("<|python_start|>")[0]
+        self.python_end_id = self.tokenizer.encode_special("<|python_end|>")[0]
+        self.output_start_id = self.tokenizer.encode_special("<|output_start|>")[0]
+        self.output_end_id = self.tokenizer.encode_special("<|output_end|>")[0]
+        # Stop tokens (exclude tool markers so generation continues through tool calls)
+        self._stop_token_ids = {self.assistant_end_id, self.tokenizer.get_bos_token_id() if hasattr(self.tokenizer, "get_bos_token_id") else self.tokenizer.encode_special("<|bos|>")[0]}
+
         dt = time.time() - t0
-        print(f"Model loaded in {dt:.1f}s on {device}")
+        print(f"Model loaded in {dt:.1f}s on {device} | tools: {[t for t in self.tool_registry._tools.keys()] if hasattr(self.tool_registry, '_tools') else 'registered'}")
 
     @modal.fastapi_endpoint(method="POST", docs=True)
     async def generate(self, request: dict):
@@ -236,49 +254,74 @@ class Inference:
             tokens = tokens[-max_context:]
 
         async def stream():
+            from collections import deque
             input_ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
+            forced = deque()
+            in_tool = False
+            tool_payload_ids = []
+
+            def _append_token(tid):
+                nonlocal input_ids
+                nt = torch.tensor([[tid]], dtype=torch.long, device=self.device)
+                input_ids = torch.cat([input_ids, nt], dim=1)
+                if input_ids.size(1) > self.config.sequence_len:
+                    input_ids = input_ids[:, -self.config.sequence_len:]
 
             with torch.no_grad():
-                generated = []
-                for _ in range(max_tokens):
-                    # Forward pass
-                    logits = self.model(input_ids)
-                    next_logits = logits[:, -1, :]
+                num_generated = 0
+                while num_generated < max_tokens:
+                    if forced:
+                        token_id = forced.popleft()
+                    else:
+                        logits = self.model(input_ids)
+                        next_logits = logits[:, -1, :]
+                        if temperature > 0:
+                            next_logits = next_logits / temperature
+                        if top_k > 0:
+                            v, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
+                            next_logits[next_logits < v[:, [-1]]] = float('-inf')
+                        probs = torch.softmax(next_logits, dim=-1)
+                        next_token = torch.multinomial(probs, num_samples=1)
+                        token_id = next_token.item()
 
-                    # Temperature
-                    if temperature > 0:
-                        next_logits = next_logits / temperature
+                    # Tool state machine: detect <|python_start|>...<|python_end|>,
+                    # execute tool, inject <|output_start|>...<|output_end|> as forced tokens
+                    if token_id == self.python_start_id:
+                        in_tool = True
+                        tool_payload_ids = []
+                    elif token_id == self.python_end_id and in_tool:
+                        in_tool = False
+                        if tool_payload_ids:
+                            try:
+                                payload_text = self.tokenizer.decode(tool_payload_ids)
+                                invocation = self._parse_tool_call(payload_text)
+                                result = self.tool_registry.execute(invocation.tool_name, invocation.arguments)
+                                result_text = result.to_payload()[:4096]
+                            except Exception as exc:
+                                result_text = json.dumps({"error": str(exc)[:500]})
+                            if result_text:
+                                forced.append(self.output_start_id)
+                                forced.extend(self.tokenizer.encode(result_text))
+                                forced.append(self.output_end_id)
+                        tool_payload_ids = []
+                    elif in_tool:
+                        tool_payload_ids.append(token_id)
 
-                    # Top-k filtering
-                    if top_k > 0:
-                        v, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
-                        next_logits[next_logits < v[:, [-1]]] = float('-inf')
-
-                    # Sample
-                    probs = torch.softmax(next_logits, dim=-1)
-                    next_token = torch.multinomial(probs, num_samples=1)
-
-                    token_id = next_token.item()
-
-                    # Stop on any special token (assistant_end, bos, etc.)
-                    if token_id in self.special_token_ids:
+                    # Stop only on assistant_end or bos (NOT on tool markers)
+                    if token_id in self._stop_token_ids:
                         break
 
-                    # Decode and yield (skip tokens that can't be decoded)
+                    # Decode + stream to client (includes tool markers; UI renders)
                     try:
                         token_text = self.tokenizer.decode([token_id])
-                    except (KeyError, Exception):
-                        continue
-                    yield f"data: {json.dumps({'token': token_text, 'gpu': 0})}\n\n"
+                        yield "data: " + json.dumps({"token": token_text, "gpu": 0}) + "\n\n"
+                    except Exception:
+                        pass
 
-                    # Append for next iteration
-                    input_ids = torch.cat([input_ids, next_token], dim=1)
+                    _append_token(token_id)
+                    num_generated += 1
 
-                    # Truncate if exceeding sequence length
-                    if input_ids.size(1) > self.config.sequence_len:
-                        input_ids = input_ids[:, -self.config.sequence_len:]
-
-            yield f"data: {json.dumps({'done': True})}\n\n"
+            yield "data: " + json.dumps({"done": True}) + "\n\n"
 
         return StreamingResponse(
             stream(),
