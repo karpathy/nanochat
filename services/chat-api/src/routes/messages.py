@@ -27,12 +27,44 @@ class SendMessageRequest(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=4096)
     top_k: int | None = Field(default=None, ge=0, le=200)
+    thinking_mode: bool = Field(default=False)
 
 
 class RegenerateRequest(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=4096)
     top_k: int | None = Field(default=None, ge=0, le=200)
+    thinking_mode: bool = Field(default=False)
+
+
+# System prompts: tools are always implicitly available via the model's SFT training.
+# The toggle only affects whether the model is nudged into <think>...</think> mode.
+_SYS_DEFAULT = (
+    "You are samosaChaat, a helpful AI assistant created by Manmohan Sharma. "
+    "You have access to tools: use web_search for facts that may change over time or "
+    "require current information, and use calculator for arithmetic. Otherwise answer directly and concisely."
+)
+_SYS_THINK = (
+    "You are samosaChaat, a helpful AI assistant created by Manmohan Sharma. "
+    "You have access to tools: use web_search for facts that may change over time or "
+    "require current information, and use calculator for arithmetic. "
+    "Think step by step inside <think>...</think> tags, then give your final answer after the closing tag."
+)
+
+
+def _inject_system_prompt(history: list[dict[str, str]], thinking_mode: bool) -> list[dict[str, str]]:
+    """Merge a system prompt into the first user message. Upstream Modal serve
+    ignores role='system', so we prepend the system prompt inline to the first
+    user turn — mirroring nanochat's tokenizer convention."""
+    if not history:
+        return history
+    sys_prompt = _SYS_THINK if thinking_mode else _SYS_DEFAULT
+    out = [dict(m) for m in history]
+    for m in out:
+        if m.get("role") == "user":
+            m["content"] = sys_prompt + "\n\n" + m.get("content", "")
+            break
+    return out
 
 
 def _parse_uuid(raw: str) -> uuid.UUID:
@@ -182,18 +214,23 @@ async def send_message(
             db_session, conversation_id=conv_uuid
         )
 
+    # Inject system prompt (direct or think mode) into the first user message,
+    # since upstream Modal serve ignores role='system'.
+    history_with_sys = _inject_system_prompt(history, body.thinking_mode)
+
     logger.info(
         "send_message",
         conversation_id=str(conv_uuid),
         history_len=len(history),
         model_tag=model_tag,
+        thinking_mode=body.thinking_mode,
     )
 
     generator = _stream_and_persist(
         request=request,
         user_id=user_uuid,
         conversation_id=conv_uuid,
-        history=history,
+        history=history_with_sys,
         temperature=body.temperature,
         max_tokens=body.max_tokens,
         top_k=body.top_k,
@@ -235,17 +272,20 @@ async def regenerate(
             detail="conversation has no user messages to regenerate from",
         )
 
+    history_with_sys = _inject_system_prompt(history, body.thinking_mode)
+
     logger.info(
         "regenerate_message",
         conversation_id=str(conv_uuid),
         history_len=len(history),
+        thinking_mode=body.thinking_mode,
     )
 
     generator = _stream_and_persist(
         request=request,
         user_id=user_uuid,
         conversation_id=conv_uuid,
-        history=history,
+        history=history_with_sys,
         temperature=body.temperature,
         max_tokens=body.max_tokens,
         top_k=body.top_k,

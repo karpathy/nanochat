@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { ArrowUp, Square } from 'lucide-react';
+import { ArrowUp, Brain, Square } from 'lucide-react';
 import clsx from 'clsx';
 
 interface Props {
@@ -11,9 +11,11 @@ interface Props {
   onStop?: () => void;
   isStreaming?: boolean;
   disabled?: boolean;
+  thinkingMode?: boolean;
+  onToggleThinking?: () => void;
 }
 
-export default function ChatInput({ value, onChange, onSubmit, onStop, isStreaming, disabled }: Props) {
+export default function ChatInput({ value, onChange, onSubmit, onStop, isStreaming, disabled, thinkingMode, onToggleThinking }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -57,6 +59,27 @@ export default function ChatInput({ value, onChange, onSubmit, onStop, isStreami
             disabled={disabled}
             className="flex-1 resize-none bg-transparent px-5 py-4 pr-2 text-[0.95rem] leading-relaxed text-gray-900 dark:text-ink-text placeholder-gray-400 dark:placeholder-ink-text-soft focus:outline-none min-h-[52px] max-h-[200px]"
           />
+
+          {/* Think toggle */}
+          {onToggleThinking && (
+            <div className="self-end p-2">
+              <button
+                type="button"
+                onClick={onToggleThinking}
+                aria-pressed={!!thinkingMode}
+                title={thinkingMode ? 'Reasoning mode ON — model will think step-by-step' : 'Enable reasoning mode'}
+                className={clsx(
+                  'h-10 px-3 rounded-full flex items-center gap-1.5 text-xs font-medium transition-all border',
+                  thinkingMode
+                    ? 'bg-saffron/15 dark:bg-saffron/20 border-saffron/40 dark:border-saffron/50 text-saffron dark:text-saffron-soft shadow-[0_4px_14px_rgba(255,153,51,0.15)]'
+                    : 'bg-transparent border-cream-border dark:border-ink-border text-gray-500 dark:text-ink-text-soft hover:bg-gray-50 dark:hover:bg-ink-elev',
+                )}
+              >
+                <Brain size={14} />
+                <span>Think</span>
+              </button>
+            </div>
+          )}
 
           {/* Send / stop button — vertically centered with the textarea baseline */}
           <div className="self-end p-2">

@@ -31,6 +31,7 @@ export default function ChatWindow() {
 
   const [draft, setDraft] = useState('');
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
+  const [thinkingMode, setThinkingMode] = useState(false);
   const streamingBufferRef = useRef('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -60,7 +61,7 @@ export default function ChatWindow() {
     setIsStreaming(false);
   }, []);
 
-  const streamFromApi = useCallback(async (convId: string, assistantMsgId: string, content: string, temp?: number, topk?: number) => {
+  const streamFromApi = useCallback(async (convId: string, assistantMsgId: string, content: string, temp?: number, topk?: number, thinking?: boolean) => {
     stop();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -76,7 +77,7 @@ export default function ChatWindow() {
       const res = await fetch(`/api/conversations/${convId}/messages`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ content, temperature: temp, max_tokens: 512, top_k: topk }),
+        body: JSON.stringify({ content, temperature: temp, max_tokens: 512, top_k: topk, thinking_mode: !!thinking }),
         signal: ac.signal,
       });
 
@@ -172,7 +173,7 @@ export default function ChatWindow() {
       setStreamingMsgId(assistantId);
       streamingBufferRef.current = '';
 
-      await streamFromApi(convId, assistantId, text, temperature, topK);
+      await streamFromApi(convId, assistantId, text, temperature, topK, thinkingMode);
     },
     [
       draft,
@@ -180,13 +181,13 @@ export default function ChatWindow() {
       ensureConversation,
       temperature,
       topK,
+      thinkingMode,
       appendMessage,
       streamFromApi,
       setTemperature,
       setTopK,
       createConversation,
       newConversation,
-      // streamFromApi in deps via earlier line
     ],
   );
 
@@ -238,6 +239,8 @@ export default function ChatWindow() {
         onSubmit={() => handleSend()}
         onStop={stop}
         isStreaming={isStreaming}
+        thinkingMode={thinkingMode}
+        onToggleThinking={() => setThinkingMode((v) => !v)}
       />
     </section>
   );

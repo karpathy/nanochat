@@ -459,6 +459,52 @@
             .illust-right svg.kettle-svg { width: 70px; }
             .explore-tag, .chai-label { font-size: 0.85rem; }
         }
+    
+        /* --- Reasoning mode --- */
+        .think-toggle {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.15);
+            color: #b8a88a;
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 6px;
+            margin-right: 8px;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.2s;
+        }
+        .think-toggle:hover { background: rgba(255,255,255,0.05); }
+        .think-toggle.active {
+            background: rgba(184,168,138,0.15);
+            border-color: #b8a88a;
+            color: #fff;
+        }
+        .think-block {
+            background: rgba(100,100,100,0.08);
+            border-left: 3px solid #777;
+            padding: 10px 14px;
+            margin-bottom: 10px;
+            font-style: italic;
+            color: #999;
+            font-size: 0.88em;
+            white-space: pre-wrap;
+            border-radius: 4px;
+        }
+        .think-block::before {
+            content: "\1F4AD" " thinking";
+            display: block;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #888;
+            font-style: normal;
+            font-size: 0.85em;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+        .answer-block { white-space: pre-wrap; }
+
     </style>
 </head>
 <body>
@@ -609,6 +655,10 @@
 <div class="input-container landing-mode" id="inputContainer">
     <div class="input-wrapper">
         <textarea id="chatInput" class="chat-input" placeholder="Ask samosaChaat anything..." rows="1" onkeydown="handleKeyDown(event)"></textarea>
+        <button id="thinkToggle" class="think-toggle" onclick="toggleReasoning()" title="Reasoning mode (think step-by-step)" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"></path></svg>
+            <span>Think</span>
+        </button>
         <button id="sendButton" class="send-button" onclick="sendMessage()" disabled>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M22 2L11 13"></path><path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
@@ -639,6 +689,53 @@
     let isChatMode = false;
     let currentTemperature = 0.8;
     let currentTopK = 50;
+    let reasoningMode = false;
+
+    const SYS_DIRECT = "You are samosaChaat, a helpful AI assistant. Answer directly and concisely.";
+    const SYS_THINK  = "You are samosaChaat, a helpful AI assistant. Think step by step inside <think>...</think> tags, then give your final answer.";
+
+    function toggleReasoning() {
+        reasoningMode = !reasoningMode;
+        const btn = document.getElementById("thinkToggle");
+        if (btn) btn.classList.toggle("active", reasoningMode);
+    }
+
+    function buildApiMessages() {
+        const out = messages.map(m => ({ role: m.role, content: m.content }));
+        if (out.length && out[0].role === "user") {
+            const sys = reasoningMode ? SYS_THINK : SYS_DIRECT;
+            out[0].content = sys + "
+
+" + out[0].content;
+        }
+        return out;
+    }
+
+    function renderAssistantContent(fullText, container) {
+        // Parse <think>...</think> blocks and render specially
+        const openIdx = fullText.indexOf("<think>");
+        if (openIdx === -1) { container.textContent = fullText; return; }
+        const closeIdx = fullText.indexOf("</think>", openIdx);
+        container.innerHTML = "";
+        if (openIdx > 0) {
+            const pre = document.createElement("div");
+            pre.className = "answer-block";
+            pre.textContent = fullText.slice(0, openIdx);
+            container.appendChild(pre);
+        }
+        const thinkText = closeIdx >= 0 ? fullText.slice(openIdx+7, closeIdx) : fullText.slice(openIdx+7);
+        const thinkDiv = document.createElement("div");
+        thinkDiv.className = "think-block";
+        thinkDiv.textContent = thinkText;
+        container.appendChild(thinkDiv);
+        if (closeIdx >= 0) {
+            const after = fullText.slice(closeIdx+8);
+            const ansDiv = document.createElement("div");
+            ansDiv.className = "answer-block";
+            ansDiv.textContent = after;
+            container.appendChild(ansDiv);
+        }
+    }
 
     // ================================================================
     //  TRANSITION: Landing → Chat
@@ -776,7 +873,7 @@
                 assistantContent.textContent = '';
                 for await (const token of window.samosaChaat.generateLocal(messages)) {
                     fullResponse += token;
-                    assistantContent.textContent = fullResponse;
+                    renderAssistantContent(fullResponse, assistantContent);
                     chatContainer.scrollTop = chatContainer.scrollHeight;
                 }
                 const idx = messages.length;
@@ -788,7 +885,7 @@
                 const response = await fetch(`${API_URL}/chat/completions`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ messages, temperature: currentTemperature, top_k: currentTopK, max_tokens: 512 }),
+                    body: JSON.stringify({ messages: buildApiMessages(), temperature: currentTemperature, top_k: currentTopK, max_tokens: 512 }),
                 });
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 const reader = response.body.getReader();
@@ -802,7 +899,7 @@
                         if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.slice(6));
-                                if (data.token) { fullResponse += data.token; assistantContent.textContent = fullResponse; chatContainer.scrollTop = chatContainer.scrollHeight; }
+                                if (data.token) { fullResponse += data.token; renderAssistantContent(fullResponse, assistantContent); chatContainer.scrollTop = chatContainer.scrollHeight; }
                             } catch (e) {}
                         }
                     }
