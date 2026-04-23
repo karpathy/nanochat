@@ -229,7 +229,7 @@ class Inference:
 
         messages = request.get("messages", [])
         temperature = min(max(request.get("temperature", 0.8), 0.0), 2.0)
-        max_tokens = min(max(request.get("max_tokens", 512), 1), 2048)
+        max_tokens = min(max(request.get("max_tokens", 1024), 1), 4096)
         top_k = min(max(request.get("top_k", 50), 0), 200)
         force_web_search = bool(request.get("force_web_search", False))
 

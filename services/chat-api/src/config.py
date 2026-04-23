@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     auth_cache_max_size: int = Field(default=1024)
 
     inference_default_temperature: float = Field(default=0.8)
-    inference_default_max_tokens: int = Field(default=512)
+    inference_default_max_tokens: int = Field(default=1024)
     inference_default_top_k: int = Field(default=50)
 
     frontend_url: str = Field(default="http://localhost:3000")
