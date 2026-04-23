@@ -38,9 +38,12 @@ import asyncio
 import logging
 import random
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
+try:
+    from fastapi import FastAPI, HTTPException
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
+except ImportError as exc:
+    raise SystemExit("Missing web dependencies, install the extra 'web'") from exc
 from pydantic import BaseModel
 from typing import List, Optional, AsyncGenerator
 from dataclasses import dataclass
