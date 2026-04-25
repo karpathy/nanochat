@@ -77,14 +77,14 @@ export const useChatStore = create<ChatState>()(
           });
           if (!res.ok) return;
           const data = await res.json();
-          const list: Conversation[] = (data.conversations ?? []).map(
+          const list: Conversation[] = (data.items ?? []).map(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (c: any) => ({
               id: c.id,
               title: c.title ?? 'New chat',
               messages: c.messages ?? [],
-              createdAt: c.createdAt ? new Date(c.createdAt).getTime() : now(),
-              updatedAt: c.updatedAt ? new Date(c.updatedAt).getTime() : now(),
+              createdAt: c.created_at ? new Date(c.created_at).getTime() : now(),
+              updatedAt: c.updated_at ? new Date(c.updated_at).getTime() : now(),
             }),
           );
           set({ conversations: list });
@@ -105,7 +105,7 @@ export const useChatStore = create<ChatState>()(
             id: m.id ?? uid(),
             role: m.role,
             content: m.content,
-            createdAt: m.createdAt ? new Date(m.createdAt).getTime() : now(),
+            createdAt: m.created_at ? new Date(m.created_at).getTime() : now(),
           }));
           set((s) => ({
             conversations: s.conversations.map((c) =>
@@ -130,8 +130,8 @@ export const useChatStore = create<ChatState>()(
             id: data.id,
             title: data.title ?? title ?? 'New chat',
             messages: [],
-            createdAt: data.createdAt ? new Date(data.createdAt).getTime() : now(),
-            updatedAt: data.updatedAt ? new Date(data.updatedAt).getTime() : now(),
+            createdAt: data.created_at ? new Date(data.created_at).getTime() : now(),
+            updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : now(),
           };
           set((s) => ({
             conversations: [conv, ...s.conversations],
