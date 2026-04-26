@@ -21,6 +21,12 @@ import traceback
 import platform
 import subprocess
 
+# This probe lives at <repo>/runs/runpod/probe_fa3.py — add repo root to
+# sys.path so we can `import nanochat.*` regardless of cwd or how we're invoked.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 OK = "\033[32mOK\033[0m"
 FAIL = "\033[31mFAIL\033[0m"
 WARN = "\033[33mWARN\033[0m"
