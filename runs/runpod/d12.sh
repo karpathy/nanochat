@@ -65,6 +65,12 @@ cleanup() {
         --exclude "base_data_climbmix/**" --exclude "wandb/**" || \
         echo "[runner] WARN: final upload failed"
     fi
+    # Also upload the runner log so we have a permanent record of this successful run.
+    if [ -f "$LOG_FILE" ]; then
+      hf upload "$HF_REPO" "$LOG_FILE" "_runs/${TS}/runner.log" \
+        --repo-type model --commit-message "runner log $TS" || \
+        echo "[runner] WARN: runner.log upload failed"
+    fi
   else
     echo "[runner] failure rc=$rc — dumping logs to HF for offline debug"
     mkdir -p /tmp/failure
@@ -115,8 +121,11 @@ echo "[runner] HEAD = $(git rev-parse HEAD)"
 
 sed -i 's/--depth=24/--depth=12/' runs/speedrun.sh
 sed -i 's/ --target-param-data-ratio=8//' runs/speedrun.sh
+# Inject `set -euo pipefail` so a mid-pipeline failure (e.g. chat_sft) propagates
+# as rc!=0 instead of being silently swallowed by the next command.
+sed -i '1a set -euo pipefail' runs/speedrun.sh
 echo "[runner] speedrun.sh edits applied:"
-grep -n 'depth\|target-param' runs/speedrun.sh || true
+grep -n 'depth\|target-param\|set -e' runs/speedrun.sh || true
 
 # Explicit venv setup BEFORE speedrun.sh so we can run diagnostic probes
 # inside the venv. speedrun.sh's uv sync is idempotent (no-op the second time).
@@ -137,6 +146,12 @@ export HF_HUB_TOKEN="${HF_TOKEN}"
 echo "[runner] upgrading kernels lib for FA3 reliability"
 uv pip install --quiet --upgrade 'kernels>=0.13.0' 2>&1 || \
   echo "[runner] WARN: kernels upgrade failed (continuing)"
+
+# Install hf_transfer — runpod base image sets HF_HUB_ENABLE_HF_TRANSFER=1, which
+# makes huggingface_hub raise ValueError if the package is missing. chat_sft loads
+# HuggingFaceTB/smol-smoltalk via datasets and crashes without this.
+echo "[runner] installing hf_transfer for SFT dataset download"
+uv pip install --quiet hf_transfer 2>&1 || echo "[runner] WARN: hf_transfer install failed"
 
 # FA3 diagnostic probe — surfaces real errors (nanochat silently swallows them).
 # Non-fatal: SDPA fallback is automatic. We want this output in the log
@@ -162,5 +177,20 @@ echo "[runner] backup loop pid=$BACKUP_PID interval=${BACKUP_INTERVAL}s"
 
 export WANDB_RUN
 WANDB_RUN="$WANDB_RUN" bash runs/speedrun.sh
+
+# Verify expected pipeline outputs — speedrun.sh historically didn't `set -e`;
+# we patched it above, but double-check the artifacts that matter for the d12 baseline.
+echo "[runner] verifying pipeline outputs"
+missing=()
+for required in base_checkpoints/d12 chatsft_checkpoints/d12 tokenizer report; do
+  if [ ! -d "$NANOCHAT_BASE_DIR/$required" ]; then
+    missing+=("$required")
+  fi
+done
+if [ ${#missing[@]} -gt 0 ]; then
+  echo "[runner] FAIL: pipeline finished but missing expected artifacts: ${missing[*]}"
+  exit 1
+fi
+echo "[runner] all expected artifacts present"
 
 echo "[runner] $(date -Iseconds) pipeline complete"
