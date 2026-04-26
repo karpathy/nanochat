@@ -91,8 +91,23 @@ uv sync --extra gpu
 source .venv/bin/activate
 pip install --quiet --upgrade huggingface_hub
 
+# Ensure HF token flows to the kernels lib (some libs read HF_HUB_TOKEN, not HF_TOKEN)
+export HF_HUB_TOKEN="${HF_TOKEN}"
+
+# Bump kernels to latest — pyproject pins >=0.11.7, uv often picks exactly that;
+# 0.11.x had kernel-resolution bugs that affect FA3 loading silently.
+echo "[smoke] upgrading kernels lib for FA3 reliability"
+uv pip install --quiet --upgrade 'kernels>=0.13.0' 2>&1 || \
+  echo "[smoke] WARN: kernels upgrade failed (continuing with whatever uv installed)"
+
 # GPU sanity
 python -c "import torch; print('[smoke] torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'devices', torch.cuda.device_count())"
+
+# FA3 diagnostic probe — surfaces the real error if FA3 won't load (nanochat
+# silently swallows it). Non-fatal: SDPA fallback is automatic if probe fails.
+echo "[smoke] === FA3 PROBE BEGIN ==="
+python "$WORKDIR/runs/runpod/probe_fa3.py" || echo "[smoke] FA3 probe reported issues (non-fatal — continuing with SDPA fallback)"
+echo "[smoke] === FA3 PROBE END ==="
 
 # Minimum dataset + tokenizer (1 shard, 50M chars — enough for the tokenizer
 # to train on AND for base_train to consume 20 iterations of tokens)

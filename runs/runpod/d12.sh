@@ -116,7 +116,32 @@ sed -i 's/ --target-param-data-ratio=8//' runs/speedrun.sh
 echo "[runner] speedrun.sh edits applied:"
 grep -n 'depth\|target-param' runs/speedrun.sh || true
 
+# Explicit venv setup BEFORE speedrun.sh so we can run diagnostic probes
+# inside the venv. speedrun.sh's uv sync is idempotent (no-op the second time).
+export OMP_NUM_THREADS=1
+export NANOCHAT_BASE_DIR
+mkdir -p "$NANOCHAT_BASE_DIR"
+command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+[ -d ".venv" ] || uv venv
+uv sync --extra gpu
+source .venv/bin/activate
 pip install --quiet --upgrade huggingface_hub
+
+# Ensure HF token flows to the kernels lib (some libs read HF_HUB_TOKEN, not HF_TOKEN)
+export HF_HUB_TOKEN="${HF_TOKEN}"
+
+# Bump kernels to latest — pyproject pins >=0.11.7 and uv often picks exactly that;
+# 0.11.x had kernel-resolution bugs that affect FA3 loading silently.
+echo "[runner] upgrading kernels lib for FA3 reliability"
+uv pip install --quiet --upgrade 'kernels>=0.13.0' 2>&1 || \
+  echo "[runner] WARN: kernels upgrade failed (continuing)"
+
+# FA3 diagnostic probe — surfaces real errors (nanochat silently swallows them).
+# Non-fatal: SDPA fallback is automatic. We want this output in the log
+# regardless of outcome so we can decide what to do about FA3.
+echo "[runner] === FA3 PROBE BEGIN ==="
+python "$WORKDIR/runs/runpod/probe_fa3.py" || echo "[runner] FA3 probe reported issues (non-fatal — continuing with SDPA fallback)"
+echo "[runner] === FA3 PROBE END ==="
 
 (
   while true; do
