@@ -13,6 +13,9 @@
 #
 # Optional W&B logging:
 #   WANDB_RUN=my-run bash runs/pace_submit.sh
+#
+# Optional XSA attention:
+#   XSA=TRUE bash runs/pace_submit.sh
 
 set -e
 cd "$HOME/scratch/nanochat"
@@ -20,50 +23,53 @@ cd "$HOME/scratch/nanochat"
 mkdir -p runs/logs
 
 WANDB_RUN="${WANDB_RUN:-dummy}"
+XSA="${XSA:-FALSE}"
 export WANDB_RUN
+export XSA
 
 echo "Submitting nanochat full pipeline..."
 echo "WANDB_RUN=$WANDB_RUN"
+echo "XSA=$XSA"
 echo ""
 
 # Stage 1
 JOB1=$(sbatch --parsable \
-    --export=ALL,WANDB_RUN=$WANDB_RUN \
+    --export=ALL,WANDB_RUN=$WANDB_RUN,XSA=$XSA \
     runs/pace_stage1_tokenizer.sh)
 echo "Stage 1 submitted: job $JOB1 (tokenizer + dataset)"
 
 # Stage 2a
 JOB2A=$(sbatch --parsable \
     --dependency=afterok:$JOB1 \
-    --export=ALL,WANDB_RUN=$WANDB_RUN \
+    --export=ALL,WANDB_RUN=$WANDB_RUN,XSA=$XSA \
     runs/pace_stage2a_pretrain.sh)
 echo "Stage 2a submitted: job $JOB2A (pretrain chunk 1, depends on $JOB1)"
 
 # Stage 2b
 JOB2B=$(sbatch --parsable \
     --dependency=afterany:$JOB2A \
-    --export=ALL,WANDB_RUN=$WANDB_RUN \
+    --export=ALL,WANDB_RUN=$WANDB_RUN,XSA=$XSA \
     runs/pace_stage2b_pretrain.sh)
 echo "Stage 2b submitted: job $JOB2B (pretrain chunk 2, depends on $JOB2A)"
 
 # Stage 2c
 JOB2C=$(sbatch --parsable \
     --dependency=afterany:$JOB2B \
-    --export=ALL,WANDB_RUN=$WANDB_RUN \
+    --export=ALL,WANDB_RUN=$WANDB_RUN,XSA=$XSA \
     runs/pace_stage2c_pretrain.sh)
 echo "Stage 2c submitted: job $JOB2C (pretrain chunk 3, depends on $JOB2B)"
 
 # Stage 2d
 JOB2D=$(sbatch --parsable \
     --dependency=afterany:$JOB2C \
-    --export=ALL,WANDB_RUN=$WANDB_RUN \
+    --export=ALL,WANDB_RUN=$WANDB_RUN,XSA=$XSA \
     runs/pace_stage2d_pretrain.sh)
 echo "Stage 2d submitted: job $JOB2D (pretrain chunk 4, depends on $JOB2C)"
 
 # Stage 3
 JOB3=$(sbatch --parsable \
     --dependency=afterok:$JOB2D \
-    --export=ALL,WANDB_RUN=$WANDB_RUN \
+    --export=ALL,WANDB_RUN=$WANDB_RUN,XSA=$XSA \
     runs/pace_stage3_sft.sh)
 echo "Stage 3 submitted:  job $JOB3  (eval + SFT, depends on $JOB2D)"
 

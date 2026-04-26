@@ -25,6 +25,7 @@ WANDB_RUN="${WANDB_RUN:-dummy}"
 echo "=== Stage 3: Eval + SFT ==="
 echo "Base dir: $NANOCHAT_BASE_DIR"
 echo "WANDB_RUN: $WANDB_RUN"
+echo "XSA: ${XSA:-FALSE}"
 echo "Started: $(date)"
 
 CHECKPOINT_DIR="$NANOCHAT_BASE_DIR/base_checkpoints/d24"
@@ -52,4 +53,3 @@ torchrun --standalone --nproc_per_node=2 -m scripts.chat_eval -- -i sft
 python -m nanochat.report generate
 
 echo "=== Stage 3 complete: $(date) ==="
-

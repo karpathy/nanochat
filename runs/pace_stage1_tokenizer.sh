@@ -20,6 +20,7 @@ mkdir -p runs/logs
 
 echo "=== Stage 1: Tokenizer ==="
 echo "Base dir: $NANOCHAT_BASE_DIR"
+echo "XSA: ${XSA:-FALSE}"
 echo "Started: $(date)"
 
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh

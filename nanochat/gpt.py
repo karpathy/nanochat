@@ -37,6 +37,7 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    use_xsa: bool = False
 
 
 def norm(x):
@@ -70,6 +71,8 @@ class CausalSelfAttention(nn.Module):
         self.n_kv_head = config.n_kv_head
         self.n_embd = config.n_embd
         self.head_dim = self.n_embd // self.n_head
+        self.use_xsa = config.use_xsa
+        self.xsa = ExclusiveSelfAttention()
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
         self.c_q = Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
@@ -120,10 +123,20 @@ class CausalSelfAttention(nn.Module):
             if self.layer_idx == kv_cache.n_layers - 1:
                 kv_cache.advance(T)
 
+        if self.use_xsa:
+            y = self.xsa.XSA(y, v)
+
         # Re-assemble the heads and project back to residual stream
         y = y.contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
+
+
+class ExclusiveSelfAttention(nn.Module):
+    def XSA(self, y, v):
+        Vn = F.normalize(v, dim=-1)
+        Z = y - (y * Vn).sum(dim=-1, keepdim=True) * Vn
+        return Z
 
 
 class MLP(nn.Module):
