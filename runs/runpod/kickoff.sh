@@ -17,7 +17,7 @@
 # Optional env overrides:
 #   GPU_ID         default: "NVIDIA H100 80GB HBM3"
 #   GPU_COUNT      default: 8
-#   CLOUD_TYPE     default: COMMUNITY     (SECURE for guaranteed availability)
+#   CLOUD_TYPE     default: SECURE        (COMMUNITY when capacity available, cheaper)
 #   DISK_GB        default: 200
 #   NANOCHAT_REPO  default: Team-XSA/nanochat
 #   NANOCHAT_REF   default: dev
@@ -44,7 +44,7 @@ RUNNER_URL="${RUNNER_URL:-https://raw.githubusercontent.com/${NANOCHAT_REPO}/${N
 
 GPU_ID="${GPU_ID:-NVIDIA H100 80GB HBM3}"
 GPU_COUNT="${GPU_COUNT:-8}"
-CLOUD_TYPE="${CLOUD_TYPE:-COMMUNITY}"
+CLOUD_TYPE="${CLOUD_TYPE:-SECURE}"
 DISK_GB="${DISK_GB:-200}"
 POD_NAME="${POD_NAME:-${RUNNER}-$(date +%Y%m%d-%H%M)}"
 
