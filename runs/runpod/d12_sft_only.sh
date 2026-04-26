@@ -112,16 +112,28 @@ export HF_HUB_TOKEN="${HF_TOKEN}"
 echo "[sft] installing hf_transfer (the bug from last run)"
 uv pip install --quiet hf_transfer
 
-# Pull tokenizer + base checkpoint from HF — skip base_train entirely
-echo "[sft] downloading tokenizer and base_checkpoints/d12 from $HF_REPO"
+# Pull tokenizer + base checkpoint from HF in TWO separate calls.
+# `hf download` only honors the LAST --include when specified multiple times
+# (multi-include works for upload, not download — verified the hard way).
+echo "[sft] downloading tokenizer from $HF_REPO"
 hf download "$HF_REPO" \
   --include "tokenizer/**" \
+  --local-dir "$NANOCHAT_BASE_DIR" \
+  --repo-type model
+
+echo "[sft] downloading base_checkpoints/d12 from $HF_REPO"
+hf download "$HF_REPO" \
   --include "base_checkpoints/d12/**" \
   --local-dir "$NANOCHAT_BASE_DIR" \
   --repo-type model
 
-ls -la "$NANOCHAT_BASE_DIR/base_checkpoints/d12/" || true
-ls -la "$NANOCHAT_BASE_DIR/tokenizer/" || true
+# Verify both pieces actually landed before invoking chat_sft.
+echo "[sft] verifying downloads"
+ls -la "$NANOCHAT_BASE_DIR/base_checkpoints/d12/" 2>&1 || true
+ls -la "$NANOCHAT_BASE_DIR/tokenizer/" 2>&1 || true
+[ -f "$NANOCHAT_BASE_DIR/tokenizer/tokenizer.pkl" ] || { echo "[sft] FAIL: tokenizer.pkl missing after download"; exit 1; }
+[ -n "$(ls -A "$NANOCHAT_BASE_DIR/base_checkpoints/d12/" 2>/dev/null)" ] || { echo "[sft] FAIL: base_checkpoints/d12 is empty"; exit 1; }
+echo "[sft] downloads verified"
 
 # Also need identity_conversations.jsonl for SFT (speedrun.sh normally fetches it)
 echo "[sft] fetching identity_conversations.jsonl"
