@@ -59,7 +59,7 @@ cleanup() {
   if [ "$rc" -eq 0 ]; then
     echo "[runner] success — final upload to $HF_REPO"
     if [ -d "$NANOCHAT_BASE_DIR" ]; then
-      huggingface-cli upload "$HF_REPO" "$NANOCHAT_BASE_DIR" . \
+      hf upload "$HF_REPO" "$NANOCHAT_BASE_DIR" . \
         --repo-type model --commit-message "final rc=0 $TS" || \
         echo "[runner] WARN: final upload failed"
     fi
@@ -70,31 +70,30 @@ cleanup() {
     [ -d "$NANOCHAT_BASE_DIR/report" ] && cp -r "$NANOCHAT_BASE_DIR/report" /tmp/failure/ 2>/dev/null || true
     [ -d "$WORKDIR" ] && (cd "$WORKDIR" && git rev-parse HEAD 2>/dev/null > /tmp/failure/git-head.txt || true)
 
-    huggingface-cli upload "$HF_REPO" /tmp/failure "_failures/${TS}-rc${rc}/logs" \
+    hf upload "$HF_REPO" /tmp/failure "_failures/${TS}-rc${rc}/logs" \
       --repo-type model --commit-message "failure rc=$rc logs $TS" || \
       echo "[runner] WARN: log upload failed"
 
     if [ "$UPLOAD_FAILURE_CACHE" = "1" ] && [ -d "$NANOCHAT_BASE_DIR" ]; then
       echo "[runner] UPLOAD_FAILURE_CACHE=1 — also dumping partial cache (may be slow)"
-      huggingface-cli upload "$HF_REPO" "$NANOCHAT_BASE_DIR" "_failures/${TS}-rc${rc}/cache" \
+      hf upload "$HF_REPO" "$NANOCHAT_BASE_DIR" "_failures/${TS}-rc${rc}/cache" \
         --repo-type model --commit-message "failure rc=$rc cache $TS" || true
     fi
     echo "[runner] failure artifacts: https://huggingface.co/$HF_REPO/tree/main/_failures/${TS}-rc${rc}"
   fi
 
   echo "[runner] self-deleting pod $RUNPOD_POD_ID"
-  # Preinstalled runpodctl may be older (legacy 'remove pod') or newer ('pod delete').
-  # Try new, then legacy, then REST API. -fsS makes curl fail loudly on HTTP errors.
-  if runpodctl pod delete "$RUNPOD_POD_ID" 2>&1; then
-    :
-  elif runpodctl remove pod "$RUNPOD_POD_ID" 2>&1; then
-    :
+  # REST API first — pod-scoped key has delete permission and the API is reliable.
+  # The pod's preinstalled runpodctl is unreliable (often missing config or 'pod' subcommand).
+  if curl -fsS -X DELETE \
+       -H "Authorization: Bearer ${RUNPOD_API_KEY:-}" \
+       "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" 2>&1; then
+    echo "[runner] REST delete request accepted"
   else
-    echo "[runner] runpodctl delete failed via both syntaxes, using REST API"
-    curl -fsS -X DELETE \
-      -H "Authorization: Bearer ${RUNPOD_API_KEY:-}" \
-      "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" 2>&1 || \
-      echo "[runner] WARN: REST delete also failed — pod may need manual cleanup"
+    echo "[runner] REST delete failed, trying runpodctl as fallback"
+    runpodctl pod delete "$RUNPOD_POD_ID" 2>&1 || \
+    runpodctl remove pod "$RUNPOD_POD_ID" 2>&1 || \
+    echo "[runner] WARN: all delete methods failed — pod may need manual cleanup"
   fi
   exit "$rc"
 }
@@ -147,7 +146,7 @@ echo "[runner] === FA3 PROBE END ==="
   while true; do
     sleep "$BACKUP_INTERVAL"
     if [ -d "$NANOCHAT_BASE_DIR" ]; then
-      huggingface-cli upload "$HF_REPO" "$NANOCHAT_BASE_DIR" . \
+      hf upload "$HF_REPO" "$NANOCHAT_BASE_DIR" . \
         --repo-type model \
         --commit-message "checkpoint $(date -Iseconds)" >> /workspace/backup.log 2>&1 || true
     fi

@@ -46,24 +46,23 @@ cleanup() {
   cp /workspace/*.log /tmp/smoke-out/ 2>/dev/null || true
   echo "rc=$rc ts=$TS pod=$RUNPOD_POD_ID" > /tmp/smoke-out/result.txt
   [ -d "$WORKDIR" ] && (cd "$WORKDIR" && git rev-parse HEAD 2>/dev/null > /tmp/smoke-out/git-head.txt || true)
-  huggingface-cli upload "$HF_REPO" /tmp/smoke-out "$HF_PATH_PREFIX" \
+  hf upload "$HF_REPO" /tmp/smoke-out "$HF_PATH_PREFIX" \
     --repo-type model --commit-message "smoke rc=$rc $TS" || \
     echo "[smoke] WARN: HF upload failed"
 
   echo "[smoke] artifacts: https://huggingface.co/$HF_REPO/tree/main/$HF_PATH_PREFIX"
   echo "[smoke] self-deleting pod $RUNPOD_POD_ID"
-  # The preinstalled runpodctl may be older (legacy 'remove pod' syntax) or newer ('pod delete').
-  # Try new, then legacy, then REST API. -fsS makes curl fail loudly on HTTP errors.
-  if runpodctl pod delete "$RUNPOD_POD_ID" 2>&1; then
-    :
-  elif runpodctl remove pod "$RUNPOD_POD_ID" 2>&1; then
-    :
+  # REST API first — pod-scoped key has delete permission and the API is reliable.
+  # The pod's preinstalled runpodctl is unreliable (often missing config or 'pod' subcommand).
+  if curl -fsS -X DELETE \
+       -H "Authorization: Bearer ${RUNPOD_API_KEY:-}" \
+       "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" 2>&1; then
+    echo "[smoke] REST delete request accepted"
   else
-    echo "[smoke] runpodctl delete failed via both syntaxes, using REST API"
-    curl -fsS -X DELETE \
-      -H "Authorization: Bearer ${RUNPOD_API_KEY:-}" \
-      "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" 2>&1 || \
-      echo "[smoke] WARN: REST delete also failed — pod may need manual cleanup"
+    echo "[smoke] REST delete failed, trying runpodctl as fallback"
+    runpodctl pod delete "$RUNPOD_POD_ID" 2>&1 || \
+    runpodctl remove pod "$RUNPOD_POD_ID" 2>&1 || \
+    echo "[smoke] WARN: all delete methods failed — pod may need manual cleanup"
   fi
   exit "$rc"
 }
