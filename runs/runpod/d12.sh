@@ -33,10 +33,17 @@ NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 BACKUP_PID=""
 
 mkdir -p /workspace
-exec > >(tee -a "$LOG_FILE") 2>&1
+# NOTE: dockerStartCmd already redirects stdout/stderr to $LOG_FILE.
+# Don't add a second tee here — would write every line twice.
 
 echo "[runner] $(date -Iseconds) starting on pod=$RUNPOD_POD_ID"
 echo "[runner] repo=$NANOCHAT_REPO ref=$NANOCHAT_REF hf_repo=$HF_REPO wandb_run=$WANDB_RUN"
+
+# Bootstrap huggingface_hub system-wide so the cleanup trap can upload logs
+# even if we fail before the venv is activated.
+{ pip3 install --break-system-packages --quiet --upgrade huggingface_hub 2>&1 || \
+  python3 -m pip install --break-system-packages --quiet --upgrade huggingface_hub 2>&1 || \
+  echo "[runner] WARN: could not pre-install huggingface_hub; cleanup uploads may fail"; } || true
 
 cleanup() {
   local rc=$?
@@ -76,9 +83,19 @@ cleanup() {
   fi
 
   echo "[runner] self-deleting pod $RUNPOD_POD_ID"
-  runpodctl pod delete "$RUNPOD_POD_ID" 2>&1 || \
-    curl -sS -X DELETE -H "Authorization: Bearer ${RUNPOD_API_KEY:-}" \
-      "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID"
+  # Preinstalled runpodctl may be older (legacy 'remove pod') or newer ('pod delete').
+  # Try new, then legacy, then REST API. -fsS makes curl fail loudly on HTTP errors.
+  if runpodctl pod delete "$RUNPOD_POD_ID" 2>&1; then
+    :
+  elif runpodctl remove pod "$RUNPOD_POD_ID" 2>&1; then
+    :
+  else
+    echo "[runner] runpodctl delete failed via both syntaxes, using REST API"
+    curl -fsS -X DELETE \
+      -H "Authorization: Bearer ${RUNPOD_API_KEY:-}" \
+      "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" 2>&1 || \
+      echo "[runner] WARN: REST delete also failed — pod may need manual cleanup"
+  fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -90,7 +107,8 @@ trap cleanup EXIT
 rm -rf "$WORKDIR"
 git clone "https://github.com/${NANOCHAT_REPO}.git" "$WORKDIR"
 cd "$WORKDIR"
-git checkout "$NANOCHAT_REF"
+# `--` disambiguates ref-vs-file (some images create a `dev` file in HOME)
+git checkout "$NANOCHAT_REF" --
 echo "[runner] HEAD = $(git rev-parse HEAD)"
 
 sed -i 's/--depth=24/--depth=12/' runs/speedrun.sh
