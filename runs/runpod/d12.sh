@@ -59,8 +59,10 @@ cleanup() {
   if [ "$rc" -eq 0 ]; then
     echo "[runner] success — final upload to $HF_REPO"
     if [ -d "$NANOCHAT_BASE_DIR" ]; then
+      # Skip the climbmix dataset shards (~2GB of public data, not model artifacts)
       hf upload "$HF_REPO" "$NANOCHAT_BASE_DIR" . \
-        --repo-type model --commit-message "final rc=0 $TS" || \
+        --repo-type model --commit-message "final rc=0 $TS" \
+        --exclude "base_data_climbmix/**" --exclude "wandb/**" || \
         echo "[runner] WARN: final upload failed"
     fi
   else
@@ -77,7 +79,8 @@ cleanup() {
     if [ "$UPLOAD_FAILURE_CACHE" = "1" ] && [ -d "$NANOCHAT_BASE_DIR" ]; then
       echo "[runner] UPLOAD_FAILURE_CACHE=1 — also dumping partial cache (may be slow)"
       hf upload "$HF_REPO" "$NANOCHAT_BASE_DIR" "_failures/${TS}-rc${rc}/cache" \
-        --repo-type model --commit-message "failure rc=$rc cache $TS" || true
+        --repo-type model --commit-message "failure rc=$rc cache $TS" \
+        --exclude "base_data_climbmix/**" --exclude "wandb/**" || true
     fi
     echo "[runner] failure artifacts: https://huggingface.co/$HF_REPO/tree/main/_failures/${TS}-rc${rc}"
   fi
@@ -148,7 +151,9 @@ echo "[runner] === FA3 PROBE END ==="
     if [ -d "$NANOCHAT_BASE_DIR" ]; then
       hf upload "$HF_REPO" "$NANOCHAT_BASE_DIR" . \
         --repo-type model \
-        --commit-message "checkpoint $(date -Iseconds)" >> /workspace/backup.log 2>&1 || true
+        --commit-message "checkpoint $(date -Iseconds)" \
+        --exclude "base_data_climbmix/**" --exclude "wandb/**" \
+        >> /workspace/backup.log 2>&1 || true
     fi
   done
 ) &
