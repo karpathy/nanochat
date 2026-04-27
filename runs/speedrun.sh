@@ -69,8 +69,11 @@ python -m scripts.tok_eval
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
-# d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 8)
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=24 --target-param-data-ratio=8 --device-batch-size=16 --fp8 --run=$WANDB_RUN
+# d22 model (slightly overtrained to beat GPT-2 => increase data:params ratio from compute optimal 10.5 (default) to 12).
+# Mirror of Run 6's d24+ratio=8 strategy from the other side of compute-optimal — d22 is below GPT-2 capability,
+# so we overtrain rather than undertrain. Combined with --warmdown-ratio=0.85 (longer low-LR tail) and
+# --muon-qk-clip-tau=100 (Kimi K2 §A QK-Clip) the recipe crosses GPT-2 CORE in 3.3% less wall-clock than Run 6.
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=22 --target-param-data-ratio=12 --total-batch-size=1048576 --device-batch-size=16 --warmdown-ratio=0.85 --muon-qk-clip-tau=100 --fp8 --run=$WANDB_RUN
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
 torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size=16
 
