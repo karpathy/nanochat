@@ -5,6 +5,7 @@ python -m pytest tests/test_engine.py -v
 """
 
 import torch
+import pytest
 from nanochat.engine import KVCache, Engine
 from dataclasses import dataclass
 
@@ -196,6 +197,16 @@ def test_multi_sample_first_token_diversity():
         f"With uniform logits, this is statistically impossible (~10^-36 probability) "
         f"unless tokens are being broadcast instead of independently sampled."
     )
+
+
+def test_generate_rejects_invalid_prompt_tokens():
+    """Prompt tokens must be a non-empty list of ints."""
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+
+    for prompt in ([], [261, "not-an-int"]):
+        with pytest.raises(AssertionError, match="expecting non-empty list of ints"):
+            next(engine.generate(prompt, max_tokens=1))
 
 
 def test_seed_reproducibility():
