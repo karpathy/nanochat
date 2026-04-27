@@ -69,11 +69,12 @@ python -m scripts.tok_eval
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
-# d22 model (slightly overtrained to beat GPT-2 => increase data:params ratio from compute optimal 10.5 (default) to 12).
-# Mirror of Run 6's d24+ratio=8 strategy from the other side of compute-optimal — d22 is below GPT-2 capability,
-# so we overtrain rather than undertrain. Combined with --warmdown-ratio=0.85 (longer low-LR tail) and
-# --muon-qk-clip-tau=100 (Kimi K2 §A QK-Clip) the recipe crosses GPT-2 CORE in 3.3% less wall-clock than Run 6.
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=22 --target-param-data-ratio=12 --total-batch-size=1048576 --device-batch-size=16 --warmdown-ratio=0.85 --muon-qk-clip-tau=100 --fp8 --run=$WANDB_RUN
+# d22 model trained for 6000 iterations at 1M tokens/iter = 6B tokens (~ratio=11 against d22's
+# scaling params, mirror of Run 6's d24+ratio=8 strategy from the other side of compute-optimal —
+# d22 is below GPT-2 capability so we overtrain). Combined with --warmdown-ratio=0.85 (longer
+# low-LR tail) and --muon-qk-clip-tau=100 (Kimi K2 §A QK-Clip) the recipe crosses GPT-2 CORE
+# in 88 min — ~10.8% less wall-clock than Run 6 — at CORE 0.2646, val_bpb 0.7241.
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=22 --num-iterations=6000 --total-batch-size=1048576 --device-batch-size=16 --warmdown-ratio=0.85 --muon-qk-clip-tau=100 --fp8 --run=$WANDB_RUN
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
 torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size=16
 
