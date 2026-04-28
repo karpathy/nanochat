@@ -39,6 +39,32 @@ def _patch_missing_keys(model_data, model_config):
         model_data["x0_lambdas"] = torch.zeros(n_layer)
         log0(f"Patching missing x0_lambdas in model data to 0.0")
 
+def _patch_removed_state_keys(model_data):
+    """Remove/remap keys that no longer exist in the model (backward compat)."""
+    import re
+    keys_to_remove = []
+    keys_to_remap = {}
+    for key in list(model_data.keys()):
+        # Strip old engram.hash_seeds keys
+        if key.startswith("transformer.h.") and "engram.hash_seeds" in key:
+            keys_to_remove.append(key)
+            continue
+        # Remap old engram.embed_tables.<n>_<k>.* -> embed_tables.<n_idx>.<k>.*
+        m = re.match(r"(transformer\.h\.\d+\.engram\.embed_tables)\.(\d+)_(\d+)\.(.*)", key)
+        if m:
+            prefix, n_str, k_str, rest = m.groups()
+            n_idx = int(n_str) - 2  # old n=2,3 -> new n_idx=0,1
+            new_key = f"{prefix}.{n_idx}.{k_str}.{rest}"
+            keys_to_remap[key] = new_key
+    for old_key in keys_to_remove:
+        del model_data[old_key]
+    for old_key, new_key in keys_to_remap.items():
+        model_data[new_key] = model_data.pop(old_key)
+    if keys_to_remove:
+        log0(f"Removed {len(keys_to_remove)} stale engram.hash_seeds keys from checkpoint")
+    if keys_to_remap:
+        log0(f"Remapped {len(keys_to_remap)} engram.embed_tables keys from old string-keyed format")
+
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
     if rank == 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
@@ -97,6 +123,7 @@ def build_model(checkpoint_dir, step, device, phase):
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)
     _patch_missing_keys(model_data, model_config)
+    _patch_removed_state_keys(model_data)
     with torch.device("meta"):
         model = GPT(model_config)
     # Load the model state

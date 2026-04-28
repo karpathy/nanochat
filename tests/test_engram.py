@@ -139,8 +139,9 @@ class TestOptimizerNoDuplicates:
         engram_embed_ids = set()
         for block in model.transformer.h:
             if block.engram is not None:
-                for t in block.engram.embed_tables.values():
-                    engram_embed_ids.add(id(t.weight))
+                for tables_n in block.engram.embed_tables:
+                    for t in tables_n:
+                        engram_embed_ids.add(id(t.weight))
 
         muon_params = set()
         for group in opt.param_groups:
