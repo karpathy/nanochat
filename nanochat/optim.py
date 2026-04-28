@@ -148,6 +148,43 @@ def muon_step_fused(
     stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
 
 # -----------------------------------------------------------------------------
+# MuonClip QK-Clip (Kimi K2, arxiv 2507.20534 §A)
+#
+# Muon orthogonalizes W_Q and W_K each step, which can cause the attention logits
+# Q @ K^T to grow unbounded over training and blow up softmax. QK-Clip rescales
+# W_Q and W_K *after* the Muon step so that their combined spectral norm product
+# is bounded by sqrt(tau), capping the max attention logit magnitude at ~tau.
+#
+# We use the cheap Frobenius-over-sqrt(min_dim) approximation of the spectral
+# norm (upper bound). Conservative (overestimates), so when it triggers a
+# rescale it's safe; when it doesn't trigger we know we're fine.
+
+@torch.no_grad()
+def _apply_qk_clip(param_groups: list[dict]) -> None:
+    """Rescale Muon param groups marked `is_qk` so spectral norm <= sqrt(tau).
+    No-op if tau <= 0. Safe to call every step. Identical across DDP ranks since
+    qk weights are replicated post-gather."""
+    for group in param_groups:
+        if group.get('kind') != 'muon':
+            continue
+        if not group.get('is_qk', False):
+            continue
+        tau = float(group.get('qk_tau', 0.0))
+        if tau <= 0.0:
+            continue
+        target = tau ** 0.5
+        for p in group['params']:
+            if p.ndim < 2:
+                continue
+            frob = p.detach().float().norm()
+            min_dim = min(p.shape[-2], p.shape[-1])
+            spec_est = frob / (min_dim ** 0.5)
+            if spec_est > target:
+                scale = target / spec_est.clamp_min(1e-12)
+                p.data.mul_(scale.to(p.dtype))
+
+
+# -----------------------------------------------------------------------------
 # Single GPU version of the MuonAdamW optimizer.
 # Used mostly for reference, debugging and testing.
 
@@ -291,6 +328,8 @@ class MuonAdamW(torch.optim.Optimizer):
                 self._step_muon(group)
             else:
                 raise ValueError(f"Unknown optimizer kind: {group['kind']}")
+        # MuonClip QK-Clip after Muon update. No-op unless qk_tau > 0.
+        _apply_qk_clip(self.param_groups)
 
 # -----------------------------------------------------------------------------
 # Distributed version of the MuonAdamW optimizer.
@@ -533,3 +572,6 @@ class DistMuonAdamW(torch.optim.Optimizer):
 
         # Phase 3: wait for gathers, copy back
         self._finish_gathers(gather_list)
+
+        # MuonClip QK-Clip after the Muon update. No-op unless qk_tau > 0.
+        _apply_qk_clip(self.param_groups)

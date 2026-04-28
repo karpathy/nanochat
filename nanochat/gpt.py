@@ -371,19 +371,30 @@ class GPT(nn.Module):
             'total': total,
         }
 
-    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, scalar_lr=0.5):
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, scalar_lr=0.5, muon_qk_clip_tau=0.0):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
 
         # Separate out all parameters into groups
         matrix_params = list(self.transformer.h.parameters())
+        # When MuonClip QK-Clip is enabled, pull c_q/c_k out of matrix_params into a
+        # dedicated Muon group tagged for spectral-norm capping (Kimi K2 §A).
+        qk_params = []
+        if muon_qk_clip_tau > 0.0:
+            qk_param_ids = set()
+            for block in self.transformer.h:
+                qk_params.append(block.attn.c_q.weight)
+                qk_params.append(block.attn.c_k.weight)
+                qk_param_ids.add(id(block.attn.c_q.weight))
+                qk_param_ids.add(id(block.attn.c_k.weight))
+            matrix_params = [p for p in matrix_params if id(p) not in qk_param_ids]
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
         smear_params = [self.smear_gate.weight, self.smear_lambda, self.backout_lambda]
-        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(smear_params)
+        assert len(list(self.parameters())) == len(matrix_params) + len(qk_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(smear_params)
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
@@ -406,6 +417,15 @@ class GPT(nn.Module):
                 kind='muon', params=group_params, lr=matrix_lr,
                 momentum=0.95, ns_steps=5, beta2=0.9, weight_decay=weight_decay,
             ))
+        # Dedicated Muon group for QK params when MuonClip is enabled (Kimi K2 §A).
+        if qk_params:
+            for shape in sorted({p.shape for p in qk_params}):
+                group_params = [p for p in qk_params if p.shape == shape]
+                param_groups.append(dict(
+                    kind='muon', params=group_params, lr=matrix_lr,
+                    momentum=0.95, ns_steps=5, beta2=0.9, weight_decay=weight_decay,
+                    is_qk=True, qk_tau=muon_qk_clip_tau,
+                ))
 
         Factory = DistMuonAdamW if ddp else MuonAdamW
         optimizer = Factory(param_groups)
