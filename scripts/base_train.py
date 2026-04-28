@@ -25,7 +25,7 @@ import wandb
 import torch
 import torch.distributed as dist
 
-from nanochat.gpt import GPT, GPTConfig, Linear
+from nanochat.gpt import GPT, GPTConfig, Linear, default_sparse_n_global, compute_sparse_global_layers
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
@@ -52,6 +52,20 @@ parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = de
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+# Sparse funnel architecture
+parser.add_argument("--sparse-funnel", action=argparse.BooleanOptionalAction, default=True, help="use sparse funnel architecture instead of window pattern")
+parser.add_argument("--n-global", type=int, default=0, help="number of global (full-context) layers, 0 = auto depth//4")
+parser.add_argument("--chirp-gamma", type=float, default=0.7, help="chirp exponent for global layer placement")
+parser.add_argument("--local-window", type=int, default=128, help="local attention window size")
+parser.add_argument("--global-layers", type=str, default="", help="explicit global layer indices, comma-separated (overrides chirp)")
+parser.add_argument("--rope-base", type=int, default=200000, help="RoPE base frequency")
+parser.add_argument("--smear", action=argparse.BooleanOptionalAction, default=True, help="restore cheap bigram-like embedding mixing before the transformer trunk")
+parser.add_argument("--smear-channels", type=int, default=24, help="number of embedding channels used to predict smear gate")
+parser.add_argument("--bigram-vocab-size", type=int, default=4096, help="hashed bigram embedding buckets (0 disables)")
+parser.add_argument("--bigram-dim", type=int, default=128, help="bigram embedding dim before projection")
+parser.add_argument("--gated-attn", action=argparse.BooleanOptionalAction, default=True, help="learn lightweight per-head attention output gates")
+parser.add_argument("--attn-gate-channels", type=int, default=12, help="embedding channels used to predict attention gates")
+parser.add_argument("--ve-layers", type=str, default="", help="explicit value-residual layer indices, comma-separated")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -78,6 +92,14 @@ parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
+
+if args.sparse_funnel and args.n_global <= 0:
+    args.n_global = default_sparse_n_global(args.depth)
+if args.sparse_funnel and not args.ve_layers:
+    args.ve_layers = ",".join(
+        str(x) for x in compute_sparse_global_layers(args.depth, args.n_global, args.chirp_gamma)
+    )
+
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
 # Compute init and wandb logging
@@ -133,10 +155,21 @@ def build_model_meta(depth):
     base_dim = depth * args.aspect_ratio
     model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
     num_heads = model_dim // args.head_dim
+    # Parse explicit layer lists
+    global_layer_override = tuple(int(x) for x in args.global_layers.split(",") if x.strip()) if args.global_layers else ()
+    ve_layers_parsed = tuple(int(x) for x in args.ve_layers.split(",") if x.strip()) if args.ve_layers else ()
     config = GPTConfig(
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        use_sparse_funnel=args.sparse_funnel,
+        n_global=args.n_global, chirp_gamma=args.chirp_gamma,
+        local_window=args.local_window, global_layer_override=global_layer_override,
+        rope_base=args.rope_base,
+        use_smear=args.smear, smear_channels=args.smear_channels,
+        bigram_vocab_size=args.bigram_vocab_size, bigram_dim=args.bigram_dim,
+        use_gated_attn=args.gated_attn, attn_gate_channels=args.attn_gate_channels,
+        ve_layers=ve_layers_parsed,
     )
     with torch.device("meta"):
         model_meta = GPT(config)
