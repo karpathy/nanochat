@@ -5,7 +5,7 @@ Common utilities for nanochat.
 import os
 import re
 import logging
-import urllib.request
+import requests
 import torch
 import torch.distributed as dist
 from filelock import FileLock
@@ -100,8 +100,9 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
 
         # Download the content as bytes
         print(f"Downloading {url}...")
-        with urllib.request.urlopen(url) as response:
-            content = response.read() # bytes
+        response = requests.get(url, timeout=60)
+        response.raise_for_status()
+        content = response.content # bytes
 
         # Write to local file
         with open(file_path, 'wb') as f:
