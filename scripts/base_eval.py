@@ -29,8 +29,6 @@ import random
 import zipfile
 import tempfile
 import argparse
-from contextlib import nullcontext
-
 import torch
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
@@ -199,8 +197,6 @@ def main():
     # Distributed / precision setup
     device_type = autodetect_device_type() if args.device_type == '' else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
-    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
-
     # Load model and tokenizer
     is_hf_model = args.hf_path is not None
     if is_hf_model:
@@ -244,8 +240,7 @@ def main():
             print0("\nConditioned samples:")
             for prompt in prompts:
                 tokens = tokenizer(prompt, prepend="<|bos|>")
-                with autocast_ctx:
-                    sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
+                sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
                 sample_str = tokenizer.decode(sample[0])
                 print0("-" * 80)
                 print0(sample_str)
@@ -253,8 +248,7 @@ def main():
 
             print0("\nUnconditioned samples:")
             tokens = tokenizer("", prepend="<|bos|>")
-            with autocast_ctx:
-                uncond, _ = engine.generate_batch(tokens, num_samples=8, max_tokens=128, temperature=1.0)
+            uncond, _ = engine.generate_batch(tokens, num_samples=8, max_tokens=128, temperature=1.0)
             for sample in uncond:
                 sample_str = tokenizer.decode(sample)
                 print0("-" * 80)
@@ -277,8 +271,7 @@ def main():
 
         for split_name in ["train", "val"]:
             loader = tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, sequence_len, split_name, device=device)
-            with autocast_ctx:
-                bpb = evaluate_bpb(model, loader, steps, token_bytes)
+            bpb = evaluate_bpb(model, loader, steps, token_bytes)
             bpb_results[split_name] = bpb
             print0(f"{split_name} bpb: {bpb:.6f}")
 
@@ -287,8 +280,7 @@ def main():
         print0("\n" + "="*80)
         print0("CORE Evaluation")
         print0("="*80)
-        with autocast_ctx:
-            core_results = evaluate_core(model, tokenizer, device, max_per_task=args.max_per_task)
+        core_results = evaluate_core(model, tokenizer, device, max_per_task=args.max_per_task)
 
         # Write CSV output
         if ddp_rank == 0:

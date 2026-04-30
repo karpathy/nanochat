@@ -19,7 +19,6 @@ from contextlib import contextmanager
 from collections import deque
 from nanochat.common import compute_init, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
-from contextlib import nullcontext
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
@@ -101,10 +100,13 @@ class KVCache:
         self.v_cache = torch.zeros(num_layers, batch_size, seq_len, num_heads, head_dim, device=device, dtype=dtype)
         # Current sequence length per batch element (FA3 needs int32)
         self.cache_seqlens = torch.zeros(batch_size, dtype=torch.int32, device=device)
+        # Previous token's normalized embedding for smear (set by model forward pass)
+        self.prev_embedding = None
 
     def reset(self):
         """Reset cache to empty state."""
         self.cache_seqlens.zero_()
+        self.prev_embedding = None
 
     def get_pos(self):
         """Get current position (assumes all batch elements at same position)."""
@@ -130,6 +132,9 @@ class KVCache:
         self.k_cache[:, :, :other_pos, :, :] = other.k_cache[:, :, :other_pos, :, :]
         self.v_cache[:, :, :other_pos, :, :] = other.v_cache[:, :, :other_pos, :, :]
         self.cache_seqlens.fill_(other_pos)
+        # Copy smear state: expand batch=1 prev_embedding to num_samples
+        if other.prev_embedding is not None:
+            self.prev_embedding = other.prev_embedding.expand(self.batch_size, -1, -1).clone()
 
 # -----------------------------------------------------------------------------
 @torch.inference_mode()
@@ -308,8 +313,6 @@ if __name__ == "__main__":
     # init compute
     device_type = autodetect_device_type()
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
-    autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
-
     # load the model and tokenizer
     model, tokenizer, meta = load_model("base", device, phase="eval")
     bos_token_id = tokenizer.get_bos_token_id()
@@ -322,11 +325,10 @@ if __name__ == "__main__":
     torch.cuda.synchronize()
     t0 = time.time()
     stream = model.generate(prompt_tokens, **kwargs)
-    with autocast_ctx:
-        for token in stream:
-            generated_tokens.append(token)
-            chunk = tokenizer.decode([token])
-            print(chunk, end="", flush=True)
+    for token in stream:
+        generated_tokens.append(token)
+        chunk = tokenizer.decode([token])
+        print(chunk, end="", flush=True)
     print()
     torch.cuda.synchronize()
     t1 = time.time()
@@ -338,12 +340,11 @@ if __name__ == "__main__":
     stream = engine.generate(prompt_tokens, num_samples=1, **kwargs) # note: runs in fp32
     torch.cuda.synchronize()
     t0 = time.time()
-    with autocast_ctx:
-        for token_column, token_masks in stream:
-            token = token_column[0] # only print out the first row
-            generated_tokens.append(token)
-            chunk = tokenizer.decode([token])
-            print(chunk, end="", flush=True)
+    for token_column, token_masks in stream:
+        token = token_column[0] # only print out the first row
+        generated_tokens.append(token)
+        chunk = tokenizer.decode([token])
+        print(chunk, end="", flush=True)
     print()
     torch.cuda.synchronize()
     t1 = time.time()
