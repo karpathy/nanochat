@@ -32,7 +32,7 @@ from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
-from nanochat.flash_attention import HAS_FA3
+from nanochat.flash_attention import HAS_FA3, HAS_FA2
 from scripts.base_eval import evaluate_core
 print_banner()
 
@@ -100,10 +100,12 @@ use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
 
 # Flash Attention status
-from nanochat.flash_attention import USE_FA3
+from nanochat.flash_attention import USE_FA3, USE_FA2
 using_fa3 = USE_FA3
 if using_fa3:
     print0("✓ Using Flash Attention 3 (Hopper GPU detected), efficient, new and awesome.")
+elif USE_FA2:
+    print0("Using Flash Attention 2 (flash-attn package detected)")
 else:
     print0("!" * 80)
     if HAS_FA3 and COMPUTE_DTYPE != torch.bfloat16:
