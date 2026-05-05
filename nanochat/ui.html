@@ -449,7 +449,11 @@
 
             } catch (error) {
                 console.error('Error:', error);
-                assistantContent.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+                const errDiv = document.createElement('div');
+                errDiv.className = 'error-message';
+                errDiv.textContent = `Error: ${error.message}`;
+                assistantContent.innerHTML = '';
+                assistantContent.appendChild(errDiv);
             } finally {
                 isGenerating = false;
                 sendButton.disabled = !chatInput.value.trim();
