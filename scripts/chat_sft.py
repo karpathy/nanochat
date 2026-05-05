@@ -118,6 +118,19 @@ for name, fallback, source in [
 
 orig_model = model
 model = torch.compile(model, dynamic=False)
+
+# Multi-node compile warmup: same fix as in base_train.py, trigger kernel compilation on all ranks then barrier so nobody races ahead and trips the NCCL watchdog.
+if ddp and ddp_world_size > 1:
+    warmup_x = torch.randint(0, model.config.vocab_size, (1, model.config.sequence_len), device=device)
+    warmup_y = torch.randint(0, model.config.vocab_size, (1, model.config.sequence_len), device=device)
+    warmup_loss = model(warmup_x, warmup_y)
+    warmup_loss.backward()
+    model.zero_grad(set_to_none=True)
+    del warmup_x, warmup_y, warmup_loss
+    torch.cuda.empty_cache()
+    dist.barrier()
+    print0("Multi-node compile warmup complete")
+
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
