@@ -59,7 +59,8 @@ python -m scripts.chat_sft \
 # The model should be able to say that it is Paris.
 # It might even know that the color of the sky is blue.
 # Sometimes the model likes it if you first say Hi before you ask it questions.
-# python -m scripts.chat_cli -p "What is the capital of France?"
+# export MODEL_TAG="d6"
+# python -m scripts.chat_cli -p "What is the capital of France?" --model-tag $MODEL_TAG
 
 # Chat with the model over a pretty WebUI ChatGPT style
 # python -m scripts.chat_web

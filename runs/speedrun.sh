@@ -86,7 +86,8 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --device-batch-s
 torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
-# python -m scripts.chat_cli -p "Why is the sky blue?"
+# export MODEL_TAG="d24"
+# python -m scripts.chat_cli -p "Why is the sky blue?" --model-tag $MODEL_TAG
 
 # even better, chat with your model over a pretty WebUI ChatGPT style
 # python -m scripts.chat_web
