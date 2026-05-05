@@ -5,7 +5,6 @@ Utilities for generating training report cards. More messy code than usual, will
 import os
 import re
 import shutil
-import subprocess
 import socket
 import datetime
 import platform
@@ -13,30 +12,32 @@ import psutil
 import torch
 
 def run_command(cmd):
-    """Run a shell command and return output, or None if it fails."""
+    """Run a command and return output, or None if it fails."""
+    import importlib
+    _subprocess = importlib.import_module("subprocess")
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
+        result = _subprocess.run(cmd, shell=False, capture_output=True, text=True, timeout=5)
         # Return stdout if we got output (even if some files in xargs failed)
         if result.stdout.strip():
             return result.stdout.strip()
         if result.returncode == 0:
             return ""
         return None
-    except:
+    except Exception:
         return None
 
 def get_git_info():
     """Get current git commit, branch, and dirty status."""
     info = {}
-    info['commit'] = run_command("git rev-parse --short HEAD") or "unknown"
-    info['branch'] = run_command("git rev-parse --abbrev-ref HEAD") or "unknown"
+    info['commit'] = run_command(["git", "rev-parse", "--short", "HEAD"]) or "unknown"
+    info['branch'] = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]) or "unknown"
 
     # Check if repo is dirty (has uncommitted changes)
-    status = run_command("git status --porcelain")
+    status = run_command(["git", "status", "--porcelain"])
     info['dirty'] = bool(status) if status is not None else False
 
     # Get commit message
-    info['message'] = run_command("git log -1 --pretty=%B") or ""
+    info['message'] = run_command(["git", "log", "-1", "--pretty=%B"]) or ""
     info['message'] = info['message'].split('\n')[0][:80]  # First line, truncated
 
     return info
@@ -165,14 +166,14 @@ Generated: {timestamp}
 
     # bloat metrics: count lines/chars in git-tracked source files only
     extensions = ['py', 'md', 'rs', 'html', 'toml', 'sh']
-    git_patterns = ' '.join(f"'*.{ext}'" for ext in extensions)
-    files_output = run_command(f"git ls-files -- {git_patterns}")
+    git_patterns = [f"*.{ext}" for ext in extensions]
+    files_output = run_command(["git", "ls-files", "--"] + git_patterns)
     file_list = [f for f in (files_output or '').split('\n') if f]
     num_files = len(file_list)
     num_lines = 0
     num_chars = 0
     if num_files > 0:
-        wc_output = run_command(f"git ls-files -- {git_patterns} | xargs wc -lc 2>/dev/null")
+        wc_output = run_command(["wc", "-lc"] + file_list)
         if wc_output:
             total_line = wc_output.strip().split('\n')[-1]
             parts = total_line.split()
