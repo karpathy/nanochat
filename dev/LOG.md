@@ -4,6 +4,18 @@ A running summary documenting some experiments and findings. Started ~Jan 7 2026
 
 ---
 
+## 2026-05-05: DyT for d12 pretraining (negative)
+
+Tried replacing normalization with [DyT](https://arxiv.org/abs/2503.10622) for d12-scale pretraining following some [hype](https://x.com/LodestoneRock/status/2050367217087512953) on X.
+
+- DyT uses `gamma * tanh(alpha * x) + beta` with learnable scalar `alpha` and per-channel `gamma`/`beta`.
+- Added separate alpha initializers for attention vs other normalization sites, following the paper's width-dependent heuristic unless overridden.
+- Added optional embedding DyT plus the LLM-specific `sqrt(d_model)` embedding scale from the paper.
+
+Every variation of the idea that was attempted, including after a bunch of parameter tuning did not outperform the baseline d12 model on master, even with steps on the x-axis. In addition, the throughput (tokens per second) was ~10% lower.
+
+---
+
 ## 2026-03-24: Parameter-Golf Ideas Sweep (Negative)
 
 Reviewed `openai/parameter-golf` for small/simple ideas that might transfer to nanochat pretraining without bloating the codebase. Cached notes are in `knowledge/parameter_golf.md`.
