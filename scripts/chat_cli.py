@@ -75,13 +75,19 @@ while True:
 
     # Kick off the assistant
     conversation_tokens.append(assistant_start)
+    max_new_tokens = 256
     generate_kwargs = {
         "num_samples": 1,
-        "max_tokens": 256,
+        "max_tokens": max_new_tokens,
         "temperature": args.temperature,
         "top_k": args.top_k,
     }
     response_tokens = []
+    # Reserve max_new_tokens slots for the response; cap history to the remaining space and re-insert bos to keep the sequence well-formed
+    max_ctx = model.config.sequence_len - max_new_tokens
+    if len(conversation_tokens) > max_ctx:
+        conversation_tokens = [bos] + conversation_tokens[-(max_ctx - 1):]
+        print("[Context window full - older messages have been dropped]", flush=True)
     print("\nAssistant: ", end="", flush=True)
     for token_column, token_masks in engine.generate(conversation_tokens, **generate_kwargs):
         token = token_column[0] # pop the batch dimension (num_samples=1)
