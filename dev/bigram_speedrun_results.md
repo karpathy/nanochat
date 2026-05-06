@@ -47,6 +47,23 @@ comparison. The candidate also uses `--train-log-every=50` and
 `--compile-mode=max-autotune-no-cudagraphs`, while upstream master logs every
 step and uses the default compile mode.
 
+## Controlled d16 Throughput
+
+A denser control run with the same log50/compile-control style is the better
+way to estimate the per-step overhead of the bigram path.
+
+| Run | Final BPB | Train time | Avg logged tok/s, excluding first | Avg logged step time, excluding first |
+| --- | ---: | ---: | ---: | ---: |
+| Dense log50 compile control | `0.800604` | `92.85m` | `336,247` | `1559.258ms` |
+| Bigram/Muon+ candidate, full 3584 | `0.798000` | `93.61m` | `333,507` | `1572.058ms` |
+
+Against this controlled dense run, the bigram candidate is about `0.81%` slower
+per step, but `0.002604` BPB better at the same horizon.
+
+A shortened bigram run at 3400 steps landed at `0.800232` BPB in `88.92m`,
+which is `0.000372` BPB better than the dense log50 compile control while using
+about `4.23%` less training time.
+
 ## Compile Mode Probe
 
 Short d16/40 throughput probes on the minimal branch:
