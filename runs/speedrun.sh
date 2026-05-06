@@ -70,7 +70,19 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 8)
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=24 --target-param-data-ratio=8 --device-batch-size=16 --fp8 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+    --depth=24 \
+    --target-param-data-ratio=8 \
+    --device-batch-size=16 \
+    --total-batch-size=1048576 \
+    --fp8 \
+    --compile-mode=max-autotune-no-cudagraphs \
+    --muon-plus \
+    --muon-eq=row \
+    --bigram-embed-factor=5 \
+    --scalar-lr=0.3 \
+    --train-log-every=50 \
+    --run=$WANDB_RUN
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
 torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size=16
 

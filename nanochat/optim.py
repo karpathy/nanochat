@@ -100,6 +100,8 @@ def muon_step_fused(
     beta2_t: Tensor,                # () - 0-D CPU tensor, beta2 for second moment
     ns_steps: int,                  # 5 - number of Newton-Schulz/Polar Express iterations
     red_dim: int,                   # -1 or -2 - reduction dimension for variance
+    muon_plus: bool,                # add one Frobenius renormalization after orthogonalization
+    muon_eq_axis: int,              # 0 none, 1 row, 2 column equilibration before orthogonalization
 ) -> None:
     """
     Fused Muon step: momentum -> polar_express -> variance_reduction -> cautious_update
@@ -115,6 +117,14 @@ def muon_step_fused(
     # Polar express
     # Cast to bf16 for speed when available; skip cast otherwise (fp16 is unstable here due to limited exponent range)
     X = g.bfloat16() if COMPUTE_DTYPE == torch.bfloat16 else g
+    if muon_eq_axis == 1:
+        target = X.float().norm(dim=(-2, -1), keepdim=True) / (X.size(-2) ** 0.5)
+        row_norm = X.float().norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        X = X * (target / row_norm).to(X.dtype)
+    elif muon_eq_axis == 2:
+        target = X.float().norm(dim=(-2, -1), keepdim=True) / (X.size(-1) ** 0.5)
+        col_norm = X.float().norm(dim=-2, keepdim=True).clamp_min(1e-6)
+        X = X * (target / col_norm).to(X.dtype)
     X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.01 + 1e-6)
     if g.size(-2) > g.size(-1): # Tall matrix
         for a, b, c in polar_express_coeffs[:ns_steps]:
@@ -127,6 +137,10 @@ def muon_step_fused(
             B = b * A + c * (A @ A)
             X = a * X + B @ X
     g = X
+    if muon_plus:
+        target_norm = min(g.size(-2), g.size(-1)) ** 0.5
+        current_norm = g.float().norm(dim=(-2, -1), keepdim=True).clamp_min(1e-6)
+        g = g * (target_norm / current_norm).to(g.dtype)
 
     # Variance reduction
     beta2 = beta2_t.to(g.dtype)
@@ -277,6 +291,8 @@ class MuonAdamW(torch.optim.Optimizer):
             self._muon_beta2_t,
             group["ns_steps"],
             red_dim,
+            group.get("muon_plus", False),
+            group.get("muon_eq_axis", 0),
         )
 
         # Copy back to original params
@@ -486,7 +502,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
                 grad_chunk[:num_owned], stacked_owned,
                 state["momentum_buffer"][:num_owned], state["second_momentum_buffer"][:num_owned],
                 self._muon_momentum_t, self._muon_lr_t, self._muon_wd_t, self._muon_beta2_t,
-                group["ns_steps"], red_dim,
+                group["ns_steps"], red_dim, group.get("muon_plus", False), group.get("muon_eq_axis", 0),
             )
             updated_params[:num_owned].copy_(stacked_owned)
 
