@@ -2,7 +2,7 @@
 
 This branch is based on upstream nanochat master at `dc54a1a`. The goal is to
 keep the submission patch limited to the changes needed to reproduce the
-best-performing speedrun recipe:
+best-performing speedrun recipe. These are the `scripts/base_train.py` defaults:
 
 ```bash
 --fp8
@@ -129,18 +129,19 @@ Adds:
 - `--bigram-lambda-lr`
 
 These configure the bigram residual and its optimizer treatment from the
-training script without changing defaults. With default values, upstream
-behavior is unchanged because `--bigram-embed-factor` defaults to `0`.
+training script. The submission default is `--bigram-embed-factor=5`.
 
 ### Muon Variant Flags
 
 Adds:
 
 - `--muon-plus`
+- `--no-muon-plus`
 - `--muon-eq`
 
-These expose the optimizer variants used in the recipe. Defaults preserve the
-original optimizer behavior.
+These expose the optimizer variants used in the recipe. The submission defaults
+are Muon+ enabled and `--muon-eq=row`. `--no-muon-plus --muon-eq=none` restores
+the original Muon path.
 
 ### Train Logging Cadence
 
@@ -148,7 +149,7 @@ Adds `--train-log-every`. Values greater than 1 avoid converting the loss tensor
 to a Python scalar every step.
 
 Why this helps: per-step logging creates extra synchronization overhead. The
-speedrun uses `--train-log-every=50`, which keeps useful progress reporting
+submission default is `--train-log-every=50`, which keeps useful progress reporting
 while reducing logging overhead.
 
 ### Compile Mode
@@ -160,16 +161,17 @@ Adds `--compile-mode` so the speedrun can request:
 ```
 
 Why this helps: on the d16 probe, this compile mode was about 2.5% faster than
-default `torch.compile` for the candidate recipe.
+default `torch.compile` for the candidate recipe. It is now the submission
+default.
 
 ### Skip Initial Eval
 
-Adds `--skip-initial-eval`. This avoids spending benchmark wall time on the
-step-0 validation pass when it is not needed for a speedrun submission.
+Adds `--skip-initial-eval` and `--initial-eval`. The submission default skips
+the step-0 validation pass; `--initial-eval` restores the original behavior.
 
 ## `runs/speedrun.sh`
 
-Updates the default speedrun command to use the winning recipe flags:
+Uses the `scripts/base_train.py` submission defaults:
 
 - FP8
 - depth `22`

@@ -70,24 +70,9 @@ echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # d22 Muon+/row-eq + hashed bigram recipe.
-# This is the submission default: fixed 11,600 optimizer steps, eval every 250,
-# and one in-training CORE pass halfway through.
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
-    --depth=22 \
-    --num-iterations=11600 \
-    --target-param-data-ratio=11 \
-    --device-batch-size=32 \
-    --total-batch-size=524288 \
-    --fp8 \
-    --compile-mode=max-autotune-no-cudagraphs \
-    --muon-plus \
-    --muon-eq=row \
-    --bigram-embed-factor=5 \
-    --scalar-lr=0.3 \
-    --train-log-every=50 \
-    --eval-every=250 \
-    --core-metric-every=5800 \
-    --run=$WANDB_RUN
+# scripts/base_train defaults are the submission defaults: fixed 11,600
+# optimizer steps, eval every 250, and one in-training CORE pass halfway through.
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --run=$WANDB_RUN
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
 torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size=16
 
