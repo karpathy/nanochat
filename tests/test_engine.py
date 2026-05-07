@@ -47,6 +47,25 @@ class MockModel:
         return logits
 
 
+class BigramStateModel(MockModel):
+    """Mock model whose greedy next token depends on current and previous token ids."""
+    def forward(self, ids, kv_cache=None):
+        B, T = ids.shape
+        if kv_cache is None:
+            prev = torch.cat([torch.zeros(B, 1, dtype=ids.dtype), ids[:, :-1]], dim=1)
+        else:
+            if T > 1 or kv_cache.prev_token is None:
+                prev = torch.cat([torch.zeros(B, 1, dtype=ids.dtype), ids[:, :-1]], dim=1)
+            else:
+                prev = kv_cache.prev_token
+            kv_cache.prev_token = ids[:, -1:].clone()
+            kv_cache.advance(T)
+        next_token = ((ids + prev + 1) % 256).long()
+        logits = torch.full((B, T, self.vocab_size), -1000.0)
+        logits.scatter_(2, next_token.unsqueeze(-1), 1000.0)
+        return logits
+
+
 class ByteTokenizer:
     """
     Simple byte-level tokenizer for testing.
@@ -114,6 +133,7 @@ def test_kv_cache_basic():
     # Test reset
     kv_cache.reset()
     assert kv_cache.get_pos() == 0
+    assert kv_cache.prev_token is None
 
     # Test get_layer_cache returns correct views
     k_layer0, v_layer0 = kv_cache.get_layer_cache(0)
@@ -136,6 +156,7 @@ def test_kv_cache_prefill():
     # Write some data to source cache
     src_cache.k_cache[0, 0, :16, :, :] = 1.0
     src_cache.v_cache[0, 0, :16, :, :] = 2.0
+    src_cache.prev_token = torch.tensor([[123]])
     src_cache.advance(16)
 
     # Create destination cache with larger seq_len
@@ -153,6 +174,29 @@ def test_kv_cache_prefill():
     # Check data was copied
     assert (dst_cache.k_cache[0, 0, :16, :, :] == 1.0).all()
     assert (dst_cache.v_cache[0, 0, :16, :, :] == 2.0).all()
+    assert dst_cache.prev_token.tolist() == [[123]]
+
+
+def test_engine_preserves_bigram_prev_token_state():
+    """Engine KV-cache generation should match naive generation for previous-token state."""
+    model = BigramStateModel()
+    tokenizer = ByteTokenizer()
+    engine = Engine(model, tokenizer)
+    prompt = [261, 17, 23, 42]
+    max_tokens = 8
+
+    def naive_generate(tokens):
+        ids = torch.tensor([tokens], dtype=torch.long)
+        out = []
+        for _ in range(max_tokens):
+            logits = model.forward(ids)
+            next_id = int(logits[:, -1, :].argmax(dim=-1).item())
+            out.append(next_id)
+            ids = torch.cat([ids, torch.tensor([[next_id]], dtype=torch.long)], dim=1)
+        return tokens + out
+
+    results, _ = engine.generate_batch(prompt, temperature=0.0, max_tokens=max_tokens)
+    assert results[0] == naive_generate(prompt)
 
 
 def test_multi_sample_first_token_diversity():
