@@ -6,12 +6,17 @@ best-performing speedrun recipe:
 
 ```bash
 --fp8
+--depth=22
+--num-iterations=11600
+--total-batch-size=524288
 --bigram-embed-factor=5
 --muon-plus
 --muon-eq=row
 --scalar-lr=0.3
 --train-log-every=50
 --compile-mode=max-autotune-no-cudagraphs
+--eval-every=250
+--core-metric-every=5800
 ```
 
 It does not include the experimental branches that were tested and rejected:
@@ -167,13 +172,17 @@ step-0 validation pass when it is not needed for a speedrun submission.
 Updates the default speedrun command to use the winning recipe flags:
 
 - FP8
-- total batch size `1048576`
+- depth `22`
+- fixed `11600` optimizer steps
+- total batch size `524288`
 - Muon+
 - row equilibration
 - bigram factor 5
 - scalar LR `0.3`
 - log every 50 training steps
 - `max-autotune-no-cudagraphs` compile mode
+- validation every 250 steps
+- one CORE metric pass halfway through at step 5800
 
 This script is the intended entry point for reproducing the submitted run.
 

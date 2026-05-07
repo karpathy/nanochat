@@ -69,12 +69,15 @@ python -m scripts.tok_eval
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
-# d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 8)
+# d22 Muon+/row-eq + hashed bigram recipe.
+# This is the submission default: fixed 11,600 optimizer steps, eval every 250,
+# and one in-training CORE pass halfway through.
 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
-    --depth=24 \
-    --target-param-data-ratio=8 \
-    --device-batch-size=16 \
-    --total-batch-size=1048576 \
+    --depth=22 \
+    --num-iterations=11600 \
+    --target-param-data-ratio=11 \
+    --device-batch-size=32 \
+    --total-batch-size=524288 \
     --fp8 \
     --compile-mode=max-autotune-no-cudagraphs \
     --muon-plus \
@@ -82,6 +85,8 @@ torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
     --bigram-embed-factor=5 \
     --scalar-lr=0.3 \
     --train-log-every=50 \
+    --eval-every=250 \
+    --core-metric-every=5800 \
     --run=$WANDB_RUN
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
 torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size=16
