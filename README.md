@@ -37,6 +37,14 @@ uv sync --extra cpu    # (or) Use for CPU-only / MPS
 source .venv/bin/activate
 ```
 
+If you want to use HuggingFace tokenizers or models, add the extra "hf":
+
+```bash
+uv sync --extra gpu --extra hf    # Use for CUDA (A100/H100/etc.)
+uv sync --extra cpu --extra hf    # (or) Use for CPU-only / MPS
+source .venv/bin/activate
+```
+
 For development (adds pytest, matplotlib, ipykernel, transformers, etc.):
 
 ```bash

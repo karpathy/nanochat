@@ -31,10 +31,6 @@ SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| 
 
 # -----------------------------------------------------------------------------
 # Generic GPT-4-style tokenizer based on HuggingFace Tokenizer
-from tokenizers import Tokenizer as HFTokenizer
-from tokenizers import pre_tokenizers, decoders, Regex
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
 
 class HuggingFaceTokenizer:
     """Light wrapper around HuggingFace Tokenizer for some utilities"""
@@ -42,15 +38,26 @@ class HuggingFaceTokenizer:
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
 
+    @staticmethod
+    def _try_import():
+        try:
+            import tokenizers
+        except ImportError as exc:
+            raise ImportError("Missing HF dependencies, install the extra 'hf'") from exc
+
     @classmethod
     def from_pretrained(cls, hf_path):
         # init from a HuggingFace pretrained tokenizer (e.g. "gpt2")
+        cls._try_import()
+        from tokenizers import Tokenizer as HFTokenizer
         tokenizer = HFTokenizer.from_pretrained(hf_path)
         return cls(tokenizer)
 
     @classmethod
     def from_directory(cls, tokenizer_dir):
         # init from a local directory on disk (e.g. "out/tokenizer")
+        cls._try_import()
+        from tokenizers import Tokenizer as HFTokenizer
         tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
         tokenizer = HFTokenizer.from_file(tokenizer_path)
         return cls(tokenizer)
@@ -58,6 +65,10 @@ class HuggingFaceTokenizer:
     @classmethod
     def train_from_iterator(cls, text_iterator, vocab_size):
         # train from an iterator of text
+        from tokenizers import Tokenizer as HFTokenizer
+        from tokenizers import pre_tokenizers, decoders, Regex
+        from tokenizers.models import BPE
+        from tokenizers.trainers import BpeTrainer
         # Configure the HuggingFace Tokenizer
         tokenizer = HFTokenizer(BPE(
             byte_fallback=True, # needed!

@@ -11,7 +11,6 @@ dependencies = [
     "psutil>=7.1.0",
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
-    "tokenizers>=0.22.0",
     "torch==2.9.1",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
@@ -23,7 +22,6 @@ dev = [
     "matplotlib>=3.10.8",
     "pytest>=8.0.0",
     "python-dotenv>=1.2.1",
-    "transformers>=4.57.3",
 ]
 
 [tool.pytest.ini_options]
@@ -59,6 +57,10 @@ cpu = [
 ]
 gpu = [
     "torch==2.9.1",
+]
+hf = [
+    "tokenizers>=0.22.0",
+    "transformers>=4.57.3",
 ]
 
 [tool.uv]
