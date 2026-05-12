@@ -62,4 +62,5 @@ python -m scripts.chat_sft \
 # python -m scripts.chat_cli -p "What is the capital of France?"
 
 # Chat with the model over a pretty WebUI ChatGPT style
+# uv sync --extra cpu --extra web
 # python -m scripts.chat_web

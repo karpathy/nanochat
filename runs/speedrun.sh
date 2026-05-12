@@ -89,6 +89,7 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 # python -m scripts.chat_cli -p "Why is the sky blue?"
 
 # even better, chat with your model over a pretty WebUI ChatGPT style
+# uv sync --extra gpu --extra web
 # python -m scripts.chat_web
 
 # -----------------------------------------------------------------------------
