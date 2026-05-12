@@ -4,8 +4,8 @@ All the generic code lives here, and all the evaluation-specific
 code lives in nanochat directory and is imported from here.
 
 Example runs:
-python -m scripts.chat_eval -a ARC-Easy
-torchrun --nproc_per_node=8 -m scripts.chat_eval -- -a ARC-Easy
+python -m scripts.chat_eval -i sft -a ARC-Easy
+torchrun --nproc_per_node=8 -m scripts.chat_eval -- -i sft -a ARC-Easy
 """
 
 import argparse
@@ -241,6 +241,7 @@ if __name__ == "__main__":
             centered_acc = (acc - baseline_acc) / (1.0 - baseline_acc)
             centered_mean += centered_acc
         chatcore_metric = centered_mean / len(results)
+        print0(f"CORE score: {100 * chatcore_metric:.2f}%")
         chatcore_metric_dict = {"ChatCORE metric": chatcore_metric}
     get_report().log(section="Chat evaluation " + args.source, data=[
         vars(args), # CLI args
