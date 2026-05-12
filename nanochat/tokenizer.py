@@ -284,6 +284,8 @@ class RustBPETokenizer:
             # some conversation surgery is necessary here for now...
             conversation = copy.deepcopy(conversation) # avoid mutating the original
             messages = conversation["messages"]
+            if len(messages) < 2:
+                raise ValueError("System message must be followed by a user message")
             assert messages[1]["role"] == "user", "System message must be followed by a user message"
             messages[1]["content"] = messages[0]["content"] + "\n\n" + messages[1]["content"]
             messages = messages[1:]
