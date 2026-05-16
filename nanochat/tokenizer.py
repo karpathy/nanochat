@@ -4,31 +4,6 @@ BPE Tokenizer in the style of GPT-4.
 Two implementations are available:
 1) HuggingFace Tokenizer that can do both training and inference but is really confusing
 2) Our own RustBPE Tokenizer for training and tiktoken for efficient inference
-
-Patch 1 — encode_special lru_cache → instance dict
-__init__:
-pythondef __init__(self, enc, bos_token):
-    self.enc = enc
-    self._special_id_cache: dict[str, int] = {}
-    self.bos_token_id = self.encode_special(bos_token)
-encode_special (decorator'ı kaldır):
-pythondef encode_special(self, text):
-    cached = self._special_id_cache.get(text)
-    if cached is not None:
-        return cached
-    v = self.enc.encode_single_token(text)
-    self._special_id_cache[text] = v
-    return v
-Signature aynı, cache davranışı aynı (lookup → hit/miss), instance ölünce cache da ölüyor. Caller hiçbir şey fark etmez.
-Patch 2 — insert(0) O(n) shift'i kaldır
-RustBPETokenizer.encode, batch dalı:
-pythonelif isinstance(text, list):
-    ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
-    if prepend is not None:
-        ids = [[prepend_id, *row] for row in ids]
-    if append is not None:
-        for ids_row in ids:
-            ids_row.append(append_id)
 """
 
 import os
