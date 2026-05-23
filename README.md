@@ -41,7 +41,49 @@ For development (adds pytest, matplotlib, ipykernel, transformers, etc.):
 
 ```bash
 uv sync --extra gpu --group dev
+# or
+uv sync --extra cpu --group dev
 ```
+
+### Learning notebooks
+
+If you're trying to understand how nanochat works, there are lightweight notebooks in [dev/](dev/) that explain individual subsystems with toy examples before you dive into the full training code.
+
+Suggested walkthrough order:
+
+- [dev/01_tokenizer_walkthrough.ipynb](dev/01_tokenizer_walkthrough.ipynb) explains the `RustBPETokenizer`, `get_tokenizer()`, and what [scripts/tok_train.py](scripts/tok_train.py) / [scripts/tok_eval.py](scripts/tok_eval.py) do.
+- [dev/02_gpt_walkthrough.ipynb](dev/02_gpt_walkthrough.ipynb) explains how [nanochat/gpt.py](nanochat/gpt.py) turns token-id tensors into embeddings, block activations, logits, and loss.
+- [dev/03_training_walkthrough.ipynb](dev/03_training_walkthrough.ipynb) explains how token batches become loss, gradients, and optimizer updates.
+
+Open notebooks with the repo's `.venv` after syncing with `--group dev`. These notebooks are intentionally lightweight and do not require downloading the pretraining dataset first.
+
+Example terminal flow:
+
+```bash
+cd /path/to/nanochat
+uv sync --extra cpu --group dev   # or --extra gpu --group dev
+source .venv/bin/activate
+python -c "import rustbpe, tiktoken, torch, tokenizers; print('ok')"
+python -m ipykernel install --user --name nanochat --display-name "nanochat (.venv)"
+jupyter lab dev/01_tokenizer_walkthrough.ipynb
+```
+
+Then select the `nanochat (.venv)` kernel in Jupyter. The `ipykernel` piece comes from the repo's `.venv`; `jupyter lab` itself can come from your existing Jupyter install.
+
+The `python -c ...` check should print `ok`. If it does not, the repo environment is not set up correctly yet.
+
+If the first notebook cell says `Missing dependencies: rustbpe, tiktoken, torch, tokenizers`, Jupyter most likely opened the notebook on the wrong kernel. Switch the notebook kernel to `nanochat (.venv)` and rerun the cell.
+
+If you want to retry the notebook from scratch later, a minimal rerun flow is:
+
+```bash
+cd /path/to/nanochat
+source .venv/bin/activate
+python -c "import rustbpe, tiktoken, torch, tokenizers; print('ok')"
+jupyter lab dev/01_tokenizer_walkthrough.ipynb
+```
+
+Then in Jupyter, confirm the kernel is `nanochat (.venv)` and use `Restart Kernel and Run All`.
 
 ### Reproduce and talk to GPT-2
 
@@ -141,7 +183,10 @@ I've published a number of guides that might contain helpful information, most r
 │   ├── gen_synthetic_data.py       # Example synthetic data for identity
 │   ├── generate_logo.html
 │   ├── nanochat.png
-│   └── repackage_data_reference.py # Pretraining data shard generation
+│   ├── repackage_data_reference.py # Pretraining data shard generation
+│   ├── 01_tokenizer_walkthrough.ipynb # Toy notebook explaining the tokenizer pipeline
+│   ├── 02_gpt_walkthrough.ipynb       # Toy notebook explaining the GPT forward path
+│   └── 03_training_walkthrough.ipynb  # Toy notebook explaining the training loop
 ├── nanochat
 │   ├── __init__.py                 # empty
 │   ├── checkpoint_manager.py       # Save/Load model checkpoints
