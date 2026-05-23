@@ -1,7 +1,7 @@
 [project]
-name = "nanochat"
+name = "clarinet"
 version = "0.1.0"
-description = "the minimal full-stack ChatGPT clone"
+description = "Instrumental-variable conditioned LLM, research fork of nanochat by Vemund Rundberget"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -69,3 +69,8 @@ conflicts = [
         { extra = "gpu" },
     ],
 ]
+
+# Explicit package list: project name no longer matches a single top-level dir,
+# so we tell the build backend which directories to ship.
+[tool.hatch.build.targets.wheel]
+packages = ["nanochat", "clarinet"]

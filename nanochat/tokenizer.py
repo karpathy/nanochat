@@ -22,6 +22,12 @@ SPECIAL_TOKENS = [
     "<|python_end|>",
     "<|output_start|>", # python REPL outputs back to assistant
     "<|output_end|>",
+    # clarinet: source markers used as the IV instrument. one is prepended right after
+    # <|bos|> at the start of each document, identifying which corpus the document came
+    # from (or <|src_unknown|> when dropped out during training, à la classifier-free guidance).
+    "<|src_reasoning|>",
+    "<|src_general|>",
+    "<|src_unknown|>",
 ]
 
 # NOTE: this split pattern deviates from GPT-4 in that we use \p{N}{1,2} instead of \p{N}{1,3}
