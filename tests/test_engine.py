@@ -5,6 +5,7 @@ python -m pytest tests/test_engine.py -v
 """
 
 import torch
+import nanochat.engine as engine_module
 from nanochat.engine import KVCache, Engine
 from dataclasses import dataclass
 
@@ -153,6 +154,28 @@ def test_kv_cache_prefill():
     # Check data was copied
     assert (dst_cache.k_cache[0, 0, :16, :, :] == 1.0).all()
     assert (dst_cache.v_cache[0, 0, :16, :, :] == 2.0).all()
+
+
+def test_engine_kv_cache_dtype_follows_compute_dtype(monkeypatch):
+    """Generation KV cache should use nanochat's compute dtype, not device-only heuristics."""
+    captured_dtypes = []
+    original_kv_cache = engine_module.KVCache
+
+    class CapturingKVCache(original_kv_cache):
+        def __init__(self, *args, **kwargs):
+            captured_dtypes.append(kwargs["dtype"])
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(engine_module, "COMPUTE_DTYPE", torch.bfloat16)
+    monkeypatch.setattr(engine_module, "KVCache", CapturingKVCache)
+
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+    prompt = [261, 72, 101, 108, 108, 111]  # <bos> + "Hello"
+
+    engine.generate_batch(prompt, num_samples=2, max_tokens=1, temperature=0.0)
+
+    assert captured_dtypes == [torch.bfloat16, torch.bfloat16]
 
 
 def test_multi_sample_first_token_diversity():
