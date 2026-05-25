@@ -27,7 +27,7 @@ import torch.distributed as dist
 
 from nanochat.gpt import GPT, GPTConfig, Linear
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, round_to_nearest_multiple
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -272,6 +272,8 @@ target_tokens = int(args.target_param_data_ratio * num_scaling_params) # optimal
 d12_ref = build_model_meta(12) # creates the model on meta device
 D_REF = args.target_param_data_ratio * get_scaling_params(d12_ref) # compute-optimal d12 training horizon in tokens (measured empirically)
 B_REF = 2**19 # optimal batch size at d12 ~= 524,288 tokens (measured empirically)
+tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
+world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
 
 # 2) Now that we have the token horizon, we can calculate the optimal batch size
 # We follow the Power Lines paper (Bopt ∝ D^0.383), ref: https://arxiv.org/abs/2505.13738
@@ -280,8 +282,19 @@ total_batch_size = args.total_batch_size # user-provided override is possible
 if total_batch_size == -1:
     batch_size_ratio = target_tokens / D_REF
     predicted_batch_size = B_REF * batch_size_ratio ** 0.383
-    total_batch_size = 2 ** round(math.log2(predicted_batch_size)) # clamp to nearest power of 2 for efficiency
+    preferred_batch_size = 2 ** round(math.log2(predicted_batch_size)) # clamp to nearest power of 2 for efficiency
+    total_batch_size = preferred_batch_size
+    if total_batch_size % world_tokens_per_fwdbwd != 0:
+        total_batch_size = round_to_nearest_multiple(preferred_batch_size, world_tokens_per_fwdbwd)
+        print0(f"Adjusted auto batch size from {preferred_batch_size:,} to {total_batch_size:,} tokens so it is divisible by {world_tokens_per_fwdbwd:,} tokens/micro-batch")
     print0(f"Auto-computed optimal batch size: {total_batch_size:,} tokens")
+elif total_batch_size % world_tokens_per_fwdbwd != 0:
+    suggested_batch_size = round_to_nearest_multiple(total_batch_size, world_tokens_per_fwdbwd)
+    raise ValueError(
+        f"--total-batch-size={total_batch_size:,} must be divisible by "
+        f"device_batch_size * max_seq_len * world_size = {world_tokens_per_fwdbwd:,}. "
+        f"Try --total-batch-size={suggested_batch_size:,}."
+    )
 
 # 3) Knowing the batch size, we can now calculate a learning rate correction (bigger batch size allows higher learning rates)
 batch_lr_scale = 1.0
@@ -404,9 +417,6 @@ else:
     total_training_time = loop_state["total_training_time"]
 
 # Figure out the needed gradient accumulation micro-steps to reach the desired total batch size per step
-tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
-world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
-assert total_batch_size % world_tokens_per_fwdbwd == 0
 grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
 print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")

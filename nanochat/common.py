@@ -78,6 +78,19 @@ def get_base_dir():
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
+def ceil_div(a: int, b: int) -> int:
+    assert b > 0, f"Divisor must be positive, got {b}"
+    return -(-a // b)
+
+def round_to_nearest_multiple(value: int, multiple: int) -> int:
+    assert value > 0, f"Value must be positive, got {value}"
+    assert multiple > 0, f"Multiple must be positive, got {multiple}"
+    lower = (value // multiple) * multiple
+    upper = (value // multiple + 1) * multiple
+    if lower == 0:
+        return upper
+    return lower if value - lower <= upper - value else upper
+
 def download_file_with_lock(url, filename, postprocess_fn=None):
     """
     Downloads a file from a URL to a local path in the base directory.
