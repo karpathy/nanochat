@@ -54,6 +54,7 @@ Suggested walkthrough order:
 - [dev/01_tokenizer_walkthrough.ipynb](dev/01_tokenizer_walkthrough.ipynb) explains the `RustBPETokenizer`, `get_tokenizer()`, and what [scripts/tok_train.py](scripts/tok_train.py) / [scripts/tok_eval.py](scripts/tok_eval.py) do.
 - [dev/02_gpt_walkthrough.ipynb](dev/02_gpt_walkthrough.ipynb) explains how [nanochat/gpt.py](nanochat/gpt.py) turns token-id tensors into embeddings, block activations, logits, and loss.
 - [dev/03_training_walkthrough.ipynb](dev/03_training_walkthrough.ipynb) explains how token batches become loss, gradients, and optimizer updates.
+- [dev/04_eval_and_generation_walkthrough.ipynb](dev/04_eval_and_generation_walkthrough.ipynb) explains how checkpoints are loaded, how generation uses logits and KV cache, and how BPB / CORE evaluation should be interpreted.
 
 Open notebooks with the repo's `.venv` after syncing with `--group dev`. These notebooks are intentionally lightweight and do not require downloading the pretraining dataset first.
 
@@ -97,6 +98,14 @@ You may wish to do so in a screen session as this will take ~3 hours to run. Onc
 
 ```bash
 python -m scripts.chat_web
+```
+
+On rented/cloud machines, make sure `NANOCHAT_BASE_DIR` points to storage that survives machine shutdown. The speedrun stores tokenizer files, checkpoints, eval results, and reports there. By default it uses `~/.cache/nanochat`, but you can override it before launch, e.g.:
+
+```bash
+export NANOCHAT_BASE_DIR=/workspace/nanochat-cache
+mkdir -p "$NANOCHAT_BASE_DIR"
+screen -L -Logfile "$NANOCHAT_BASE_DIR/speedrun.log" -S speedrun bash runs/speedrun.sh
 ```
 
 And then visit the URL shown. Make sure to access it correctly, e.g. on Lambda use the public IP of the node you're on, followed by the port, so for example [http://209.20.xxx.xxx:8000/](http://209.20.xxx.xxx:8000/), etc. Then talk to your LLM as you'd normally talk to ChatGPT! Get it to write stories or poems. Ask it to tell you who you are to see a hallucination. Ask it why the sky is blue. Or why it's green. The speedrun is a 4e19 FLOPs capability model so it's a bit like talking to a kindergartener :).
@@ -186,7 +195,8 @@ I've published a number of guides that might contain helpful information, most r
 │   ├── repackage_data_reference.py # Pretraining data shard generation
 │   ├── 01_tokenizer_walkthrough.ipynb # Toy notebook explaining the tokenizer pipeline
 │   ├── 02_gpt_walkthrough.ipynb       # Toy notebook explaining the GPT forward path
-│   └── 03_training_walkthrough.ipynb  # Toy notebook explaining the training loop
+│   ├── 03_training_walkthrough.ipynb  # Toy notebook explaining the training loop
+│   └── 04_eval_and_generation_walkthrough.ipynb # Toy notebook explaining eval/generation
 ├── nanochat
 │   ├── __init__.py                 # empty
 │   ├── checkpoint_manager.py       # Save/Load model checkpoints
