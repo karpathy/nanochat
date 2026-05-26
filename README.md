@@ -108,6 +108,15 @@ mkdir -p "$NANOCHAT_BASE_DIR"
 screen -L -Logfile "$NANOCHAT_BASE_DIR/speedrun.log" -S speedrun bash runs/speedrun.sh
 ```
 
+Before paying for the full run, you can verify artifact saving with a tiny preflight run:
+
+```bash
+export NANOCHAT_BASE_DIR=/workspace/nanochat-cache
+bash runs/preflight_artifacts.sh
+```
+
+The preflight writes into a timestamped subdirectory under `NANOCHAT_BASE_DIR`, checks that tokenizer files, checkpoints, optimizer state, metadata, and report sections were created, and prints an archive command.
+
 And then visit the URL shown. Make sure to access it correctly, e.g. on Lambda use the public IP of the node you're on, followed by the port, so for example [http://209.20.xxx.xxx:8000/](http://209.20.xxx.xxx:8000/), etc. Then talk to your LLM as you'd normally talk to ChatGPT! Get it to write stories or poems. Ask it to tell you who you are to see a hallucination. Ask it why the sky is blue. Or why it's green. The speedrun is a 4e19 FLOPs capability model so it's a bit like talking to a kindergartener :).
 
 ---
