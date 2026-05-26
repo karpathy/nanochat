@@ -241,6 +241,7 @@ def get_peak_flops(device_name: str) -> float:
         (["h100", "nvl"], 835e12),
         (["h100", "pcie"], 756e12),
         (["h100"], 989e12),
+        (["h20"], 148e12),  # Nvidia h20 Peak BF16 Tensor TFLOPS with FP32 Accumulate
         (["h800", "nvl"], 989e12),
         (["h800"], 756e12),
         # NVIDIA Ampere data center
