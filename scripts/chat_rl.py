@@ -100,12 +100,13 @@ def get_batch():
         model.eval() # ensure the model is in eval mode
         generated_token_sequences = []
         masks = []
-        num_sampling_steps = args.num_samples // args.device_batch_size # go sequentially to prevent OOMs
-        for sampling_step in range(num_sampling_steps):
+        sampling_step = 0
+        for sample_start in range(0, args.num_samples, args.device_batch_size):
+            batch_num_samples = min(args.device_batch_size, args.num_samples - sample_start)
             seed = hash((step, example_idx, sampling_step)) & 0x7FFFFFFF # positive half of int32
             generated_token_sequences_batch, masks_batch = engine.generate_batch(
                 tokens,
-                num_samples=args.device_batch_size,
+                num_samples=batch_num_samples,
                 max_tokens=args.max_new_tokens,
                 temperature=args.temperature,
                 top_k=args.top_k,
@@ -113,6 +114,7 @@ def get_batch():
             )
             generated_token_sequences.extend(generated_token_sequences_batch)
             masks.extend(masks_batch)
+            sampling_step += 1
 
         # Calculate the rewards for each sample
         rewards = []
@@ -251,11 +253,11 @@ for step in range(num_steps):
         # Evaluate the loss and gradients
         model.train() # ensure the model is in train mode
         # We need one more loop because we can never exceed the device_batch_size
-        assert inputs_all.size(0) % args.device_batch_size == 0
-        num_passes = inputs_all.size(0) // args.device_batch_size
+        num_passes = (inputs_all.size(0) + args.device_batch_size - 1) // args.device_batch_size
         for pass_idx in range(num_passes):
             # Pluck out the batch for this pass
-            b0, b1 = pass_idx * args.device_batch_size, (pass_idx + 1) * args.device_batch_size
+            b0 = pass_idx * args.device_batch_size
+            b1 = min(b0 + args.device_batch_size, inputs_all.size(0))
             inputs = inputs_all[b0:b1]
             targets = targets_all[b0:b1]
             rewards = rewards_all[b0:b1]
