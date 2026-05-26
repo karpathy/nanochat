@@ -22,6 +22,7 @@ from dataclasses import asdict
 from contextlib import contextmanager
 
 import wandb
+import swanlab
 import torch
 import torch.distributed as dist
 
@@ -95,9 +96,12 @@ else:
     gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
 print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 
-# wandb logging init
-use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
+# logging init
+if os.getenv("SWANLAB_ENABLE", "0") == "1":
+    wandb_run = swanlab.init(project="nanochat", name=args.run, config=user_config)
+else:
+    use_dummy_wandb = args.run == "dummy" or not master_process
+    wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
 
 # Flash Attention status
 from nanochat.flash_attention import USE_FA3
