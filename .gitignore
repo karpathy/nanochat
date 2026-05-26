@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 .DS_Store
 dev-ignore/
+dev/.ipynb_checkpoints/
 report.md
 eval_bundle/
 
