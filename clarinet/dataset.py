@@ -15,7 +15,13 @@ import os
 from nanochat.common import get_base_dir
 from nanochat.dataset import list_parquet_files as list_climbmix_parquet_files
 
-from clarinet.prepare_proof_pile import proof_pile_dir
+REASONING_DIR_NAME = "reasoning_data"
+PROOF_PILE_DIR_NAME = "proof_pile_2"
+
+
+def proof_pile_dir():
+    """Where prepare_proof_pile.py writes shards, and where the dataloader reads them from."""
+    return os.path.join(get_base_dir(), REASONING_DIR_NAME, PROOF_PILE_DIR_NAME)
 
 
 def list_proof_pile_parquet_files():

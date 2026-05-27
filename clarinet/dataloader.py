@@ -47,8 +47,11 @@ def _interleave_sources(paths_with_source, reasoning_mix_ratio):
     A deterministic schedule (no RNG) keeps all DDP ranks aligned without
     needing a shared seed.
     """
-    climbmix = [p for p in paths_with_source if not p[1]]
-    reasoning = [p for p in paths_with_source if p[1]]
+    # Pull just the paths — paths_with_source entries are (path, is_reasoning)
+    # tuples, and we re-wrap below. Failing to unwrap here used to produce
+    # nested tuples that downstream pyarrow rejected.
+    climbmix = [p for p, is_r in paths_with_source if not is_r]
+    reasoning = [p for p, is_r in paths_with_source if is_r]
     if not climbmix or not reasoning:
         return list(paths_with_source)
 

@@ -22,16 +22,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from datasets import interleave_datasets, load_dataset
 
-from nanochat.common import get_base_dir
+from clarinet.dataset import proof_pile_dir
 
-REASONING_DIR_NAME = "reasoning_data"
-PROOF_PILE_DIR_NAME = "proof_pile_2"
 DOCS_PER_SHARD = 65536  # ~64 row groups of 1024 docs each, in line with climbmix shard sizes
 DOCS_PER_ROW_GROUP = 1024
-
-
-def proof_pile_dir():
-    return os.path.join(get_base_dir(), REASONING_DIR_NAME, PROOF_PILE_DIR_NAME)
 
 
 def streaming_proof_pile(subsets):

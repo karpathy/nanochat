@@ -100,10 +100,20 @@ def _first_batch(tok, **kwargs):
     return inputs, targets
 
 
+def _assert_path_str_bool_pairs(out):
+    """Guard against the regression where interleave returned ((str, bool), bool)."""
+    for entry in out:
+        assert isinstance(entry, tuple) and len(entry) == 2, f"bad shape: {entry!r}"
+        path, is_r = entry
+        assert isinstance(path, str), f"path should be str, got {type(path).__name__}: {path!r}"
+        assert isinstance(is_r, bool), f"is_reasoning should be bool, got {type(is_r).__name__}"
+
+
 def test_interleave_sources_50_50():
     paths = [(f"c{i}", False) for i in range(6)] + [(f"r{i}", True) for i in range(6)]
     out = _interleave_sources(paths, 0.5)
     assert len(out) == 12
+    _assert_path_str_bool_pairs(out)
     n_reasoning = sum(1 for _, r in out if r)
     assert n_reasoning == 6
     # No long run of either source — alternation should be tight at 0.5
@@ -117,6 +127,7 @@ def test_interleave_sources_30_70():
     paths = [(f"c{i}", False) for i in range(7)] + [(f"r{i}", True) for i in range(3)]
     out = _interleave_sources(paths, 0.3)
     assert len(out) == 10
+    _assert_path_str_bool_pairs(out)
     n_reasoning = sum(1 for _, r in out if r)
     assert n_reasoning == 3
 

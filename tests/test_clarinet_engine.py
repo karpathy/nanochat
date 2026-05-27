@@ -156,33 +156,21 @@ def test_prefix_with_marker_does_not_mutate_input():
 # Dual-pass mechanics
 
 
-def _consume(generator, n):
-    for _ in range(n):
-        try:
-            next(generator)
-        except StopIteration:
-            break
-
-
 def test_two_caches_used_during_prefill():
     model = CountingMockModel()
     eng = ClarinetEngine(model, ClarinetByteTokenizer())
     prompt = [261, 72, 101, 108, 108, 111]  # <bos> Hello
 
-    gen = eng.generate(prompt, num_samples=1, max_tokens=1, temperature=0.0,
-                       iv_weight=1.0, wald_scale=1.0)
-    _consume(gen, 1)
+    # list() drives the generator to StopIteration. After the single yield at
+    # max_tokens=1, the engine still runs one post-yield decode forward (to
+    # prepare logits for what would be the next step) before the loop breaks.
+    list(eng.generate(prompt, num_samples=1, max_tokens=1, temperature=0.0,
+                      iv_weight=1.0, wald_scale=1.0))
 
-    # Prefill: 2 calls on the small prefill caches (one per condition).
-    # Decode step 1: 2 calls on the decode caches (one per condition).
-    # That's 4 forward calls total for max_tokens=1.
+    # 2 prefill forwards (one per condition) + 2 post-yield decode forwards = 4.
     assert len(model.forward_calls) == 4, (
         f"expected 4 forward calls (2 prefill + 2 decode), got {len(model.forward_calls)}"
     )
-
-    # The 4 calls hit at most 4 distinct cache identities, and they come in
-    # cond/uncond pairs by construction. Specifically: 2 prefill caches (held
-    # briefly then deleted) and 2 decode caches.
     cache_ids = [cid for cid, _ in model.forward_calls]
     assert len(set(cache_ids)) >= 2, "engine should use more than one KV cache"
 
@@ -192,20 +180,16 @@ def test_decode_caches_advance_in_lockstep():
     eng = ClarinetEngine(model, ClarinetByteTokenizer())
     prompt = [261, 72, 105]  # <bos> Hi
 
-    gen = eng.generate(prompt, num_samples=1, max_tokens=4, temperature=0.0,
-                       iv_weight=0.5, wald_scale=1.0)
-    _consume(gen, 4)
+    list(eng.generate(prompt, num_samples=1, max_tokens=4, temperature=0.0,
+                      iv_weight=0.5, wald_scale=1.0))
 
-    # Per decode step there are exactly 2 forward calls (one cond, one uncond),
-    # each consuming 1 token. After prefill (2 calls, each consuming len(prompt) tokens),
-    # we should see 2*max_tokens=8 single-token forward calls.
+    # 4 yields → 4 post-yield decode steps → 2*4 single-token forwards.
     decode_calls = [(cid, T) for cid, T in model.forward_calls if T == 1]
     assert len(decode_calls) == 2 * 4, (
         f"expected 8 single-token decode forward calls (4 steps * 2 conditions), "
         f"got {len(decode_calls)}"
     )
 
-    # The decode forward calls should split evenly between two cache identities
     from collections import Counter
     counts = Counter(cid for cid, _ in decode_calls)
     assert len(counts) == 2, f"expected exactly 2 distinct decode caches, got {len(counts)}"
