@@ -3,10 +3,10 @@ Clarinet's BOS-aligned best-fit dataloader.
 
 Differences from nanochat.dataloader.tokenizing_distributed_data_loader_with_state_bos_bestfit:
 
-  1. Documents come from TWO parquet sources — climbmix (general) and
-     proof-pile-2 (reasoning) — interleaved by a deterministic round-robin
-     that honors `reasoning_mix_ratio`. All DDP ranks see the same
-     source-ordering so per-rank row-group sharding stays well-defined.
+  1. Documents come from TWO parquet sources — climbmix (general) and the
+     reasoning corpus (currently FineMath) — interleaved by a deterministic
+     round-robin that honors `reasoning_mix_ratio`. All DDP ranks see the
+     same source-ordering so per-rank row-group sharding stays well-defined.
 
   2. After BOS-prepending, the source-marker token (<|src_reasoning|>,
      <|src_general|>, or <|src_unknown|>) is spliced in at position 1 of
@@ -80,7 +80,7 @@ def _document_batches(split, reasoning_mix_ratio, resume_state_dict, tokenizer_b
     """
     Infinite iterator over (text_batch, is_reasoning, (pq_idx, rg_idx, epoch)).
 
-    pq_idx indexes into the interleaved (climbmix + proof-pile-2) sequence.
+    pq_idx indexes into the interleaved (climbmix + reasoning) sequence.
     DDP sharding is done at the row-group level inside each parquet file,
     matching upstream.
     """

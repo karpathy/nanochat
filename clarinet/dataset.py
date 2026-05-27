@@ -2,9 +2,9 @@
 Source-labelled parquet listing for clarinet.
 
 Combines the existing climbmix shards (from nanochat/dataset.py) with the
-proof-pile-2 shards produced by clarinet/prepare_proof_pile.py, attaching an
-is_reasoning flag to each path so the clarinet dataloader can pick a
-source-marker token per document.
+reasoning-corpus shards produced by clarinet/prepare_reasoning_data.py,
+attaching an is_reasoning flag to each path so the clarinet dataloader can
+pick a source-marker token per document.
 
 Train/val convention matches upstream nanochat: last shard in each source dir
 is the validation shard, all earlier shards are train.
@@ -16,24 +16,31 @@ from nanochat.common import get_base_dir
 from nanochat.dataset import list_parquet_files as list_climbmix_parquet_files
 
 REASONING_DIR_NAME = "reasoning_data"
-PROOF_PILE_DIR_NAME = "proof_pile_2"
+FINEMATH_DIR_NAME = "finemath"
 
 
-def proof_pile_dir():
-    """Where prepare_proof_pile.py writes shards, and where the dataloader reads them from."""
-    return os.path.join(get_base_dir(), REASONING_DIR_NAME, PROOF_PILE_DIR_NAME)
+def reasoning_data_dir():
+    """
+    Where prepare_reasoning_data.py writes the reasoning-corpus shards, and where
+    the dataloader reads them from. Currently FineMath (HuggingFaceTB/finemath,
+    finemath-4plus subset) — the original plan called for EleutherAI/proof-pile-2
+    but their data hosting rotted out (data files return 404 on HF Hub as of
+    2026-05). FineMath is the closest practical replacement: parquet-native,
+    actively maintained, math-focused.
+    """
+    return os.path.join(get_base_dir(), REASONING_DIR_NAME, FINEMATH_DIR_NAME)
 
 
-def list_proof_pile_parquet_files():
-    """Returns paths to proof-pile-2 shards written by prepare_proof_pile.py."""
-    pdir = proof_pile_dir()
-    if not os.path.isdir(pdir):
+def list_reasoning_parquet_files():
+    """Returns paths to reasoning-corpus shards written by prepare_reasoning_data.py."""
+    rdir = reasoning_data_dir()
+    if not os.path.isdir(rdir):
         return []
     files = sorted(
-        f for f in os.listdir(pdir)
+        f for f in os.listdir(rdir)
         if f.endswith(".parquet") and not f.endswith(".tmp")
     )
-    return [os.path.join(pdir, f) for f in files]
+    return [os.path.join(rdir, f) for f in files]
 
 
 def list_parquet_files_with_source(split):
@@ -45,10 +52,10 @@ def list_parquet_files_with_source(split):
     assert split in ("train", "val"), "split must be 'train' or 'val'"
 
     climbmix = list_climbmix_parquet_files(warn_on_legacy=(split == "train"))
-    reasoning = list_proof_pile_parquet_files()
+    reasoning = list_reasoning_parquet_files()
     assert reasoning, (
-        f"No proof-pile-2 shards found under {proof_pile_dir()}. "
-        "Run `python -m clarinet.prepare_proof_pile` first."
+        f"No reasoning-corpus shards found under {reasoning_data_dir()}. "
+        "Run `python -m clarinet.prepare_reasoning_data` first."
     )
 
     if split == "train":

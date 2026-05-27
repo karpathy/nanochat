@@ -2,7 +2,7 @@
 Hermetic tests for clarinet's source-marker-aware dataloader.
 
 Uses a mock tokenizer and synthetic parquet files in tmp_path so nothing
-depends on a real model, real climbmix, or real proof-pile-2 download.
+depends on a real model, real climbmix, or real reasoning-corpus download.
 
 Run: python -m pytest tests/test_clarinet_dataloader.py -v
 """
