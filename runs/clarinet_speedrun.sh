@@ -31,7 +31,7 @@ fi
 python -m nanochat.report reset
 
 # -----------------------------------------------------------------------------
-# Data: climbmix (general) + proof-pile-2 (reasoning instrument)
+# Data: climbmix (general) + FineMath (reasoning instrument)
 
 # Start downloading climbmix shards in the background.
 # 170 climbmix shards for ~GPT-2 capacity, +20 padding.
@@ -39,10 +39,9 @@ python -m nanochat.dataset -n 8                    # 8 shards for tokenizer trai
 python -m nanochat.dataset -n 170 &
 DATASET_DOWNLOAD_PID=$!
 
-# Prepare proof-pile-2 reasoning shards in parallel (~50 shards = ~3M docs).
-# Note: requires `datasets` and may need HF auth for the EleutherAI repo.
-python -m clarinet.prepare_proof_pile -n 50 &
-PROOF_PILE_PID=$!
+# Prepare FineMath reasoning shards in parallel (~50 shards = ~3M docs).
+python -m clarinet.prepare_reasoning_data -n 50 &
+REASONING_PID=$!
 
 # Tokenizer (must be retrained because clarinet added 3 new special tokens to SPECIAL_TOKENS).
 # Trained only on general-source data so the vocab isn't biased toward math/proofs.
@@ -53,8 +52,8 @@ python -m scripts.tok_eval
 # Base model: clarinet IV-conditioned pretraining
 echo "Waiting for climbmix download to complete..."
 wait $DATASET_DOWNLOAD_PID
-echo "Waiting for proof-pile-2 prep to complete..."
-wait $PROOF_PILE_PID
+echo "Waiting for FineMath prep to complete..."
+wait $REASONING_PID
 
 # d24 model, same compute envelope as vanilla speedrun, with clarinet's source-marker
 # conditioning and CFG-style dropout. Mix ratio and dropout are the v1 defaults.

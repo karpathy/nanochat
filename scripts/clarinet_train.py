@@ -24,7 +24,7 @@ from clarinet.dataloader import clarinet_data_loader
 def _parse_and_strip_clarinet_args():
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--reasoning-mix-ratio", type=float, default=0.3,
-                     help="Fraction of training docs sampled from proof-pile-2 (vs climbmix).")
+                     help="Fraction of training docs sampled from the reasoning corpus (FineMath) vs climbmix.")
     pre.add_argument("--p-uncond", type=float, default=0.1,
                      help="Probability of overriding the true source marker with <|src_unknown|> during training.")
     pre.add_argument("--clarinet-seed", type=int, default=0,

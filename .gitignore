@@ -11,3 +11,20 @@ eval_bundle/
 # Local setup
 CLAUDE.md
 wandb/
+
+# Stray venv that occasionally lands at repo root (instead of inside .venv/)
+# when uv/pip is invoked oddly; keep these out of commits.
+/bin/
+/lib/
+/lib64/
+/pyvenv.cfg
+/share/
+/include/
+
+# Local installer downloads (ROCm, etc.)
+*.deb
+*.rpm
+
+# Downloaded artifacts from one-off curls
+/index.html
+
