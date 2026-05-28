@@ -42,7 +42,8 @@ uv sync --extra cpu --group dev      # bootstraps everything except torch
 # torch 2.9.1's ROCm wheels are only published at rocm6.3 and rocm6.4;
 # matching the system ROCm runtime version is best (we assume 6.4 since
 # that's what AMD's current WSL installer ships).
-.venv/bin/pip install --quiet --force-reinstall torch==2.9.1 \
+# Use `uv pip` (not `.venv/bin/pip`) because uv-created venvs don't ship pip.
+uv pip install --quiet --force-reinstall torch==2.9.1 \
     --index-url https://download.pytorch.org/whl/rocm6.4
 source .venv/bin/activate
 
