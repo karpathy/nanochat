@@ -38,9 +38,12 @@ mkdir -p "$CLARINET_BASE_DIR"
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 uv sync --extra cpu --group dev      # bootstraps everything except torch
-# Swap in the ROCm torch build (overrides the cpu wheel from uv sync):
+# Swap in the ROCm torch build (overrides the cpu wheel from uv sync).
+# torch 2.9.1's ROCm wheels are only published at rocm6.3 and rocm6.4;
+# matching the system ROCm runtime version is best (we assume 6.4 since
+# that's what AMD's current WSL installer ships).
 .venv/bin/pip install --quiet --force-reinstall torch==2.9.1 \
-    --index-url https://download.pytorch.org/whl/rocm6.2
+    --index-url https://download.pytorch.org/whl/rocm6.4
 source .venv/bin/activate
 
 # Sanity: GPU must be visible
