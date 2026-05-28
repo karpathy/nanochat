@@ -1,3 +1,13 @@
+[build-system]
+# Without an explicit build-system, pip falls back to setuptools and tries
+# auto-discovery, which fails because the repo has multiple top-level dirs
+# (`nanochat`, `clarinet`, `runs`, `dev`, `tests`, ...). uv users don't hit
+# this because uv handles editable installs without invoking the build
+# backend. With this section, `pip install -e .` uses hatchling, which honors
+# the explicit packages list in [tool.hatch.build.targets.wheel] below.
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "clarinet"
 version = "0.1.0"
