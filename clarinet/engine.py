@@ -11,9 +11,18 @@ Then combine logits as
 
 where
   - w is the standard guidance weight (`iv_weight`)
-  - s is the Wald-style scale factor (`wald_scale`); s=1 reduces to vanilla CFG.
-    A learned-from-hidden-states estimator for s is left as future work
-    (would require exposing pre-lm_head activations from gpt.py).
+  - s is the scale factor (`wald_scale`); s=1 reduces to vanilla CFG.
+
+The scale s may be held constant (vanilla CFG) or made *content-adaptive* per
+decode step via the L1 (total-variation) distance between the conditional and
+unconditional next-token distributions — see `l1_adaptive_scale`. The intuition:
+spend guidance budget where the source marker actually changes the prediction
+(high divergence) and back off where it doesn't (low divergence). This measures
+the marker's effect directly in output space, from the two logit vectors we
+already compute, so it needs no probe and no extra forward pass. It is an
+adaptive-CFG schedule, not a causal estimator — the modulation *direction* is a
+hypothesis to validate against held-out reasoning likelihood / GSM8K, with
+constant s (scale_lo == scale_hi) as the control it must beat.
 
 Two parallel KVCaches are maintained — one per conditioning. Both consume the
 same sampled-token sequence after combination, so they stay in lock-step.
@@ -46,14 +55,49 @@ class ClarinetEngine(Engine):
         """
         return logit_uncond + iv_weight * wald_scale * (logit_cond - logit_uncond)
 
+    @staticmethod
+    def l1_adaptive_scale(logit_cond, logit_uncond, base_scale, scale_lo, scale_hi):
+        """
+        Content-adaptive scale from the L1 (total-variation) distance between
+        the conditional and unconditional next-token distributions.
+
+        Returns a per-row scale with the logits' leading shape and trailing
+        dim 1 (broadcastable over the vocab axis in combine_logits):
+
+            s = base_scale * (scale_lo + (scale_hi - scale_lo) * d)
+
+        where d in [0, 1] is the total-variation distance (= 0.5 * L1) between
+        softmax(logit_cond) and softmax(logit_uncond). When the source marker
+        barely changes the prediction (d ~ 0) the scale relaxes toward
+        scale_lo; when it strongly forks the prediction (d ~ 1) it rises toward
+        scale_hi.
+
+        scale_lo == scale_hi short-circuits to the constant `base_scale *
+        scale_lo` (no softmax computed), and the default scale_lo == scale_hi
+        == 1.0 is exactly vanilla CFG. Both logits are already softcapped by
+        gpt.py, which is the same space the combine happens in.
+        """
+        if scale_lo == scale_hi:
+            return base_scale * scale_lo
+        p = torch.softmax(logit_cond.float(), dim=-1)
+        q = torch.softmax(logit_uncond.float(), dim=-1)
+        d = 0.5 * (p - q).abs().sum(dim=-1, keepdim=True)  # (..., 1) in [0, 1]
+        return base_scale * (scale_lo + (scale_hi - scale_lo) * d)
+
     @torch.inference_mode()
     def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0,
-                 top_k=None, seed=42, iv_weight=1.5, wald_scale=1.0):
+                 top_k=None, seed=42, iv_weight=1.5, wald_scale=1.0,
+                 scale_lo=1.0, scale_hi=1.0):
         """
         IV-conditioned generation. iv_weight=0 recovers the unconditional
         distribution; iv_weight=1, wald_scale=1 recovers the conditional
         distribution exactly. iv_weight in [1.5, 2.5] is the expected
         useful range.
+
+        scale_lo / scale_hi enable the L1 content-adaptive scale schedule (see
+        l1_adaptive_scale). The default scale_lo == scale_hi == 1.0 keeps s
+        constant at `wald_scale` (vanilla CFG). A recommended starting point
+        for the adaptive variant is scale_lo=0.5, scale_hi=2.0.
 
         Forwards everything else (tool-use state machine, forced tokens,
         completion detection) from the upstream Engine.generate().
@@ -105,7 +149,11 @@ class ClarinetEngine(Engine):
         uncond_cache = expand_to_decode_cache(uncond_prefill)
         del cond_prefill, uncond_prefill
 
-        logits = self.combine_logits(cond_logits, uncond_logits, iv_weight, wald_scale)
+        def combine(cond, uncond):
+            s = self.l1_adaptive_scale(cond, uncond, wald_scale, scale_lo, scale_hi)
+            return self.combine_logits(cond, uncond, iv_weight, s)
+
+        logits = combine(cond_logits, uncond_logits)
 
         row_states = [RowState(tokens.copy()) for _ in range(num_samples)]
 
@@ -152,4 +200,4 @@ class ClarinetEngine(Engine):
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
             cond_logits = self.model.forward(ids, kv_cache=cond_cache)[:, -1, :]
             uncond_logits = self.model.forward(ids, kv_cache=uncond_cache)[:, -1, :]
-            logits = self.combine_logits(cond_logits, uncond_logits, iv_weight, wald_scale)
+            logits = combine(cond_logits, uncond_logits)
