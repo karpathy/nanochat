@@ -123,6 +123,76 @@ def test_combine_wald_scale_multiplies_step():
 
 
 # -----------------------------------------------------------------------------
+# l1_adaptive_scale: content-adaptive guidance schedule
+
+
+def test_l1_scale_constant_when_lo_equals_hi():
+    # scale_lo == scale_hi short-circuits to a constant base_scale*scale_lo,
+    # regardless of the logits (no softmax, exact vanilla-CFG behavior).
+    lc = torch.tensor([[1.0, 5.0, -3.0, 0.0]])
+    lu = torch.tensor([[-2.0, 0.0, 4.0, 1.0]])
+    s = ClarinetEngine.l1_adaptive_scale(lc, lu, base_scale=1.5, scale_lo=1.0, scale_hi=1.0)
+    assert s == 1.5
+
+
+def test_l1_scale_zero_divergence_hits_floor():
+    # Identical distributions => TV distance 0 => s == base_scale * scale_lo.
+    lc = torch.tensor([[1.0, 2.0, 3.0]])
+    lu = torch.tensor([[1.0, 2.0, 3.0]])
+    s = ClarinetEngine.l1_adaptive_scale(lc, lu, base_scale=2.0, scale_lo=0.5, scale_hi=2.0)
+    assert torch.allclose(s, torch.tensor([[1.0]]))  # 2.0 * 0.5
+
+
+def test_l1_scale_max_divergence_hits_ceiling():
+    # Disjoint support => TV distance ~1 => s ~ base_scale * scale_hi.
+    big = 50.0
+    lc = torch.tensor([[big, -big]])
+    lu = torch.tensor([[-big, big]])
+    s = ClarinetEngine.l1_adaptive_scale(lc, lu, base_scale=1.0, scale_lo=0.5, scale_hi=2.0)
+    assert torch.allclose(s, torch.tensor([[2.0]]), atol=1e-4)
+
+
+def test_l1_scale_monotone_and_bounded():
+    # As divergence grows, s grows monotonically and stays within
+    # [base*lo, base*hi]. Build three cond logits at increasing distance from a
+    # fixed uncond.
+    lu = torch.tensor([[0.0, 0.0, 0.0, 0.0]])
+    near = torch.tensor([[0.1, 0.0, 0.0, 0.0]])
+    mid = torch.tensor([[2.0, 0.0, 0.0, 0.0]])
+    far = torch.tensor([[20.0, 0.0, 0.0, 0.0]])
+    lo, hi, base = 0.5, 2.0, 1.0
+    f = lambda lc: ClarinetEngine.l1_adaptive_scale(lc, lu, base, lo, hi).item()
+    s_near, s_mid, s_far = f(near), f(mid), f(far)
+    assert s_near < s_mid < s_far
+    assert base * lo <= s_near and s_far <= base * hi
+
+
+def test_l1_scale_is_per_row():
+    # Row 0 identical (floor), row 1 disjoint (ceiling): scale is per-row.
+    big = 50.0
+    lc = torch.tensor([[1.0, 2.0], [big, -big]])
+    lu = torch.tensor([[1.0, 2.0], [-big, big]])
+    s = ClarinetEngine.l1_adaptive_scale(lc, lu, base_scale=1.0, scale_lo=0.5, scale_hi=2.0)
+    assert s.shape == (2, 1)
+    assert torch.allclose(s[0], torch.tensor([0.5]), atol=1e-4)
+    assert torch.allclose(s[1], torch.tensor([2.0]), atol=1e-4)
+
+
+def test_generate_with_adaptive_scale_smoke():
+    # End-to-end: enabling the adaptive schedule doesn't crash and still yields
+    # max_tokens tokens. (Mock model returns uniform logits so divergence is 0,
+    # i.e. the schedule sits at its floor, but the code path is exercised.)
+    model = CountingMockModel()
+    eng = ClarinetEngine(model, ClarinetByteTokenizer())
+    prompt = [261, 72, 105]
+    out = list(eng.generate(prompt, num_samples=2, max_tokens=3, temperature=0.0,
+                            iv_weight=2.0, wald_scale=1.0, scale_lo=0.5, scale_hi=2.0))
+    assert len(out) == 3
+    for col in out:
+        assert len(col) == 2
+
+
+# -----------------------------------------------------------------------------
 # _prefix_with_marker: prompt splicing
 
 
