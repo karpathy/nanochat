@@ -17,7 +17,15 @@ mkdir -p "$CLARINET_BASE_DIR"
 # Python venv setup with uv
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
-uv sync --extra gpu
+# Intended path: the `gpu` extra installs the CUDA 12.8 (Hopper/H100) torch
+# build, sourced from download.pytorch.org/whl/cu128 — correct for an 8xH100
+# node with open network. On environments whose network policy blocks that CDN
+# (e.g. Claude Code on the web), fall back to PyPI, whose linux torch==2.9.1
+# wheel is itself the +cu128 build and drives H100s identically (CUDA 12.8, NCCL).
+uv sync --extra gpu || {
+    echo "uv sync --extra gpu failed (PyTorch CDN unreachable?); installing from PyPI instead."
+    uv pip install -e .
+}
 source .venv/bin/activate
 
 # -----------------------------------------------------------------------------

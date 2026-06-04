@@ -6,7 +6,9 @@
 # (download.pytorch.org), which the web environment's network policy blocks
 # (HTTP 403). The exact pinned torch==2.9.1 is also published on PyPI, which is
 # reachable, so we install the project from PyPI via `uv pip` instead. The PyPI
-# linux torch wheel is CUDA-enabled but runs fine on CPU-only nodes.
+# linux torch wheel is the +cu128 build (CUDA 12.8 + NCCL): it runs fine on
+# CPU-only boxes AND drives GPUs (incl. 8xH100) when a web session has them, so
+# this one hook covers both the CPU and CUDA web environments.
 set -euo pipefail
 
 # Only run in the remote (Claude Code on the web) environment.
