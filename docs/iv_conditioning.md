@@ -357,3 +357,178 @@ also that generation behavior depends only on the **product `w·s`**, so `w` and
 The dataloader installs a conditioning channel; the engine exploits it; the L1
 schedule is an opt-in, still-to-be-validated refinement of *how hard* to lean on
 that channel at each step.
+
+---
+
+## 8. Running the complete setup, step by step
+
+This section is operational: how to actually train a Clarinet model and talk to
+it. Section 7 is the *what*; this is the *how*.
+
+### 8.1 Prerequisites and hardware
+
+- **Dependency manager:** [uv](https://docs.astral.sh/uv/). Install with
+  `curl -LsSf https://astral.sh/uv/install.sh | sh` if you don't have it.
+- **Hardware, three tiers:**
+  - **8×H100** — the reference. The full speedrun is ~3.5 h. `--fp8` is used and
+    is **Hopper-only** (H100, not A100).
+  - **1×H100 (or any single GPU)** — works unchanged; the trainer auto-switches
+    to gradient accumulation (`base_train.py:407-410`), producing the *same*
+    model in ~8× the wall-clock. Drop `--fp8` on non-Hopper cards.
+  - **CPU / MPS** — only for exercising code paths on a tiny model; see
+    `runs/runcpu.sh`. You will not get useful results.
+- **Scratch space:** set a base directory for data and checkpoints. The scripts
+  use `CLARINET_BASE_DIR` (defaults to `~/.cache/nanochat`):
+  ```bash
+  export CLARINET_BASE_DIR="$HOME/.cache/nanochat"
+  ```
+
+### 8.2 The fast path: one script
+
+Everything below is wired into two reference scripts. Pick the one matching your
+hardware and run it:
+
+```bash
+bash runs/clarinet_speedrun.sh      # 8×H100 (fp8, large batch), ~3.5 h
+bash runs/clarinet_local_run.sh     # single GPU (smaller batch, --save-every for resume)
+```
+
+Optionally name the run for Weights & Biases: `WANDB_RUN=clarinet-v1 bash runs/clarinet_speedrun.sh`
+(omit and it logs to a dummy run). Run inside `screen`/`tmux` for long jobs.
+
+The rest of this section breaks that script into its stages so you can run them
+one at a time, understand each, or restart partway through.
+
+### 8.3 Step 0 — environment and dependencies
+
+```bash
+[ -d ".venv" ] || uv venv
+uv sync --extra gpu        # CUDA 12.8 (H100); use --extra cpu for CPU/MPS
+source .venv/bin/activate
+```
+
+**Network caveat (important on locked-down nodes).** `uv sync` pulls torch from
+the PyTorch CDN (`download.pytorch.org`). If that host is blocked by your
+environment's network policy (e.g. Claude Code on the web returns HTTP 403),
+`uv sync` fails. Fall back to PyPI, whose `torch==2.9.1` linux wheel is itself
+the `+cu128` build (CUDA 12.8 + NCCL — identical on H100):
+
+```bash
+uv pip install -e .                 # runtime deps
+uv pip install -e . --group dev     # + pytest etc. for running the test suite
+```
+
+`runs/clarinet_speedrun.sh` already does this fallback automatically, and the
+`.claude/hooks/session-start.sh` SessionStart hook performs the PyPI install for
+you in web sessions.
+
+### 8.4 Step 1 — datasets (two corpora)
+
+Download the general corpus (climbmix) and build the reasoning corpus (FineMath)
+in parallel. The first small download feeds tokenizer training; the larger ones
+run in the background:
+
+```bash
+python -m nanochat.report reset                 # start a fresh run report
+
+python -m nanochat.dataset -n 8                  # 8 climbmix shards (for the tokenizer)
+python -m nanochat.dataset -n 170 &              # full climbmix (~GPT-2 capacity)
+python -m clarinet.prepare_reasoning_data -n 50 &  # ~50 FineMath shards
+```
+
+For a quick smoke test use far fewer shards (e.g. `-n 8` for both). Wait for the
+background jobs (`wait`) before training.
+
+### 8.5 Step 2 — tokenizer (must be retrained)
+
+Clarinet adds three special tokens (`<|src_reasoning|>`, `<|src_general|>`,
+`<|src_unknown|>`) to `SPECIAL_TOKENS`, so **any pre-existing tokenizer is
+incompatible** — retrain it. It is trained on general-source data only, so the
+vocabulary isn't skewed toward math/proof notation:
+
+```bash
+python -m scripts.tok_train
+python -m scripts.tok_eval
+```
+
+### 8.6 Step 3 — IV-conditioned pretraining
+
+This is where the source-marker conditioning is installed (sections 2–4). The
+two Clarinet-specific knobs are `--reasoning-mix-ratio` (fraction of reasoning
+shards, default 0.3) and `--p-uncond` (CFG dropout, default 0.1); everything
+else forwards to `base_train.py`.
+
+**8×H100:**
+```bash
+torchrun --standalone --nproc_per_node=8 -m scripts.clarinet_train -- \
+    --reasoning-mix-ratio=0.3 --p-uncond=0.1 \
+    --depth=24 --target-param-data-ratio=8 --device-batch-size=16 --fp8 --run=$WANDB_RUN
+```
+
+**Single GPU** (no `torchrun`, no `--` separator; smaller per-device batch, drop
+`--fp8` off Hopper). Gradient accumulation makes up the same total batch:
+```bash
+python -m scripts.clarinet_train \
+    --reasoning-mix-ratio=0.3 --p-uncond=0.1 \
+    --depth=24 --target-param-data-ratio=8 \
+    --device-batch-size=2 --save-every=500 --run=$WANDB_RUN
+```
+
+If you hit out-of-memory, lower `--device-batch-size` (16 → 8 → 4 → 2 → 1);
+correctness is unchanged, only the accumulation step count grows.
+
+Then evaluate the base model (plain single-pass eval, no IV combine yet):
+```bash
+torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size=16
+```
+
+### 8.7 Step 4 — supervised finetuning (SFT)
+
+```bash
+curl -L -o "$CLARINET_BASE_DIR/identity_conversations.jsonl" \
+    https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
+
+torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --device-batch-size=16 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft   # reference, single-pass
+```
+
+### 8.8 Step 5 — the IV experiment: guidance-weight sweep
+
+This is the actual Clarinet measurement — accuracy as a function of the guidance
+weight `w`. It is **single-GPU by design** (the dual-pass engine keeps two KV
+caches and we want clean per-task numbers), so run it on one device even if you
+trained on eight:
+
+```bash
+python -m scripts.iv_eval -i sft \
+    -a GSM8K,ARC-Easy,ARC-Challenge,MMLU,HumanEval,SpellingBee \
+    --weights 0,0.5,1.0,1.5,2.0,3.0,5.0
+```
+
+`w=0` is the unconditional baseline; `w=1` is plain conditional; `w>1` is the
+guided regime. To also probe the L1 adaptive schedule, pass `--wald-scale` (and,
+once exposed there, the `scale_lo`/`scale_hi` knobs) — remembering that only the
+product `w·s` matters, so sweep one with the other fixed.
+
+### 8.9 Step 6 — talk to it, and finish the report
+
+```bash
+python -m scripts.clarinet_cli --iv-weight 2.0 -p "Prove that sqrt(2) is irrational."
+# enable the L1 adaptive scale:
+python -m scripts.clarinet_cli --iv-weight 2.0 --scale-lo 0.5 --scale-hi 2.0
+
+python -m nanochat.report generate     # assemble the run report
+```
+
+### 8.10 Resuming, and running the tests
+
+- **Resume:** the trainer checkpoints every `--save-every` steps and the
+  Clarinet dataloader persists `{pq_idx, rg_idx, epoch}`, so re-running the same
+  script after an interruption (or spot preemption) auto-resumes from the latest
+  checkpoint. This is why the single-GPU script sets `--save-every=500`.
+- **Tests** (needs the `dev` group installed, step 0):
+  ```bash
+  python -m pytest tests/test_clarinet_engine.py tests/test_clarinet_dataloader.py -q
+  ```
+  These are hermetic (mock model + byte tokenizer) and run in seconds on CPU —
+  no GPU or trained checkpoint required.
