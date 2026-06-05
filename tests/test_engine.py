@@ -5,6 +5,7 @@ python -m pytest tests/test_engine.py -v
 """
 
 import torch
+import pytest
 from nanochat.engine import KVCache, Engine
 from dataclasses import dataclass
 
@@ -244,6 +245,18 @@ def test_num_samples_count():
     for num_samples in [1, 4, 16, 64]:
         results, _ = engine.generate_batch(prompt, num_samples=num_samples, max_tokens=3)
         assert len(results) == num_samples, f"Expected {num_samples} sequences from {num_samples} samples, got {len(results)}"
+
+
+def test_generate_validates_token_input():
+    """Prompt tokens must be a non-empty list of integers."""
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+
+    with pytest.raises(AssertionError, match="expecting non-empty list of ints"):
+        next(engine.generate([], max_tokens=1))
+
+    with pytest.raises(AssertionError, match="expecting non-empty list of ints"):
+        next(engine.generate([261, "bad"], max_tokens=1))
 
 
 def test_different_seeds_introduce_variation_when_temperature_nonzero():
