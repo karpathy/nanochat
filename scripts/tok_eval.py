@@ -155,10 +155,10 @@ all_text = [
     ("code", code_text),
     ("math", math_text),
     ("science", science_text),
-    ("fwe-train", train_text),
+    ("climbmix-train", train_text),
 ]
 if val_text:
-    all_text.append(("fwe-val", val_text))
+    all_text.append(("climbmix-val", val_text))
 
 # Try out current default compared to GPT-2 and GPT-4 tokenizers
 tokenizer_results = {}
