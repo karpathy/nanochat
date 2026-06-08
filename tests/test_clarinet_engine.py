@@ -298,3 +298,116 @@ def test_iv_weight_zero_matches_unconditional_only_sampling():
     out = list(eng.generate(prompt, num_samples=1, max_tokens=2, temperature=0.0,
                             iv_weight=0.0, wald_scale=1.0))
     assert len(out) == 2
+
+
+# ---------------------------------------------------------------------------
+# categorical_logits_at: batch forward with IV combine for categorical eval
+
+
+class PositionAwareMockModel:
+    """
+    Returns logits that depend on position AND the marker token at index 1,
+    so we can verify both position extraction and dual-pass combination.
+
+    - If marker at index 1 is <|src_reasoning|> (262): logit at pos t = t + 1.0
+    - If marker at index 1 is <|src_unknown|> (264): logit at pos t = 0.0
+    - Otherwise (base Engine path): logit at pos t = t + 1.0
+    """
+
+    def __init__(self, vocab_size=8):
+        self.vocab_size = vocab_size
+        self.config = MockConfig()
+        self._device = torch.device("cpu")
+        self.forward_count = 0
+
+    def get_device(self):
+        return self._device
+
+    def forward(self, ids, kv_cache=None):
+        B, T = ids.shape
+        self.forward_count += 1
+        logits = torch.zeros(B, T, self.vocab_size)
+        for b in range(B):
+            if T > 1 and ids[b, 1].item() == 262:  # reasoning marker
+                for t in range(T):
+                    logits[b, t, :] = float(t + 1)
+            elif T > 1 and ids[b, 1].item() == 264:  # unknown marker
+                pass  # zeros
+            else:
+                # Base engine path (no marker): position-based logits
+                for t in range(T):
+                    logits[b, t, :] = float(t + 1)
+        return logits
+
+
+def test_base_engine_categorical_logits_at():
+    """Engine.categorical_logits_at extracts logits at the correct positions."""
+    from nanochat.engine import Engine
+    model = PositionAwareMockModel()
+    eng = Engine(model, ClarinetByteTokenizer())
+    # Two sequences of different lengths
+    seq1 = [261, 10, 20, 30]       # answer at position 3
+    seq2 = [261, 10, 20, 30, 40]   # answer at position 4
+    logits = eng.categorical_logits_at([seq1, seq2], [3, 4])
+    assert logits.shape == (2, model.vocab_size)
+    # Position 3 -> value 4.0 (t+1), Position 4 -> value 5.0
+    assert torch.allclose(logits[0], torch.full((model.vocab_size,), 4.0))
+    assert torch.allclose(logits[1], torch.full((model.vocab_size,), 5.0))
+
+
+def test_categorical_logits_at_dual_pass_combine():
+    """ClarinetEngine.categorical_logits_at applies dual-pass IV combine."""
+    model = PositionAwareMockModel()
+    eng = ClarinetEngine(model, ClarinetByteTokenizer())
+    # Input: [BOS, t1, t2] — BOS present, marker inserts at pos 1 -> offset +1
+    # After marker: [BOS, marker, t1, t2] — answer originally at pos 2, now at 3
+    seq = [261, 10, 20]  # answer at position 2 (last position)
+    logits = eng.categorical_logits_at([seq], [2], iv_weight=2.0, wald_scale=1.0)
+    assert logits.shape == (1, model.vocab_size)
+    # Adjusted position 3: cond = 4.0 (3+1), uncond = 0.0
+    # combine: 0.0 + 2.0 * 1.0 * (4.0 - 0.0) = 8.0
+    assert torch.allclose(logits, torch.full((1, model.vocab_size), 8.0))
+
+
+def test_categorical_logits_at_w_zero_recovers_uncond():
+    """iv_weight=0 returns the unconditional logits (zeros from unknown marker)."""
+    model = PositionAwareMockModel()
+    eng = ClarinetEngine(model, ClarinetByteTokenizer())
+    seq = [261, 10, 20]
+    logits = eng.categorical_logits_at([seq], [2], iv_weight=0.0, wald_scale=1.0)
+    assert torch.allclose(logits, torch.zeros(1, model.vocab_size))
+
+
+def test_categorical_logits_at_w_one_recovers_cond():
+    """iv_weight=1, wald_scale=1 returns the conditional logits exactly."""
+    model = PositionAwareMockModel()
+    eng = ClarinetEngine(model, ClarinetByteTokenizer())
+    seq = [261, 10, 20]
+    logits = eng.categorical_logits_at([seq], [2], iv_weight=1.0, wald_scale=1.0)
+    # Adjusted position 3: cond = 4.0
+    assert torch.allclose(logits, torch.full((1, model.vocab_size), 4.0))
+
+
+def test_categorical_logits_at_issues_two_forwards():
+    """Verifies exactly two forward calls (cond + uncond) per batch."""
+    model = PositionAwareMockModel()
+    eng = ClarinetEngine(model, ClarinetByteTokenizer())
+    seq = [261, 10, 20]
+    eng.categorical_logits_at([seq], [2], iv_weight=1.5, wald_scale=1.0)
+    assert model.forward_count == 2
+
+
+def test_categorical_logits_at_multi_element_batch():
+    """Dual-pass works correctly with multiple sequences of different lengths."""
+    model = PositionAwareMockModel()
+    eng = ClarinetEngine(model, ClarinetByteTokenizer())
+    seq1 = [261, 10, 20]           # answer at pos 2, adjusted to 3
+    seq2 = [261, 10, 20, 30, 40]   # answer at pos 4, adjusted to 5
+    logits = eng.categorical_logits_at(
+        [seq1, seq2], [2, 4], iv_weight=1.5, wald_scale=1.0
+    )
+    assert logits.shape == (2, model.vocab_size)
+    # seq1: cond@3 = 4.0, uncond@3 = 0.0 -> 0 + 1.5*(4-0) = 6.0
+    # seq2: cond@5 = 6.0, uncond@5 = 0.0 -> 0 + 1.5*(6-0) = 9.0
+    assert torch.allclose(logits[0], torch.full((model.vocab_size,), 6.0))
+    assert torch.allclose(logits[1], torch.full((model.vocab_size,), 9.0))

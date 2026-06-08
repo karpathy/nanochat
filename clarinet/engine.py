@@ -201,3 +201,62 @@ class ClarinetEngine(Engine):
             cond_logits = self.model.forward(ids, kv_cache=cond_cache)[:, -1, :]
             uncond_logits = self.model.forward(ids, kv_cache=uncond_cache)[:, -1, :]
             logits = combine(cond_logits, uncond_logits)
+
+    @torch.inference_mode()
+    def categorical_logits_at(self, token_lists, answer_positions,
+                              iv_weight=1.5, wald_scale=1.0,
+                              scale_lo=1.0, scale_hi=1.0):
+        """
+        Dual-pass categorical logits: insert source markers, run conditional
+        and unconditional forward passes, combine via IV formula, and return
+        logits at the answer positions.
+
+        This is the categorical-evaluation counterpart of generate() — it
+        applies the same dual-pass IV combine to every answer position in a
+        batched forward pass (no autoregressive decoding).
+
+        Args:
+            token_lists: list of list of int — unpadded token sequences
+            answer_positions: list of int — position of the answer token in each
+                sequence (indexing into the *original* sequences before marker
+                insertion)
+            iv_weight: guidance weight (0 = unconditional, 1 = conditional)
+            wald_scale: constant scale factor
+            scale_lo, scale_hi: bounds for L1 adaptive scale (lo == hi -> constant)
+        Returns:
+            (B, V) tensor of combined logits at the answer positions
+        """
+        device = self.model.get_device()
+        bos = self.tokenizer.get_bos_token_id()
+        src_reasoning_id = self.tokenizer.encode_special(self.SRC_REASONING)
+        src_unknown_id = self.tokenizer.encode_special(self.SRC_UNKNOWN)
+
+        # Insert source markers — shifts each sequence by 1 (or 2 if BOS missing)
+        cond_lists = [self._prefix_with_marker(ids, src_reasoning_id, bos)
+                      for ids in token_lists]
+        uncond_lists = [self._prefix_with_marker(ids, src_unknown_id, bos)
+                        for ids in token_lists]
+        adjusted_positions = [
+            pos + len(marked) - len(orig)
+            for pos, orig, marked in zip(answer_positions, token_lists, cond_lists)
+        ]
+
+        max_length = max(len(ids) for ids in cond_lists)
+        cond_padded = [ids + [bos] * (max_length - len(ids)) for ids in cond_lists]
+        uncond_padded = [ids + [bos] * (max_length - len(ids)) for ids in uncond_lists]
+
+        cond_ids = torch.tensor(cond_padded, dtype=torch.long, device=device)
+        uncond_ids = torch.tensor(uncond_padded, dtype=torch.long, device=device)
+
+        cond_logits = self.model(cond_ids)      # (B, T', V)
+        uncond_logits = self.model(uncond_ids)   # (B, T', V)
+
+        # Extract logits at adjusted answer positions
+        B = cond_logits.size(0)
+        positions = torch.tensor(adjusted_positions, device=device)
+        arange = torch.arange(B, device=device)
+        cond_at = cond_logits[arange, positions]      # (B, V)
+        uncond_at = uncond_logits[arange, positions]   # (B, V)
+
+        s = self.l1_adaptive_scale(cond_at, uncond_at, wald_scale, scale_lo, scale_hi)
+        return self.combine_logits(cond_at, uncond_at, iv_weight, s)

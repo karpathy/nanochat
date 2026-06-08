@@ -31,6 +31,10 @@ def make_engine(model, tokenizer, iv_weight, wald_scale):
             kwargs.setdefault("iv_weight", iv_weight)
             kwargs.setdefault("wald_scale", wald_scale)
             yield from super().generate(*args, **kwargs)
+        def categorical_logits_at(self, *args, **kwargs):
+            kwargs.setdefault("iv_weight", iv_weight)
+            kwargs.setdefault("wald_scale", wald_scale)
+            return super().categorical_logits_at(*args, **kwargs)
     return _BoundClarinetEngine(model, tokenizer)
 
 

@@ -279,6 +279,32 @@ class Engine:
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
             logits = self.model.forward(ids, kv_cache=kv_cache_decode)[:, -1, :]  # (B, vocab_size)
 
+    @torch.inference_mode()
+    def categorical_logits_at(self, token_lists, answer_positions):
+        """
+        Compute logits at the answer positions for a batch of prompts.
+
+        Used by categorical evaluation (multiple-choice tasks like ARC, MMLU).
+        Subclasses can override to apply guidance (e.g. dual-pass IV combine).
+
+        Args:
+            token_lists: list of list of int — unpadded token sequences
+            answer_positions: list of int — position of the answer token in each
+                sequence (indexing into the *original* sequences before any
+                marker insertion)
+        Returns:
+            (B, V) tensor of logits at the answer positions
+        """
+        device = self.model.get_device()
+        bos = self.tokenizer.get_bos_token_id()
+        max_length = max(len(ids) for ids in token_lists)
+        padded = [ids + [bos] * (max_length - len(ids)) for ids in token_lists]
+        prompt_ids = torch.tensor(padded, dtype=torch.long, device=device)
+        logits = self.model(prompt_ids)  # (B, T, V)
+        B = logits.size(0)
+        positions = torch.tensor(answer_positions, device=device)
+        return logits[torch.arange(B, device=device), positions]  # (B, V)
+
     def generate_batch(self, tokens, num_samples=1, **kwargs):
         """
         Non-streaming batch generation that just returns the final token sequences.
