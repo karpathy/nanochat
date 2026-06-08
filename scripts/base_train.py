@@ -18,6 +18,7 @@ import json
 import time
 import math
 import argparse
+import signal
 from dataclasses import asdict
 from contextlib import contextmanager
 
@@ -27,7 +28,7 @@ import torch.distributed as dist
 
 from nanochat.gpt import GPT, GPTConfig, Linear
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, round_to_nearest_multiple
+from nanochat.common import compute_init, compute_cleanup, print0, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, init_wandb_or_dummy, round_to_nearest_multiple
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -35,6 +36,22 @@ from nanochat.engine import Engine
 from nanochat.flash_attention import HAS_FA3
 from scripts.base_eval import evaluate_core
 print_banner()
+
+_stop_requested = False
+_stop_signal_name = None
+
+def _handle_stop_signal(signum, frame):
+    global _stop_requested, _stop_signal_name
+    _stop_requested = True
+    try:
+        _stop_signal_name = signal.Signals(signum).name
+    except ValueError:
+        _stop_signal_name = str(signum)
+
+for _signal_name in ("SIGUSR1", "SIGTERM", "SIGINT"):
+    _signal = getattr(signal, _signal_name, None)
+    if _signal is not None:
+        signal.signal(_signal, _handle_stop_signal)
 
 # -----------------------------------------------------------------------------
 # CLI arguments
@@ -75,6 +92,7 @@ parser.add_argument("--core-metric-every", type=int, default=2000, help="evaluat
 parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
+parser.add_argument("--keep-last-checkpoints", type=int, default=-1, help="keep only the last N checkpoints (-1 = keep all)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
@@ -87,6 +105,15 @@ ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
+
+def sync_stop_requested():
+    """Return True if this rank received a stop/preemption signal.
+
+    Avoid a pre-step collective here: during large model startup ranks can arrive
+    at the first training-loop iteration at very different times.
+    """
+    return bool(_stop_requested)
+
 if device_type == "cuda":
     gpu_device_name = torch.cuda.get_device_name(0)
     gpu_peak_flops = get_peak_flops(gpu_device_name)
@@ -97,7 +124,7 @@ print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
+wandb_run = init_wandb_or_dummy(wandb, project="nanochat", name=args.run, config=user_config, enabled=not use_dummy_wandb)
 
 # Flash Attention status
 from nanochat.flash_attention import USE_FA3
@@ -423,12 +450,41 @@ print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 
 # Go!
+stop_announced = False
+def prune_old_checkpoints(checkpoint_dir, keep_last):
+    if keep_last <= 0 or not master_process:
+        return
+    steps = []
+    for filename in os.listdir(checkpoint_dir):
+        if filename.startswith("model_") and filename.endswith(".pt"):
+            try:
+                steps.append(int(filename.removeprefix("model_").removesuffix(".pt")))
+            except ValueError:
+                pass
+    steps = sorted(set(steps))
+    old_steps = steps[:-keep_last]
+    for old_step in old_steps:
+        for filename in os.listdir(checkpoint_dir):
+            if filename.startswith((f"model_{old_step:06d}.", f"meta_{old_step:06d}.", f"optim_{old_step:06d}_rank")):
+                path = os.path.join(checkpoint_dir, filename)
+                try:
+                    os.remove(path)
+                    print0(f"Pruned old checkpoint file: {path}")
+                except FileNotFoundError:
+                    pass
+
 while True:
     last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
+    first_step_of_run = (step == 0) or (resuming and step == args.resume_from_step)
+    stop_now = sync_stop_requested()
+    if stop_now and not stop_announced:
+        signal_name = _stop_signal_name or "peer rank"
+        print0(f"Stop requested by {signal_name}; saving checkpoint at step {step} and exiting cleanly.")
+        stop_announced = True
     flops_so_far = num_flops_per_token * total_batch_size * step
 
     # once in a while: evaluate the val bpb (all ranks participate)
-    if args.eval_every > 0 and (last_step or step % args.eval_every == 0):
+    if args.eval_every > 0 and not first_step_of_run and (last_step or step % args.eval_every == 0):
         model.eval()
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
@@ -449,7 +505,7 @@ while True:
     # use the original uncompiled model because the inputs keep changing shape
     # disable FP8 for evaluation to use BF16 for more consistent/accurate results
     results = {}
-    if args.core_metric_every > 0 and (last_step or (step > 0 and step % args.core_metric_every == 0)):
+    if args.core_metric_every > 0 and not first_step_of_run and (last_step or (step > 0 and step % args.core_metric_every == 0)):
         model.eval()
         with disable_fp8(orig_model):
             results = evaluate_core(orig_model, tokenizer, device, max_per_task=args.core_metric_max_per_task)
@@ -464,7 +520,7 @@ while True:
 
     # once in a while: sample from the model (only on master process)
     # use the original uncompiled model because the inputs keep changing shape
-    if args.sample_every > 0 and master_process and (last_step or (step > 0 and step % args.sample_every == 0)):
+    if args.sample_every > 0 and master_process and not first_step_of_run and (last_step or (step > 0 and step % args.sample_every == 0)):
         model.eval()
         prompts = [
             "The capital of France is",
@@ -483,8 +539,9 @@ while True:
             print0(tokenizer.decode(sample[0]))
         model.train()
 
-    # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step
-    if last_step or (step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0):
+    # save checkpoint: at the end of the run, on preemption, or every save_every steps,
+    # except at the first step or the resume step for scheduled saves.
+    if last_step or stop_now or (step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0):
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -499,6 +556,8 @@ while True:
                 "max_seq_len": args.max_seq_len,
                 "total_batch_size": total_batch_size,
                 "dataloader_state_dict": dataloader_state_dict,
+                "interrupted": bool(stop_now and not last_step),
+                "stop_signal": _stop_signal_name,
                 "loop_state": { # all loop state (other than step) so that we can resume training
                     "min_val_bpb": min_val_bpb,
                     "smooth_train_loss": smooth_train_loss,
@@ -507,9 +566,10 @@ while True:
             },
             rank=ddp_rank,
         )
+        prune_old_checkpoints(checkpoint_dir, args.keep_last_checkpoints)
 
     # termination conditions (TODO: possibly also add loss explosions etc.)
-    if last_step:
+    if last_step or stop_now:
         break
 
     # -------------------------------------------------------------------------
@@ -590,7 +650,6 @@ while True:
         wandb_run.log(log_data)
 
     # state update
-    first_step_of_run = (step == 0) or (resuming and step == args.resume_from_step)
     step += 1
 
     # The garbage collector is sadly a little bit overactive and for some poorly understood reason,

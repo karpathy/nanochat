@@ -23,6 +23,10 @@ def _rank_first_dim_slice(num_rows: int, world_size: int, rank: int):
     valid_rows = max(0, end - start)
     return rank_size, padded_rows, start, end, valid_rows
 
+class _DoneFuture:
+    def wait(self):
+        return None
+
 # -----------------------------------------------------------------------------
 """
 Good old AdamW optimizer, fused kernel.
@@ -384,6 +388,9 @@ class DistMuonAdamW(torch.optim.Optimizer):
         param_infos = {}
         for p in group['params']:
             grad = p.grad
+            if world_size == 1:
+                param_infos[p] = dict(future=_DoneFuture(), grad_slice=grad, is_small=True)
+                continue
             if p.numel() < 1024:
                 # Small params: all_reduce (no scatter/gather needed)
                 future = dist.all_reduce(grad, op=dist.ReduceOp.AVG, async_op=True).get_future()
@@ -426,9 +433,19 @@ class DistMuonAdamW(torch.optim.Optimizer):
 
         # Reduce_scatter to get this rank's chunk
         grad_chunk = torch.empty(chunk_size, *shape, dtype=dtype, device=device)
-        future = dist.reduce_scatter_tensor(grad_chunk, stacked_grads, op=dist.ReduceOp.AVG, async_op=True).get_future()
+        if world_size == 1:
+            grad_chunk.copy_(stacked_grads)
+            future = _DoneFuture()
+        else:
+            future = dist.reduce_scatter_tensor(grad_chunk, stacked_grads, op=dist.ReduceOp.AVG, async_op=True).get_future()
 
-        return dict(future=future, grad_chunk=grad_chunk, stacked_grads=stacked_grads, chunk_size=chunk_size)
+        return dict(
+            future=future,
+            grad_chunk=grad_chunk,
+            stacked_grads=stacked_grads,
+            chunk_size=chunk_size,
+            single_process=world_size == 1,
+        )
 
     def _compute_adamw(self, group: dict, info: dict, gather_list: list, rank: int, world_size: int) -> None:
         """Wait for reduce, compute AdamW updates, launch gathers for large params."""
@@ -534,6 +551,10 @@ class DistMuonAdamW(torch.optim.Optimizer):
         if num_owned < chunk_size:
             updated_params[num_owned:].zero_()
 
+        if info.get("single_process"):
+            torch._foreach_copy_(params, list(updated_params[:len(params)].unbind(0)))
+            return
+
         # Reuse stacked_grads buffer for all_gather output
         stacked_params = info["stacked_grads"]
         future = dist.all_gather_into_tensor(stacked_params, updated_params, async_op=True).get_future()
@@ -551,8 +572,12 @@ class DistMuonAdamW(torch.optim.Optimizer):
 
     @torch.no_grad()
     def step(self):
-        rank = dist.get_rank()
-        world_size = dist.get_world_size()
+        if dist.is_available() and dist.is_initialized():
+            rank = dist.get_rank()
+            world_size = dist.get_world_size()
+        else:
+            rank = 0
+            world_size = 1
 
         # Phase 1: launch all async reduce ops
         reduce_infos: list[dict] = []

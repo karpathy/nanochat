@@ -24,7 +24,8 @@ BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resol
 MAX_SHARD = 6542 # the last datashard is shard_06542.parquet
 index_to_filename = lambda index: f"shard_{index:05d}.parquet" # format of the filenames
 base_dir = get_base_dir()
-DATA_DIR = os.path.join(base_dir, "base_data_climbmix")
+# Allow large shared corpus mirrors to live outside per-run output directories.
+DATA_DIR = os.path.expanduser(os.environ.get("CLIMBMIX_DATA_DIR", os.path.join(base_dir, "base_data_climbmix")))
 
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported

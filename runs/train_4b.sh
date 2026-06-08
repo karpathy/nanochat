@@ -5,6 +5,9 @@ set -euo pipefail
 # Designed for a WATGPU H200 batch allocation. Override settings with env vars.
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export TORCH_DISTRIBUTED_TIMEOUT_SECONDS="${TORCH_DISTRIBUTED_TIMEOUT_SECONDS:-3600}"
+export TORCH_NCCL_TRACE_BUFFER_SIZE="${TORCH_NCCL_TRACE_BUFFER_SIZE:-1048576}"
+export TORCH_NCCL_DUMP_ON_TIMEOUT="${TORCH_NCCL_DUMP_ON_TIMEOUT:-1}"
 export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
 mkdir -p "$NANOCHAT_BASE_DIR"
 
@@ -15,13 +18,49 @@ DEVICE_BATCH_SIZE="${DEVICE_BATCH_SIZE:-8}"
 EVAL_DEVICE_BATCH_SIZE="${EVAL_DEVICE_BATCH_SIZE:-$DEVICE_BATCH_SIZE}"
 SFT_DEVICE_BATCH_SIZE="${SFT_DEVICE_BATCH_SIZE:-$DEVICE_BATCH_SIZE}"
 TOKENIZER_SHARDS="${TOKENIZER_SHARDS:-8}"
+TOKENIZER_MAX_CHARS="${TOKENIZER_MAX_CHARS:-2000000000}"
+TOKENIZER_VOCAB_SIZE="${TOKENIZER_VOCAB_SIZE:-32768}"
 DATASET_SHARDS="${DATASET_SHARDS:-1000}"
 DATASET_WORKERS="${DATASET_WORKERS:-8}"
-SAVE_EVERY="${SAVE_EVERY:-1000}"
+SAVE_EVERY="${SAVE_EVERY:-250}"
+KEEP_LAST_CHECKPOINTS="${KEEP_LAST_CHECKPOINTS:-4}"
 USE_FP8="${USE_FP8:-1}"
 PREFETCH_TASK_DATA="${PREFETCH_TASK_DATA:-1}"
+SKIP_TOKENIZER_TRAIN="${SKIP_TOKENIZER_TRAIN:-0}"
+SKIP_IDENTITY_DOWNLOAD="${SKIP_IDENTITY_DOWNLOAD:-0}"
 WANDB_RUN="${WANDB_RUN:-dummy}"
 STOP_AFTER="${STOP_AFTER:-full}"
+CLIMBMIX_DATA_DIR="${CLIMBMIX_DATA_DIR:-}"
+RESUME_FROM_STEP="${RESUME_FROM_STEP:--1}"
+AUTO_RESUME="${AUTO_RESUME:-0}"
+UV_SYNC_EXTRA="${UV_SYNC_EXTRA:-gpu}"
+if [ -z "${NANOCHAT_ENV_DIR:-}" ]; then
+    if [ -n "${SLURM_TMPDIR:-}" ]; then
+        NANOCHAT_ENV_DIR="$SLURM_TMPDIR/nanochat-venv"
+    elif [ -d /dev/shm ]; then
+        NANOCHAT_ENV_DIR="/dev/shm/${USER:-nanochat}/nanochat-venv"
+    else
+        NANOCHAT_ENV_DIR="/tmp/${USER:-nanochat}/nanochat-venv"
+    fi
+fi
+export UV_PROJECT_ENVIRONMENT="$NANOCHAT_ENV_DIR"
+export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
+if [ -z "${JOB_TMP_DIR:-}" ]; then
+    if [ -n "${SLURM_TMPDIR:-}" ]; then
+        JOB_TMP_DIR="$SLURM_TMPDIR"
+    elif [ -d /dev/shm ]; then
+        JOB_TMP_DIR="/dev/shm/${USER:-nanochat}/tmp"
+    else
+        JOB_TMP_DIR="/tmp/${USER:-nanochat}/tmp"
+    fi
+fi
+mkdir -p "$JOB_TMP_DIR"
+export TMPDIR="$JOB_TMP_DIR"
+export TMP="$JOB_TMP_DIR"
+export TEMP="$JOB_TMP_DIR"
+if [ "$WANDB_RUN" = "dummy" ]; then
+    export WANDB_MODE=disabled
+fi
 
 if [ -z "${NPROC_PER_NODE:-}" ]; then
     if [[ "${SLURM_GPUS_ON_NODE:-}" =~ ^[0-9]+$ ]]; then
@@ -40,14 +79,31 @@ log() {
 
 log "Starting $MODEL_TAG on $NPROC_PER_NODE GPU(s)"
 log "NANOCHAT_BASE_DIR=$NANOCHAT_BASE_DIR"
+log "UV_PROJECT_ENVIRONMENT=$UV_PROJECT_ENVIRONMENT"
+log "TMPDIR=$TMPDIR"
+if [ -n "$CLIMBMIX_DATA_DIR" ]; then
+    export CLIMBMIX_DATA_DIR
+    log "CLIMBMIX_DATA_DIR=$CLIMBMIX_DATA_DIR"
+fi
 
 if [ "${SKIP_SETUP:-0}" != "1" ]; then
-    command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
-    [ -d ".venv" ] || uv venv
-    uv sync --extra gpu
+    if ! command -v uv &> /dev/null || ! uv --version &> /dev/null; then
+        if [ -z "${UV_INSTALL_DIR:-}" ]; then
+            if [ -d /dev/shm ]; then
+                UV_INSTALL_DIR="/dev/shm/${USER:-nanochat}/uv-bin"
+            else
+                UV_INSTALL_DIR="/tmp/${USER:-nanochat}/uv-bin"
+            fi
+        fi
+        export UV_INSTALL_DIR
+        mkdir -p "$UV_INSTALL_DIR"
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        export PATH="$UV_INSTALL_DIR:$PATH"
+    fi
+    [ -d "$UV_PROJECT_ENVIRONMENT" ] || uv venv "$UV_PROJECT_ENVIRONMENT"
+    uv sync --extra "$UV_SYNC_EXTRA"
 fi
-source .venv/bin/activate
+source "$UV_PROJECT_ENVIRONMENT/bin/activate"
 
 python -m nanochat.report reset
 
@@ -58,13 +114,21 @@ log "Downloading ClimbMix train shards in background: DATASET_SHARDS=$DATASET_SH
 python -m nanochat.dataset -n "$DATASET_SHARDS" -w "$DATASET_WORKERS" &
 DATASET_DOWNLOAD_PID=$!
 
-log "Training tokenizer"
-python -m scripts.tok_train --max-chars=2000000000 --vocab-size=32768
-python -m scripts.tok_eval
+if [ "$SKIP_TOKENIZER_TRAIN" = "1" ]; then
+    log "SKIP_TOKENIZER_TRAIN=1, reusing tokenizer in $NANOCHAT_BASE_DIR/tokenizer"
+else
+    log "Training tokenizer"
+    python -m scripts.tok_train --max-chars="$TOKENIZER_MAX_CHARS" --vocab-size="$TOKENIZER_VOCAB_SIZE"
+    python -m scripts.tok_eval
+fi
 
-log "Downloading identity conversations"
-curl -L --fail -o "$NANOCHAT_BASE_DIR/identity_conversations.jsonl" \
-    https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
+if [ "$SKIP_IDENTITY_DOWNLOAD" = "1" ] && [ -f "$NANOCHAT_BASE_DIR/identity_conversations.jsonl" ]; then
+    log "SKIP_IDENTITY_DOWNLOAD=1, reusing identity conversations"
+else
+    log "Downloading identity conversations"
+    curl -L --fail -o "$NANOCHAT_BASE_DIR/identity_conversations.jsonl" \
+        https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
+fi
 
 if [ "$PREFETCH_TASK_DATA" = "1" ]; then
     log "Prefetching eval bundle and SFT/chat-eval datasets"
@@ -115,8 +179,33 @@ BASE_TRAIN_ARGS=(
     --device-batch-size="$DEVICE_BATCH_SIZE"
     --model-tag="$MODEL_TAG"
     --save-every="$SAVE_EVERY"
+    --keep-last-checkpoints="$KEEP_LAST_CHECKPOINTS"
     --run="$WANDB_RUN"
 )
+if [ "$AUTO_RESUME" = "1" ] && [ "$RESUME_FROM_STEP" = "-1" ]; then
+    RESUME_FROM_STEP="$(NANOCHAT_BASE_DIR="$NANOCHAT_BASE_DIR" MODEL_TAG="$MODEL_TAG" python - <<'PY'
+import glob
+import os
+
+checkpoint_dir = os.path.join(os.environ["NANOCHAT_BASE_DIR"], "base_checkpoints", os.environ["MODEL_TAG"])
+steps = []
+for path in glob.glob(os.path.join(checkpoint_dir, "model_*.pt")):
+    try:
+        steps.append(int(os.path.basename(path).split("_")[-1].split(".")[0]))
+    except ValueError:
+        pass
+print(max(steps) if steps else -1)
+PY
+)"
+    if [ "$RESUME_FROM_STEP" != "-1" ]; then
+        log "AUTO_RESUME found checkpoint step $RESUME_FROM_STEP"
+    else
+        log "AUTO_RESUME found no checkpoint; starting from scratch"
+    fi
+fi
+if [ "$RESUME_FROM_STEP" != "-1" ]; then
+    BASE_TRAIN_ARGS+=(--resume-from-step="$RESUME_FROM_STEP")
+fi
 if [ "$USE_FP8" = "1" ]; then
     BASE_TRAIN_ARGS+=(--fp8)
 fi
@@ -126,7 +215,25 @@ if [ -n "${EXTRA_BASE_TRAIN_ARGS:-}" ]; then
 fi
 
 log "Pretraining base model"
-torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.base_train -- "${BASE_TRAIN_ARGS[@]}"
+BASE_TRAIN_PID=""
+forward_base_train_signal() {
+    if [ -n "$BASE_TRAIN_PID" ]; then
+        log "Forwarding stop signal to base training process $BASE_TRAIN_PID"
+        pkill -USR1 -P "$BASE_TRAIN_PID" 2>/dev/null || true
+    fi
+}
+trap forward_base_train_signal USR1 TERM INT
+torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.base_train -- "${BASE_TRAIN_ARGS[@]}" &
+BASE_TRAIN_PID=$!
+set +e
+wait "$BASE_TRAIN_PID"
+BASE_TRAIN_STATUS=$?
+set -e
+BASE_TRAIN_PID=""
+trap - USR1 TERM INT
+if [ "$BASE_TRAIN_STATUS" -ne 0 ]; then
+    exit "$BASE_TRAIN_STATUS"
+fi
 if [ "$STOP_AFTER" = "base_train" ]; then
     log "STOP_AFTER=base_train, stopping after pretraining"
     exit 0

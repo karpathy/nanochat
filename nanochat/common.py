@@ -6,6 +6,7 @@ import os
 import re
 import logging
 import urllib.request
+from datetime import timedelta
 import torch
 import torch.distributed as dist
 from filelock import FileLock
@@ -210,7 +211,8 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     if is_ddp_requested and device_type == "cuda":
         device = torch.device("cuda", ddp_local_rank)
         torch.cuda.set_device(device)  # make "cuda" default to this device
-        dist.init_process_group(backend="nccl", device_id=device)
+        timeout_seconds = int(os.environ.get("TORCH_DISTRIBUTED_TIMEOUT_SECONDS", "3600"))
+        dist.init_process_group(backend="nccl", device_id=device, timeout=timedelta(seconds=timeout_seconds))
         dist.barrier()
     else:
         device = torch.device(device_type) # mps|cpu
@@ -233,6 +235,16 @@ class DummyWandb:
         pass
     def finish(self):
         pass
+
+def init_wandb_or_dummy(wandb_module, project, name, config, enabled=True):
+    """Initialize W&B when configured, otherwise keep batch jobs noninteractive."""
+    if not enabled or name == "dummy":
+        return DummyWandb()
+    try:
+        return wandb_module.init(project=project, name=name, config=config)
+    except Exception as exc:
+        logger.warning(f"W&B init failed ({exc}); continuing with dummy logging")
+        return DummyWandb()
 
 # hardcoded BF16 peak flops for various GPUs
 # inspired by torchtitan: https://github.com/pytorch/torchtitan/blob/main/torchtitan/tools/utils.py
