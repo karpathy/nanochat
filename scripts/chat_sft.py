@@ -15,6 +15,7 @@ import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
+import swanlab
 import torch
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
 from nanochat.tokenizer import get_token_bytes
@@ -36,7 +37,9 @@ from tasks.spellingbee import SimpleSpelling, SpellingBee
 # CLI arguments
 parser = argparse.ArgumentParser(description="Supervised fine-tuning (SFT) the model")
 # Logging
+parser.add_argument("--project-name", type=str, default="nanochat", help="swanlab project name (defaults to 'nanochat')")
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
+parser.add_argument("--log-every", type=int, default=1, help="log training metrics every N steps")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 # Model loading
@@ -84,9 +87,12 @@ if device_type == "cuda":
 else:
     gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
 
-# wandb logging init
-use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-sft", name=args.run, config=user_config)
+# logging init
+if os.getenv("SWANLAB_ENABLE", "0") == "1":
+    wandb_run = swanlab.init(project=args.project_name, namespace="nanochat", name=args.run + "_gpu_" + str(ddp_rank), config=user_config)
+else:
+    use_dummy_wandb = args.run == "dummy" or not master_process
+    wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
 
 # Flash Attention status
 if not HAS_FA3:
@@ -357,7 +363,7 @@ while True:
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
             "val/bpb": val_bpb,
-        })
+        }, step=step)
         model.train()
 
     # once in a while: estimate the ChatCORE metric (all ranks participate)
@@ -392,7 +398,7 @@ while True:
             "chatcore_metric": chatcore,
             "chatcore_cat": chatcore_cat,
             **{f"chatcore/{task_name}": acc for task_name, acc in task_results.items()},
-        })
+        }, step=step)
         model.train()
 
     # save checkpoint at the end of the run (all ranks participate so each saves its optimizer shard)
@@ -474,7 +480,7 @@ while True:
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
     print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {total_training_time/60:.2f}m")
-    if step % 10 == 0:
+    if step % args.log_every == 0:
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -484,8 +490,8 @@ while True:
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,
             "train/mfu": mfu,
-            "train/epoch": current_epoch,
-        })
+            # "train/epoch": current_epoch,
+        }, step=step)
 
     # The garbage collector spends ~500ms scanning for cycles quite frequently.
     # We manually manage it to avoid these pauses during training.

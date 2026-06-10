@@ -15,6 +15,7 @@ dependencies = [
     "torch==2.9.1",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
+    "swanlab==0.8.0rc4",
 ]
 
 [dependency-groups]

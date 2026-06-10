@@ -20,6 +20,7 @@ import argparse
 import os
 import itertools
 import wandb
+import swanlab
 import torch
 import torch.distributed as dist
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type
@@ -31,7 +32,9 @@ from tasks.gsm8k import GSM8K
 # CLI arguments
 parser = argparse.ArgumentParser(description="Reinforcement learning on GSM8K")
 # Logging
+parser.add_argument("--project-name", type=str, default="nanochat", help="swanlab project name (defaults to 'nanochat')")
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
+parser.add_argument("--log-every", type=int, default=1, help="log training metrics every N steps")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 # Model loading
@@ -66,9 +69,12 @@ device_type = autodetect_device_type() if args.device_type == "" else args.devic
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 
-# wandb logging init
-use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl", name=args.run, config=user_config)
+# logging init
+if os.getenv("SWANLAB_ENABLE", "0") == "1":
+    wandb_run = swanlab.init(project=args.project_name, namespace="nanochat", name=args.run + "_gpu_" + str(ddp_rank), config=user_config)
+else:
+    use_dummy_wandb = args.run == "dummy" or not master_process
+    wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
 
 # Init model and tokenizer
 model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
@@ -240,7 +246,7 @@ for step in range(num_steps):
         wandb_run.log({
             "step": step,
             **log_passk,
-        })
+        }, step=step)
 
     # Forward/Backward on rollouts over multiple examples in the dataset
     rewards_list = []
@@ -287,11 +293,6 @@ for step in range(num_steps):
         mean_reward = mean_reward_tensor.item()
         mean_sequence_length = mean_sequence_length_tensor.item()
     print0(f"Step {step}/{num_steps} | Average reward: {mean_reward} | Average sequence length: {mean_sequence_length:.2f}")
-    wandb_run.log({
-        "step": step,
-        "reward": mean_reward,
-        "sequence_length": mean_sequence_length,
-    })
 
     # Update the model parameters
     lrm = get_lr_multiplier(step)
@@ -299,10 +300,13 @@ for step in range(num_steps):
         group["lr"] = group["initial_lr"] * lrm
     optimizer.step()
     model.zero_grad(set_to_none=True)
-    wandb_run.log({
-        "step": step,
-        "lrm": lrm,
-    })
+    if step % args.log_every == 0:
+        wandb_run.log({
+            "step": step,
+            "reward": mean_reward,
+            "sequence_length": mean_sequence_length,
+            "lrm": lrm,
+        }, step=step)
 
     # Master process saves the model once in a while. Skip first step. Save last step.
     if master_process and ((step > 0 and step % args.save_every == 0) or step == num_steps - 1):

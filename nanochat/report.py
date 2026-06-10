@@ -202,7 +202,15 @@ Generated: {timestamp}
 
 def slugify(text):
     """Slugify a text string."""
-    return text.lower().replace(" ", "-")
+    return re.sub(r"[^a-z0-9._-]+", "-", text.lower()).strip("-")
+
+def get_report_dir(base_dir):
+    """Return the report directory, optionally suffixed by NANOCHAT_REPORT_SUFFIX."""
+    suffix = os.environ.get("NANOCHAT_REPORT_SUFFIX", "").strip()
+    if not suffix:
+        return os.path.join(base_dir, "report")
+    suffix = slugify(suffix)
+    return os.path.join(base_dir, f"report_{suffix}")
 
 # the expected files and their order
 EXPECTED_FILES = [
@@ -364,8 +372,10 @@ class Report:
             else:
                 out_file.write("Total wall clock time: unknown\n")
         # also cp the report.md file to current directory
-        print(f"Copying report.md to current directory for convenience")
-        shutil.copy(report_file, "report.md")
+        report_basename = os.path.basename(report_dir)
+        copy_name = "report.md" if report_basename == "report" else f"{report_basename}.md"
+        print(f"Copying report.md to current directory as {copy_name} for convenience")
+        shutil.copy(report_file, copy_name)
         return report_file
 
     def reset(self):
@@ -402,7 +412,7 @@ def get_report():
     from nanochat.common import get_base_dir, get_dist_info
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     if ddp_rank == 0:
-        report_dir = os.path.join(get_base_dir(), "report")
+        report_dir = get_report_dir(get_base_dir())
         return Report(report_dir)
     else:
         return DummyReport()
