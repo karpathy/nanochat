@@ -41,7 +41,9 @@ print_banner()
 # CLI arguments
 parser = argparse.ArgumentParser(description="Pretrain base model")
 # Logging
+parser.add_argument("--project-name", type=str, default="nanochat", help="swanlab project name (defaults to 'nanochat')")
 parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('dummy' disables wandb logging)")
+parser.add_argument("--log-every", type=int, default=1, help="log training metrics every N steps")
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 # FP8 training
@@ -51,6 +53,7 @@ parser.add_argument("--fp8-recipe", type=str, default="tensorwise", choices=["ro
 parser.add_argument("--depth", type=int, default=20, help="depth of the Transformer model")
 parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
+parser.add_argument("--n-kv-head", type=int, default=-1, help="number of key/value heads for GQA (-1 = match n_head)")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
 # Training horizon (only one used, in order of precedence)
@@ -98,7 +101,7 @@ print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 
 # logging init
 if os.getenv("SWANLAB_ENABLE", "0") == "1":
-    wandb_run = swanlab.init(project="nanochat", name=args.run, config=user_config)
+    wandb_run = swanlab.init(project=args.project_name, workspace="nanochat", name=args.run + "_gpu_" + str(ddp_rank), config=user_config)
 else:
     use_dummy_wandb = args.run == "dummy" or not master_process
     wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
@@ -137,9 +140,11 @@ def build_model_meta(depth):
     base_dim = depth * args.aspect_ratio
     model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
     num_heads = model_dim // args.head_dim
+    num_kv_heads = num_heads if args.n_kv_head == -1 else args.n_kv_head
+    assert num_heads % num_kv_heads == 0, f"n_head ({num_heads}) must be divisible by n_kv_head ({num_kv_heads})"
     config = GPTConfig(
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
-        n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
+        n_layer=depth, n_head=num_heads, n_kv_head=num_kv_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
     )
     with torch.device("meta"):
@@ -436,7 +441,7 @@ while True:
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
             "val/bpb": val_bpb,
-        })
+        }, step=step)
         model.train()
 
     # once in a while: estimate the CORE metric (all ranks participate)
@@ -453,7 +458,7 @@ while True:
             "total_training_flops": flops_so_far,
             "core_metric": results["core_metric"],
             "centered_results": results["centered_results"],
-        })
+        }, step=step)
         model.train()
 
     # once in a while: sample from the model (only on master process)
@@ -567,9 +572,10 @@ while True:
         eta_str = f" | eta: {eta_seconds/60:.1f}m"
     else:
         eta_str = ""
+    # Log dataloader position for debugging/resume: epoch, parquet file index, row-group index.
     epoch = f"{dataloader_state_dict['epoch']} pq: {dataloader_state_dict['pq_idx']} rg: {dataloader_state_dict['rg_idx']}"
     print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
-    if step % 100 == 0:
+    if step % args.log_every == 0:
         log_data = {
             "step": step,
             "total_training_flops": flops_so_far,
@@ -579,9 +585,11 @@ while True:
             "train/dt": dt,
             "train/tok_per_sec": tok_per_sec,
             "train/mfu": mfu,
-            "train/epoch": epoch,
+            "train/epoch": dataloader_state_dict["epoch"],
+            "data/parquet_idx": dataloader_state_dict["pq_idx"],
+            "data/row_group_idx": dataloader_state_dict["rg_idx"],
         }
-        wandb_run.log(log_data)
+        wandb_run.log(log_data, step=step)
 
     # state update
     first_step_of_run = (step == 0) or (resuming and step == args.resume_from_step)
