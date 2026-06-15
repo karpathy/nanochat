@@ -43,6 +43,8 @@ class Task:
 
     def __getitem__(self, index: int):
         assert isinstance(index, int), f"Index must be an integer, got {type(index)}"
+        num = len(self)
+        assert 0 <= index < num, f"Index {index} out of range for task with {num} examples"
         physical_index = self.start + index * self.step
         conversation = self.get_example(physical_index)
         return conversation
