@@ -206,13 +206,12 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
     cursor = ddp_rank  # Each rank processes different conversations (for fetching)
     consumed = ddp_rank  # Track actual consumption separately from buffering
     epoch = 1
-    it = 0  # iteration counter
 
     def refill_buffer():
         nonlocal cursor, epoch
         while len(conv_buffer) < buffer_size:
             conversation = dataset[cursor]
-            ids, mask = tokenizer.render_conversation(conversation)
+            ids, mask = tokenizer.render_conversation(conversation, max_tokens=row_capacity)
             conv_buffer.append((ids, mask))
             cursor += ddp_world_size
             if cursor >= dataset_size:
@@ -267,17 +266,10 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
             rows.append(row[:row_capacity])
             mask_rows.append(mask_row[:row_capacity])
 
-        # Stopping condition to respect num_iterations, if given
-        it += 1
-        if 0 < args.num_iterations <= it and split == "train":
-            last_step = True
-
         # Update progress tracking (based on consumed, not cursor, to account for buffering)
         if split == "train":
             current_epoch = epoch
-            if args.num_iterations > 0:
-                approx_progress = it / args.num_iterations
-            else:
+            if args.num_iterations <= 0:
                 approx_progress = consumed / dataset_size
             # Trigger last_step when we've consumed enough (instead of when cursor wraps)
             if consumed >= dataset_size:
@@ -302,6 +294,9 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
             if content_len < row_capacity:
                 targets[i, content_len-1:] = -1
 
+        if (targets != -1).sum().item() == 0:
+            continue
+
         yield inputs, targets
 
 train_loader = sft_data_generator_bos_bestfit("train")
@@ -312,6 +307,7 @@ progress = 0 # will go from 0 to 1 over the course of the epoch
 # Same shape as base_train but uses progress (0→1) instead of absolute step counts,
 # because SFT doesn't always know num_iterations in advance (dataset-driven stopping).
 def get_lr_multiplier(progress):
+    progress = min(max(progress, 0.0), 1.0)
     if progress < args.warmup_ratio:
         return (progress + 1e-8) / args.warmup_ratio
     elif progress <= 1.0 - args.warmdown_ratio:
@@ -336,6 +332,9 @@ total_training_time = 0 # total wall-clock time of training
 step = 0
 while True:
     flops_so_far = num_flops_per_token * args.total_batch_size * step
+
+    if args.num_iterations > 0 and step >= args.num_iterations:
+        last_step = True
 
     # Synchronize last_step across all ranks to avoid hangs in the distributed setting
     if ddp:
@@ -438,7 +437,11 @@ while True:
         else:
             loss.backward()
         x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
-        progress = max(progress, approx_progress) # only increase progress monotonically
+        if args.num_iterations > 0:
+            micro_progress = (step + (micro_step + 1) / grad_accum_steps) / args.num_iterations
+            progress = max(progress, min(micro_progress, 1.0)) # only increase progress monotonically
+        else:
+            progress = max(progress, min(approx_progress, 1.0)) # only increase progress monotonically
     # step the optimizer
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)

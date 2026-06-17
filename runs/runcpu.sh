@@ -53,6 +53,7 @@ python -m scripts.chat_sft \
     --eval-every=200 \
     --eval-tokens=524288 \
     --num-iterations=1500 \
+    --chatcore-every=-1 \
     --run=$WANDB_RUN
 
 # Chat with the model over CLI
