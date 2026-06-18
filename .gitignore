@@ -11,3 +11,14 @@ eval_bundle/
 # Local setup
 CLAUDE.md
 wandb/
+
+# Local job outputs
+*.out
+*.err
+
+# Local model artifacts
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+pytorch_model*.bin

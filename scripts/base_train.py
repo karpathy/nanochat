@@ -451,6 +451,9 @@ print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {
 
 # Go!
 stop_announced = False
+mfu = 0.0
+flops_so_far = num_flops_per_token * total_batch_size * step
+results = {}
 def prune_old_checkpoints(checkpoint_dir, keep_last):
     if keep_last <= 0 or not master_process:
         return

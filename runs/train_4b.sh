@@ -17,6 +17,9 @@ TARGET_PARAM_DATA_RATIO="${TARGET_PARAM_DATA_RATIO:-12}"
 DEVICE_BATCH_SIZE="${DEVICE_BATCH_SIZE:-8}"
 EVAL_DEVICE_BATCH_SIZE="${EVAL_DEVICE_BATCH_SIZE:-$DEVICE_BATCH_SIZE}"
 SFT_DEVICE_BATCH_SIZE="${SFT_DEVICE_BATCH_SIZE:-$DEVICE_BATCH_SIZE}"
+SFT_SAVE_EVERY="${SFT_SAVE_EVERY:-25}"
+KEEP_LAST_SFT_CHECKPOINTS="${KEEP_LAST_SFT_CHECKPOINTS:-4}"
+AUTO_RESUME_SFT="${AUTO_RESUME_SFT:-1}"
 TOKENIZER_SHARDS="${TOKENIZER_SHARDS:-8}"
 TOKENIZER_MAX_CHARS="${TOKENIZER_MAX_CHARS:-2000000000}"
 TOKENIZER_VOCAB_SIZE="${TOKENIZER_VOCAB_SIZE:-32768}"
@@ -249,10 +252,36 @@ if [ "$STOP_AFTER" = "base_eval" ]; then
 fi
 
 log "Running SFT"
-torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.chat_sft -- \
+SFT_ARGS=(
     --model-tag="$MODEL_TAG" \
     --device-batch-size="$SFT_DEVICE_BATCH_SIZE" \
+    --save-every="$SFT_SAVE_EVERY" \
+    --keep-last-checkpoints="$KEEP_LAST_SFT_CHECKPOINTS" \
     --run="$WANDB_RUN"
+)
+if [ "$AUTO_RESUME_SFT" = "1" ]; then
+    SFT_RESUME_FROM_STEP="$(NANOCHAT_BASE_DIR="$NANOCHAT_BASE_DIR" MODEL_TAG="$MODEL_TAG" python - <<'PY'
+import glob
+import os
+
+checkpoint_dir = os.path.join(os.environ["NANOCHAT_BASE_DIR"], "chatsft_checkpoints", os.environ["MODEL_TAG"])
+steps = []
+for path in glob.glob(os.path.join(checkpoint_dir, "model_*.pt")):
+    try:
+        steps.append(int(os.path.basename(path).split("_")[-1].split(".")[0]))
+    except ValueError:
+        pass
+print(max(steps) if steps else -1)
+PY
+)"
+    if [ "$SFT_RESUME_FROM_STEP" != "-1" ]; then
+        log "AUTO_RESUME_SFT found checkpoint step $SFT_RESUME_FROM_STEP"
+        SFT_ARGS+=(--resume-from-step="$SFT_RESUME_FROM_STEP")
+    else
+        log "AUTO_RESUME_SFT found no checkpoint; starting SFT from base model"
+    fi
+fi
+torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.chat_sft -- "${SFT_ARGS[@]}"
 if [ "$STOP_AFTER" = "sft" ]; then
     log "STOP_AFTER=sft, stopping after SFT"
     exit 0

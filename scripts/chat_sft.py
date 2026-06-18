@@ -13,6 +13,7 @@ import gc
 import argparse
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+import signal
 import time
 import wandb
 import torch
@@ -42,6 +43,7 @@ parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (e
 # Model loading
 parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
 parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
+parser.add_argument("--resume-from-step", type=int, default=-1, help="resume SFT from this step (-1 = disable)")
 parser.add_argument("--load-optimizer", type=int, default=1, help="warm-start optimizer from pretrained checkpoint (0=no, 1=yes)")
 # Training horizon
 parser.add_argument("--num-iterations", type=int, default=-1, help="number of optimization steps (-1 = full epoch)")
@@ -63,12 +65,30 @@ parser.add_argument("--eval-tokens", type=int, default=40*524288, help="number o
 parser.add_argument("--chatcore-every", type=int, default=200, help="evaluate ChatCORE metric every N steps (-1 = disable)")
 parser.add_argument("--chatcore-max-cat", type=int, default=-1, help="max problems per categorical task for ChatCORE")
 parser.add_argument("--chatcore-max-sample", type=int, default=24, help="max problems per generative task for ChatCORE")
+parser.add_argument("--save-every", type=int, default=-1, help="save SFT checkpoint every N steps (-1 = only at end)")
+parser.add_argument("--keep-last-checkpoints", type=int, default=-1, help="keep only the last N SFT checkpoints (-1 = keep all)")
 # Data mixture
 parser.add_argument("--mmlu-epochs", type=int, default=3, help="number of epochs of MMLU in training mixture (teaches Multiple Choice)")
 parser.add_argument("--gsm8k-epochs", type=int, default=4, help="number of epochs of GSM8K in training mixture (teaches Math and Tool Use)")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
+
+_stop_requested = False
+_stop_signal_name = None
+
+def _handle_stop_signal(signum, frame):
+    global _stop_requested, _stop_signal_name
+    _stop_requested = True
+    try:
+        _stop_signal_name = signal.Signals(signum).name
+    except ValueError:
+        _stop_signal_name = str(signum)
+
+for _signal_name in ("SIGUSR1", "SIGTERM", "SIGINT"):
+    _signal = getattr(signal, _signal_name, None)
+    if _signal is not None:
+        signal.signal(_signal, _handle_stop_signal)
 
 # Compute init
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
@@ -92,15 +112,21 @@ wandb_run = init_wandb_or_dummy(wandb, project="nanochat-sft", name=args.run, co
 if not HAS_FA3:
     print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback. Training will be less efficient.")
 
-# Load the model and tokenizer
-model, tokenizer, meta = load_model("base", device, phase="train", model_tag=args.model_tag, step=args.model_step)
+resuming_sft = args.resume_from_step != -1
+if resuming_sft:
+    print0(f"Resuming SFT from step {args.resume_from_step}")
+    model, tokenizer, meta = load_model("sft", device, phase="train", model_tag=args.model_tag, step=args.resume_from_step)
+else:
+    # Load the model and tokenizer
+    model, tokenizer, meta = load_model("base", device, phase="train", model_tag=args.model_tag, step=args.model_step)
 
 # Inherit training hyperparameters from pretrained checkpoint (None = inherit, explicit value = override)
-pretrain_user_config = meta.get("user_config", {})
+pretrain_meta = meta.get("pretrain_meta", meta)
+pretrain_user_config = meta.get("pretrain_user_config", pretrain_meta.get("user_config", {}))
 for name, fallback, source in [
-    ("max_seq_len",       2048,  meta),
-    ("device_batch_size", 32,    meta),
-    ("total_batch_size",  524288, meta),
+    ("max_seq_len",       2048,  meta if resuming_sft else pretrain_meta),
+    ("device_batch_size", 32,    meta if resuming_sft else pretrain_meta),
+    ("total_batch_size",  524288, meta if resuming_sft else pretrain_meta),
     ("embedding_lr",      0.3,   pretrain_user_config),
     ("unembedding_lr",    0.004, pretrain_user_config),
     ("matrix_lr",         0.02,  pretrain_user_config),
@@ -138,7 +164,14 @@ optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_
 # pretrained values. Since pretraining warmdown brings LRs to ~0, we must save and
 # restore our fresh SFT LRs after loading.
 base_dir = get_base_dir()
-if args.load_optimizer:
+if resuming_sft:
+    optimizer_data = load_optimizer_state("sft", device, rank=ddp_rank, model_tag=args.model_tag, step=args.resume_from_step)
+    if optimizer_data is None:
+        raise FileNotFoundError(f"Missing SFT optimizer state for step {args.resume_from_step}")
+    optimizer.load_state_dict(optimizer_data)
+    del optimizer_data
+    print0("Loaded SFT optimizer state")
+elif args.load_optimizer:
     optimizer_data = load_optimizer_state("base", device, rank=ddp_rank, model_tag=args.model_tag, step=args.model_step)
     if optimizer_data is not None:
         base_lrs = [group["lr"] for group in optimizer.param_groups]
@@ -306,7 +339,6 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
 
 train_loader = sft_data_generator_bos_bestfit("train")
 build_val_loader = lambda: sft_data_generator_bos_bestfit("val")
-progress = 0 # will go from 0 to 1 over the course of the epoch
 
 # Learning rate schedule (linear warmup, constant, linear warmdown)
 # Same shape as base_train but uses progress (0→1) instead of absolute step counts,
@@ -328,12 +360,96 @@ def get_muon_momentum(it):
 
 # -----------------------------------------------------------------------------
 # Training loop
-x, y = next(train_loader) # prefetch the very first batch of data
-min_val_bpb = float("inf")
-smooth_train_loss = 0 # EMA of training loss
+if resuming_sft:
+    step = meta["step"]
+    loop_state = meta["loop_state"]
+    val_bpb = meta.get("val_bpb")
+    min_val_bpb = meta["min_val_bpb"]
+    smooth_train_loss = loop_state["smooth_train_loss"]
+    total_training_time = loop_state["total_training_time"]
+    progress = loop_state["progress"]
+    current_epoch = loop_state.get("current_epoch", current_epoch)
+else:
+    step = 0
+    val_bpb = None
+    min_val_bpb = float("inf")
+    smooth_train_loss = 0 # EMA of training loss
+    total_training_time = 0 # total wall-clock time of training
+    progress = 0 # will go from 0 to 1 over the course of the epoch
 ema_beta = 0.9 # EMA decay factor
-total_training_time = 0 # total wall-clock time of training
-step = 0
+
+def next_train_batch_at_step(loader, resume_step, accum_steps):
+    target_batch_idx = resume_step * accum_steps
+    batch = None
+    for _ in range(target_batch_idx + 1):
+        batch = next(loader)
+    return batch
+
+x, y = next_train_batch_at_step(train_loader, step, grad_accum_steps)
+progress = max(progress, approx_progress)
+
+def prune_old_checkpoints(checkpoint_dir, keep_last):
+    if keep_last <= 0 or not master_process:
+        return
+    steps = []
+    for filename in os.listdir(checkpoint_dir):
+        if filename.startswith("model_") and filename.endswith(".pt"):
+            try:
+                steps.append(int(filename.removeprefix("model_").removesuffix(".pt")))
+            except ValueError:
+                pass
+    steps = sorted(set(steps))
+    for old_step in steps[:-keep_last]:
+        for filename in os.listdir(checkpoint_dir):
+            if filename.startswith((f"model_{old_step:06d}.", f"meta_{old_step:06d}.", f"optim_{old_step:06d}_rank")):
+                path = os.path.join(checkpoint_dir, filename)
+                try:
+                    os.remove(path)
+                    print0(f"Pruned old SFT checkpoint file: {path}")
+                except FileNotFoundError:
+                    pass
+
+def save_sft_checkpoint(step, val_bpb, interrupted=False):
+    output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
+    checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
+    save_checkpoint(
+        checkpoint_dir,
+        step,
+        orig_model.state_dict(),
+        optimizer.state_dict(),
+        {
+            "step": step,
+            "val_bpb": val_bpb,
+            "min_val_bpb": min_val_bpb,
+            "model_config": {
+                "sequence_len": args.max_seq_len,
+                "vocab_size": tokenizer.get_vocab_size(),
+                "n_layer": depth,
+                "n_head": model.config.n_head,
+                "n_kv_head": model.config.n_kv_head,
+                "n_embd": model.config.n_embd,
+                "window_pattern": model.config.window_pattern,
+            },
+            "user_config": user_config,
+            "pretrain_user_config": pretrain_user_config,
+            "pretrain_meta": pretrain_meta,
+            "device_batch_size": args.device_batch_size,
+            "max_seq_len": args.max_seq_len,
+            "total_batch_size": args.total_batch_size,
+            "interrupted": interrupted,
+            "stop_signal": _stop_signal_name,
+            "loop_state": {
+                "min_val_bpb": min_val_bpb,
+                "smooth_train_loss": smooth_train_loss,
+                "total_training_time": total_training_time,
+                "progress": progress,
+                "current_epoch": current_epoch,
+            },
+        },
+        rank=ddp_rank,
+    )
+    prune_old_checkpoints(checkpoint_dir, args.keep_last_checkpoints)
+
 while True:
     flops_so_far = num_flops_per_token * args.total_batch_size * step
 
@@ -395,33 +511,14 @@ while True:
         })
         model.train()
 
-    # save checkpoint at the end of the run (all ranks participate so each saves its optimizer shard)
-    if last_step:
-        output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
-        checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
-        save_checkpoint(
-            checkpoint_dir,
-            step,
-            orig_model.state_dict(),
-            optimizer.state_dict(),
-            {
-                "step": step,
-                "val_bpb": val_bpb, # loss at last step
-                "model_config": {
-                    "sequence_len": args.max_seq_len,
-                    "vocab_size": tokenizer.get_vocab_size(),
-                    "n_layer": depth,
-                    "n_head": model.config.n_head,
-                    "n_kv_head": model.config.n_kv_head,
-                    "n_embd": model.config.n_embd,
-                    "window_pattern": model.config.window_pattern,
-                },
-                "user_config": user_config, # inputs to the training script
-            },
-            rank=ddp_rank,
-        )
+    stop_now = bool(_stop_requested)
+    # save checkpoint at the end of the run, on signal, or periodically
+    if last_step or stop_now or (step > 0 and args.save_every > 0 and step != args.resume_from_step and step % args.save_every == 0):
+        if stop_now:
+            print0(f"Stop requested by {_stop_signal_name}; saving SFT checkpoint at step {step}")
+        save_sft_checkpoint(step, val_bpb, interrupted=stop_now and not last_step)
 
-    if last_step:
+    if last_step or stop_now:
         break
 
     # -------------------------------------------------------------------------
