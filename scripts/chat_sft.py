@@ -43,6 +43,7 @@ parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (e
 parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
 parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
 parser.add_argument("--load-optimizer", type=int, default=1, help="warm-start optimizer from pretrained checkpoint (0=no, 1=yes)")
+parser.add_argument("--output-model-tag", type=str, default=None, help="SFT checkpoint tag (default: source model tag or d<depth>)")
 # Training horizon
 parser.add_argument("--num-iterations", type=int, default=-1, help="number of optimization steps (-1 = full epoch)")
 # Batch sizes (default: inherit from pretrained checkpoint)
@@ -63,10 +64,19 @@ parser.add_argument("--eval-tokens", type=int, default=40*524288, help="number o
 parser.add_argument("--chatcore-every", type=int, default=200, help="evaluate ChatCORE metric every N steps (-1 = disable)")
 parser.add_argument("--chatcore-max-cat", type=int, default=-1, help="max problems per categorical task for ChatCORE")
 parser.add_argument("--chatcore-max-sample", type=int, default=24, help="max problems per generative task for ChatCORE")
+parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N optimizer steps (-1 = only at end)")
 # Data mixture
 parser.add_argument("--mmlu-epochs", type=int, default=3, help="number of epochs of MMLU in training mixture (teaches Multiple Choice)")
 parser.add_argument("--gsm8k-epochs", type=int, default=4, help="number of epochs of GSM8K in training mixture (teaches Math and Tool Use)")
+parser.add_argument("--custom-train-jsonl", type=str, default=None, help="additional conversation JSONL for training")
+parser.add_argument("--custom-val-jsonl", type=str, default=None, help="additional conversation JSONL for validation")
+parser.add_argument("--custom-train-repeats", type=int, default=1, help="number of copies of custom train data in the task mixture")
+parser.add_argument("--custom-train-token-ratio", type=float, default=None, help="target custom-data share estimated by rendered tokens (overrides repeats)")
 args = parser.parse_args()
+if args.custom_train_repeats < 1:
+    parser.error("--custom-train-repeats must be >= 1")
+if args.custom_train_token_ratio is not None and not 0 < args.custom_train_token_ratio < 1:
+    parser.error("--custom-train-token-ratio must be between 0 and 1")
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
 
@@ -171,13 +181,63 @@ train_tasks = [
     SimpleSpelling(size=200000, split="train"), # 200K rows of Simple Spelling (e.g. spell the word 'apple')
     SpellingBee(size=80000, split="train"), # 80K rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
 ]
+custom_effective_rows = 0
+estimated_custom_token_ratio = None
+if args.custom_train_jsonl is not None:
+    custom_train_path = os.path.abspath(os.path.expanduser(args.custom_train_jsonl))
+    if not os.path.exists(custom_train_path):
+        raise FileNotFoundError(f"Custom train JSONL not found: {custom_train_path}")
+    custom_task = CustomJSON(filepath=custom_train_path)
+    if len(custom_task) == 0:
+        raise ValueError(f"Custom train JSONL contains no conversations: {custom_train_path}")
+
+    if args.custom_train_token_ratio is None:
+        train_tasks.extend([custom_task] * args.custom_train_repeats)
+        custom_effective_rows = len(custom_task) * args.custom_train_repeats
+    else:
+        def estimate_average_tokens(task, max_samples=256):
+            sample_count = min(len(task), max_samples)
+            token_total = 0
+            for sample_index in range(sample_count):
+                task_index = sample_index * len(task) // sample_count
+                ids, _ = tokenizer.render_conversation(
+                    task[task_index], max_tokens=args.max_seq_len + 1,
+                )
+                token_total += len(ids)
+            return token_total / sample_count
+
+        base_token_mass = sum(len(task) * estimate_average_tokens(task) for task in train_tasks)
+        custom_average_tokens = estimate_average_tokens(custom_task)
+        target_custom_mass = (
+            args.custom_train_token_ratio / (1 - args.custom_train_token_ratio)
+        ) * base_token_mass
+        custom_effective_rows = max(1, round(target_custom_mass / custom_average_tokens))
+        full_repeats, partial_rows = divmod(custom_effective_rows, len(custom_task))
+        train_tasks.extend([custom_task] * full_repeats)
+        if partial_rows:
+            train_tasks.append(CustomJSON(filepath=custom_train_path, stop=partial_rows))
+        estimated_custom_token_ratio = (
+            custom_effective_rows * custom_average_tokens
+            / (base_token_mass + custom_effective_rows * custom_average_tokens)
+        )
 train_dataset = TaskMixture(train_tasks)
-print0(f"Training mixture: {len(train_dataset):,} rows (MMLU x{args.mmlu_epochs}, GSM8K x{args.gsm8k_epochs})")
-val_dataset = TaskMixture([
+print0(
+    f"Training mixture: {len(train_dataset):,} rows "
+    f"(MMLU x{args.mmlu_epochs}, GSM8K x{args.gsm8k_epochs}, "
+    f"custom rows {custom_effective_rows:,}, "
+    f"estimated custom token ratio {estimated_custom_token_ratio})"
+)
+val_tasks = [
     SmolTalk(split="test"), # 24K rows in test set
     MMLU(subset="all", split="test", stop=5200), # 14K rows in test set, use only 5.2K to match the train ratios
     GSM8K(subset="main", split="test", stop=420), # 1.32K rows in test set, use only 420 to match the train ratios
-]) # total: 24K + 5.2K + 0.42K ~= 29.6K rows
+] # total: 24K + 5.2K + 0.42K ~= 29.6K rows
+if args.custom_val_jsonl is not None:
+    custom_val_path = os.path.abspath(os.path.expanduser(args.custom_val_jsonl))
+    if not os.path.exists(custom_val_path):
+        raise FileNotFoundError(f"Custom val JSONL not found: {custom_val_path}")
+    val_tasks.append(CustomJSON(filepath=custom_val_path))
+val_dataset = TaskMixture(val_tasks)
 # DataLoader is defined here, it emits inputs, targets : 2D tensors of shape (device_batch_size, max_seq_len)
 # A big problem is that we don't know the final num_iterations in advance. So we create
 # these two global variables and update them from within the data generator.
@@ -326,6 +386,7 @@ def get_muon_momentum(it):
 # Training loop
 x, y = next(train_loader) # prefetch the very first batch of data
 min_val_bpb = float("inf")
+val_bpb = None
 smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
@@ -394,9 +455,12 @@ while True:
         })
         model.train()
 
-    # save checkpoint at the end of the run (all ranks participate so each saves its optimizer shard)
-    if last_step:
-        output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
+    # Save at the end and optionally at intermediate optimizer steps.
+    should_save = last_step or (
+        step > 0 and args.save_every > 0 and step % args.save_every == 0
+    )
+    if should_save:
+        output_dirname = args.output_model_tag or args.model_tag or f"d{depth}"
         checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
         save_checkpoint(
             checkpoint_dir,
@@ -405,7 +469,7 @@ while True:
             optimizer.state_dict(),
             {
                 "step": step,
-                "val_bpb": val_bpb, # loss at last step
+                "val_bpb": val_bpb, # most recently evaluated validation loss
                 "model_config": {
                     "sequence_len": args.max_seq_len,
                     "vocab_size": tokenizer.get_vocab_size(),

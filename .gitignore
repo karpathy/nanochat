@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+.DS_Store
 dev-ignore/
 report.md
 eval_bundle/

@@ -9,6 +9,7 @@ import torch
 from nanochat.common import compute_init, autodetect_device_type
 from nanochat.engine import Engine
 from nanochat.checkpoint_manager import load_model
+from nanochat.tokenizer import IncrementalTextDecoder
 
 parser = argparse.ArgumentParser(description='Chat with the model')
 parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|rl")
@@ -82,12 +83,14 @@ while True:
         "top_k": args.top_k,
     }
     response_tokens = []
+    stream_decoder = IncrementalTextDecoder(tokenizer)
     print("\nAssistant: ", end="", flush=True)
     for token_column, token_masks in engine.generate(conversation_tokens, **generate_kwargs):
         token = token_column[0] # pop the batch dimension (num_samples=1)
         response_tokens.append(token)
-        token_text = tokenizer.decode([token])
-        print(token_text, end="", flush=True)
+        new_text = stream_decoder.push(token)
+        if new_text:
+            print(new_text, end="", flush=True)
     print()
     # we have to ensure that the assistant end token is the last token
     # so even if generation ends due to max tokens, we have to append it to the end

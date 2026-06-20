@@ -24,6 +24,24 @@ SPECIAL_TOKENS = [
     "<|output_end|>",
 ]
 
+
+class IncrementalTextDecoder:
+    """Decode an incrementally generated token stream without exposing partial UTF-8."""
+
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.token_ids = []
+        self.emitted_text = ""
+
+    def push(self, token_id):
+        self.token_ids.append(token_id)
+        current_text = self.tokenizer.decode(self.token_ids)
+        if current_text.endswith("\ufffd"):
+            return ""
+        new_text = current_text[len(self.emitted_text):]
+        self.emitted_text = current_text
+        return new_text
+
 # NOTE: this split pattern deviates from GPT-4 in that we use \p{N}{1,2} instead of \p{N}{1,3}
 # I did this because I didn't want to "waste" too many tokens on numbers for smaller vocab sizes.
 # I verified that 2 is the sweet spot for vocab size of 32K. 1 is a bit worse, 3 was worse still.

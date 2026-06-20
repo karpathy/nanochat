@@ -29,7 +29,7 @@ from nanochat.gpt import GPT, GPTConfig, Linear
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
+from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint, find_last_step
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from nanochat.flash_attention import HAS_FA3
@@ -68,6 +68,8 @@ parser.add_argument("--warmup-steps", type=int, default=40, help="number of step
 parser.add_argument("--warmdown-ratio", type=float, default=0.65, help="ratio of iterations for LR warmdown")
 parser.add_argument("--final-lr-frac", type=float, default=0.05, help="final LR as fraction of initial LR")
 parser.add_argument("--resume-from-step", type=int, default=-1, help="resume training from this step (-1 = disable)")
+parser.add_argument("--init-from-model-tag", type=str, default=None, help="initialize model weights from a base checkpoint tag, but reset optimizer/data/step")
+parser.add_argument("--init-from-step", type=int, default=None, help="checkpoint step for --init-from-model-tag (default = latest)")
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=250, help="evaluate val bpb every N steps (-1 = disable)")
 parser.add_argument("--eval-tokens", type=int, default=80*524288, help="number of tokens to evaluate val loss on")
@@ -77,8 +79,15 @@ parser.add_argument("--sample-every", type=int, default=2000, help="sample from 
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
+parser.add_argument("--data-dir", type=str, default=None, help="directory containing train parquet shards followed by one validation shard")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
+if args.resume_from_step != -1 and args.init_from_model_tag is not None:
+    parser.error("--resume-from-step and --init-from-model-tag are mutually exclusive")
+if args.init_from_step is not None and args.init_from_model_tag is None:
+    parser.error("--init-from-step requires --init-from-model-tag")
+if args.init_from_model_tag is not None and (args.model_tag or f"d{args.depth}") == args.init_from_model_tag:
+    parser.error("--model-tag must differ from --init-from-model-tag to protect the source checkpoint")
 # -----------------------------------------------------------------------------
 # Compute init and wandb logging
 
@@ -160,6 +169,22 @@ if resuming:
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)
     model.load_state_dict(model_data, strict=True, assign=True)
     del model_data # free up this memory after the copy
+elif args.init_from_model_tag is not None:
+    source_dir = os.path.join(base_dir, "base_checkpoints", args.init_from_model_tag)
+    source_step = args.init_from_step if args.init_from_step is not None else find_last_step(source_dir)
+    print0(f"Initializing model weights from {args.init_from_model_tag} step {source_step}")
+    model_data, _, init_meta_data = load_checkpoint(source_dir, source_step, device, load_optimizer=False)
+    source_config = dict(init_meta_data["model_config"])
+    if "window_pattern" not in source_config:
+        source_config["window_pattern"] = "L"
+    if source_config != model_config_kwargs:
+        raise ValueError(
+            "Initialization checkpoint model config does not match requested model config.\n"
+            f"checkpoint: {source_config}\nrequested: {model_config_kwargs}"
+        )
+    model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
+    model.load_state_dict(model_data, strict=True, assign=True)
+    del model_data
 
 # -----------------------------------------------------------------------------
 # FP8 training initialization and management (this has to be done before torch.compile)
@@ -328,8 +353,14 @@ if scaler is not None:
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
-build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
+train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(
+    tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device,
+    resume_state_dict=dataloader_resume_state_dict, data_dir=args.data_dir,
+)
+build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(
+    tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device,
+    data_dir=args.data_dir,
+)
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
