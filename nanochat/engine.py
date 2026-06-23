@@ -13,6 +13,7 @@ The whole thing is made as efficient as possible.
 
 import torch
 import torch.nn.functional as F
+import platform
 import signal
 import warnings
 from contextlib import contextmanager
@@ -22,26 +23,57 @@ from nanochat.checkpoint_manager import load_model
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
-@contextmanager
-def timeout(duration, formula):
-    def timeout_handler(signum, frame):
-        raise Exception(f"'{formula}': timed out after {duration} seconds")
+_IS_UNIX = platform.system() != "Windows"
 
-    signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(duration)
-    yield
-    signal.alarm(0)
+if _IS_UNIX:
 
+    @contextmanager
+    def timeout(duration, formula):
+        def timeout_handler(signum, frame):
+            raise TimeoutError(f"'{formula}': timed out after {duration} seconds")
+
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(duration)
+
+        try:
+            yield
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
+else:
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+    @contextmanager
+    def timeout(duration, formula):
+        yield
 def eval_with_timeout(formula, max_time=3):
-    try:
-        with timeout(max_time, formula):
+
+    if _IS_UNIX:
+        try:
+            with timeout(max_time, formula):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", SyntaxWarning)
+                    return eval(formula, {"__builtins__": {}}, {})
+        except Exception:
+            return None
+
+    else:
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+        def _do_eval():
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
                 return eval(formula, {"__builtins__": {}}, {})
-    except Exception as e:
-        signal.alarm(0)
-        # print(f"Warning: Failed to eval {formula}, exception: {e}") # it's ok ignore wrong calculator usage
-        return None
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_do_eval)
+
+            try:
+                return future.result(timeout=max_time)
+            except (FuturesTimeoutError, Exception):
+                future.cancel()
+                return None
 
 def use_calculator(expr):
     """
