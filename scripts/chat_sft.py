@@ -16,7 +16,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
 import torch
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, get_sync_fn, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state
 from nanochat.loss_eval import evaluate_bpb
@@ -75,7 +75,7 @@ device_type = autodetect_device_type() if args.device_type == "" else args.devic
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0
 print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
-synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
+synchronize = get_sync_fn(device_type)
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 if device_type == "cuda":
     gpu_device_name = torch.cuda.get_device_name(0)
