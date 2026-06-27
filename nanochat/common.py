@@ -27,7 +27,12 @@ def _detect_compute_dtype():
         # fp16 training requires GradScaler (not yet implemented), so fall back to fp32.
         # Users can still force fp16 via NANOCHAT_DTYPE=float16 if they know what they're doing.
         return torch.float32, f"auto-detected: CUDA SM {capability[0]}{capability[1]} (pre-Ampere, bf16 not supported, using fp32)"
-    return torch.float32, "auto-detected: no CUDA (CPU/MPS)"
+    # No CUDA: CPU or Apple Silicon (MPS). Default to fp32 for broad compatibility.
+    # Note: MPS *can* run bf16 (set NANOCHAT_DTYPE=bfloat16). On recent macOS this
+    # works and saves ~25% of training/inference memory; without an FA3/bf16
+    # tensor-core fast path the per-step time may not improve (memory is the win).
+    # Default stays fp32 because bf16 on MPS was buggy on older macOS.
+    return torch.float32, "auto-detected: no CUDA (CPU/MPS), default fp32"
 COMPUTE_DTYPE, COMPUTE_DTYPE_REASON = _detect_compute_dtype()
 
 class ColoredFormatter(logging.Formatter):

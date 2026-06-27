@@ -108,7 +108,8 @@ nanochat does not use `torch.amp.autocast`. Instead, precision is managed explic
 |----------|--------------|-----|
 | CUDA SM 80+ (A100, H100, ...) | `bfloat16` | Native bf16 tensor cores |
 | CUDA SM < 80 (V100, T4, ...) | `float32` | No bf16; fp16 available via `NANOCHAT_DTYPE=float16` (uses GradScaler) |
-| CPU / MPS | `float32` | No reduced-precision tensor cores |
+| CPU | `float32` | No reduced-precision tensor cores |
+| MPS (Apple Silicon) | `float32` | Safe default; bf16 works on recent macOS — see note below |
 
 You can override the default with the `NANOCHAT_DTYPE` environment variable:
 
@@ -116,6 +117,8 @@ You can override the default with the `NANOCHAT_DTYPE` environment variable:
 NANOCHAT_DTYPE=float32 python -m scripts.chat_cli -p "hello"   # force fp32
 NANOCHAT_DTYPE=bfloat16 torchrun --nproc_per_node=8 -m scripts.base_train  # force bf16
 ```
+
+On Apple Silicon (MPS), the default is `float32` for broad compatibility, but recent macOS handles `bfloat16` on MPS fine. Setting `NANOCHAT_DTYPE=bfloat16` saves roughly **~25% of memory** in both training and inference (measured ~26% lower peak on an M4 Max / macOS 26.4.1: a 125.8M-param model went from 1412 MB to 1041 MB), with no loss of training stability. Without an FA3/bf16 tensor-core fast path on MPS the per-step wall-clock may not improve — the benefit is memory headroom (which gates how large a model fits on a Mac), not throughput. It's left opt-in rather than default because bf16 on MPS was unreliable on older macOS.
 
 How it works: model weights are stored in fp32 (for optimizer precision), but our custom `Linear` layer casts them to `COMPUTE_DTYPE` during the forward pass. Embeddings are stored directly in `COMPUTE_DTYPE` to save memory. This gives us the same mixed-precision benefit as autocast but with full explicit control over what runs in which precision.
 
