@@ -334,7 +334,7 @@ def execute_code(
             stdout="",
             stderr="",
             error="Execution failed (no result returned)",
-            timeout=True,
+            timeout=False,
             memory_exceeded=False,
         )
 
