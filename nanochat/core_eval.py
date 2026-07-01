@@ -164,6 +164,25 @@ def forward_model(model, input_ids):
     return losses, predictions
 
 
+def sample_fewshot_indices(idx, num_fewshot, data_len):
+    """
+    Sample few-shot example indices for evaluation, excluding the current item.
+
+    The sample size is clamped to the available population so that restricted
+    evaluation runs (e.g. --core-metric-max-per-task smaller than a task's
+    num_fewshot) degrade gracefully instead of raising ValueError from
+    random.sample. Sampling is deterministic for a given idx (seeded with
+    1234 + idx) so that few-shot prompts are stable across runs.
+    """
+    if num_fewshot <= 0:
+        return []
+    available_indices = [i for i in range(data_len) if i != idx]
+    if not available_indices:
+        return []
+    rng = random.Random(1234 + idx)
+    return rng.sample(available_indices, min(num_fewshot, len(available_indices)))
+
+
 @torch.no_grad()
 def evaluate_example(idx, model, tokenizer, data, device, task_meta):
     """Evaluate a single example, return True if correct, False otherwise"""
@@ -173,12 +192,8 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
     continuation_delimiter = task_meta['continuation_delimiter']
 
     # Sample few-shot examples (excluding current item)
-    fewshot_examples = []
-    if num_fewshot > 0:
-        rng = random.Random(1234 + idx)
-        available_indices = [i for i in range(len(data)) if i != idx]
-        fewshot_indices = rng.sample(available_indices, num_fewshot)
-        fewshot_examples = [data[i] for i in fewshot_indices]
+    fewshot_indices = sample_fewshot_indices(idx, num_fewshot, len(data))
+    fewshot_examples = [data[i] for i in fewshot_indices]
 
     # Render prompts and batch sequences based on task type
     if task_type == 'multiple_choice':
