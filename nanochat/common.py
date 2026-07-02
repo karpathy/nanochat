@@ -212,6 +212,18 @@ def compute_cleanup():
     if is_ddp_initialized():
         dist.destroy_process_group()
 
+def get_sync_fn(device_type):
+    """Return a device-appropriate synchronize() callable.
+    cuda/mps each have their own synchronize; cpu has nothing to wait on.
+    Important on MPS: without an actual sync, timing measurements only capture
+    async dispatch (not real compute), and bare torch.cuda.synchronize() raises
+    "Torch not compiled with CUDA enabled" on a CUDA-less build."""
+    if device_type == "cuda":
+        return torch.cuda.synchronize
+    if device_type == "mps":
+        return torch.mps.synchronize
+    return lambda: None
+
 class DummyWandb:
     """Useful if we wish to not use wandb but have all the same signatures"""
     def __init__(self):
