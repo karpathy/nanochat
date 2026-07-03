@@ -52,6 +52,10 @@ parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = de
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+# Mixture of Experts (see nanochat/moe.py)
+parser.add_argument("--num-experts", type=int, default=0, help="MoE: number of routed experts (0 = dense MLP)")
+parser.add_argument("--top-k", type=int, default=2, help="MoE: active routed experts per token")
+parser.add_argument("--moe-balance-coeff", type=float, default=1e-3, help="MoE: expert bias update speed for aux-loss-free balancing (DeepSeekV3's gamma). At 1e-3 the d16 sweep showed imbalance growing with num_experts (CV 0.16/0.40/1.27 at e8/e16/e32)")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -64,6 +68,7 @@ parser.add_argument("--unembedding-lr", type=float, default=0.008, help="learnin
 parser.add_argument("--weight-decay", type=float, default=0.28, help="cautious weight decay for the Muon optimizer (for weights)")
 parser.add_argument("--matrix-lr", type=float, default=0.02, help="learning rate for matrix parameters (Muon)")
 parser.add_argument("--scalar-lr", type=float, default=0.5, help="learning rate for scalars (resid_lambdas, x0_lambdas)")
+parser.add_argument("--router-lr", type=float, default=0.005, help="learning rate for the MoE router gate (Adam). Swept at d16: flat optimum around 0.0025-0.01, sharply worse >= 0.04")
 parser.add_argument("--warmup-steps", type=int, default=40, help="number of steps for LR warmup")
 parser.add_argument("--warmdown-ratio", type=float, default=0.65, help="ratio of iterations for LR warmdown")
 parser.add_argument("--final-lr-frac", type=float, default=0.05, help="final LR as fraction of initial LR")
@@ -137,6 +142,7 @@ def build_model_meta(depth):
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        num_experts=args.num_experts, top_k=args.top_k,
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -243,6 +249,9 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
+# MoE routing does arithmetic on tensor-valued counts (histc -> cumsum offsets); this dynamo
+# flag lets torch.compile trace through it without graph breaks (harmless for dense models)
+torch._dynamo.config.capture_scalar_outputs = True
 model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
 
 # -----------------------------------------------------------------------------
@@ -262,8 +271,10 @@ print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 # We've already initialized the model so we have Params. Optimal Tokens is now simply target-param-data-ratio * Params
 def get_scaling_params(m):
     # As for which params to use exactly, transformer matrices + lm_head gives cleanest scaling laws (see dev/LOG.md Jan 27, 2026)
+    # For MoE, use active params (top_k routed experts + shared, not all num_experts);
+    # for dense models active_transformer_matrices == transformer_matrices.
     params_counts = m.num_scaling_params()
-    scaling_params = params_counts['transformer_matrices'] + params_counts['lm_head']
+    scaling_params = params_counts['active_transformer_matrices'] + params_counts['lm_head']
     return scaling_params
 num_scaling_params = get_scaling_params(model)
 target_tokens = int(args.target_param_data_ratio * num_scaling_params) # optimal tokens for the model we are about to train
@@ -310,6 +321,7 @@ optimizer = model.setup_optimizer(
     unembedding_lr=args.unembedding_lr * batch_lr_scale,
     embedding_lr=args.embedding_lr * batch_lr_scale,
     scalar_lr=args.scalar_lr * batch_lr_scale,
+    router_lr=args.router_lr * batch_lr_scale,
     # Muon hyperparameters
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,
@@ -525,6 +537,10 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+    # MoE: log routing stats (sparingly, they sync) and update the balancing biases.
+    # Stats are read BEFORE the balancing update, which resets the token counters.
+    moe_stats = orig_model.get_moe_stats() if step % 100 == 0 else {}
+    orig_model.update_moe_balancing(args.moe_balance_coeff)
     if scaler is not None:
         scaler.unscale_(optimizer)
         # In distributed training, all ranks must agree on whether to skip the step.
@@ -577,6 +593,7 @@ while True:
             "train/mfu": mfu,
             "train/epoch": epoch,
         }
+        log_data.update(moe_stats)
         wandb_run.log(log_data)
 
     # state update
