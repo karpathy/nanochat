@@ -117,6 +117,8 @@ for name, fallback, source in [
         print0(f"Using {name}={arg_val}")
 
 orig_model = model
+# MoE routing does arithmetic on tensor-valued counts; lets dynamo trace through (harmless for dense)
+torch._dynamo.config.capture_scalar_outputs = True
 model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
@@ -446,6 +448,7 @@ while True:
         group["lr"] = group["initial_lr"] * lrm
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
+    orig_model.update_moe_balancing() # no-op for dense models
     if scaler is not None:
         scaler.unscale_(optimizer)
         if is_ddp_initialized():
