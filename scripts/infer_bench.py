@@ -34,7 +34,7 @@ import time
 import torch
 
 from nanochat.common import compute_init, compute_cleanup, autodetect_device_type, get_peak_bandwidth, get_peak_flops
-from nanochat.logfmt import format_record
+from nanochat.logfmt import format_record, format_invocation
 from nanochat.checkpoint_manager import load_model, find_largest_model
 from nanochat.engine import Engine
 
@@ -99,6 +99,7 @@ def main():
     parser.add_argument("--batch-sizes", type=str, default="1,8,32,128", help="Comma-separated decode batch sizes")
     parser.add_argument("-t", "--temperature", type=float, default=0.0)
     args = parser.parse_args()
+    print(format_invocation(args))
 
     device_type = autodetect_device_type()
     assert device_type == "cuda", "infer_bench currently assumes a CUDA GPU (for timing and VRAM measurement)"

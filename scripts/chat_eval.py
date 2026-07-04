@@ -14,7 +14,7 @@ import torch
 import torch.distributed as dist
 
 from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0, autodetect_device_type
-from nanochat.logfmt import format_record
+from nanochat.logfmt import format_record, format_invocation
 from nanochat.checkpoint_manager import load_model, find_largest_model
 from nanochat.engine import Engine
 
@@ -192,6 +192,7 @@ if __name__ == "__main__":
     parser.add_argument('-x', '--max-problems', type=int, default=None, help='Max problems to evaluate')
     parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
     args = parser.parse_args()
+    print0(format_invocation(args))
 
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)

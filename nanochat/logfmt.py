@@ -18,6 +18,7 @@ format records with format_record(), and the aggregator reads them back with
 parse_records().
 """
 
+import sys
 import shlex
 
 def format_record(tag, **fields):
@@ -28,6 +29,22 @@ def format_record(tag, **fields):
         parts.append(f"{key}={value_str}")
     line = " ".join(parts)
     return line
+
+def format_invocation(args):
+    """
+    The record pair every stage script prints at startup, so that a run is
+    reproducible from its log alone: `argv` carries the verbatim command line,
+    `config` the fully resolved arguments, i.e. including all the defaults
+    (which argv does not show, and which change over time as the code evolves).
+    args is the argparse Namespace of the calling script.
+    """
+    main_spec = getattr(sys.modules["__main__"], "__spec__", None)
+    script = main_spec.name if main_spec is not None else sys.argv[0]
+    argv_str = shlex.join(sys.argv[1:])
+    argv_line = format_record("argv", script=script, args=argv_str)
+    config_line = format_record("config", **vars(args))
+    lines = argv_line + "\n" + config_line
+    return lines
 
 def _parse_value(value_str):
     """Infer the type of a value: int, then float, else string."""

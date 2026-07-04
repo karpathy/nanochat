@@ -4,7 +4,9 @@ Test the log line grammar: the machine-readable contract inside stage logs.
 python -m pytest tests/test_logfmt.py -v
 """
 
-from nanochat.logfmt import format_record, parse_record, parse_records
+import argparse
+
+from nanochat.logfmt import format_record, format_invocation, parse_record, parse_records
 
 
 def test_roundtrip_types():
@@ -42,6 +44,20 @@ def test_negative_and_scientific_numbers():
     record = parse_record(line)
     assert record["loss"] == -2.5
     assert record["lr"] == 1e-4
+
+
+def test_format_invocation_roundtrip(monkeypatch):
+    # simulate a script invoked as: python -m scripts.base_train --depth=12 --run="my run"
+    monkeypatch.setattr("sys.argv", ["/path/to/base_train.py", "--depth=12", "--run=my run"])
+    args = argparse.Namespace(depth=12, run="my run", fp8=False, model_tag=None)
+    lines = format_invocation(args).split("\n")
+    assert len(lines) == 2
+    argv = parse_record(lines[0], tag="argv")
+    assert argv["args"] == "--depth=12 '--run=my run'"  # copy-pasteable back into a shell
+    config = parse_record(lines[1], tag="config")
+    assert config["depth"] == 12
+    assert config["run"] == "my run"
+    assert config["fp8"] == "False"  # bools/None become strings, fine for a log
 
 
 def test_parse_records_scans_mixed_file(tmp_path):

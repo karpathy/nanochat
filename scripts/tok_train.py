@@ -6,7 +6,7 @@ import os
 import time
 import argparse
 import torch
-from nanochat.logfmt import format_record
+from nanochat.logfmt import format_record, format_invocation
 from nanochat.tokenizer import RustBPETokenizer, get_tokenizer_dir
 from nanochat.dataset import parquets_iter_batched
 
@@ -18,9 +18,7 @@ parser.add_argument('--max-chars', type=int, default=2_000_000_000, help='Maximu
 parser.add_argument('--doc-cap', type=int, default=10_000, help='Maximum characters per document (default: 10,000)')
 parser.add_argument('--vocab-size', type=int, default=32768, help='Vocabulary size (default: 32768 = 2^15)')
 args = parser.parse_args()
-print(f"max_chars: {args.max_chars:,}")
-print(f"doc_cap: {args.doc_cap:,}")
-print(f"vocab_size: {args.vocab_size:,}")
+print(format_invocation(args))
 
 # -----------------------------------------------------------------------------
 # Text iterator

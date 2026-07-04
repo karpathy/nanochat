@@ -17,7 +17,7 @@ import time
 import wandb
 import torch
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
-from nanochat.logfmt import format_record
+from nanochat.logfmt import format_record, format_invocation
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state, get_checkpoint_dir
 from nanochat.loss_eval import evaluate_bpb
@@ -67,6 +67,7 @@ parser.add_argument("--mmlu-epochs", type=int, default=3, help="number of epochs
 parser.add_argument("--gsm8k-epochs", type=int, default=4, help="number of epochs of GSM8K in training mixture (teaches Math and Tool Use)")
 args = parser.parse_args()
 user_config = vars(args).copy()
+print0(format_invocation(args))
 # -----------------------------------------------------------------------------
 
 # Compute init
