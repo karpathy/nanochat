@@ -52,7 +52,7 @@ export NANOCHAT_DATASET="${NANOCHAT_DATASET:-climbmix}"
 NUM_SHARDS="${NUM_SHARDS:-1000}"
 
 # the depth ladder: one model is trained per depth, tracing out the cost-perf curve
-DEPTHS="${DEPTHS:-12 16 20 26}"
+DEPTHS="${DEPTHS:-12 16 20 24}"
 # which stages to run at each depth (e.g. a pretraining researcher: STAGES="base infer")
 STAGES="${STAGES:-base infer sft chat}"
 has_stage() { [[ " $STAGES " == *" $1 "* ]]; }
