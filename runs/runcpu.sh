@@ -13,6 +13,8 @@
 # all the setup stuff
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p $NANOCHAT_BASE_DIR
+# artifacts (tokenizer, checkpoints) land in ~/.cache/nanochat/experiments/runcpu/
+export NANOCHAT_EXPERIMENT=runcpu
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
 uv sync --extra cpu
@@ -55,4 +57,4 @@ python -m scripts.chat_sft \
 # The model should be able to say that it is Paris.
 # It might even know that the color of the sky is blue.
 # Sometimes the model likes it if you first say Hi before you ask it questions.
-# python -m scripts.chat_cli -p "What is the capital of France?"
+# NANOCHAT_EXPERIMENT=runcpu python -m scripts.chat_cli -p "What is the capital of France?"

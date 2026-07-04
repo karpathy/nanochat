@@ -6,8 +6,8 @@ import os
 import time
 import argparse
 import torch
-from nanochat.tokenizer import RustBPETokenizer
-from nanochat.common import get_base_dir
+from nanochat.logfmt import format_record, format_invocation
+from nanochat.tokenizer import RustBPETokenizer, get_tokenizer_dir
 from nanochat.dataset import parquets_iter_batched
 
 # -----------------------------------------------------------------------------
@@ -18,9 +18,7 @@ parser.add_argument('--max-chars', type=int, default=2_000_000_000, help='Maximu
 parser.add_argument('--doc-cap', type=int, default=10_000, help='Maximum characters per document (default: 10,000)')
 parser.add_argument('--vocab-size', type=int, default=32768, help='Vocabulary size (default: 32768 = 2^15)')
 args = parser.parse_args()
-print(f"max_chars: {args.max_chars:,}")
-print(f"doc_cap: {args.doc_cap:,}")
-print(f"vocab_size: {args.vocab_size:,}")
+print(format_invocation(args))
 
 # -----------------------------------------------------------------------------
 # Text iterator
@@ -52,9 +50,8 @@ train_time = t1 - t0
 print(f"Training time: {train_time:.2f}s")
 
 # -----------------------------------------------------------------------------
-# Save the tokenizer to disk
-base_dir = get_base_dir()
-tokenizer_dir = os.path.join(base_dir, "tokenizer")
+# Save the tokenizer to disk (into the active experiment's directory)
+tokenizer_dir = get_tokenizer_dir()
 tokenizer.save(tokenizer_dir)
 
 # -----------------------------------------------------------------------------
@@ -89,3 +86,12 @@ token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
 with open(token_bytes_path, "wb") as f:
     torch.save(token_bytes, f)
 print(f"Saved token_bytes to {token_bytes_path}")
+
+# -----------------------------------------------------------------------------
+# Report the stage record (see nanochat/logfmt.py)
+print(format_record("summary",
+    vocab_size=vocab_size,
+    max_chars=args.max_chars,
+    doc_cap=args.doc_cap,
+    train_time_sec=round(train_time, 2),
+))

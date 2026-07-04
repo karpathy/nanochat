@@ -9,7 +9,13 @@ For questions about the repo, I recommend either using [DeepWiki](https://deepwi
 
 ## Time-to-GPT-2 Leaderboard
 
-Presently, the main focus of development is on tuning the pretraining stage, which takes the most amount of compute. Inspired by the modded-nanogpt repo and to incentivise progress and community collaboration, nanochat maintains a leaderboard for a "GPT-2 speedrun", which is the wall-clock time required to train a nanochat model to GPT-2 grade capability, as measured by the DCLM CORE score. The [runs/speedrun.sh](runs/speedrun.sh) script always reflects the reference way to train GPT-2 grade model and talk to it. The current leaderboard looks as follows:
+Presently, the main focus of development is on tuning the pretraining stage, which takes the most amount of compute. Inspired by the modded-nanogpt repo and to incentivise progress and community collaboration, nanochat maintains a leaderboard for a "GPT-2 speedrun", which is the wall-clock time required to train a nanochat model to GPT-2 grade capability, as measured by the DCLM CORE score. The reference way to train a GPT-2 grade model is the master script [runs/run.sh](runs/run.sh) with the speedrun settings:
+
+```bash
+DEPTHS="24" BASE_TRAIN_FLAGS="--target-param-data-ratio=8 --fp8" bash runs/run.sh speedrun
+```
+
+The current leaderboard looks as follows:
 
 | # | time | val_bpb | CORE | Description | Date | Commit | Contributors |
 |---|-------------|---------|------|-------------|------|--------|--------------|
@@ -45,16 +51,18 @@ uv sync --extra gpu --group dev
 
 ### Reproduce and talk to GPT-2
 
-The most fun you can have is to train your own GPT-2 and talk to it. The entire pipeline to do so is contained in the single file [runs/speedrun.sh](runs/speedrun.sh), which is designed to be run on an 8XH100 GPU node. Boot up a new 8XH100 GPU box from your favorite provider (e.g. I use and like [Lambda](https://lambda.ai/service/gpu-cloud)), and kick off the training script:
+The most fun you can have is to train your own GPT-2 and talk to it. The entire pipeline (data, tokenizer, pretraining, inference bench, SFT, chat evals) is orchestrated by the master script [runs/run.sh](runs/run.sh), which runs one named *experiment* on an 8XH100 GPU node. Boot up a new 8XH100 GPU box from your favorite provider (e.g. I use and like [Lambda](https://lambda.ai/service/gpu-cloud)), and kick off the speedrun experiment:
 
 ```bash
-bash runs/speedrun.sh
+DEPTHS="24" BASE_TRAIN_FLAGS="--target-param-data-ratio=8 --fp8" bash runs/run.sh speedrun
 ```
 
-You may wish to do so in a screen session as this will take ~1.5 hours to run. Once it's done, you can talk to your model over the CLI. Make sure again that your local uv virtual environment is active (run `source .venv/bin/activate`), and chat:
+Everything the experiment produces (checkpoints, logs, the results in `curve.log`) lands in `~/.cache/nanochat/experiments/speedrun/`. The run is resumable: if it crashes, re-run the same command and completed stages are skipped.
+
+You may wish to do so in a screen session as this will take ~1.5 hours to run. Once it's done, you can talk to your model over the CLI. Make sure again that your local uv virtual environment is active (run `source .venv/bin/activate`), select the experiment, and chat:
 
 ```bash
-python -m scripts.chat_cli
+NANOCHAT_EXPERIMENT=speedrun python -m scripts.chat_cli
 ```
 
 Get it to write stories or poems. Ask it to tell you who you are to see a hallucination. Ask it why the sky is blue. Or why it's green. The speedrun is a 4e19 FLOPs capability model so it's a bit like talking to a kindergartener :). An example conversation with a speedrun model:
@@ -85,10 +93,11 @@ A few more notes:
 
 ## Research
 
-If you are a researcher and wish to help improve nanochat, two scripts of interest are [runs/scaling_laws.sh](runs/scaling_laws.sh) and [runs/miniseries.sh](runs/miniseries.sh). See [Jan 7 miniseries v1](https://github.com/karpathy/nanochat/discussions/420) for related documentation. For quick experimentation (~5 min pretraining runs) my favorite scale is to train a 12-layer model (GPT-1 sized), e.g. like this:
+If you are a researcher and wish to help improve nanochat, the miniseries (a ladder of compute-optimal models tracing out the cost-performance curve) is the default behavior of the master script — `bash runs/run.sh my_experiment` trains, benches, finetunes and evals every depth in `$DEPTHS`, and aggregates the results into `~/.cache/nanochat/experiments/my_experiment/curve.log`. Also of interest: [runs/scaling_laws.sh](runs/scaling_laws.sh). For quick experimentation (~5 min pretraining runs) my favorite scale is to train a 12-layer model (GPT-1 sized), e.g. like this:
 
 ```
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+NANOCHAT_EXPERIMENT=my_experiment OMP_NUM_THREADS=1 \
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
     --depth=12 \
     --run="d12" \
     --model-tag="d12" \
@@ -97,7 +106,7 @@ OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train
     --save-every=-1 \
 ```
 
-This uses wandb (run name "d12"), only runs the CORE metric on last step, and it doesn't sample and save intermediate checkpoints. I like to change something in the code, re-run a d12 (or a d16 etc) and see if it helped, in an iteration loop. To see if a run helps, I like to monitor the wandb plots for:
+This trains a d12 inside an existing experiment (it uses that experiment's tokenizer and writes its checkpoint there), uses wandb (run name "d12"), only runs the CORE metric on last step, and doesn't sample or save intermediate checkpoints. I like to change something in the code, re-run a d12 (or a d16 etc) and see if it helped, in an iteration loop. To see if a run helps, I like to monitor the wandb plots for:
 
 1. `val_bpb` (validation loss in vocab-size-invariant units of bits per byte) as a function of `step`, `total_training_time` and `total_training_flops`.
 2. `core_metric` (the DCLM CORE score)
@@ -156,19 +165,20 @@ I've published a number of guides that might contain helpful information, most r
 │   ├── common.py                   # Misc small utilities, quality of life
 │   ├── core_eval.py                # Evaluates base model CORE score (DCLM paper)
 │   ├── dataloader.py               # Tokenizing Distributed Data Loader
-│   ├── dataset.py                  # Download/read utils for pretraining data
+│   ├── dataset.py                  # Named datasets: materialize/verify/read
 │   ├── engine.py                   # Efficient model inference with KV Cache
 │   ├── execution.py                # Allows the LLM to execute Python code as tool
+│   ├── experiment.py               # Experiment identity: meta.json, dirty diffs
 │   ├── gpt.py                      # The GPT nn.Module Transformer
+│   ├── logfmt.py                   # The log line grammar (records in stage logs)
 │   ├── loss_eval.py                # Evaluate bits per byte (instead of loss)
 │   ├── optim.py                    # AdamW + Muon optimizer, 1GPU and distributed
 │   └── tokenizer.py                # BPE Tokenizer wrapper in style of GPT-4
 ├── pyproject.toml
 ├── runs
-│   ├── miniseries.sh               # Miniseries training script
+│   ├── run.sh                      # The master script: runs one experiment end to end
 │   ├── runcpu.sh                   # Small example of how to run on CPU/MPS
-│   ├── scaling_laws.sh             # Scaling laws experiments
-│   └── speedrun.sh                 # Train the ~$100 nanochat d20
+│   └── scaling_laws.sh             # Scaling laws experiments
 ├── scripts
 │   ├── base_eval.py                # Base model: CORE score, bits per byte, samples
 │   ├── base_train.py               # Base model: train
@@ -176,6 +186,7 @@ I've published a number of guides that might contain helpful information, most r
 │   ├── chat_eval.py                # Chat model: eval tasks
 │   ├── chat_rl.py                  # Chat model: reinforcement learning
 │   ├── chat_sft.py                 # Chat model: train SFT
+│   ├── curve.py                    # Aggregate stage records into curve.log
 │   ├── infer_bench.py              # Inference: latency/throughput/VRAM bench
 │   ├── tok_eval.py                 # Tokenizer: evaluate compression rate
 │   └── tok_train.py                # Tokenizer: train it

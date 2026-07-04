@@ -28,9 +28,9 @@ import tempfile
 import argparse
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
+from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, get_experiment_dir, autodetect_device_type, download_file_with_lock
 from nanochat.tokenizer import get_token_bytes
-from nanochat.checkpoint_manager import load_model
+from nanochat.checkpoint_manager import load_model, find_largest_model
 from nanochat.core_eval import evaluate_task
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
 from nanochat.loss_eval import evaluate_bpb
@@ -147,11 +147,11 @@ def main():
     device_type = autodetect_device_type() if args.device_type == '' else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
     # Load model and tokenizer
-    model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=args.model_tag, step=args.step)
+    model_tag = args.model_tag if args.model_tag is not None else find_largest_model("base")
+    model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=model_tag, step=args.step)
     sequence_len = meta["model_config"]["sequence_len"]
     token_bytes = get_token_bytes(device=device)
-    model_name = f"base_model (step {meta['step']})"
-    model_slug = f"base_model_{meta['step']:06d}"
+    model_name = f"{model_tag} base model (step {meta['step']})"
 
     print0(f"Evaluating model: {model_name}")
     print0(f"Eval modes: {', '.join(sorted(eval_modes))}")
@@ -223,8 +223,9 @@ def main():
 
         # Write CSV output
         if ddp_rank == 0:
-            base_dir = get_base_dir()
-            output_csv_path = os.path.join(base_dir, "base_eval", f"{model_slug}.csv")
+            # per-task CORE results go next to the model's checkpoints in the experiment
+            model_dir = os.path.join(get_experiment_dir(), model_tag)
+            output_csv_path = os.path.join(model_dir, f"base_eval_{meta['step']:06d}.csv")
             os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
             with open(output_csv_path, 'w', encoding='utf-8', newline='') as f:
                 f.write(f"{'Task':<35}, {'Accuracy':<10}, {'Centered':<10}\n")

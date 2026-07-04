@@ -79,6 +79,23 @@ def get_base_dir():
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
+def get_experiment_name():
+    """The active experiment name, e.g. exported by runs/run.sh."""
+    return os.environ.get("NANOCHAT_EXPERIMENT", "default")
+
+def get_experiment_dir(name=None):
+    """
+    The experiment dir holds everything one experiment produces: the tokenizer,
+    checkpoints, stage logs, meta.json. See experiment_refactor.md for the design.
+    Lives under the base dir (not the repo, to keep the source tree lean):
+    $NANOCHAT_BASE_DIR/experiments/<name>, overridable via NANOCHAT_EXPERIMENTS_DIR.
+    """
+    name = get_experiment_name() if name is None else name
+    default_root = os.path.join(get_base_dir(), "experiments")
+    experiments_root = os.environ.get("NANOCHAT_EXPERIMENTS_DIR", default_root)
+    experiment_dir = os.path.join(experiments_root, name)
+    return experiment_dir
+
 def download_file_with_lock(url, filename, postprocess_fn=None):
     """
     Downloads a file from a URL to a local path in the base directory.

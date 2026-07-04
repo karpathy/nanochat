@@ -6,7 +6,13 @@ The primary metric we care about is "time to GPT-2" - the wall clock time needed
 
 ## How to
 
-The script [runs/speedrun.sh](../runs/speedrun.sh) always implements the current state of the art on the leaderboard.
+The reference way to run the speedrun is the master script [runs/run.sh](../runs/run.sh) with the speedrun settings:
+
+```bash
+DEPTHS="24" BASE_TRAIN_FLAGS="--target-param-data-ratio=8 --fp8" bash runs/run.sh speedrun
+```
+
+This always implements the current state of the art on the leaderboard (results land in `~/.cache/nanochat/experiments/speedrun/`).
 
 In practice, I tune the base_train command a little bit. For example, once all the setup is configured and a tokenizer is trained, I like to do something like:
 
