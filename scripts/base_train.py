@@ -613,6 +613,7 @@ if val_bpb is not None:
     print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
 
 # the stage record (see nanochat/logfmt.py); this is what downstream tooling consumes
+total_eflops = num_flops_per_token * total_tokens / 1e18 # 1 EFLOP = 1e18 FLOPs
 summary = {
     "model_tag": model_tag,
     "depth": args.depth,
@@ -622,6 +623,7 @@ summary = {
     "num_iterations": num_iterations,
     "total_batch_size": total_batch_size,
     "tokens_trained": total_tokens,
+    "eflops": round(total_eflops, 3),
     "param_data_ratio": round(total_tokens / num_scaling_params, 2),
     "train_time_sec": round(total_training_time, 1),
     "peak_vram_mib": round(get_max_memory() / 1024 / 1024),

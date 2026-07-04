@@ -72,7 +72,7 @@ def build_row(model_dir, model_tag):
 
 # columns for the compact stdout table (the full set goes to curve.log)
 TABLE_COLUMNS = [
-    "model_tag", "base.num_params", "base.tokens_trained", "base.train_time_sec",
+    "model_tag", "base.num_params", "base.tokens_trained", "base.eflops", "base.train_time_sec",
     "base.val_bpb", "base.core", "infer.tok_per_sec_bs1", "sft.val_bpb", "chat.chatcore",
 ]
 
