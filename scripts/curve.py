@@ -20,10 +20,10 @@ Usage: python -m scripts.curve    (reads $NANOCHAT_EXPERIMENT)
 """
 
 import os
-import re
 
 from nanochat.common import get_experiment_dir, get_experiment_name
 from nanochat.logfmt import format_record, parse_records
+from nanochat.experiment import list_model_tags, read_stage_summary
 
 # stage logs to join, in curve column order
 STAGE_LOGS = [
@@ -33,29 +33,11 @@ STAGE_LOGS = [
     ("chat", "chat_eval.log"),
 ]
 
-def read_summary(log_path):
-    """The last `summary` record of a stage log (or empty dict if absent)."""
-    if not os.path.exists(log_path):
-        return {}
-    records = parse_records(log_path, tag="summary")
-    if not records:
-        return {}
-    summary = records[-1]
-    summary.pop("tag", None)
-    return summary
-
-def model_sort_key(model_tag):
-    """Sort d<depth> tags numerically, anything else after them alphabetically."""
-    match = re.fullmatch(r"d(\d+)", model_tag)
-    if match:
-        return (0, int(match.group(1)), model_tag)
-    return (1, 0, model_tag)
-
 def build_row(model_dir, model_tag):
     """Join the stage summaries of one model directory into a flat row."""
     row = {"model_tag": model_tag}
     for stage, log_name in STAGE_LOGS:
-        summary = read_summary(os.path.join(model_dir, log_name))
+        summary = read_stage_summary(os.path.join(model_dir, log_name)) or {}
         summary.pop("model_tag", None) # identity, already in the row
         if stage == "base" and "depth" in summary:
             row["depth"] = summary.pop("depth")
@@ -78,12 +60,7 @@ TABLE_COLUMNS = [
 
 if __name__ == "__main__":
     experiment_dir = get_experiment_dir()
-    model_tags = sorted(
-        (d for d in os.listdir(experiment_dir)
-         if os.path.isdir(os.path.join(experiment_dir, d))
-         and any(os.path.exists(os.path.join(experiment_dir, d, log)) for _, log in STAGE_LOGS)),
-        key=model_sort_key,
-    )
+    model_tags = list_model_tags(experiment_dir)
     assert model_tags, f"No model directories with stage logs found in {experiment_dir}"
     rows = [build_row(os.path.join(experiment_dir, tag), tag) for tag in model_tags]
 

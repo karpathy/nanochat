@@ -437,7 +437,7 @@ while True:
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
         with disable_fp8(model):
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print0(format_record("eval", step=step, val_bpb=round(val_bpb, 6)))
+        print0(format_record("eval", step=step, eflops=round(flops_so_far / 1e18, 4), val_bpb=round(val_bpb, 6)))
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
         wandb_run.log({
