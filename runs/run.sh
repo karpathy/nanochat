@@ -52,9 +52,10 @@ export NANOCHAT_DATASET="${NANOCHAT_DATASET:-climbmix}"
 NUM_SHARDS="${NUM_SHARDS:-1000}"
 
 # the depth ladder: one model is trained per depth, tracing out the cost-perf curve.
-# the default spans exactly 1e18 -> 1e20 FLOPs (~13 hours total on 8xH100);
+# the default spans exactly 1e18 -> 1e20 FLOPs (~13 hours total on 8xH100), denser at
+# the cheap end: 12 14 16 alone form a <1h mini-ladder for quick scaling checks.
 # drop the 28 for an overnight-sized run (~6 hours)
-DEPTHS="${DEPTHS:-12 16 20 24 28}"
+DEPTHS="${DEPTHS:-12 14 16 20 24 28}"
 # which stages to run at each depth (e.g. a pretraining researcher: STAGES="base infer")
 STAGES="${STAGES:-base infer sft chat}"
 has_stage() { [[ " $STAGES " == *" $1 "* ]]; }
