@@ -7,7 +7,7 @@ import json
 import logging
 import torch
 
-from nanochat.common import get_base_dir
+from nanochat.common import get_experiment_dir, get_experiment_name
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.tokenizer import get_tokenizer
 from nanochat.common import setup_default_logging
@@ -19,24 +19,16 @@ def log0(message):
     if int(os.environ.get('RANK', 0)) == 0:
         logger.info(message)
 
-def _patch_missing_config_keys(model_config_kwargs):
-    """Add default values for new config keys missing in old checkpoints."""
-    # Old models were trained with full context (no sliding window)
-    if "window_pattern" not in model_config_kwargs:
-        model_config_kwargs["window_pattern"] = "L"
-        log0(f"Patching missing window_pattern in model config to 'L'")
-
-def _patch_missing_keys(model_data, model_config):
-    """Add default values for new parameters that may be missing in old checkpoints."""
-    n_layer = model_config.n_layer
-    # resid_lambdas defaults to 1.0 (identity scaling)
-    if "resid_lambdas" not in model_data:
-        model_data["resid_lambdas"] = torch.ones(n_layer)
-        log0(f"Patching missing resid_lambdas in model data to 1.0")
-    # x0_lambdas defaults to 0.0 (disabled)
-    if "x0_lambdas" not in model_data:
-        model_data["x0_lambdas"] = torch.zeros(n_layer)
-        log0(f"Patching missing x0_lambdas in model data to 0.0")
+def get_checkpoint_dir(model_tag, source):
+    """
+    Checkpoints belong to the experiment: experiments/<name>/<model_tag>/<source>/
+    e.g. experiments/my_exp/d12/base/. The model_tag defaults to d<depth> in the
+    training scripts but can be overridden (the --model-tag escape hatch).
+    """
+    assert source in ["base", "mid", "sft", "rl"], f"Invalid source: {source}"
+    experiment_dir = get_experiment_dir()
+    checkpoint_dir = os.path.join(experiment_dir, model_tag, source)
+    return checkpoint_dir
 
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
     if rank == 0:
@@ -92,10 +84,8 @@ def build_model(checkpoint_dir, step, device, phase):
     # Hack: fix torch compile issue, which prepends all keys with _orig_mod.
     model_data = {k.removeprefix("_orig_mod."): v for k, v in model_data.items()}
     model_config_kwargs = meta_data["model_config"]
-    _patch_missing_config_keys(model_config_kwargs)
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)
-    _patch_missing_keys(model_data, model_config)
     with torch.device("meta"):
         model = GPT(model_config)
     # Load the model state
@@ -114,11 +104,14 @@ def build_model(checkpoint_dir, step, device, phase):
     return model, tokenizer, meta_data
 
 
-def find_largest_model(checkpoints_dir):
-    # attempt to guess the model tag: take the biggest model available
-    model_tags = [f for f in os.listdir(checkpoints_dir) if os.path.isdir(os.path.join(checkpoints_dir, f))]
+def find_largest_model(source):
+    # attempt to guess the model tag: take the biggest model available in the experiment
+    experiment_dir = get_experiment_dir()
+    model_tags = [f for f in os.listdir(experiment_dir)
+                  if os.path.isdir(os.path.join(experiment_dir, f, source))] if os.path.isdir(experiment_dir) else []
     if not model_tags:
-        raise FileNotFoundError(f"No checkpoints found in {checkpoints_dir}")
+        raise FileNotFoundError(f"No '{source}' models found in experiment '{get_experiment_name()}' ({experiment_dir}). "
+                                f"Select an experiment with NANOCHAT_EXPERIMENT=<name>, or train a model first.")
     # 1) normally all model tags are of the form d<number>, try that first:
     candidates = []
     for model_tag in model_tags:
@@ -130,7 +123,7 @@ def find_largest_model(checkpoints_dir):
         candidates.sort(key=lambda x: x[0], reverse=True)
         return candidates[0][1]
     # 2) if that failed, take the most recently updated model:
-    model_tags.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoints_dir, x)), reverse=True)
+    model_tags.sort(key=lambda x: os.path.getmtime(os.path.join(experiment_dir, x)), reverse=True)
     return model_tags[0]
 
 
@@ -145,12 +138,12 @@ def find_last_step(checkpoint_dir):
 # -----------------------------------------------------------------------------
 # convenience functions that take into account nanochat's directory structure
 
-def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None):
+def load_model(source, device, phase, model_tag=None, step=None):
     if model_tag is None:
-        # guess the model tag by defaulting to the largest model
-        model_tag = find_largest_model(checkpoints_dir)
+        # guess the model tag by defaulting to the largest model in the experiment
+        model_tag = find_largest_model(source)
         log0(f"No model tag provided, guessing model tag: {model_tag}")
-    checkpoint_dir = os.path.join(checkpoints_dir, model_tag)
+    checkpoint_dir = get_checkpoint_dir(model_tag, source)
     if step is None:
         # guess the step by defaulting to the last step
         step = find_last_step(checkpoint_dir)
@@ -160,28 +153,11 @@ def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=Non
     model, tokenizer, meta_data = build_model(checkpoint_dir, step, device, phase)
     return model, tokenizer, meta_data
 
-def load_model(source, *args, **kwargs):
-    model_dir = {
-        "base": "base_checkpoints",
-        "sft": "chatsft_checkpoints",
-        "rl": "chatrl_checkpoints",
-    }[source]
-    base_dir = get_base_dir()
-    checkpoints_dir = os.path.join(base_dir, model_dir)
-    return load_model_from_dir(checkpoints_dir, *args, **kwargs)
-
 def load_optimizer_state(source, device, rank, model_tag=None, step=None):
     """Load just the optimizer shard for a given rank, without re-loading the model."""
-    model_dir = {
-        "base": "base_checkpoints",
-        "sft": "chatsft_checkpoints",
-        "rl": "chatrl_checkpoints",
-    }[source]
-    base_dir = get_base_dir()
-    checkpoints_dir = os.path.join(base_dir, model_dir)
     if model_tag is None:
-        model_tag = find_largest_model(checkpoints_dir)
-    checkpoint_dir = os.path.join(checkpoints_dir, model_tag)
+        model_tag = find_largest_model(source)
+    checkpoint_dir = get_checkpoint_dir(model_tag, source)
     if step is None:
         step = find_last_step(checkpoint_dir)
     optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")

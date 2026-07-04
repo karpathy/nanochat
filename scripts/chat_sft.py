@@ -16,9 +16,10 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
 import torch
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.logfmt import format_record
 from nanochat.tokenizer import get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state
+from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state, get_checkpoint_dir
 from nanochat.loss_eval import evaluate_bpb
 import torch.distributed as dist
 from nanochat.flash_attention import HAS_FA3
@@ -135,7 +136,6 @@ optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_
 # Note: load_state_dict overwrites param_group metadata (LRs, betas, etc.) with the
 # pretrained values. Since pretraining warmdown brings LRs to ~0, we must save and
 # restore our fresh SFT LRs after loading.
-base_dir = get_base_dir()
 if args.load_optimizer:
     optimizer_data = load_optimizer_state("base", device, rank=ddp_rank, model_tag=args.model_tag, step=args.model_step)
     if optimizer_data is not None:
@@ -342,7 +342,7 @@ while True:
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
         val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
+        print0(format_record("eval", step=step, val_bpb=round(val_bpb, 6)))
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
         wandb_run.log({
@@ -378,7 +378,9 @@ while True:
             return sum((task_results[t] - baseline_accuracies[t]) / (1.0 - baseline_accuracies[t]) for t in tasks) / len(tasks)
         chatcore = centered_mean(all_tasks)
         chatcore_cat = centered_mean(categorical_tasks)
-        print0(f"Step {step:05d} | ChatCORE: {chatcore:.4f} | ChatCORE_cat: {chatcore_cat:.4f}")
+        chatcore_results = {"chatcore": chatcore, "chatcore_cat": chatcore_cat, **task_results}
+        print0(format_record("chatcore", step=step,
+                             **{k: round(v, 6) for k, v in chatcore_results.items()}))
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -390,8 +392,8 @@ while True:
 
     # save checkpoint at the end of the run (all ranks participate so each saves its optimizer shard)
     if last_step:
-        output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
-        checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
+        model_tag = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
+        checkpoint_dir = get_checkpoint_dir(model_tag, "sft") # e.g. experiments/<name>/d12/sft
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -493,6 +495,20 @@ while True:
 print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
+
+# the stage record (see nanochat/logfmt.py); this is what downstream tooling consumes
+summary = {
+    "model_tag": args.model_tag if args.model_tag else f"d{depth}",
+    "depth": depth,
+    "num_iterations": step,
+    "tokens_trained": args.total_batch_size * step,
+    "train_time_sec": round(total_training_time, 1),
+    "peak_vram_mib": round(get_max_memory() / 1024 / 1024),
+    "val_bpb": round(val_bpb, 6),
+    "min_val_bpb": round(min_val_bpb, 6),
+}
+summary.update({k: round(v, 6) for k, v in chatcore_results.items()}) # from the final ChatCORE eval, if it ran
+print0(format_record("summary", **summary))
 
 # cleanup
 wandb_run.finish() # wandb run finish

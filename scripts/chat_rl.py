@@ -22,8 +22,8 @@ import itertools
 import wandb
 import torch
 import torch.distributed as dist
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type
-from nanochat.checkpoint_manager import save_checkpoint, load_model
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, autodetect_device_type
+from nanochat.checkpoint_manager import save_checkpoint, load_model, get_checkpoint_dir
 from nanochat.engine import Engine
 from tasks.gsm8k import GSM8K
 
@@ -306,10 +306,9 @@ for step in range(num_steps):
 
     # Master process saves the model once in a while. Skip first step. Save last step.
     if master_process and ((step > 0 and step % args.save_every == 0) or step == num_steps - 1):
-        base_dir = get_base_dir()
         depth = model.config.n_layer
-        output_dirname = args.model_tag if args.model_tag else f"d{depth}" # base the model tag on the depth of the base model
-        checkpoint_dir = os.path.join(base_dir, "chatrl_checkpoints", output_dirname)
+        model_tag = args.model_tag if args.model_tag else f"d{depth}" # base the model tag on the depth of the base model
+        checkpoint_dir = get_checkpoint_dir(model_tag, "rl") # e.g. experiments/<name>/d12/rl
         model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
         save_checkpoint(
             checkpoint_dir,

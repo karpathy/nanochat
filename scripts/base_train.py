@@ -27,9 +27,10 @@ import torch.distributed as dist
 
 from nanochat.gpt import GPT, GPTConfig, Linear
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.logfmt import format_record
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
+from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint, get_checkpoint_dir
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from nanochat.flash_attention import HAS_FA3
@@ -57,7 +58,7 @@ parser.add_argument("--num-iterations", type=int, default=-1, help="explicit num
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
 parser.add_argument("--target-param-data-ratio", type=float, default=12, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
 # Optimization
-parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size. good number to reduce to 16,8,4,... if you OOM on VRAM.")
+parser.add_argument("--device-batch-size", type=int, default=-1, help="per-device batch size (-1 = auto from depth). reduce to 16,8,4,... if you OOM on VRAM.")
 parser.add_argument("--total-batch-size", type=int, default=-1, help="total batch size in tokens. decent numbers are e.g. 524288. (-1 = auto-compute optimal)")
 parser.add_argument("--embedding-lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
 parser.add_argument("--unembedding-lr", type=float, default=0.008, help="learning rate for unembedding parameters (Adam)")
@@ -151,9 +152,8 @@ model.to_empty(device=device) # 2) All tensors get storage on target device but 
 model.init_weights() # 3) All tensors get initialized
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
-base_dir = get_base_dir()
-output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
-checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
+model_tag = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
+checkpoint_dir = get_checkpoint_dir(model_tag, "base") # e.g. experiments/<name>/d12/base
 resuming = args.resume_from_step != -1
 if resuming:
     print0(f"Resuming optimization from step {args.resume_from_step}")
@@ -253,6 +253,8 @@ param_counts = model.num_scaling_params()
 print0(f"Parameter counts:")
 for key, value in param_counts.items():
     print0(f"{key:24s}: {value:,}")
+# also as a record, for scaling-law analyses that slice params by component
+print0(format_record("params", **param_counts))
 num_params = param_counts['total']
 num_flops_per_token = model.estimate_flops()
 print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
@@ -282,6 +284,16 @@ if total_batch_size == -1:
     predicted_batch_size = B_REF * batch_size_ratio ** 0.383
     total_batch_size = 2 ** round(math.log2(predicted_batch_size)) # clamp to nearest power of 2 for efficiency
     print0(f"Auto-computed optimal batch size: {total_batch_size:,} tokens")
+
+# Derive the device batch size unless overridden: as large as VRAM comfortably allows
+# (bigger models leave less headroom), but never larger than one full micro-batch
+# across all ranks exceeding the total batch size (relevant for small/debug models).
+if args.device_batch_size == -1:
+    vram_device_batch_size = 32 if args.depth < 20 else (16 if args.depth < 28 else 8)
+    max_device_batch_size = total_batch_size // (args.max_seq_len * ddp_world_size)
+    args.device_batch_size = min(vram_device_batch_size, max_device_batch_size)
+    assert args.device_batch_size >= 1, f"total_batch_size {total_batch_size:,} is too small for {ddp_world_size} ranks at seq len {args.max_seq_len}"
+    print0(f"Auto device batch size: {args.device_batch_size} (depth {args.depth}, {ddp_world_size} ranks)")
 
 # 3) Knowing the batch size, we can now calculate a learning rate correction (bigger batch size allows higher learning rates)
 batch_lr_scale = 1.0
@@ -424,7 +436,7 @@ while True:
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
         with disable_fp8(model):
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
+        print0(format_record("eval", step=step, val_bpb=round(val_bpb, 6)))
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
         wandb_run.log({
@@ -443,7 +455,7 @@ while True:
         model.eval()
         with disable_fp8(orig_model):
             results = evaluate_core(orig_model, tokenizer, device, max_per_task=args.core_metric_max_per_task)
-        print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
+        print0(format_record("core", step=step, core=round(results['core_metric'], 6)))
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -598,6 +610,29 @@ print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 if val_bpb is not None:
     print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
+
+# the stage record (see nanochat/logfmt.py); this is what downstream tooling consumes
+summary = {
+    "model_tag": model_tag,
+    "depth": args.depth,
+    "model_dim": model_config.n_embd,
+    "num_params": num_params,
+    "num_scaling_params": num_scaling_params,
+    "num_iterations": num_iterations,
+    "total_batch_size": total_batch_size,
+    "tokens_trained": total_tokens,
+    "param_data_ratio": round(total_tokens / num_scaling_params, 2),
+    "train_time_sec": round(total_training_time, 1),
+    "peak_vram_mib": round(get_max_memory() / 1024 / 1024),
+}
+if args.target_flops > 0: # the training horizon came from a flops budget (scaling laws)
+    summary["target_flops"] = args.target_flops
+if val_bpb is not None:
+    summary["val_bpb"] = round(val_bpb, 6)
+    summary["min_val_bpb"] = round(min_val_bpb, 6)
+if "core_metric" in results: # only present if the CORE metric ran on the last step
+    summary["core"] = round(results["core_metric"], 6)
+print0(format_record("summary", **summary))
 
 # cleanup
 wandb_run.finish() # wandb run finish

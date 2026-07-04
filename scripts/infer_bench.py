@@ -16,11 +16,9 @@ between these regimes. MBU (model bandwidth utilization) is the decode
 counterpart of training MFU: achieved bytes/sec over the peak bandwidth of
 the GPU. It measures how far the implementation is from the physical ceiling.
 
-Output: a human-readable card and table, and then the very last line of stdout
-is a single compact JSON document with all of the same data, so that scripts
-can consume the benchmark without parsing the pretty formatting:
-
-    result = json.loads(subprocess.run([...], capture_output=True, text=True).stdout.splitlines()[-1])
+Output: a human-readable card and table, plus machine-readable record lines
+following the log grammar (see nanochat/logfmt.py): one `prefill` record, one
+`bench` record per batch size, and a final `summary` record.
 
 Examples:
 
@@ -29,18 +27,15 @@ Examples:
 
     # benchmark the SFT model, custom sweep
     python -m scripts.infer_bench -i sft --batch-sizes 1,4,16,64 --decode-tokens 512
-
-    # machine-readable: grab the last line
-    python -m scripts.infer_bench -i base -g d12 | tail -1 | jq .sweep
 """
 
 import argparse
-import json
 import time
 import torch
 
 from nanochat.common import compute_init, compute_cleanup, autodetect_device_type, get_peak_bandwidth, get_peak_flops
-from nanochat.checkpoint_manager import load_model
+from nanochat.logfmt import format_record
+from nanochat.checkpoint_manager import load_model, find_largest_model
 from nanochat.engine import Engine
 
 # -----------------------------------------------------------------------------
@@ -110,7 +105,8 @@ def main():
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
     assert ddp_world_size == 1, "infer_bench is a single GPU benchmark, run without torchrun"
 
-    model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
+    model_tag = args.model_tag if args.model_tag is not None else find_largest_model(args.source)
+    model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=model_tag, step=args.step)
     config = model.config
     engine = Engine(model, tokenizer)
 
@@ -138,7 +134,7 @@ def main():
     max_rows = int((total_vram - w_bytes) / (kv_store * config.sequence_len))
 
     print("=" * 100)
-    print(f"Model: {args.source} {meta.get('model_tag', '')} (step {meta['step']}) | "
+    print(f"Model: {args.source} {model_tag} (step {meta['step']}) | "
           f"depth {config.n_layer}, dim {config.n_embd}, heads {config.n_head}, kv heads {config.n_kv_head} (GQA)")
     print(f"GPU: {device_name} | peak bandwidth {peak_bw/1e12:.2f} TB/s | peak compute {peak_flops/1e12:.0f} TFLOPS | VRAM {total_vram/2**30:.0f} GiB")
     print("-" * 100)
@@ -154,31 +150,6 @@ def main():
           f"max ~{max_rows:,} full-context rows in VRAM")
     print("=" * 100)
 
-    # Everything printed above also goes into the final JSON line for scripts
-    payload = {
-        "source": args.source,
-        "step": meta["step"],
-        "model_config": meta["model_config"],
-        "gpu": device_name,
-        # None (not Infinity) for unknown GPUs, so the last line stays valid JSON
-        "peak_bandwidth_bytes_per_sec": peak_bw if peak_bw != float("inf") else None,
-        "total_vram_bytes": total_vram,
-        "num_params": num_params,
-        "param_dtypes": dtype_counts,
-        "weight_bytes": w_bytes,
-        "kv_bytes_per_token": kv_store,
-        "kv_read_bytes_per_step": kv_read,
-        "context_mid": context_mid,
-        "peak_flops_per_sec": peak_flops if peak_flops != float("inf") else None,
-        "decode_flops_per_token": model.estimate_decode_flops(context_mid),
-        "ceiling_bs1_tok_per_sec": round(ceiling_bs1, 1) if ceiling_bs1 != float("inf") else None,
-        "max_full_context_rows": max_rows,
-        "prompt_tokens": prompt_len,
-        "decode_tokens": args.decode_tokens,
-        "temperature": args.temperature,
-        "sweep": [],
-    }
-
     # ------------------------------------------------------------------------
     # Prefill measurement: batch 1, a single decode step, so TTFT ~= prefill time.
     # Prefill is compute-bound, so MFU (not MBU) is its distance from the roofline.
@@ -188,17 +159,13 @@ def main():
     prefill_mfu = 100 * model.estimate_prefill_flops(prompt_len) / prefill_time / peak_flops
     prefill_tok_per_sec = prompt_len / prefill_time
     print(f"Prefill (batch 1, {prompt_len} tokens): {prefill_tok_per_sec:,.0f} tok/s | MFU {prefill_mfu:.1f}%")
-    payload["prefill"] = {
-        "tok_per_sec": round(prefill_tok_per_sec, 1),
-        "mfu_percent": round(prefill_mfu, 2),
-        "time_sec": round(prefill_time, 6),
-    }
 
     # ------------------------------------------------------------------------
     # Measured sweep over batch sizes. Decode reads all weights + KV every step:
     # MBU is the distance from the bandwidth roofline (binds at small batch),
     # MFU the distance from the compute roofline (binds at large batch).
     batch_sizes = [int(b) for b in args.batch_sizes.split(",")]
+    bench_records = [] # record lines, printed after the human table
     header = f"{'batch':>6} {'TTFT ms':>9} {'TPOT ms':>9} {'tok/s':>10} {'MBU %':>7} {'MFU %':>7} {'VRAM GiB':>9} {'steps':>6}"
     print(header)
     print("-" * len(header))
@@ -224,21 +191,43 @@ def main():
         note = "" if num_steps == args.decode_tokens - 1 else f" (early stop @ {num_steps})"
         print(f"{batch_size:>6} {result['ttft']*1e3:>9.1f} {tpot*1e3:>9.2f} {tok_per_sec:>10,.0f} "
               f"{mbu:>7.1f} {mfu:>7.2f} {vram_gib:>9.2f} {num_steps:>6}{note}")
-        payload["sweep"].append({
-            "batch_size": batch_size,
-            "ttft_sec": round(result["ttft"], 6), # microsecond resolution, plenty for wall clock
-            "tpot_sec": round(tpot, 6),
-            "tok_per_sec": round(tok_per_sec, 1),
-            "mbu_percent": round(mbu, 2),
-            "mfu_percent": round(mfu, 4), # decode MFU is tiny at small batch, keep the signal
-
-            "peak_vram_bytes": result["peak_vram"],
-            "decode_steps": num_steps,
-        })
-
-    # The last line of stdout is the machine-readable version of the whole run
+        bench_records.append(format_record("bench",
+            batch=batch_size,
+            ttft_sec=round(result["ttft"], 6), # microsecond resolution, plenty for wall clock
+            tpot_sec=round(tpot, 6),
+            tok_per_sec=round(tok_per_sec, 1),
+            mbu_pct=round(mbu, 2),
+            mfu_pct=round(mfu, 4), # decode MFU is tiny at small batch, keep the signal
+            peak_vram_bytes=result["peak_vram"],
+            decode_steps=num_steps,
+        ))
     print("-" * len(header))
-    print(json.dumps(payload))
+
+    # ------------------------------------------------------------------------
+    # The stage records (see nanochat/logfmt.py); everything above, machine-readable
+    print()
+    print(format_record("prefill",
+        tok_per_sec=round(prefill_tok_per_sec, 1),
+        mfu_pct=round(prefill_mfu, 2),
+        time_sec=round(prefill_time, 6),
+    ))
+    for record in bench_records:
+        print(record)
+    print(format_record("summary",
+        model_tag=model_tag,
+        source=args.source,
+        step=meta["step"],
+        gpu=device_name,
+        params=num_params,
+        weight_bytes=w_bytes,
+        kv_bytes_per_token=kv_store,
+        kv_read_bytes=kv_read,
+        context=context_mid,
+        ceiling_bs1_tok_per_sec=round(ceiling_bs1, 1),
+        max_full_context_rows=max_rows,
+        prompt_tokens=prompt_len,
+        decode_tokens=args.decode_tokens,
+    ))
 
     compute_cleanup()
 

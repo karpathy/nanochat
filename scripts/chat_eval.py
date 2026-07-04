@@ -14,7 +14,8 @@ import torch
 import torch.distributed as dist
 
 from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0, autodetect_device_type
-from nanochat.checkpoint_manager import load_model
+from nanochat.logfmt import format_record
+from nanochat.checkpoint_manager import load_model, find_largest_model
 from nanochat.engine import Engine
 
 from tasks.humaneval import HumanEval
@@ -195,7 +196,8 @@ if __name__ == "__main__":
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 
-    model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
+    model_tag = args.model_tag if args.model_tag is not None else find_largest_model(args.source)
+    model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=model_tag, step=args.step)
     engine = Engine(model, tokenizer)
 
     # Get the tasks to evaluate on
@@ -236,5 +238,12 @@ if __name__ == "__main__":
             centered_mean += centered_acc
         chatcore_metric = centered_mean / len(results)
         print0(f"ChatCORE metric: {chatcore_metric:.4f}")
+
+    # the stage record (see nanochat/logfmt.py); this is what downstream tooling consumes
+    summary = {"model_tag": model_tag, "source": args.source, "step": meta["step"]}
+    summary.update({task_name: round(acc, 6) for task_name, acc in results.items()})
+    if all_tasks_were_evaluated:
+        summary["chatcore"] = round(chatcore_metric, 6)
+    print0(format_record("summary", **summary))
 
     compute_cleanup()

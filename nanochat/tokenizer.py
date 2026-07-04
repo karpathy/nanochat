@@ -261,17 +261,30 @@ class RustBPETokenizer:
 # -----------------------------------------------------------------------------
 # nanochat-specific convenience functions
 
+def get_tokenizer_dir():
+    """The tokenizer belongs to the experiment (it is trained on the experiment's dataset)."""
+    from nanochat.common import get_experiment_dir
+    experiment_dir = get_experiment_dir()
+    tokenizer_dir = os.path.join(experiment_dir, "tokenizer")
+    return tokenizer_dir
+
 def get_tokenizer():
-    from nanochat.common import get_base_dir
-    base_dir = get_base_dir()
-    tokenizer_dir = os.path.join(base_dir, "tokenizer")
+    tokenizer_dir = get_tokenizer_dir()
+    if not os.path.exists(os.path.join(tokenizer_dir, "tokenizer.pkl")):
+        from nanochat.common import get_experiment_name
+        experiments_root = os.path.dirname(os.path.dirname(tokenizer_dir))
+        available = sorted(d for d in (os.listdir(experiments_root) if os.path.isdir(experiments_root) else [])
+                           if os.path.exists(os.path.join(experiments_root, d, "tokenizer", "tokenizer.pkl")))
+        raise FileNotFoundError(
+            f"No tokenizer found for experiment '{get_experiment_name()}' (looked in {tokenizer_dir}).\n"
+            f"Select an experiment with e.g.: NANOCHAT_EXPERIMENT=<name> python -m scripts.foo\n"
+            f"Experiments with a trained tokenizer: {available or '(none - run tok_train, or bash runs/run.sh <name>)'}"
+        )
     return RustBPETokenizer.from_directory(tokenizer_dir)
 
 def get_token_bytes(device="cpu"):
     import torch
-    from nanochat.common import get_base_dir
-    base_dir = get_base_dir()
-    tokenizer_dir = os.path.join(base_dir, "tokenizer")
+    tokenizer_dir = get_tokenizer_dir()
     token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
     assert os.path.exists(token_bytes_path), f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"
     with open(token_bytes_path, "rb") as f:

@@ -241,3 +241,18 @@ def print_comparison(baseline_name, baseline_results, ours_results, all_text):
 # Print comparisons
 print_comparison("GPT-2", tokenizer_results['gpt2'], tokenizer_results['ours'], all_text)
 print_comparison("GPT-4", tokenizer_results['gpt4'], tokenizer_results['ours'], all_text)
+
+# -----------------------------------------------------------------------------
+# Report the stage records (see nanochat/logfmt.py), one per text type.
+# ratio is bytes/token: higher = better compression.
+from nanochat.logfmt import format_record
+print()
+for name, _ in all_text:
+    print(format_record("compression",
+        text=name,
+        bytes=tokenizer_results['ours'][name]['bytes'],
+        tokens=tokenizer_results['ours'][name]['tokens'],
+        ratio=round(tokenizer_results['ours'][name]['ratio'], 4),
+        ratio_gpt2=round(tokenizer_results['gpt2'][name]['ratio'], 4),
+        ratio_gpt4=round(tokenizer_results['gpt4'][name]['ratio'], 4),
+    ))

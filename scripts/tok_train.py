@@ -6,8 +6,8 @@ import os
 import time
 import argparse
 import torch
-from nanochat.tokenizer import RustBPETokenizer
-from nanochat.common import get_base_dir
+from nanochat.logfmt import format_record
+from nanochat.tokenizer import RustBPETokenizer, get_tokenizer_dir
 from nanochat.dataset import parquets_iter_batched
 
 # -----------------------------------------------------------------------------
@@ -52,9 +52,8 @@ train_time = t1 - t0
 print(f"Training time: {train_time:.2f}s")
 
 # -----------------------------------------------------------------------------
-# Save the tokenizer to disk
-base_dir = get_base_dir()
-tokenizer_dir = os.path.join(base_dir, "tokenizer")
+# Save the tokenizer to disk (into the active experiment's directory)
+tokenizer_dir = get_tokenizer_dir()
 tokenizer.save(tokenizer_dir)
 
 # -----------------------------------------------------------------------------
@@ -89,3 +88,12 @@ token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
 with open(token_bytes_path, "wb") as f:
     torch.save(token_bytes, f)
 print(f"Saved token_bytes to {token_bytes_path}")
+
+# -----------------------------------------------------------------------------
+# Report the stage record (see nanochat/logfmt.py)
+print(format_record("summary",
+    vocab_size=vocab_size,
+    max_chars=args.max_chars,
+    doc_cap=args.doc_cap,
+    train_time_sec=round(train_time, 2),
+))
