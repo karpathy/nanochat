@@ -1,6 +1,9 @@
 ---
 name: read-arxiv-paper
-description: Use this skill when asked to read an arxiv paper given an arxiv URL
+description: >-
+  This skill should be used when the user provides an arXiv URL and asks to "read this paper",
+  "summarize this arXiv paper", "explain this paper", "what does this paper say", "read arxiv",
+  or wants to fetch and analyze the TeX source of an arXiv preprint for detailed understanding.
 ---
 
 You will be given a URL of an arxiv paper, for example:
