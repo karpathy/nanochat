@@ -260,16 +260,19 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
             rows.append(row[:row_capacity])
             mask_rows.append(mask_row[:row_capacity])
 
-        # Stopping condition to respect num_iterations, if given
+        # Stopping condition to respect num_iterations, if given.
+        # num_iterations counts optimizer steps, but this generator yields micro-batches:
+        # grad_accum_steps of them per optimizer step.
         it += 1
-        if 0 < args.num_iterations <= it and split == "train":
+        target_micro_iters = args.num_iterations * grad_accum_steps
+        if 0 < target_micro_iters <= it and split == "train":
             last_step = True
 
         # Update progress tracking (based on consumed, not cursor, to account for buffering)
         if split == "train":
             current_epoch = epoch
             if args.num_iterations > 0:
-                approx_progress = it / args.num_iterations
+                approx_progress = it / target_micro_iters
             else:
                 approx_progress = consumed / dataset_size
             # Trigger last_step when we've consumed enough (instead of when cursor wraps)
