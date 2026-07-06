@@ -5,7 +5,7 @@ python -m pytest tests/test_engine.py -v
 """
 
 import torch
-from nanochat.engine import KVCache, Engine
+from nanochat.engine import KVCache, Engine, use_calculator, format_calculator_result
 from dataclasses import dataclass
 
 
@@ -265,3 +265,19 @@ def test_different_seeds_introduce_variation_when_temperature_nonzero():
 
     # Sanity check: sampling actually introduces variation
     assert len(outputs) > 1, "All seeds produced the same output which is statistically highly improbable."
+
+
+def test_calculator_result_matches_training_format():
+    """The calculator result is injected as context the model was trained on.
+    GSM8K writes whole-number results as integers ("10", not "10.0"), but eval
+    returns a float for division and many products, so the injected output must
+    drop the trailing ".0" to match training. Genuine fractions are unchanged.
+    """
+    # The canonical GSM8K example: 0.2*50 evaluates to the float 10.0, annotated "10".
+    assert use_calculator("0.2*50") == 10.0
+    assert format_calculator_result(use_calculator("0.2*50")) == "10"
+    assert format_calculator_result(use_calculator("100/10")) == "10"
+    # Integer expressions and real fractions are rendered as before.
+    assert format_calculator_result(use_calculator("5*2")) == "10"
+    assert format_calculator_result(use_calculator("12/60")) == "0.2"
+    assert format_calculator_result(0.2) == "0.2"
