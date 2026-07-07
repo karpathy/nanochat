@@ -47,6 +47,24 @@ class MockModel:
         return logits
 
 
+class StrictLengthModel(MockModel):
+    """Mock model that fails if the prompt exceeds sequence_len."""
+    def __init__(self, vocab_size=262, sequence_len=8):
+        super().__init__(vocab_size=vocab_size)
+        self.config = MockConfig(sequence_len=sequence_len)
+        self.prefill_lengths = []
+        self.prefill_tokens = []
+
+    def forward(self, ids, kv_cache=None):
+        B, T = ids.shape
+        if T > self.config.sequence_len:
+            raise RuntimeError(f"sequence length exceeded: {T} > {self.config.sequence_len}")
+        if kv_cache is not None and kv_cache.get_pos() == 0:
+            self.prefill_lengths.append(T)
+            self.prefill_tokens.append(ids[0].tolist())
+        return super().forward(ids, kv_cache=kv_cache)
+
+
 class ByteTokenizer:
     """
     Simple byte-level tokenizer for testing.
@@ -265,3 +283,16 @@ def test_different_seeds_introduce_variation_when_temperature_nonzero():
 
     # Sanity check: sampling actually introduces variation
     assert len(outputs) > 1, "All seeds produced the same output which is statistically highly improbable."
+
+
+def test_generate_truncates_overlong_prompts_to_model_context_window():
+    """Overlong prompts should be truncated to the latest context window before prefill."""
+    model = StrictLengthModel(sequence_len=8)
+    engine = Engine(model, ByteTokenizer())
+    prompt = [261, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    results, _ = engine.generate_batch(prompt, temperature=0.0, max_tokens=1)
+
+    assert model.prefill_lengths == [8]
+    assert model.prefill_tokens == [[261, 4, 5, 6, 7, 8, 9, 10]]
+    assert results[0][:8] == [261, 4, 5, 6, 7, 8, 9, 10]
