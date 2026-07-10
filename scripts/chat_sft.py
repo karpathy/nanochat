@@ -23,6 +23,7 @@ from nanochat.loss_eval import evaluate_bpb
 import torch.distributed as dist
 from nanochat.flash_attention import HAS_FA3
 from nanochat.engine import Engine
+from nanochat.dataloader import pop_best_fit_conversation, has_sft_supervised_tokens
 from scripts.chat_eval import run_chat_eval
 
 from tasks.common import TaskMixture
@@ -183,7 +184,8 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
 
     Each row in the batch starts with BOS (beginning of a conversation).
     Conversations are packed using best-fit algorithm. When no conversation fits,
-    the row is padded (instead of cropping) to ensure no tokens are ever discarded.
+    a partially filled row is padded. If nothing fits into an empty row, the shortest
+    buffered conversation is truncated so the buffer cannot stall on oversized data.
     Padding positions have targets masked with -1 (ignore_index for cross-entropy).
     """
     global last_step, approx_progress, current_epoch
@@ -228,18 +230,16 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
 
                 remaining = row_capacity - len(row)
 
-                # Find largest conversation that fits entirely
-                best_idx = -1
-                best_len = 0
-                for i, (conv, _) in enumerate(conv_buffer):
-                    conv_len = len(conv)
-                    if conv_len <= remaining and conv_len > best_len:
-                        best_idx = i
-                        best_len = conv_len
-
-                if best_idx >= 0:
-                    # Found a conversation that fits - use it entirely
-                    conv, conv_mask = conv_buffer.pop(best_idx)
+                # Preserve best-fit behavior for normal rows. Only truncate when an
+                # empty row cannot fit any buffered conversation, which also removes
+                # oversized conversations instead of leaving them stuck forever.
+                selected = pop_best_fit_conversation(
+                    conv_buffer,
+                    remaining,
+                    truncate_if_needed=len(row) == 0,
+                )
+                if selected is not None:
+                    conv, conv_mask = selected
                     row.extend(conv)
                     mask_row.extend(conv_mask)
                     consumed += ddp_world_size  # Track actual consumption
@@ -259,6 +259,12 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
                 row_lengths.append(row_capacity)
             rows.append(row[:row_capacity])
             mask_rows.append(mask_row[:row_capacity])
+
+        # Mean cross-entropy over only ignore_index targets is 0/0 => NaN. Do not
+        # count or yield an all-masked batch; packing has still consumed its rows,
+        # so the next attempt can refill with usable conversations.
+        if not has_sft_supervised_tokens(mask_rows):
+            continue
 
         # Stopping condition to respect num_iterations, if given
         it += 1

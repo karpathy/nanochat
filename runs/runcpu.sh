@@ -48,6 +48,7 @@ python -m scripts.base_eval --device-batch-size=1 --split-tokens=16384 --max-per
 python -m scripts.chat_sft \
     --eval-every=200 \
     --eval-tokens=524288 \
+    --chatcore-every=-1 \
     --num-iterations=1500 \
     --run=$WANDB_RUN
 

@@ -22,6 +22,37 @@ import pyarrow.parquet as pq
 from nanochat.common import get_dist_info
 from nanochat.dataset import list_parquet_files
 
+
+def pop_best_fit_conversation(conversation_buffer, max_length, truncate_if_needed=False):
+    """Pop the largest conversation that fits, optionally truncating as a fallback."""
+    assert max_length > 0
+    if not conversation_buffer:
+        raise ValueError("Cannot select a conversation from an empty buffer")
+
+    best_idx = -1
+    best_len = 0
+    for i, (ids, _) in enumerate(conversation_buffer):
+        conversation_len = len(ids)
+        if conversation_len <= max_length and conversation_len > best_len:
+            best_idx = i
+            best_len = conversation_len
+
+    if best_idx < 0:
+        if not truncate_if_needed:
+            return None
+        # Minimize discarded tokens when every buffered conversation is too long.
+        best_idx = min(range(len(conversation_buffer)), key=lambda i: len(conversation_buffer[i][0]))
+
+    ids, mask = conversation_buffer.pop(best_idx)
+    return ids[:max_length], mask[:max_length]
+
+
+def has_sft_supervised_tokens(mask_rows):
+    """Return whether a packed SFT batch has at least one supervised target token."""
+    # Targets are shifted by one, so mask_rows[:, 0] can never contribute to loss.
+    return any(any(mask_row[1:]) for mask_row in mask_rows)
+
+
 def _document_batches(split, resume_state_dict, tokenizer_batch_size):
     """
     Infinite iterator over document batches (list of text strings) from parquet files.
