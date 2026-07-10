@@ -257,6 +257,25 @@ class TestSDPAOnly:
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     DTYPE = torch.bfloat16 if torch.cuda.is_available() else torch.float32
 
+    def test_non_causal_full_context(self):
+        """The SDPA fallback must honor causal=False for full-context attention."""
+        set_impl('sdpa')
+        B, T, H, D = 2, 8, 4, 16
+        q = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B, T, H, D, device=self.DEVICE, dtype=self.DTYPE)
+
+        actual = flash_attn.flash_attn_func(q, k, v, causal=False, window_size=(-1, -1))
+        expected = torch.nn.functional.scaled_dot_product_attention(
+            q.transpose(1, 2),
+            k.transpose(1, 2),
+            v.transpose(1, 2),
+            is_causal=False,
+        ).transpose(1, 2)
+
+        assert_close(actual, expected, "non_causal_full_context")
+        set_impl(None)
+
     def test_basic_forward(self):
         """Test SDPA forward pass produces valid output."""
         set_impl('sdpa')
