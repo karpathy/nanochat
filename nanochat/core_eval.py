@@ -5,7 +5,9 @@ https://arxiv.org/abs/2406.11794
 TODOs:
 - All tasks ~match except for squad. We get 31% reference is 37%. Figure out why.
 """
+import math
 import random
+import re
 
 from jinja2 import Template
 import torch
@@ -164,21 +166,99 @@ def forward_model(model, input_ids):
     return losses, predictions
 
 
+# -----------------------------------------------------------------------------
+# Counterfactual controls
+# After the normal pass, re-score with the part of the input a competent model must read corrupted
+# (swapped with another item's), keeping the few-shot examples intact. A model that actually reads
+# the input drops toward chance; one whose answer comes from a prior (boolq yes/no), an answer-position
+# bias, or just the more likely choice on its own does not -- so a larger clean->corrupted drop means
+# the score is more likely real. The control is auto-detected from each task's structure.
+
+_OPTION_LINE = re.compile(r"^\s*([A-Z])[.)]+\s+(.*)$")  # "A. <text>" / "A.) <text>" lettered-MC option lines
+
+
+def control_for_task(data, task_type):
+    """Return the counterfactual control that fits a task's structure, or None."""
+    if not data:
+        return None
+    item = data[0]
+    if task_type == 'multiple_choice':
+        choices = item['choices']
+        query = item.get('query', '')
+        if all(isinstance(c, str) and len(c.strip()) == 1 and c.strip().isalpha() for c in choices):
+            # lettered MC (csqa/language_id/lsat): the options are listed inside the query and the
+            # model picks a letter, so the stem to swap is the text before them. Only controllable if
+            # the option lines actually parse (else skip, rather than record a silent no-op).
+            n_opt = sum(1 for ln in query.split('\n') if _OPTION_LINE.match(ln))
+            return 'stem_swap' if n_opt == len(choices) else None
+        if 'Passage:' in query and 'Question:' in query:
+            return 'passage_swap'     # reading comprehension (e.g. boolq): swap the passage
+        return 'stem_swap'            # content MC (piqa/arc/hellaswag): the query is the stem
+    if task_type == 'language_modeling':
+        return 'context_swap'
+    return None                       # schema (and anything else): no control yet
+
+
+def apply_control(item, data, idx, control, rng):
+    """Corrupt the readable input of `item` (returning a copy) and return (item, gold).
+
+    No control remaps gold: each control keeps the options/choices in place, so the original gold
+    index stays valid -- it is returned (unchanged) only so callers have a uniform interface.
+    """
+    donor = data[rng.choice([i for i in range(len(data)) if i != idx])]
+    if control == 'context_swap':
+        return {**item, 'context': donor['context']}, item.get('gold')
+    if control == 'passage_swap':
+        # boolq-style: swap the passage but keep this item's question (the text after "\nQuestion:")
+        delim = '\nQuestion:'
+        if delim in item['query'] and delim in donor['query']:
+            new_query = donor['query'].split(delim, 1)[0] + delim + item['query'].split(delim, 1)[1]
+            return {**item, 'query': new_query}, item['gold']
+        return {**item, 'query': donor['query']}, item['gold']
+    if control == 'stem_swap':
+        # Swap the question/stem with another item's, keeping this item's choices + gold. Content MC
+        # keeps its choices in a separate field, so the query is just the stem -> swap it whole.
+        # Lettered MC lists the options inside the query ("A. ..."), so swap only the text before the
+        # first option line and keep this item's options. Either way the model can no longer match the
+        # question to its answer -- the same "reads -> drops" direction as the other controls.
+        lines = item['query'].split('\n')
+        first_opt = next((i for i, ln in enumerate(lines) if _OPTION_LINE.match(ln)), None)
+        if first_opt is None:
+            return {**item, 'query': donor['query']}, item['gold']        # content MC: swap whole query
+        donor_lines = donor['query'].split('\n')
+        donor_opt = next((i for i, ln in enumerate(donor_lines) if _OPTION_LINE.match(ln)), None)
+        if first_opt and donor_opt:  # lettered MC: a non-empty stem before parseable options
+            return {**item, 'query': '\n'.join(donor_lines[:donor_opt] + lines[first_opt:])}, item['gold']
+        return item, item['gold']
+    return item, item['gold']
+
+
 @torch.no_grad()
-def evaluate_example(idx, model, tokenizer, data, device, task_meta):
-    """Evaluate a single example, return True if correct, False otherwise"""
+def evaluate_example(idx, model, tokenizer, data, device, task_meta, control=None):
+    """Evaluate a single example; return (is_correct, info).
+
+    If `control` is set (see control_for_task / apply_control) the test item's readable input is
+    corrupted (the original gold is kept), while the few-shot examples stay intact -- a counterfactual
+    a reading model should fail. `info` records the response for logging: multiple_choice/schema ->
+    {idx, gold, pred, scores}; language_modeling -> {idx, correct}.
+    """
     item = data[idx]
     task_type = task_meta['task_type']
     num_fewshot = task_meta['num_fewshot']
     continuation_delimiter = task_meta['continuation_delimiter']
 
-    # Sample few-shot examples (excluding current item)
+    # Sample few-shot examples (excluding current item), from the original (un-corrupted) data
     fewshot_examples = []
     if num_fewshot > 0:
         rng = random.Random(1234 + idx)
         available_indices = [i for i in range(len(data)) if i != idx]
         fewshot_indices = rng.sample(available_indices, num_fewshot)
         fewshot_examples = [data[i] for i in fewshot_indices]
+
+    # Counterfactual control: corrupt the test item's readable input (the original gold is kept)
+    gold = item.get('gold')
+    if control is not None:
+        item, gold = apply_control(item, data, idx, control, random.Random(99 + idx))
 
     # Render prompts and batch sequences based on task type
     if task_type == 'multiple_choice':
@@ -229,34 +309,42 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
         predicted_tokens = predictions[0, si-1:ei-1]
         actual_tokens = input_ids[0, si:ei]
         is_correct = torch.all(predicted_tokens == actual_tokens).item()
+        info = {'idx': idx, 'correct': bool(is_correct)}
     elif task_type in ['multiple_choice', 'schema']:
         # For MC/schema: find the option with lowest average loss
         mean_losses = [losses[i, si-1:ei-1].mean().item()
                         for i, (si, ei) in enumerate(zip(start_idxs, end_idxs))]
         pred_idx = mean_losses.index(min(mean_losses))
-        is_correct = pred_idx == item['gold']
+        is_correct = pred_idx == gold
+        info = {'idx': idx, 'gold': gold, 'pred': pred_idx,
+                'scores': [round(m, 5) if math.isfinite(m) else None for m in mean_losses]}
     else:
         raise ValueError(f"Unsupported task type: {task_type}")
 
-    return is_correct
+    return is_correct, info
 
 
-def evaluate_task(model, tokenizer, data, device, task_meta):
+def evaluate_task(model, tokenizer, data, device, task_meta, control=None, collect_responses=False):
     """
-    This function is responsible for evaluating one task across many examples.
-    It also handles dispatch to all processes if the script is run with torchrun.
+    Evaluate one task across many examples, dispatching to all processes under torchrun.
+    Returns (mean_correct, responses). `control` runs the counterfactual control (see
+    control_for_task); `collect_responses=True` additionally returns this rank's per-example `info`
+    records for logging (this rank's strided slice, not gathered across ranks).
     """
     rank = dist.get_rank() if dist.is_initialized() else 0
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     correct = torch.zeros(len(data), dtype=torch.float32, device=device)
+    responses = []
     # stride the examples to each rank
     for idx in range(rank, len(data), world_size):
-        is_correct = evaluate_example(idx, model, tokenizer, data, device, task_meta)
+        is_correct, info = evaluate_example(idx, model, tokenizer, data, device, task_meta, control=control)
         correct[idx] = float(is_correct)
+        if collect_responses:
+            responses.append(info)
     # sync results across all the processes if running distributed
     if world_size > 1:
         dist.barrier()
         dist.all_reduce(correct, op=dist.ReduceOp.SUM)
     # compute the mean
     mean_correct = correct.mean().item()
-    return mean_correct
+    return mean_correct, responses
