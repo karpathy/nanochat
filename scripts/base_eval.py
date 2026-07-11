@@ -27,11 +27,12 @@ import zipfile
 import tempfile
 import argparse
 import torch
+import torch.distributed as dist
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import load_model
-from nanochat.core_eval import evaluate_task
+from nanochat.core_eval import evaluate_task, control_for_task
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
@@ -54,10 +55,17 @@ def place_eval_bundle(file_path):
     print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
 
-def evaluate_core(model, tokenizer, device, max_per_task=-1):
+def evaluate_core(model, tokenizer, device, max_per_task=-1, controls=False, control_samples=500, log_dir=None):
     """
     Evaluate a base model on the CORE benchmark.
-    Returns dict with results, centered_results, and core_metric.
+    Returns dict with results, centered_results, core_metric, and (if controls) control_results.
+
+    When `controls=True`, additionally (a) logs per-example responses to `log_dir` and (b) runs the
+    counterfactual controls (see nanochat.core_eval.control_for_task): per task, re-score a
+    `control_samples`-example subsample with the readable input corrupted and report both accuracies
+    CORE-centered (0 = chance). A corrupted-centered score near 0 means the model fell to chance without
+    the input (real reading); staying near the clean-centered score means its answer comes from a prior,
+    an answer-position bias, or just the more likely choice on its own.
     """
     base_dir = get_base_dir()
     eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
@@ -83,8 +91,22 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
             random_baselines[task_name] = float(random_baseline)
 
     # Evaluate each task
+    rank = dist.get_rank() if dist.is_initialized() else 0
     results = {}
     centered_results = {}
+    control_results = {}
+    resp_path = None
+    if controls and log_dir is not None:
+        os.makedirs(log_dir, exist_ok=True)
+        if rank == 0:
+            # remove stale response files (e.g. a prior run with more ranks) before any rank writes
+            import glob
+            for stale in glob.glob(os.path.join(log_dir, "responses.rank*.jsonl")):
+                os.remove(stale)
+        if dist.is_initialized():
+            dist.barrier()
+        resp_path = os.path.join(log_dir, f"responses.rank{rank}.jsonl")
+        open(resp_path, 'w', encoding='utf-8').close()
     for task in tasks:
         start_time = time.time()
         label = task['label']
@@ -106,19 +128,47 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
         if max_per_task > 0:
             data = data[:max_per_task]
 
-        accuracy = evaluate_task(model, tokenizer, data, device, task_meta)
+        accuracy, responses = evaluate_task(model, tokenizer, data, device, task_meta, collect_responses=controls)
         results[label] = accuracy
         random_baseline = random_baselines[label]
         centered_result = (accuracy - 0.01 * random_baseline) / (1.0 - 0.01 * random_baseline)
         centered_results[label] = centered_result
+
+        # Log this rank's per-example responses (gold/pred/scores) for post-hoc analysis
+        if resp_path is not None:
+            with open(resp_path, 'a', encoding='utf-8') as rf:
+                for r in responses:
+                    rf.write(json.dumps({'task': label, **r}) + "\n")
+
+        # Counterfactual control: re-score a subsample with the readable input corrupted, and center
+        # both accuracies against the task's random baseline (0 = chance) so they compare across tasks.
+        # corrupted_centered near 0 => the score fell to chance without the input (real reading); near
+        # clean_centered => the input isn't needed (a prior/position bias or the more likely choice).
+        if controls:
+            control = control_for_task(data, task_meta['task_type'])
+            if control is not None:
+                subset = data[:control_samples]
+                clean_acc, _ = evaluate_task(model, tokenizer, subset, device, task_meta)
+                corrupt_acc, _ = evaluate_task(model, tokenizer, subset, device, task_meta, control=control)
+                rb = 0.01 * random_baselines[label]
+                control_results[label] = {'control': control, 'clean': clean_acc, 'corrupted': corrupt_acc,
+                                          'clean_centered': (clean_acc - rb) / (1.0 - rb),
+                                          'corrupted_centered': (corrupt_acc - rb) / (1.0 - rb),
+                                          'n': len(subset)}
+
         elapsed = time.time() - start_time
-        print0(f"accuracy: {accuracy:.4f} | centered: {centered_result:.4f} | time: {elapsed:.2f}s")
+        ctrl_str = ""
+        if label in control_results:
+            cr = control_results[label]
+            ctrl_str = f" | {cr['control']}: centered {cr['clean_centered']:.3f}->{cr['corrupted_centered']:.3f}"
+        print0(f"accuracy: {accuracy:.4f} | centered: {centered_result:.4f}{ctrl_str} | time: {elapsed:.2f}s")
 
     core_metric = sum(centered_results.values()) / len(centered_results)
     out = {
         "results": results,
         "centered_results": centered_results,
-        "core_metric": core_metric
+        "core_metric": core_metric,
+        "control_results": control_results,
     }
     return out
 
@@ -131,6 +181,8 @@ def main():
     parser.add_argument('--model-tag', type=str, default=None, help='nanochat model tag to identify the checkpoint directory')
     parser.add_argument('--step', type=int, default=None, help='Model step to load (default = last)')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per CORE task (-1 = all)')
+    parser.add_argument('--controls', type=int, default=1, help='CORE counterfactual controls + per-example response logging (1=on default, 0=off)')
+    parser.add_argument('--control-samples', type=int, default=500, help='Examples per task for the counterfactual controls')
     parser.add_argument('--device-batch-size', type=int, default=32, help='Per-device batch size for BPB evaluation')
     parser.add_argument('--split-tokens', type=int, default=40*524288, help='Number of tokens to evaluate per split for BPB')
     parser.add_argument('--device-type', type=str, default='', help='cuda|cpu|mps (empty = autodetect)')
@@ -219,20 +271,27 @@ def main():
         print0("\n" + "="*80)
         print0("CORE Evaluation")
         print0("="*80)
-        core_results = evaluate_core(model, tokenizer, device, max_per_task=args.max_per_task)
+        core_results = evaluate_core(model, tokenizer, device, max_per_task=args.max_per_task,
+                                     controls=bool(args.controls), control_samples=args.control_samples,
+                                     log_dir=os.path.join(get_base_dir(), "base_eval"))
 
         # Write CSV output
         if ddp_rank == 0:
             base_dir = get_base_dir()
             output_csv_path = os.path.join(base_dir, "base_eval", f"{model_slug}.csv")
             os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
+            cres = core_results.get("control_results", {})
             with open(output_csv_path, 'w', encoding='utf-8', newline='') as f:
-                f.write(f"{'Task':<35}, {'Accuracy':<10}, {'Centered':<10}\n")
+                f.write(f"{'Task':<35}, {'Accuracy':<10}, {'Centered':<10}, {'Control':<14}, {'Clean':<8}, {'Corrupted':<10}, {'CleanCentered':<14}, {'CorrCentered':<13}, {'N':<6}\n")
                 for label in core_results["results"]:
                     acc = core_results["results"][label]
                     centered = core_results["centered_results"][label]
-                    f.write(f"{label:<35}, {acc:<10.6f}, {centered:<10.6f}\n")
-                f.write(f"{'CORE':<35}, {'':<10}, {core_results['core_metric']:<10.6f}\n")
+                    cr = cres.get(label)
+                    if cr:
+                        f.write(f"{label:<35}, {acc:<10.6f}, {centered:<10.6f}, {cr['control']:<14}, {cr['clean']:<8.4f}, {cr['corrupted']:<10.4f}, {cr['clean_centered']:<14.4f}, {cr['corrupted_centered']:<13.4f}, {cr['n']:<6}\n")
+                    else:
+                        f.write(f"{label:<35}, {acc:<10.6f}, {centered:<10.6f}, {'':<14}, {'':<8}, {'':<10}, {'':<14}, {'':<13}, {'':<6}\n")
+                f.write(f"{'CORE':<35}, {'':<10}, {core_results['core_metric']:<10.6f}, {'':<14}, {'':<8}, {'':<10}, {'':<14}, {'':<13}, {'':<6}\n")
             print0(f"\nResults written to: {output_csv_path}")
             print0(f"CORE metric: {core_results['core_metric']:.4f}")
 
