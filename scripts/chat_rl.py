@@ -14,6 +14,9 @@ python -m scripts.chat_rl
 
 8 GPUs:
 torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
+
+Resume an interrupted run from its last RL checkpoint (e.g. saved at step 300):
+torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --source rl --start-step 300
 """
 
 import argparse
@@ -35,10 +38,12 @@ parser.add_argument("--run", type=str, default="dummy", help="wandb run name ('d
 # Runtime
 parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (empty = autodetect)")
 # Model loading
+parser.add_argument("--source", type=str, default="sft", choices=["sft", "rl"], help="checkpoint dir to initialize from (use rl to resume an interrupted run)")
 parser.add_argument("--model-tag", type=str, default=None, help="model tag to load from")
 parser.add_argument("--model-step", type=int, default=None, help="model step to load from")
 # Training horizon
 parser.add_argument("--num-epochs", type=int, default=1, help="number of epochs over GSM8K")
+parser.add_argument("--start-step", type=int, default=0, help="step to resume from, skipping already-consumed training data")
 # Batch sizes / sampling
 parser.add_argument("--device-batch-size", type=int, default=8, help="max batch size per forward pass")
 parser.add_argument("--examples-per-step", type=int, default=16, help="total examples per optimization step across all ranks")
@@ -71,7 +76,7 @@ use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl", name=args.run, config=user_config)
 
 # Init model and tokenizer
-model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
+model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.model_step)
 engine = Engine(model, tokenizer) # for sampling rollouts
 
 # -----------------------------------------------------------------------------
@@ -81,12 +86,17 @@ train_task = GSM8K(subset="main", split="train")
 val_task = GSM8K(subset="main", split="test")
 num_steps = (len(train_task) // args.examples_per_step) * args.num_epochs
 print0(f"Calculated number of steps: {num_steps}")
+assert 0 <= args.start_step < num_steps, f"--start-step must be in [0, {num_steps})"
 
 @torch.no_grad()
 def get_batch():
     assistant_end = tokenizer.encode_special("<|assistant_end|>") # ok to use this token, it's only for padding and isn't used in the loss.
     rank_indices = range(ddp_rank, len(train_task), ddp_world_size) # each rank is responsible for different examples in the training data
-    for example_idx in itertools.cycle(rank_indices):
+    examples_iter = itertools.cycle(rank_indices)
+    # when resuming, skip the examples that were already consumed by steps [0, start_step)
+    examples_consumed = args.start_step * (args.examples_per_step // ddp_world_size)
+    examples_iter = itertools.islice(examples_iter, examples_consumed, None)
+    for example_idx in examples_iter:
 
         # First get the full conversation of both user and assistant messages
         conversation = train_task[example_idx]
@@ -219,7 +229,7 @@ print0(f"Calculated examples per rank: {examples_per_rank}")
 
 # Kick off the training loop
 batch_iterator = get_batch()
-for step in range(num_steps):
+for step in range(args.start_step, num_steps):
 
     # Evaluate the model once in a while and log to wandb
     if step % args.eval_every == 0:
