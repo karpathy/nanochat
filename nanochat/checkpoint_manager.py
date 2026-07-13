@@ -25,6 +25,9 @@ def _patch_missing_config_keys(model_config_kwargs):
     if "window_pattern" not in model_config_kwargs:
         model_config_kwargs["window_pattern"] = "L"
         log0(f"Patching missing window_pattern in model config to 'L'")
+    if "n_token_embd" not in model_config_kwargs:
+        model_config_kwargs["n_token_embd"] = model_config_kwargs["n_embd"]
+        log0(f"Patching missing n_token_embd in model config to {model_config_kwargs['n_token_embd']}")
 
 def _patch_missing_keys(model_data, model_config):
     """Add default values for new parameters that may be missing in old checkpoints."""

@@ -33,10 +33,23 @@ class GPTConfig:
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
+    n_token_embd: int = 384
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+
+    @property
+    def layer_n_embd(self) -> list[int]:
+        """Return list of n_embed for each layer, accounting for widening in early layers."""
+        n_embeds = []
+        for layer_idx in range(self.n_layer):
+            if layer_idx == 0:
+                n_embd = self.n_token_embd
+            else:
+                n_embd = self.n_embd
+            n_embeds.append(n_embd)
+        return n_embeds
 
 
 def norm(x):
@@ -60,17 +73,19 @@ def apply_rotary_emb(x, cos, sin):
     assert x.ndim == 4  # multihead attention
     d = x.shape[3] // 2
     x1, x2 = x[..., :d], x[..., d:] # split up last dim into two halves
+    # Support narrower earlier layers
+    cos, sin = cos[..., :d], sin[..., :d]
     y1 = x1 * cos + x2 * sin # rotate pairs of dims
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat([y1, y2], 3)
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, config, layer_idx):
+    def __init__(self, n_head, n_kv_head, n_embd, n_layer, layer_idx):
         super().__init__()
         self.layer_idx = layer_idx
-        self.n_head = config.n_head
-        self.n_kv_head = config.n_kv_head
-        self.n_embd = config.n_embd
+        self.n_head = n_head
+        self.n_kv_head = n_kv_head
+        self.n_embd = n_embd
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
@@ -79,7 +94,7 @@ class CausalSelfAttention(nn.Module):
         self.c_v = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 12
-        self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
+        self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, n_layer) else None
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         B, T, C = x.size()
@@ -111,6 +126,8 @@ class CausalSelfAttention(nn.Module):
         else:
             # Inference: use flash_attn_with_kvcache which handles cache management
             k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
+            # Support narrower blocks in cache for earlier layers
+            k_cache, v_cache = k_cache[:, :, :, :self.head_dim], v_cache[:, :, :, :self.head_dim]
             y = flash_attn.flash_attn_with_kvcache(
                 q, k_cache, v_cache,
                 k=k, v=v,
@@ -129,10 +146,10 @@ class CausalSelfAttention(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, config):
+    def __init__(self, n_embd):
         super().__init__()
-        self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
+        self.c_fc = Linear(n_embd, 4 * n_embd, bias=False)
+        self.c_proj = Linear(4 * n_embd, n_embd, bias=False)
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -144,13 +161,30 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
-        self.attn = CausalSelfAttention(config, layer_idx)
-        self.mlp = MLP(config)
+        self.attn = CausalSelfAttention(config.n_head, config.n_kv_head, config.n_embd, config.n_layer, layer_idx)
+        self.mlp = MLP(config.n_embd)
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
         x = x + self.mlp(norm(x))
         return x
+
+
+def widen_residual(x):
+    return torch.concat([x] * 2, dim=-1)
+
+
+class WideningBlock(nn.Module):
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        self.attn = CausalSelfAttention(config.n_head, config.n_kv_head, config.n_token_embd, config.n_layer, layer_idx)
+        self.mlp = MLP(config.n_token_embd)
+        self.n_kv_head = config.n_kv_head
+    
+    def forward(self, x, ve, cos_sin, window_size, kv_cache):
+        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
+        x = x + self.mlp(norm(x))
+        return widen_residual(x)
 
 
 class GPT(nn.Module):
@@ -171,8 +205,11 @@ class GPT(nn.Module):
         if padded_vocab_size != config.vocab_size:
             print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} for efficiency")
         self.transformer = nn.ModuleDict({
-            "wte": nn.Embedding(padded_vocab_size, config.n_embd),
-            "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
+            "wte": nn.Embedding(padded_vocab_size, config.n_token_embd),
+            "h": nn.ModuleList([
+                WideningBlock(config, layer_idx) if layer_n_embd < config.n_embd else Block(config, layer_idx)
+                for layer_idx, layer_n_embd in enumerate(config.layer_n_embd)
+            ]),
         })
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
@@ -328,10 +365,17 @@ class GPT(nn.Module):
         - Chinchilla counts the embedding layer as flops (? weird, it's just a lookup => we ignore)
         - Chinchilla counts exp/sum/divide in attention softmax as flops (a little sus and very tiny => we ignore)
         """
-        h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
+        nparams = sum(p.numel() for p in self.parameters())
+        # Exclude non-matmul params: embeddings and per-layer scalars
+        value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
+        nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
+                          self.resid_lambdas.numel() + self.x0_lambdas.numel() +
+                          self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel())
+        h, t = self.config.n_head, self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window
         attn_flops = 0
-        for window_size in self.window_sizes:
+        for layer_n_embd, window_size in zip(self.config.layer_n_embd, self.window_sizes):
+            q = layer_n_embd // h  # account for widening in early layers
             window = window_size[0]  # (left, right) tuple, we use left
             effective_seq = t if window < 0 else min(window, t)
             attn_flops += 12 * h * q * effective_seq
@@ -497,6 +541,9 @@ class GPT(nn.Module):
         backout_layer = n_layer // 2  # cache at halfway point
         x_backout = None
         for i, block in enumerate(self.transformer.h):
+            if x0.size(-1) < x.size(-1):
+                # Widen normalized embedding to match current layer's width
+                x0 = widen_residual(x0)
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
