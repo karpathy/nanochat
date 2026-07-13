@@ -10,9 +10,6 @@ Default is all three: --eval core,bpb,sample
 
 Examples:
 
-    # Evaluate a HuggingFace model (e.g. GPT-2 124M) using 8 GPUs
-    torchrun --nproc_per_node=8 -m scripts.base_eval --hf-path openai-community/gpt2
-
     # Evaluate a nanochat model (e.g. d24) using 8 GPUs
     torchrun --nproc_per_node=8 -m scripts.base_eval --model-tag d24 --device-batch-size=16
 
@@ -32,59 +29,12 @@ import argparse
 import torch
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
-from nanochat.tokenizer import HuggingFaceTokenizer, get_token_bytes
+from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
-
-# -----------------------------------------------------------------------------
-# HuggingFace loading utilities
-
-class ModelWrapper:
-    """Lightweight wrapper to give HuggingFace models a nanochat-compatible interface."""
-    def __init__(self, model, max_seq_len=None):
-        self.model = model
-        self.max_seq_len = max_seq_len
-
-    def __call__(self, input_ids, targets=None, loss_reduction='mean'):
-        logits = self.model(input_ids).logits
-        if targets is None:
-            return logits
-        loss = torch.nn.functional.cross_entropy(
-            logits.view(-1, logits.size(-1)),
-            targets.view(-1),
-            ignore_index=-1,
-            reduction=loss_reduction
-        )
-        return loss
-
-    def get_device(self):
-        return next(self.model.parameters()).device
-
-
-def load_hf_model(hf_path: str, device):
-    """Load a HuggingFace model and tokenizer."""
-    print0(f"Loading HuggingFace model from: {hf_path}")
-    from transformers import AutoModelForCausalLM
-    model = AutoModelForCausalLM.from_pretrained(hf_path)
-    model.to(device)
-    model.eval()
-    max_seq_len = 1024 if "gpt2" in hf_path else None
-    model = ModelWrapper(model, max_seq_len=max_seq_len)
-    tokenizer = HuggingFaceTokenizer.from_pretrained(hf_path)
-    return model, tokenizer
-
-
-def get_hf_token_bytes(tokenizer, device="cpu"):
-    """Compute token_bytes tensor for a HuggingFace tokenizer."""
-    vocab_size = tokenizer.tokenizer.get_vocab_size()
-    token_bytes = torch.zeros(vocab_size, dtype=torch.int64, device=device)
-    for token_id in range(vocab_size):
-        token_str = tokenizer.tokenizer.decode([token_id])
-        token_bytes[token_id] = len(token_str.encode('utf-8'))
-    return token_bytes
 
 # -----------------------------------------------------------------------------
 # CORE evaluation
@@ -178,7 +128,6 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
 def main():
     parser = argparse.ArgumentParser(description="Base model evaluation")
     parser.add_argument('--eval', type=str, default='core,bpb,sample', help='Comma-separated evaluations to run: core,bpb,sample (default: all)')
-    parser.add_argument('--hf-path', type=str, default=None, help='HuggingFace model path (e.g. openai-community/gpt2-xl)')
     parser.add_argument('--model-tag', type=str, default=None, help='nanochat model tag to identify the checkpoint directory')
     parser.add_argument('--step', type=int, default=None, help='Model step to load (default = last)')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per CORE task (-1 = all)')
@@ -198,19 +147,11 @@ def main():
     device_type = autodetect_device_type() if args.device_type == '' else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
     # Load model and tokenizer
-    is_hf_model = args.hf_path is not None
-    if is_hf_model:
-        model, tokenizer = load_hf_model(args.hf_path, device)
-        sequence_len = model.max_seq_len or 1024
-        token_bytes = get_hf_token_bytes(tokenizer, device=device)
-        model_name = args.hf_path
-        model_slug = args.hf_path.replace("/", "-")
-    else:
-        model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=args.model_tag, step=args.step)
-        sequence_len = meta["model_config"]["sequence_len"]
-        token_bytes = get_token_bytes(device=device)
-        model_name = f"base_model (step {meta['step']})"
-        model_slug = f"base_model_{meta['step']:06d}"
+    model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=args.model_tag, step=args.step)
+    sequence_len = meta["model_config"]["sequence_len"]
+    token_bytes = get_token_bytes(device=device)
+    model_name = f"base_model (step {meta['step']})"
+    model_slug = f"base_model_{meta['step']:06d}"
 
     print0(f"Evaluating model: {model_name}")
     print0(f"Eval modes: {', '.join(sorted(eval_modes))}")
@@ -222,7 +163,7 @@ def main():
     unconditioned_samples = []
 
     # --- Sampling ---
-    if 'sample' in eval_modes and not is_hf_model:
+    if 'sample' in eval_modes:
         print0("\n" + "="*80)
         print0("Model Samples")
         print0("="*80)
@@ -254,8 +195,6 @@ def main():
                 print0("-" * 80)
                 print0(sample_str)
                 unconditioned_samples.append(sample_str)
-    elif 'sample' in eval_modes and is_hf_model:
-        print0("\nSkipping sampling for HuggingFace models (not supported)")
 
     # --- BPB evaluation ---
     if 'bpb' in eval_modes:
@@ -296,25 +235,6 @@ def main():
                 f.write(f"{'CORE':<35}, {'':<10}, {core_results['core_metric']:<10.6f}\n")
             print0(f"\nResults written to: {output_csv_path}")
             print0(f"CORE metric: {core_results['core_metric']:.4f}")
-
-    # --- Log to report ---
-    from nanochat.report import get_report
-    report_data = [{"model": model_name}]
-
-    if core_results:
-        report_data[0]["CORE metric"] = core_results["core_metric"]
-        report_data.append(core_results["centered_results"])
-
-    if bpb_results:
-        report_data[0]["train bpb"] = bpb_results.get("train")
-        report_data[0]["val bpb"] = bpb_results.get("val")
-
-    if samples:
-        report_data.append({f"sample {i}": s for i, s in enumerate(samples)})
-    if unconditioned_samples:
-        report_data.append({f"unconditioned {i}": s for i, s in enumerate(unconditioned_samples)})
-
-    get_report().log(section="Base model evaluation", data=report_data)
 
     compute_cleanup()
 

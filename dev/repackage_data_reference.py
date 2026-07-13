@@ -22,6 +22,8 @@ https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle
 
 NOTE: This file is meant only as reference/documentation of the
 dataset preparation and it is not used during the project runtime.
+(For that reason, it imports `datasets`, which is not a nanochat
+dependency - pip install it ad hoc if you actually want to run this.)
 """
 import os
 import time

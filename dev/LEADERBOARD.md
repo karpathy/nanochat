@@ -2,11 +2,11 @@
 
 Docs on participating in the "Time-to-GPT-2" leaderboard of nanochat.
 
-The primary metric we care about is "time to GPT-2" - the wall clock time needed to outperform the GPT-2 (1.6B) CORE metric on an 8XH100 GPU node. Originally in 2019, GPT-2 was trained by OpenAI on 32 TPU v3 chips for 168 hours (7 days), with $8/hour/TPUv3 back then, for a total cost of approx. $43K. It achieves 0.256525 CORE score, which is an ensemble metric introduced in the DCLM paper over 22 evaluations like ARC/MMLU/etc.
+The primary metric we care about is "time to GPT-2" - the wall clock time needed to outperform the GPT-2 (1.6B) CORE metric on an 8XH100 GPU node. Originally in 2019, GPT-2 was trained by OpenAI on 32 TPU v3 chips for 168 hours (7 days), with $8/hour/TPUv3 back then, for a total cost of approx. $43K. It achieves 0.256525 CORE score, which is an ensemble metric introduced in the DCLM paper over 22 evaluations like ARC/MMLU/etc. (To re-verify this baseline yourself: `base_eval.py` used to support evaluating HuggingFace models via `--hf-path openai-community/gpt2-xl`, removed for simplicity; see commit `21a7774` or earlier.)
 
 ## How to
 
-The script [runs/speedrun.sh](runs/speedrun.sh) always implements the current state of the art on the leaderboard.
+The script [runs/speedrun.sh](../runs/speedrun.sh) always implements the current state of the art on the leaderboard.
 
 In practice, I tune the base_train command a little bit. For example, once all the setup is configured and a tokenizer is trained, I like to do something like:
 

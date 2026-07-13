@@ -7,8 +7,8 @@ Note on test structure:
     Tests are split into two classes due to dtype/device constraints:
 
     1. TestFA3VsSDPA: Comparison tests that run both FA3 and SDPA on the same inputs
-       and verify they produce identical results. These require a Hopper GPU (FA3 only
-       works on sm90+) and use bfloat16 (FA3 doesn't support float32).
+       and verify they produce identical results. These require a compatible GPU (FA3 only
+       works on sm80 and sm90) and use bfloat16 (FA3 doesn't support float32).
 
     2. TestSDPAOnly: Tests that only exercise the SDPA fallback path. These can run
        on any device (CUDA, CPU, MPS) with the appropriate dtype for that device.
@@ -46,11 +46,11 @@ def assert_close(t1, t2, name, atol=1e-2, rtol=1e-2):
 
 
 # =============================================================================
-# FA3 vs SDPA comparison tests (require Hopper GPU)
+# FA3 vs SDPA comparison tests
 # =============================================================================
 @pytest.mark.skipif(not HAS_FA3, reason="FA3 required to compare implementations")
 class TestFA3VsSDPA:
-    """Compare FA3 and SDPA produce identical results. Requires Hopper GPU."""
+    """Compare FA3 and SDPA produce identical results."""
 
     DEVICE = "cuda"
     DTYPE = torch.bfloat16

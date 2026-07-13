@@ -20,9 +20,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from nanochat.common import get_dist_info, print0, COMPUTE_DTYPE
-from nanochat.optim import MuonAdamW, DistMuonAdamW
+from nanochat.optim import MuonAdamW
 
-# Our custom Flash Attention module that automatically uses FA3 on Hopper+ and SDPA fallback elsewhere
+# Our custom Flash Attention module that automatically uses FA3 when compatible and SDPA fallback otherwise
 from nanochat.flash_attention import flash_attn
 
 @dataclass
@@ -68,6 +68,8 @@ def has_ve(layer_idx, n_layer):
     return layer_idx % 2 == (n_layer - 1) % 2
 
 def apply_rotary_emb(x, cos, sin):
+    # note: this rotates by -theta, the transpose of the textbook convention. Functionally
+    # equivalent (only the relative q/k rotation matters), kept for checkpoint compatibility.
     assert x.ndim == 4  # multihead attention
     d = x.shape[3] // 2
     x1, x2 = x[..., :d], x[..., d:] # split up last dim into two halves
@@ -116,7 +118,7 @@ class CausalSelfAttention(nn.Module):
         q = q * 1.2  # sharper attention (split scale between Q and K), TODO think through better
         k = k * 1.2
 
-        # Flash Attention (FA3 on Hopper+, PyTorch SDPA fallback elsewhere)
+        # Flash Attention (FA3 or SDPA fallback)
         # window_size is (left, right) tuple: (N, 0) for causal, (-1, 0) for full context
         if kv_cache is None:
             # Training: causal attention with optional sliding window
@@ -377,8 +379,57 @@ class GPT(nn.Module):
             window = window_size[0]  # (left, right) tuple, we use left
             effective_seq = t if window < 0 else min(window, t)
             attn_flops += 12 * h * q * effective_seq
-        num_flops_per_token = 6 * (nparams - nparams_exclude) + attn_flops
+        num_flops_per_token = 6 * self.num_matmul_params() + attn_flops
         return num_flops_per_token
+
+    def num_matmul_params(self):
+        """
+        The number of parameters that participate in matmuls with the token stream,
+        i.e. contribute 2 FLOPs/param to the forward pass. Counted structurally: every
+        matmul in this model goes through the Linear class, while non-matmul params
+        (embeddings = lookups, per-layer scalars) are nn.Embedding or raw Parameters.
+        """
+        matmul_params = sum(m.weight.numel() for m in self.modules() if isinstance(m, Linear))
+        return matmul_params
+
+    def estimate_decode_flops(self, context_len):
+        """
+        Forward FLOPs to decode one token at a given context length during inference:
+        2 FLOPs per matmul param, plus attention over min(context, window) per layer.
+        """
+        h = self.config.n_head
+        q = self.config.n_embd // self.config.n_head
+        attn_flops = sum(4 * h * q * min(context_len, window) for window, _ in self.window_sizes)
+        decode_flops = 2 * self.num_matmul_params() + attn_flops
+        return decode_flops
+
+    def estimate_prefill_flops(self, num_tokens):
+        """Forward FLOPs to prefill a prompt: causal, so token t attends to min(t, window)."""
+        h = self.config.n_head
+        q = self.config.n_embd // self.config.n_head
+        attn_flops = 0
+        for window, _ in self.window_sizes:
+            w = min(window, num_tokens)
+            attended_tokens = w * (w + 1) // 2 + (num_tokens - w) * w # ramp up to w, then flat
+            attn_flops += 4 * h * q * attended_tokens
+        prefill_flops = 2 * self.num_matmul_params() * num_tokens + attn_flops
+        return prefill_flops
+
+    def kv_bytes_per_token(self):
+        """Bytes to *store* one token of KV cache during inference, per row (all layers)."""
+        head_dim = self.config.n_embd // self.config.n_head
+        kv_dtype_bytes = COMPUTE_DTYPE.itemsize # the KV cache is kept in the compute dtype
+        return self.config.n_layer * 2 * self.config.n_kv_head * head_dim * kv_dtype_bytes
+
+    def kv_read_bytes(self, context_len):
+        """Bytes of KV cache *read* by one decode step at a given context length, per row.
+        Sliding window layers only attend to (and read) the last `window` tokens."""
+        head_dim = self.config.n_embd // self.config.n_head
+        kv_dtype_bytes = COMPUTE_DTYPE.itemsize
+        total = 0
+        for window, _ in self.window_sizes:
+            total += 2 * self.config.n_kv_head * head_dim * kv_dtype_bytes * min(context_len, window)
+        return total
 
     def num_scaling_params(self):
         """
@@ -411,7 +462,6 @@ class GPT(nn.Module):
 
     def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, scalar_lr=0.5):
         model_dim = self.config.n_embd
-        ddp, rank, local_rank, world_size = get_dist_info()
 
         # Separate out all parameters into groups
         matrix_params = list(self.transformer.h.parameters())
@@ -445,8 +495,7 @@ class GPT(nn.Module):
                 momentum=0.95, ns_steps=5, beta2=0.9, weight_decay=weight_decay,
             ))
 
-        Factory = DistMuonAdamW if ddp else MuonAdamW
-        optimizer = Factory(param_groups)
+        optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
         return optimizer
