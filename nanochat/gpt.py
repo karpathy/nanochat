@@ -299,7 +299,7 @@ class GPT(nn.Module):
         assert all(c in "SL" for c in pattern), f"Invalid window_pattern: {pattern}. Use only S and L."
         # Map characters to window sizes
         long_window = config.sequence_len
-        short_window = -(-long_window // 4 // 128) * 128  # ceil to FA3 tile size (2048 -> 768)
+        short_window = -(-long_window // 4 // 128) * 128  # ceil to FA3 tile size (2048 -> 512)
         char_to_window = {
             "L": (long_window, 0),
             "S": (short_window, 0),
