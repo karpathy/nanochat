@@ -206,6 +206,11 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
         while len(conv_buffer) < buffer_size:
             conversation = dataset[cursor]
             ids, mask = tokenizer.render_conversation(conversation)
+            # Crop oversized conversations: they can never be placed by best-fit
+            # and would clog the buffer forever (=> all-padding rows => NaN loss)
+            if len(ids) > row_capacity:
+                ids = ids[:row_capacity]
+                mask = mask[:row_capacity]
             conv_buffer.append((ids, mask))
             cursor += ddp_world_size
             if cursor >= dataset_size:
@@ -293,7 +298,8 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
         # For each row, positions >= (content_length - 1) in targets should be masked
         for i, content_len in enumerate(row_lengths):
             if content_len < row_capacity:
-                targets[i, content_len-1:] = -1
+                # max() guards content_len == 0, where the -1 index would wrap around
+                targets[i, max(content_len - 1, 0):] = -1
 
         yield inputs, targets
 
