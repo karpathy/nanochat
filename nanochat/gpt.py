@@ -37,6 +37,9 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    # HC exapnsion rate N：hidden stream的形状从(B,T,D)转变成(B,T,N,D)
+    hc_rate: int = 4
+    hc_dynamic: bool = True
 
 
 def norm(x):
@@ -126,6 +129,94 @@ class CausalSelfAttention(nn.Module):
         return y
 
 
+# HC
+class HyperConnection(nn.Module):
+    """
+    hyper-connections over a small stream dimension.
+    h has shape (B, T, n_stream, n_embd), matching the paper's (B, L, N, D).
+    """
+    def __init__(self, dim, rate, layer_id, dynamic=True, device=None):
+        super().__init__()
+        self.rate = rate
+        self.layer_id = layer_id
+        self.dynamic = dynamic
+
+        # static_beta 对应论文里的 B，初始化为全 1
+        self.static_beta = nn.Parameter(torch.empty(rate, device=device))
+        # static_alpha 对应论文里的 WC = (Am, Ar)，形状是 (N, N + 1)
+        self.static_alpha = nn.Parameter(torch.empty(rate, rate + 1, device=device))
+
+        # dynamic=True 时才创建动态 B / WC 参数
+        if self.dynamic:
+            # dynamic_alpha_fn 生成动态 WC，每个 hidden row 预测 N + 1 个连接权重，初始化0
+            self.dynamic_alpha_fn = nn.Parameter(torch.empty(dim, rate + 1, device=device))
+            # dynamic_alpha_scale 是小尺度可学习因子，对应论文里的 s_alpha，初始化0.01
+            self.dynamic_alpha_scale = nn.Parameter(torch.empty(1, device=device))
+            # dynamic_beta_fn 生成动态 B，每个 hidden row 预测 1 个 beta，初始化全0
+            self.dynamic_beta_fn = nn.Parameter(torch.empty(dim, device=device))
+            # dynamic_beta_scale 是小尺度可学习因子，对应论文里的 s_beta，初始化0.01
+            self.dynamic_beta_scale = nn.Parameter(torch.empty(1, device=device))
+
+    @torch.no_grad()
+    def reset_parameters(self):
+        """初始化参数"""
+        # 初始化 static B 为 1
+        self.static_beta.fill_(1.0)
+
+        # 初始化 static WC
+        self.static_alpha.zero_()
+        self.static_alpha[self.layer_id % self.rate, 0] = 1.0
+        eye = torch.eye(self.rate, device=self.static_alpha.device, dtype=self.static_alpha.dtype)
+        self.static_alpha[:, 1:].copy_(eye)
+
+        # 只有 dynamic=True 时初始化动态参数
+        if self.dynamic:
+            self.dynamic_alpha_fn.zero_()
+            self.dynamic_beta_fn.zero_()
+            self.dynamic_alpha_scale.fill_(0.01)
+            self.dynamic_beta_scale.fill_(0.01)
+
+    def width_connection(self, h):
+        # h: hyper hidden matrix，形状 (B, L, N, D)
+        if self.dynamic:
+            # dynamic HC: norm(H)
+            norm_h = norm(h)
+
+            # 动态 WC: tanh(norm(H) @ W_alpha) * s_alpha
+            wc_weight = norm_h @ self.dynamic_alpha_fn.to(dtype=norm_h.dtype)
+            dynamic_alpha = torch.tanh(wc_weight) * self.dynamic_alpha_scale.to(dtype=norm_h.dtype)
+            # 总 WC = dynamic WC + static WC
+            # 目的：dynamic 部分一开始初始化为 0，所以模型初始等价于 static HC，而 static HC 又被初始化成类似 Pre-Norm residual 的稳定结构。
+            # 让动态调整WC只做微调：dynamic WC 通过 tanh 和很小的 scale，比如 0.01，只是在稳定连接基础上按 token / hidden 状态做动态调整，而不是从训练一开始就完全重写连接关系。
+            alpha = dynamic_alpha + self.static_alpha.to(dtype=norm_h.dtype)[None, None, :, :]
+
+            # 动态 B: tanh(norm(H) @ W_beta) * s_beta
+            dc_weight = norm_h @ self.dynamic_beta_fn.to(dtype=norm_h.dtype)
+            dynamic_beta = torch.tanh(dc_weight) * self.dynamic_beta_scale.to(dtype=norm_h.dtype)
+            # 总 B = dynamic B + static B
+            beta = dynamic_beta + self.static_beta.to(dtype=norm_h.dtype)[None, None, :]
+        else:
+            # static HC: 不使用动态调度
+            alpha = self.static_alpha.to(dtype=h.dtype)[None, None, :, :]
+            beta = self.static_beta.to(dtype=h.dtype)[None, None, :]
+
+        # width connection: (B, L, N + 1, N) @ (B, L, N, D) -> (B, L, N + 1, D)
+        # mix_h[..., 0, :] 是当前子层 T 的输入 h0
+        # mix_h[..., 1:, :] 是 Ar^T H 得到的 H'
+        mix_h = alpha.transpose(-1, -2) @ h
+        return mix_h, beta
+
+    def depth_connection(self, mix_h, h_0, beta):
+        # h_0: 当前 attention/ffn 子层输出，形状 (B, L, D)
+        # beta: 动态 B，形状 (B, L, N)
+
+        # B^T T(h0): 把子层输出按 beta 写回 N 条 hyper hidden
+        projected_output = torch.einsum("bld,bln->blnd", h_0, beta)
+        # depth connection: B^T T(h0) + H'
+        h = projected_output + mix_h[..., 1:, :]
+
+        return h
+
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -145,10 +236,30 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache):
-        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
-        x = x + self.mlp(norm(x))
-        return x
+        # attention 和 FFN 是两个连续子层，因此分别使用 2*i 和 2*i+1 初始化 HC
+        self.attn_hc = HyperConnection(config.n_embd, config.hc_rate, 2 * layer_idx, dynamic=config.hc_dynamic)
+        self.mlp_hc = HyperConnection(config.n_embd, config.hc_rate, 2 * layer_idx + 1, dynamic=config.hc_dynamic)
+
+
+    def forward(self, h, x, ve, cos_sin, window_size, kv_cache):
+        # Attention width connection: 从 H 混合出当前 attention 输入 h0 和保留路径 H'
+        mix_h, beta = self.attn_hc.width_connection(h)
+        # 对 h0 做 Pre-Norm，再送入 self-attention
+        x = norm(mix_h[..., 0, :])
+        x = self.attn(x, ve, cos_sin, window_size, kv_cache)
+        # Attention depth connection: 用动态 beta 把 attention 输出写回 hyper hidden
+        h = self.attn_hc.depth_connection(mix_h, x, beta)
+
+
+        # FFN width connection: 从新的 H 混合出当前 FFN 输入 h0 和保留路径 H'
+        mix_h, beta = self.mlp_hc.width_connection(h)
+        # 对 h0 做 Pre-Norm，再送入 FFN
+        x = norm(mix_h[..., 0, :])
+        x = self.mlp(x)
+        # FFN depth connection: 用动态 beta 把 FFN 输出写回 hyper hidden
+        h = self.mlp_hc.depth_connection(mix_h, x, beta)
+
+        return h
 
 
 class GPT(nn.Module):
@@ -174,16 +285,10 @@ class GPT(nn.Module):
         })
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
-        # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
-        # x0_lambdas: blends initial embedding back in at each layer (init 0.0 = disabled)
         # Separate parameters so they can have different optimizer treatment
-        self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))   # fake init, real init in init_weights()
-        self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))     # fake init, real init in init_weights()
         # Smear: mix previous token's embedding into current token (cheap bigram-like info)
         self.smear_gate = Linear(24, 1, bias=False)
         self.smear_lambda = nn.Parameter(torch.zeros(1))
-        # Backout: subtract cached mid-layer residual before final norm to remove low-level features
-        self.backout_lambda = nn.Parameter(0.2 * torch.ones(1))
         # Value embeddings (ResFormer-style): alternating layers, last layer always included
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
@@ -229,18 +334,16 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)  # 0.4x init scale for c_fc
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
+            # 真实初始化 DHC 的 static B、static WC、dynamic B、dynamic WC
+            block.attn_hc.reset_parameters()
+            block.mlp_hc.reset_parameters()
+
         # Per-layer scalars
         # Per-layer resid init: stronger residual at early layers, weaker at deep layers
         n_layer = self.config.n_layer
-        for i in range(n_layer):
-            self.resid_lambdas.data[i] = 1.15 - (0.10 * i / max(n_layer - 1, 1))
-        # Decaying x0 init: earlier layers get more input embedding blending
-        for i in range(n_layer):
-            self.x0_lambdas.data[i] = 0.20 - (0.15 * i / max(n_layer - 1, 1))
 
         # Smear/backout scalars and smear gate must be explicitly initialized 
         torch.nn.init.zeros_(self.smear_lambda)
-        torch.nn.init.constant_(self.backout_lambda, 0.2)
         torch.nn.init.uniform_(self.smear_gate.weight, 0.0, 0.02)
 
         # Value embeddings (init like c_v: uniform with same std)
@@ -325,21 +428,52 @@ class GPT(nn.Module):
         This is ~1% off from the exact formulas of Chinchilla paper, the difference is:
         - Chinchilla counts the embedding layer as flops (? weird, it's just a lookup => we ignore)
         - Chinchilla counts exp/sum/divide in attention softmax as flops (a little sus and very tiny => we ignore)
+        HC 版本额外统计 dynamic B / dynamic WC 和 width/depth connection 的开销。
         """
         nparams = sum(p.numel() for p in self.parameters())
         # Exclude non-matmul params: embeddings and per-layer scalars
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
-        nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
-                          self.resid_lambdas.numel() + self.x0_lambdas.numel() +
-                          self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel())
-        h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
-        # Sum attention FLOPs per layer, accounting for sliding window
+        nparams_exclude = (
+                self.transformer.wte.weight.numel()
+                + value_embeds_numel
+                + self.lm_head.weight.numel()
+                + self.smear_gate.weight.numel()
+                + self.smear_lambda.numel()
+            )        
+        
+        h = self.config.n_head
+        q = self.config.n_embd // self.config.n_head
+        t = self.config.sequence_len
+        d = self.config.n_embd
+        n = self.config.hc_rate        # Sum attention FLOPs per layer, accounting for sliding window
+        
+        # Attention FLOPs 保持原逻辑，只按有效 attention window 统计
         attn_flops = 0
         for window_size in self.window_sizes:
-            window = window_size[0]  # (left, right) tuple, we use left
+            window = window_size[0]
             effective_seq = t if window < 0 else min(window, t)
             attn_flops += 12 * h * q * effective_seq
-        num_flops_per_token = 6 * (nparams - nparams_exclude) + attn_flops
+
+        # 每个 Block 有 attention-HC 和 FFN-HC 两个 HC 子层
+        hc_sublayers = 2 * self.config.n_layer
+
+        # dynamic WC: H @ W_alpha, 约 N * D * (N + 1)
+        # dynamic B: H @ W_beta, 约 N * D
+        # width connection: alpha^T @ H, 约 (N + 1) * N * D
+        # depth connection: beta * h_0 + H_prime, 约 N * D
+        if getattr(self.config, "hc_dynamic", True):
+            hc_flops = hc_sublayers * (
+                n * d * (n + 1)
+                + n * d
+                + (n + 1) * n * d
+                + n * d
+            )
+        else:
+            hc_flops = hc_sublayers * (
+                (n + 1) * n * d
+                + n * d
+            )
+        num_flops_per_token = 6 * (nparams - nparams_exclude) + attn_flops + hc_flops
         return num_flops_per_token
 
     def num_scaling_params(self):
@@ -353,20 +487,62 @@ class GPT(nn.Module):
 
         Returns a dict with counts for each parameter group, so downstream analysis
         can experiment with which combination gives the cleanest scaling laws.
+        HC 版本额外统计 hyper-connections 参数。
         """
         # Count each group separately (mirrors the grouping in setup_optimizers)
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
-        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
-        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel()
-        total = wte + value_embeds + lm_head + transformer_matrices + scalars
+
+        # Transformer block params
+        transformer_matrices = 0
+        hc_static = 0
+        hc_dynamic = 0
+
+        for block in self.transformer.h:
+            # Attention / MLP 原始矩阵参数
+            transformer_matrices += sum(p.numel() for p in block.attn.parameters())
+            transformer_matrices += sum(p.numel() for p in block.mlp.parameters())
+
+            # HC static params: static_alpha / static_beta
+            hc_static += block.attn_hc.static_alpha.numel()
+            hc_static += block.attn_hc.static_beta.numel()
+            hc_static += block.mlp_hc.static_alpha.numel()
+            hc_static += block.mlp_hc.static_beta.numel()
+
+            # HC dynamic params: dynamic_alpha / dynamic_beta
+            if getattr(block.attn_hc, "dynamic", False):
+                hc_dynamic += block.attn_hc.dynamic_alpha_fn.numel()
+                hc_dynamic += block.attn_hc.dynamic_alpha_scale.numel()
+                hc_dynamic += block.attn_hc.dynamic_beta_fn.numel()
+                hc_dynamic += block.attn_hc.dynamic_beta_scale.numel()
+
+            if getattr(block.mlp_hc, "dynamic", False):
+                hc_dynamic += block.mlp_hc.dynamic_alpha_fn.numel()
+                hc_dynamic += block.mlp_hc.dynamic_alpha_scale.numel()
+                hc_dynamic += block.mlp_hc.dynamic_beta_fn.numel()
+                hc_dynamic += block.mlp_hc.dynamic_beta_scale.numel()
+
+        # 其他 scalar / gate 参数
+        scalars = self.smear_gate.weight.numel() + self.smear_lambda.numel()
+
+        total = (
+                wte
+                + value_embeds
+                + lm_head
+                + transformer_matrices
+                + hc_static
+                + hc_dynamic
+                + scalars
+            )
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
             'wte': wte,
             'value_embeds': value_embeds,
             'lm_head': lm_head,
             'transformer_matrices': transformer_matrices,
+            "hc_static": hc_static,
+            "hc_dynamic": hc_dynamic,
             'scalars': scalars,
             'total': total,
         }
@@ -376,14 +552,56 @@ class GPT(nn.Module):
         ddp, rank, local_rank, world_size = get_dist_info()
 
         # Separate out all parameters into groups
-        matrix_params = list(self.transformer.h.parameters())
+        # 原 Transformer 矩阵参数：只包含 attention / MLP 本体，不包含 HC 参数
+        matrix_params = []
+        for block in self.transformer.h:
+            matrix_params.extend(list(block.attn.parameters()))
+            matrix_params.extend(list(block.mlp.parameters()))
+
+        # HC static 参数：static B 和 static WC，论文要求 static component 不使用 weight decay
+        hc_static_params = []
+        for block in self.transformer.h:
+            hc_static_params.extend([
+                block.attn_hc.static_alpha,
+                block.attn_hc.static_beta,
+                block.mlp_hc.static_alpha,
+                block.mlp_hc.static_beta,
+            ])
+
+        # HC dynamic 参数：dynamic B 和 dynamic WC，论文要求 dynamic component 使用 weight decay
+        hc_dynamic_params = []
+        for block in self.transformer.h:
+            if getattr(block.attn_hc, "dynamic", False):
+                hc_dynamic_params.extend([
+                    block.attn_hc.dynamic_alpha_fn,
+                    block.attn_hc.dynamic_alpha_scale,
+                    block.attn_hc.dynamic_beta_fn,
+                    block.attn_hc.dynamic_beta_scale,
+                ])
+            if getattr(block.mlp_hc, "dynamic", False):
+                hc_dynamic_params.extend([
+                    block.mlp_hc.dynamic_alpha_fn,
+                    block.mlp_hc.dynamic_alpha_scale,
+                    block.mlp_hc.dynamic_beta_fn,
+                    block.mlp_hc.dynamic_beta_scale,
+                ])
+
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
-        resid_params = [self.resid_lambdas]
-        x0_params = [self.x0_lambdas]
-        smear_params = [self.smear_gate.weight, self.smear_lambda, self.backout_lambda]
-        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(smear_params)
+        smear_params = [self.smear_gate.weight, self.smear_lambda]
+
+        # 注意：resid_lambdas / x0_lambdas / backout_lambda 不参与训练，因此这里不加入 optimizer
+        optim_params = (
+            matrix_params
+            + hc_static_params
+            + hc_dynamic_params
+            + value_embeds_params
+            + embedding_params
+            + lm_head_params
+            + smear_params
+        )
+        assert len([p for p in self.parameters() if p.requires_grad]) == len(optim_params)
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
@@ -391,12 +609,18 @@ class GPT(nn.Module):
 
         # Build param_groups with all required fields explicit
         param_groups = [
-            # AdamW groups (embeddings, lm_head, scalars)
+            # AdamW groups
             dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=(0.8, 0.96), eps=1e-10, weight_decay=0.01),
             dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale * 0.5, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.01),
-            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.05),
-            dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
+
+            # HC static B / WC：可训练，但不做 weight decay
+            dict(kind='adamw', params=hc_static_params, lr=scalar_lr, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0),
+
+            # HC dynamic B / WC：可训练，并使用 weight decay
+            dict(kind='adamw', params=hc_dynamic_params, lr=matrix_lr * dmodel_lr_scale, betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay),
+
+            # Smear 参数保持独立
             dict(kind='adamw', params=smear_params, lr=0.2, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0),
         ]
         # Muon groups (matrix params, grouped by shape for stacking)
@@ -448,20 +672,18 @@ class GPT(nn.Module):
                 gate = self.smear_lambda.to(x.dtype) * torch.sigmoid(self.smear_gate(x[:, :, :24]))
                 x = x + gate * x_pre_smear
 
-        # Forward the trunk of the Transformer
-        x0 = x  # save initial normalized embedding for x0 residual
-        n_layer = self.config.n_layer
-        backout_layer = n_layer // 2  # cache at halfway point
-        x_backout = None
+        # Forward the trunk of the Transformer with Dynamic Hyper-Connections
+        rate = self.config.hc_rate
+        # H0: 把普通 hidden x 复制成 hyper hidden matrix，形状 (B, T, N, D)
+        h = x.unsqueeze(2).expand(-1, -1, rate, -1).contiguous()
         for i, block in enumerate(self.transformer.h):
-            x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
-            if i == backout_layer:
-                x_backout = x
-        # Subtract mid-layer residual to remove low-level features before logit projection
-        if x_backout is not None:
-            x = x - self.backout_lambda.to(x.dtype) * x_backout
+            # value embedding 仍然按原 nanochat 逻辑提供给 attention
+            ve = self.value_embeds[str(i)](idx).to(h.dtype) if str(i) in self.value_embeds else None
+            # 每个 Block 内部执行 attention-HC 和 FFN-HC
+            h = block(h, ve, cos_sin, self.window_sizes[i], kv_cache)
+        # 论文做法：最后把 N 条 hyper hidden row-wise sum，回到普通 hidden
+        x = h.sum(dim=2)
+        # 最终 norm 后进入 lm_head
         x = norm(x)
 
         # Forward the lm_head (compute logits)

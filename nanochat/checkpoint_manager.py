@@ -27,6 +27,16 @@ def _patch_missing_config_keys(model_config_kwargs):
         model_config_kwargs["window_pattern"] = "L"
         log0(f"Patching missing window_pattern in model config to 'L'")
 
+    # HC expansion rate N；旧 checkpoint 没有该字段时，使用 GPTConfig 当前默认的 DHCx4
+    if "hc_rate" not in model_config_kwargs:
+        model_config_kwargs["hc_rate"] = 4
+        log0(f"Patching missing hc_rate in model config to 4")
+
+    # 是否启用 dynamic B/WC 调度；旧 checkpoint 没有该字段时，默认启用动态 HC
+    if "hc_dynamic" not in model_config_kwargs:
+        model_config_kwargs["hc_dynamic"] = True
+        log0(f"Patching missing hc_dynamic in model config to True")
+
 def _patch_missing_keys(model_data, model_config):
     """Add default values for new parameters that may be missing in old checkpoints."""
     n_layer = model_config.n_layer
