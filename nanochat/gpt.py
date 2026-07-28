@@ -474,10 +474,12 @@ class GPT(nn.Module):
 
         # Smear: mix previous token's embedding into current position (cheap bigram info)
         if kv_cache is None:
-            # Training / naive generate: full sequence available, use fast slice
-            assert T > 1, "Training forward pass should have T > 1"
-            gate = self.smear_lambda.to(x.dtype) * torch.sigmoid(self.smear_gate(x[:, 1:, :24]))
-            x = torch.cat([x[:, :1], x[:, 1:] + gate * x[:, :-1]], dim=1)
+            # Training / naive generate: full sequence available, use fast slice.
+            # Guard T > 1 so a single-token prompt in naive generate is a no-op here
+            # (matching the KV cache decode path) instead of tripping the assert.
+            if T > 1:
+                gate = self.smear_lambda.to(x.dtype) * torch.sigmoid(self.smear_gate(x[:, 1:, :24]))
+                x = torch.cat([x[:, :1], x[:, 1:] + gate * x[:, :-1]], dim=1)
         else:
             # KV cache inference: read prev embedding from cache, store current for next step
             x_pre_smear = kv_cache.prev_embedding
