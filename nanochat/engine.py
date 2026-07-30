@@ -17,7 +17,7 @@ import signal
 import warnings
 from contextlib import contextmanager
 from collections import deque
-from nanochat.common import compute_init, autodetect_device_type, COMPUTE_DTYPE
+from nanochat.common import compute_init, autodetect_device_type, get_sync_fn, COMPUTE_DTYPE
 from nanochat.checkpoint_manager import load_model
 
 # -----------------------------------------------------------------------------
@@ -308,6 +308,7 @@ if __name__ == "__main__":
     # init compute
     device_type = autodetect_device_type()
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+    synchronize = get_sync_fn(device_type)  # cuda/mps-aware; no-op on cpu (bare cuda.synchronize crashes off-CUDA)
     # load the model and tokenizer
     model, tokenizer, meta = load_model("base", device, phase="eval")
     bos_token_id = tokenizer.get_bos_token_id()
@@ -317,7 +318,7 @@ if __name__ == "__main__":
     prompt_tokens = tokenizer.encode("The chemical formula of water is", prepend=bos_token_id)
     # generate the reference sequence using the model.generate() function
     generated_tokens = []
-    torch.cuda.synchronize()
+    synchronize()
     t0 = time.time()
     stream = model.generate(prompt_tokens, **kwargs)
     for token in stream:
@@ -325,7 +326,7 @@ if __name__ == "__main__":
         chunk = tokenizer.decode([token])
         print(chunk, end="", flush=True)
     print()
-    torch.cuda.synchronize()
+    synchronize()
     t1 = time.time()
     print(f"Reference time: {t1 - t0:.2f}s")
     reference_ids = generated_tokens
@@ -333,7 +334,7 @@ if __name__ == "__main__":
     generated_tokens = []
     engine = Engine(model, tokenizer)
     stream = engine.generate(prompt_tokens, num_samples=1, **kwargs) # note: runs in fp32
-    torch.cuda.synchronize()
+    synchronize()
     t0 = time.time()
     for token_column, token_masks in stream:
         token = token_column[0] # only print out the first row
@@ -341,7 +342,7 @@ if __name__ == "__main__":
         chunk = tokenizer.decode([token])
         print(chunk, end="", flush=True)
     print()
-    torch.cuda.synchronize()
+    synchronize()
     t1 = time.time()
     print(f"Engine time: {t1 - t0:.2f}s")
     # compare the two sequences
