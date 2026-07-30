@@ -3,8 +3,7 @@ The MMLU dataset.
 https://huggingface.co/datasets/cais/mmlu
 """
 
-from datasets import load_dataset
-from tasks.common import Task, render_mc
+from tasks.common import Task, load_hub_dataset, render_mc
 
 class MMLU(Task):
 
@@ -17,7 +16,7 @@ class MMLU(Task):
         assert split in ["auxiliary_train", "validation", "dev", "test"], f"split {split} must be auxiliary_train|validation|dev|test"
         self.subset = subset
         self.split = split
-        self.ds = load_dataset("cais/mmlu", subset, split=split).shuffle(seed=42)
+        self.ds = load_hub_dataset("cais/mmlu", subset, split=split).shuffle(seed=42)
 
     @property
     def eval_type(self):

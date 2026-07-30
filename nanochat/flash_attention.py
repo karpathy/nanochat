@@ -2,7 +2,7 @@
 Unified Flash Attention interface with automatic FA3/SDPA switching.
 
 Exports `flash_attn` module that matches the FA3 API exactly, but falls back
-to PyTorch SDPA on non-Hopper GPUs (including Blackwell), MPS, and CPU.
+to PyTorch SDPA on incompatible CUDA GPUs, MPS, and CPU.
 
 Usage (drop-in replacement for FA3):
     from nanochat.flash_attention import flash_attn
@@ -18,22 +18,30 @@ import torch.nn.functional as F
 
 
 # =============================================================================
-# Detection: Try to load FA3 on Hopper+ GPUs
+# Detection: Try to load FA3 on CUDA GPUs
 # =============================================================================
 def _load_flash_attention_3():
-    """Try to load Flash Attention 3 (requires Hopper GPU, sm90)."""
+    """Try to load Flash Attention 3."""
     if not torch.cuda.is_available():
         return None
     try:
         major, _ = torch.cuda.get_device_capability()
-        # FA3 kernels are compiled for Hopper (sm90) only
-        # Ada (sm89), Blackwell (sm100) need SDPA fallback until FA3 is recompiled
-        if major != 9:
-            return None
+        # FA3 kernels are currently compiled for Hopper (sm90), Ada (sm89) and Ampere (sm80/sm86)
+        # Blackwell (sm100) needs SDPA fallback until FA3 is recompiled or FA4 is released
         import os
         os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-        from kernels import get_kernel
-        return get_kernel('varunneal/flash-attention-3').flash_attn_interface
+        from kernels import get_kernel, has_kernel
+        # The varunneal kernel obtains better results for H100/Hopper
+        if major == 9:
+            hf_kernel = "varunneal/flash-attention-3"
+            return get_kernel(hf_kernel).flash_attn_interface
+        else:
+            hf_kernel = "kernels-community/flash-attn3"
+            if has_kernel(hf_kernel):
+                return get_kernel(hf_kernel).flash_attn_interface
+            else:
+                return None
+
     except Exception:
         return None
 
