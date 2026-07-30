@@ -172,11 +172,9 @@ val_dataset = TaskMixture([
     GSM8K(subset="main", split="test", stop=420), # 1.32K rows in test set, use only 420 to match the train ratios
 ]) # total: 24K + 5.2K + 0.42K ~= 29.6K rows
 # DataLoader is defined here, it emits inputs, targets : 2D tensors of shape (device_batch_size, max_seq_len)
-# A big problem is that we don't know the final num_iterations in advance. So we create
-# these two global variables and update them from within the data generator.
-last_step = False # we will toggle this to True when we reach the end of the training dataset
-approx_progress = 0.0 # will go from 0 to 1 over the course of the epoch
-current_epoch = 1 # track epoch for logging
+# A big problem is that we don't know the final num_iterations in advance.
+# To handle this, training batches also return cumulative dataset consumption (in conversations) and the current epoch.
+# The training loop promotes this metadata only after the batch participates in backward.
 def sft_data_generator_bos_bestfit(split, buffer_size=100):
     """
     BOS-aligned dataloader for SFT with bestfit-pad packing.
@@ -186,7 +184,6 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
     the row is padded (instead of cropping) to ensure no tokens are ever discarded.
     Padding positions have targets masked with -1 (ignore_index for cross-entropy).
     """
-    global last_step, approx_progress, current_epoch
     assert split in {"train", "val"}, "split must be 'train' or 'val'"
     dataset = train_dataset if split == "train" else val_dataset
     dataset_size = len(dataset)
@@ -199,7 +196,6 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
     cursor = ddp_rank  # Each rank processes different conversations (for fetching)
     consumed = ddp_rank  # Track actual consumption separately from buffering
     epoch = 1
-    it = 0  # iteration counter
 
     def refill_buffer():
         nonlocal cursor, epoch
@@ -211,7 +207,6 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
             if cursor >= dataset_size:
                 cursor = cursor % dataset_size
                 epoch += 1
-                # Note: last_step is now triggered based on consumption, not fetching
 
     while True:
         rows = []
@@ -260,22 +255,6 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
             rows.append(row[:row_capacity])
             mask_rows.append(mask_row[:row_capacity])
 
-        # Stopping condition to respect num_iterations, if given
-        it += 1
-        if 0 < args.num_iterations <= it and split == "train":
-            last_step = True
-
-        # Update progress tracking (based on consumed, not cursor, to account for buffering)
-        if split == "train":
-            current_epoch = epoch
-            if args.num_iterations > 0:
-                approx_progress = it / args.num_iterations
-            else:
-                approx_progress = consumed / dataset_size
-            # Trigger last_step when we've consumed enough (instead of when cursor wraps)
-            if consumed >= dataset_size:
-                last_step = True
-
         # Build tensors
         use_cuda = device_type == "cuda"
         batch_tensor = torch.tensor(rows, dtype=torch.long, pin_memory=use_cuda)
@@ -295,11 +274,13 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
             if content_len < row_capacity:
                 targets[i, content_len-1:] = -1
 
-        yield inputs, targets
+        if split == "train":
+            yield inputs, targets, consumed, epoch
+        else:
+            yield inputs, targets  # evaluate_bpb expects just x,y pair
 
 train_loader = sft_data_generator_bos_bestfit("train")
 build_val_loader = lambda: sft_data_generator_bos_bestfit("val")
-progress = 0 # will go from 0 to 1 over the course of the epoch
 
 # Learning rate schedule (linear warmup, constant, linear warmdown)
 # Same shape as base_train but uses progress (0→1) instead of absolute step counts,
@@ -321,13 +302,28 @@ def get_muon_momentum(it):
 
 # -----------------------------------------------------------------------------
 # Training loop
-x, y = next(train_loader) # prefetch the very first batch of data
+# batch_consumed and batch_epoch describe the prefetched batch; promote them to training state only after its backward pass
+x, y, batch_consumed, batch_epoch = next(train_loader) # prefetch the very first batch of data
 min_val_bpb = float("inf")
 smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
 step = 0
+# Progress tracking and stop conditions
+trained_consumed = 0 # data items actually used for training, updated after backward pass
+current_epoch = 1 # track epoch for logging, updated after backward pass
 while True:
+    # Stopping condition to respect num_iterations, if given
+    last_step = args.num_iterations > 0 and step >= args.num_iterations
+    # Trigger last_step when we've used enough data for actual training (not just consumed)
+    if trained_consumed >= len(train_dataset):
+        last_step = True
+    # Update progress tracking (based on consumed, not cursor, to account for buffering)
+    # progress will go from 0 to 1 over the course of the epoch
+    if args.num_iterations > 0:
+        progress = step / args.num_iterations
+    else:
+        progress = trained_consumed / len(train_dataset)
     flops_so_far = num_flops_per_token * args.total_batch_size * step
 
     # Synchronize last_step across all ranks to avoid hangs in the distributed setting
@@ -430,8 +426,8 @@ while True:
             scaler.scale(loss).backward()
         else:
             loss.backward()
-        x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
-        progress = max(progress, approx_progress) # only increase progress monotonically
+        trained_consumed, current_epoch = batch_consumed, batch_epoch # promote to reflect training reality
+        x, y, batch_consumed, batch_epoch = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
     # step the optimizer
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
