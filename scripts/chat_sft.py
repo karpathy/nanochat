@@ -454,9 +454,6 @@ while True:
     dt = t1 - t0
     # -------------------------------------------------------------------------
 
-    # State
-    step += 1
-
     # logging
     smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss.item() # EMA the training loss
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1)) # debias the EMA
@@ -479,6 +476,9 @@ while True:
             "train/mfu": mfu,
             "train/epoch": current_epoch,
         })
+
+    # State update
+    step += 1
 
     # The garbage collector spends ~500ms scanning for cycles quite frequently.
     # We manually manage it to avoid these pauses during training.
