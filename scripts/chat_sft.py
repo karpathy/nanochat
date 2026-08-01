@@ -316,6 +316,7 @@ while True:
     # Stopping condition to respect num_iterations, if given
     last_step = args.num_iterations > 0 and step >= args.num_iterations
     # Trigger last_step when we've used enough data for actual training (not just consumed)
+    # Note: this caps training at approx one epoch even if args.num_iterations asks for more
     if trained_consumed >= len(train_dataset):
         last_step = True
     # Update progress tracking (based on consumed, not cursor, to account for buffering)
