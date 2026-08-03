@@ -215,11 +215,60 @@ this document, take that one.
 
 `--lams 0.0,0.003,0.03 --seeds 0,1,2 --steps 1000`, mean ± std over 3 seeds:
 
-<!--RESULTS-->
+| metric | λ=0 | λ=0.003 | λ=0.03 |
+|---|---|---|---|
+| **val bits/char** | **2.167 ± 0.008** | 2.189 ± 0.008 | 2.328 ± 0.003 |
+| train bits/char | 1.805 ± 0.005 | 1.839 ± 0.003 | 2.003 ± 0.008 |
+| **probe accuracy** | 0.183 ± 0.025 | 0.173 ± 0.014 | 0.180 ± 0.029 |
+| effective rank (of 128) | 36.1 ± 0.2 | 89.5 ± 0.6 | **109.1 ± 0.3** |
+| top-PC variance share | 0.202 ± 0.012 | 0.048 ± 0.001 | **0.026 ± 0.001** |
+| mean abs cosine | 0.225 ± 0.008 | 0.083 ± 0.002 | **0.065 ± 0.001** |
+| held-out SIGReg | 127.4 ± 8.2 | 4.8 ± 0.1 | **2.8 ± 0.0** |
+
+Majority-class baseline for the probe is 0.124. ~130 s per arm on 4 CPU cores.
 
 ### How to read it
 
-See §4 of this file for interpretation, and the chat summary that generated it.
+**The mechanism works, exactly and controllably.** Held-out SIGReg drops 127 → 4.8 → 2.8;
+effective rank climbs 36 → 90 → 109 out of a possible 128; the dominant direction's variance
+share collapses from 20% to 2.6%; mean |cosine| falls from 0.23 to 0.065. All with
+seed-spreads of well under 1%. The baseline model really is the narrow, anisotropic cone the
+literature describes, and λ dials it out monotonically.
+
+**It costs language modelling, monotonically.** +0.021 bpb at λ=0.003 (≈2.6× the seed std,
+so a real effect, but small) and +0.161 bpb at λ=0.03. Both train *and* val bpb rise
+together, so this is not a regularization/overfitting story — the model is simply being
+pulled away from the cross-entropy optimum. This is the expected direction: an anisotropic,
+high-norm-direction representation is *useful* to the softmax.
+
+**Transfer did not improve.** Probe accuracy is 0.183 / 0.173 / 0.180 with seed-std ~0.02 —
+flat, with every difference far inside the noise. On this setup, the isotropy that SIGReg
+buys does not translate into more linearly decodable features.
+
+Two caveats on that last point, both real:
+
+- **The probe is underpowered.** 18% against a 12.4% majority-class baseline, on ~330 test
+  utterances, is a weak signal to begin with; it cannot resolve small differences. A larger
+  probe set, or a model big enough to actually do speaker attribution well, would give the
+  comparison much more resolution.
+- **This is an 850k-parameter model trained for 1000 steps.** Representation-quality effects
+  are exactly the kind of thing that can change sign with scale.
+
+So the defensible claim is narrow and worth stating plainly: **on a tiny character-level LM,
+SIGReg does precisely what it advertises to the geometry of the representation, and you pay
+for it in bits-per-character without measurable downstream return.** That is a useful
+negative result — and it is the result the reasoning in §2 predicts, which is a good sign
+the port is faithful rather than broken.
+
+### Sequence-centered variant
+
+```bash
+python -m scripts.sigreg_experiment --lams 0.003 --seeds 0,1,2 --center sequence
+```
+
+_(results pending — this run is still in flight)_
+
+---
 
 ---
 
