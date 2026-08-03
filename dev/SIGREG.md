@@ -266,7 +266,34 @@ the port is faithful rather than broken.
 python -m scripts.sigreg_experiment --lams 0.003 --seeds 0,1,2 --center sequence
 ```
 
-_(results pending — this run is still in flight)_
+Subtracting each sequence's own mean before the test — the language analogue of temporally
+centered SIGReg — is the most interesting result here:
+
+| metric | λ=0 | λ=0.003, `center=none` | λ=0.003, `center=sequence` |
+|---|---|---|---|
+| **val bits/char** | 2.167 ± 0.008 | 2.189 ± 0.008 | **2.168 ± 0.004** |
+| train bits/char | 1.805 ± 0.005 | 1.839 ± 0.003 | 1.808 ± 0.002 |
+| probe accuracy | 0.183 ± 0.025 | 0.173 ± 0.014 | 0.190 ± 0.017 |
+| effective rank | 36.1 ± 0.2 | 89.5 ± 0.6 | **93.5 ± 0.4** |
+| top-PC variance share | 0.202 ± 0.012 | 0.048 ± 0.001 | **0.040 ± 0.001** |
+| mean abs cosine | 0.225 ± 0.008 | 0.083 ± 0.002 | 0.083 ± 0.001 |
+| held-out SIGReg | 127.4 ± 8.2 | 4.8 ± 0.1 | **3.5 ± 0.1** |
+
+**Centering makes the regularizer free.** Val bpb goes from 2.189 back to 2.168 — a dead
+heat with the unregularized baseline (2.167, difference 0.0008 against a seed std of 0.008)
+— while the isotropy gain is not merely preserved but slightly *better* on every measure:
+effective rank 93.5 vs 89.5, top-PC share 0.040 vs 0.048, held-out statistic 3.5 vs 4.8.
+Train bpb matches the baseline too, so nothing is being hidden in a generalization gap.
+
+The interpretation is the one §2 predicts. Applying SIGReg to the raw marginal asks the
+sequence-level mean — which carries document and topic identity the softmax is actively
+using — to be Gaussian along with everything else, and *that* is what costs bits. Centering
+exempts it and shapes only the within-sequence residual, which the model apparently gives up
+for nothing. The mechanism that helps multi-task LeWorldModel transfers to text for the same
+structural reason.
+
+Probe accuracy is nominally highest here (0.190) but still inside seed noise, so the
+transfer question remains open — see the probe-power caveat above.
 
 ---
 
@@ -274,8 +301,6 @@ _(results pending — this run is still in flight)_
 
 ## 4. Extensions worth trying
 
-- **`--center sequence`** — the temporally-centered variant. The one change most likely to
-  keep the isotropy gain while giving back less bpb.
 - **Projector head.** Apply SIGReg to an MLP projection of the hidden state rather than the
   hidden state itself, as LeJEPA does. Decouples the regularized space from the space the
   softmax reads.
