@@ -98,16 +98,66 @@ def _sdpa_attention(q, k, v, window_size, enable_gqa):
 
     # Need explicit mask for sliding window/chunk inference
     device = q.device
+
+    # Sliding window with multiple queries: block the query dimension so each
+    # block only ever sees its own windowed slice of k/v. Building a single
+    # (Tq, Tk) mask for the whole sequence forces SDPA onto its unfused math
+    # backend regardless of window size, so a small window still pays for a
+    # full-length score matrix. Slicing k/v per query block keeps the actual
+    # tensors SDPA sees proportional to the window instead of the full Tk.
+    if window >= 0 and window < Tk:
+        return _sdpa_windowed_blocked(q, k, v, window, enable_gqa)
+
     # For chunk inference (Tq != Tk), is_causal is not aligned to cache position => build an explicit bool mask
     row_idx = (Tk - Tq) + torch.arange(Tq, device=device).unsqueeze(1)
     col_idx = torch.arange(Tk, device=device).unsqueeze(0)
     mask = col_idx <= row_idx
 
-    # sliding window (left)
-    if window >= 0 and window < Tk:
+    return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, enable_gqa=enable_gqa)
+
+
+def _sdpa_windowed_blocked(q, k, v, window, enable_gqa, block_size=256):
+    """
+    Blocked sliding-window attention for the SDPA fallback path.
+
+    Splits the query dimension into blocks and, for each block, slices k/v
+    down to only the range that block's window can see before calling SDPA.
+    This mirrors the block-skipping FlashAttention kernels do internally,
+    done at the tensor-slicing level since SDPA has no windowed mode to
+    call into directly on this fallback path.
+
+    q, k, v are (B, H, T, D) format. Mathematically equivalent to the
+    single-mask approach (same causal + window restriction), just computed
+    in smaller pieces so SDPA never sees more of k/v than the window needs.
+    """
+    device = q.device
+    Tq = q.size(2)
+    Tk = k.size(2)
+    offset = Tk - Tq  # where query positions start relative to key positions
+
+    outputs = []
+    for start in range(0, Tq, block_size):
+        end = min(start + block_size, Tq)
+        q_block = q[:, :, start:end, :]
+
+        # Earliest key any query in this block can see: (offset+start) - window.
+        # Latest key any query in this block can see: offset+end (causal, own position).
+        k_start = max(0, (offset + start) - window)
+        k_end = offset + end
+        k_block = k[:, :, k_start:k_end, :]
+        v_block = v[:, :, k_start:k_end, :]
+
+        block_q_len = end - start
+        block_k_len = k_end - k_start
+        row_idx = (offset + start - k_start) + torch.arange(block_q_len, device=device).unsqueeze(1)
+        col_idx = torch.arange(block_k_len, device=device).unsqueeze(0)
+        mask = col_idx <= row_idx
         mask = mask & ((row_idx - col_idx) <= window)
 
-    return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, enable_gqa=enable_gqa)
+        out_block = F.scaled_dot_product_attention(q_block, k_block, v_block, attn_mask=mask, enable_gqa=enable_gqa)
+        outputs.append(out_block)
+
+    return torch.cat(outputs, dim=2)
 
 # =============================================================================
 # Public API: Same interface as FA3
