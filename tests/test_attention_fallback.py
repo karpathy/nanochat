@@ -335,8 +335,121 @@ class TestSDPAOnly:
 
 
 # =============================================================================
-# Override mechanism tests
+# Windowed-blocked SDPA memory tests
 # =============================================================================
+class TestSDPAWindowedBlocked:
+    """
+    Sliding window on the SDPA fallback used to build one (Tq, Tk) mask
+    regardless of window size, so a small window paid the same memory cost
+    as unlimited attention. These tests check correctness of the blocked
+    fix against the brute-force definition, and that memory actually scales
+    down with window size on CUDA.
+    """
+
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    DTYPE = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+
+    def _reference(self, q, k, v, window, enable_gqa=False):
+        """Brute-force causal + sliding-window attention, independent of SDPA."""
+        q = q.float()
+        k = k.float()
+        v = v.float()
+        B, Hq, Tq, D = q.shape
+        Hkv = k.shape[1]
+        Tk = k.shape[2]
+        if enable_gqa and Hq != Hkv:
+            k = k.repeat_interleave(Hq // Hkv, dim=1)
+            v = v.repeat_interleave(Hq // Hkv, dim=1)
+        scale = 1.0 / (D ** 0.5)
+        scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+        offset = Tk - Tq
+        row_idx = offset + torch.arange(Tq, device=q.device).unsqueeze(1)
+        col_idx = torch.arange(Tk, device=q.device).unsqueeze(0)
+        mask = col_idx <= row_idx
+        if window >= 0:
+            mask = mask & ((row_idx - col_idx) <= window)
+        scores = scores.masked_fill(~mask.unsqueeze(0).unsqueeze(0), float("-inf"))
+        return torch.matmul(torch.softmax(scores, dim=-1), v)
+
+    def test_blocked_matches_reference(self):
+        """Blocked windowed output matches brute-force reference for several window sizes."""
+        set_impl('sdpa')
+        B, T, H, D = 2, 256, 4, 32
+        for window in [0, 4, 31, 63, 100]:
+            q = torch.randn(B, H, T, D, device=self.DEVICE, dtype=self.DTYPE)
+            k = torch.randn(B, H, T, D, device=self.DEVICE, dtype=self.DTYPE)
+            v = torch.randn(B, H, T, D, device=self.DEVICE, dtype=self.DTYPE)
+            q_pub = q.transpose(1, 2).contiguous()
+            k_pub = k.transpose(1, 2).contiguous()
+            v_pub = v.transpose(1, 2).contiguous()
+            out = flash_attn.flash_attn_func(q_pub, k_pub, v_pub, causal=True, window_size=(window, 0))
+            out_bhtd = out.transpose(1, 2)
+            ref = self._reference(q, k, v, window)
+            max_diff, mean_diff = assert_close(out_bhtd, ref, f"window={window}", atol=0.05, rtol=0.05)
+            print(f"window={window}: max_diff={max_diff:.6f}, mean_diff={mean_diff:.6f}")
+        set_impl(None)
+
+    def test_blocked_matches_reference_gqa(self):
+        """Blocked windowed output matches reference under GQA (fewer kv heads than q heads)."""
+        set_impl('sdpa')
+        B, T, D = 1, 256, 32
+        n_heads, n_kv_heads, window = 8, 2, 32
+        q = torch.randn(B, n_heads, T, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B, n_kv_heads, T, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B, n_kv_heads, T, D, device=self.DEVICE, dtype=self.DTYPE)
+        q_pub = q.transpose(1, 2).contiguous()
+        k_pub = k.transpose(1, 2).contiguous()
+        v_pub = v.transpose(1, 2).contiguous()
+        out = flash_attn.flash_attn_func(q_pub, k_pub, v_pub, causal=True, window_size=(window, 0))
+        out_bhtd = out.transpose(1, 2)
+        ref = self._reference(q, k, v, window, enable_gqa=True)
+        max_diff, mean_diff = assert_close(out_bhtd, ref, "gqa windowed", atol=0.05, rtol=0.05)
+        print(f"gqa windowed: max_diff={max_diff:.6f}, mean_diff={mean_diff:.6f}")
+        set_impl(None)
+
+    def test_non_divisible_sequence_length(self):
+        """T not a multiple of block_size (trailing partial block) still runs and is close to reference."""
+        set_impl('sdpa')
+        B, T, H, D, window = 1, 513, 4, 32, 64
+        q = torch.randn(B, H, T, D, device=self.DEVICE, dtype=self.DTYPE)
+        k = torch.randn(B, H, T, D, device=self.DEVICE, dtype=self.DTYPE)
+        v = torch.randn(B, H, T, D, device=self.DEVICE, dtype=self.DTYPE)
+        q_pub = q.transpose(1, 2).contiguous()
+        k_pub = k.transpose(1, 2).contiguous()
+        v_pub = v.transpose(1, 2).contiguous()
+        out = flash_attn.flash_attn_func(q_pub, k_pub, v_pub, causal=True, window_size=(window, 0))
+        out_bhtd = out.transpose(1, 2)
+        ref = self._reference(q, k, v, window)
+        max_diff, mean_diff = assert_close(out_bhtd, ref, "T=513 trailing block", atol=0.05, rtol=0.05)
+        print(f"T=513 trailing block: max_diff={max_diff:.6f}, mean_diff={mean_diff:.6f}")
+        set_impl(None)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="memory measurement requires CUDA")
+    def test_memory_scales_with_window(self):
+        """Peak memory should drop as window shrinks, not stay flat like the old masked approach."""
+        set_impl('sdpa')
+        B, T, H, D = 1, 2048, 4, 64
+        peaks = {}
+        for window in [16, 256, 1024, -1]:
+            q = torch.randn(B, H, T, D, device=self.DEVICE, dtype=self.DTYPE)
+            k = torch.randn(B, H, T, D, device=self.DEVICE, dtype=self.DTYPE)
+            v = torch.randn(B, H, T, D, device=self.DEVICE, dtype=self.DTYPE)
+            q_pub = q.transpose(1, 2).contiguous()
+            k_pub = k.transpose(1, 2).contiguous()
+            v_pub = v.transpose(1, 2).contiguous()
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+            flash_attn.flash_attn_func(q_pub, k_pub, v_pub, causal=True, window_size=(window, 0))
+            torch.cuda.synchronize()
+            peaks[window] = torch.cuda.max_memory_allocated() / 1e6
+            print(f"window={window}: peak_mem={peaks[window]:.1f}MB")
+        assert peaks[16] < peaks[-1] * 0.9, (
+            f"expected window=16 to use meaningfully less memory than unlimited, "
+            f"got {peaks[16]:.1f}MB vs {peaks[-1]:.1f}MB"
+        )
+        set_impl(None)
+
+
 class TestOverrideMechanism:
     """Test that the override mechanism works correctly."""
 
