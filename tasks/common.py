@@ -17,6 +17,10 @@ from filelock import FileLock
 
 from nanochat.common import get_base_dir
 
+# Support dataset mirror for environments where huggingface.co is not reachable.
+# Override with NANOCHAT_DATASET_URL to use a mirror (e.g. https://hf-mirror.com).
+HF_HOST = os.environ.get("NANOCHAT_DATASET_URL", "https://huggingface.co")
+
 
 class HubDataset:
     """
@@ -60,7 +64,7 @@ def load_hub_dataset(repo_id, subset="default", split="train"):
             # only a single rank acquires the lock and downloads, the others block
             # here and then skip the download because they recheck the manifest
             if not os.path.exists(manifest_path):
-                listing_url = f"https://huggingface.co/api/datasets/{repo_id}/parquet/{subset}/{split}"
+                listing_url = f"{HF_HOST}/api/datasets/{repo_id}/parquet/{subset}/{split}"
                 with urllib.request.urlopen(listing_url) as response:
                     shard_urls = json.loads(response.read())
                 filenames = []
