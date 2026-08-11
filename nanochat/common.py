@@ -244,6 +244,7 @@ def get_peak_flops(device_name: str) -> float:
         (["h100"], 989e12),
         (["h800", "nvl"], 989e12),
         (["h800"], 756e12),
+        (["h20"], 148e12),
         # NVIDIA Ampere data center
         (["a100"], 312e12),
         (["a800"], 312e12),
