@@ -136,7 +136,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
         x = self.c_fc(x)
-        x = F.relu(x).square()
+        x = 0.5 * x * (x + torch.sqrt(x.square() + 0.04))
         x = self.c_proj(x)
         return x
 
