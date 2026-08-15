@@ -6,7 +6,7 @@ Notable features:
 - untied weights for token embedding and lm_head
 - relu^2 activation in MLP
 - norm after token embedding
-- no learnable params in rmsnorm
+- optional learnable scales on MLP-input and final rmsnorms
 - no bias in linear layers
 - Group-Query Attention (GQA) support for more efficient inference
 - Flash Attention 3 integration
@@ -37,10 +37,12 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    learnable_rmsnorm: bool = False
 
 
-def norm(x):
-    return F.rms_norm(x, (x.size(-1),)) # note that this will run in bf16, seems ok
+def norm(x, weight=None):
+    weight = None if weight is None else weight.to(dtype=x.dtype)
+    return F.rms_norm(x, (x.size(-1),), weight) # note that this will run in bf16, seems ok
 
 class Linear(nn.Linear):
     """nn.Linear that casts weights to match input dtype in forward.
@@ -146,10 +148,11 @@ class Block(nn.Module):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
+        self.mlp_norm_gamma = nn.Parameter(torch.ones(config.n_embd)) if config.learnable_rmsnorm else None
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
         x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
-        x = x + self.mlp(norm(x))
+        x = x + self.mlp(norm(x, self.mlp_norm_gamma))
         return x
 
 
@@ -176,6 +179,7 @@ class GPT(nn.Module):
         })
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         self._training_loss = None
+        self.final_norm_gamma = nn.Parameter(torch.ones(config.n_embd)) if config.learnable_rmsnorm else None
         # Per-layer learnable scalars (inspired by modded-nanogpt)
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
         # x0_lambdas: blends initial embedding back in at each layer (init 0.0 = disabled)
@@ -209,6 +213,10 @@ class GPT(nn.Module):
             raise ValueError("training loss must not own parameters or buffers")
         self._training_loss = loss.to(device=self.get_device())
 
+    def _norm_scale_params(self):
+        scales = [block.mlp_norm_gamma for block in self.transformer.h if block.mlp_norm_gamma is not None]
+        return scales + ([] if self.final_norm_gamma is None else [self.final_norm_gamma])
+
     @torch.no_grad()
     def init_weights(self):
         """
@@ -239,6 +247,10 @@ class GPT(nn.Module):
             torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)  # 0.4x init scale for c_fc
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            if block.mlp_norm_gamma is not None:
+                torch.nn.init.ones_(block.mlp_norm_gamma)
+        if self.final_norm_gamma is not None:
+            torch.nn.init.ones_(self.final_norm_gamma)
 
         # Per-layer scalars
         # Per-layer resid init: stronger residual at early layers, weaker at deep layers
@@ -412,8 +424,8 @@ class GPT(nn.Module):
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
-        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
-        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel()
+        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters() if p.ndim >= 2)
+        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel() + sum(p.numel() for p in self._norm_scale_params())
         total = wte + value_embeds + lm_head + transformer_matrices + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
@@ -429,14 +441,15 @@ class GPT(nn.Module):
         model_dim = self.config.n_embd
 
         # Separate out all parameters into groups
-        matrix_params = list(self.transformer.h.parameters())
+        matrix_params = [p for p in self.transformer.h.parameters() if p.ndim >= 2]
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
+        norm_scale_params = self._norm_scale_params()
         x0_params = [self.x0_lambdas]
         smear_params = [self.smear_gate.weight, self.smear_lambda, self.backout_lambda]
-        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(smear_params)
+        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(norm_scale_params) + len(x0_params) + len(smear_params)
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
@@ -448,7 +461,7 @@ class GPT(nn.Module):
             dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=(0.8, 0.96), eps=1e-10, weight_decay=0.01),
             dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.001),
             dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale * 0.5, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.01),
-            dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.05),
+            dict(kind='adamw', params=resid_params + norm_scale_params, lr=scalar_lr * 0.01, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.05),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
             dict(kind='adamw', params=smear_params, lr=0.2, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0),
         ]
@@ -514,7 +527,7 @@ class GPT(nn.Module):
         # Subtract mid-layer residual to remove low-level features before logit projection
         if x_backout is not None:
             x = x - self.backout_lambda.to(x.dtype) * x_backout
-        x = norm(x)
+        x = norm(x, self.final_norm_gamma)
 
         # Forward the lm_head (compute logits)
         softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
