@@ -366,7 +366,9 @@ class GPT(nn.Module):
         matmul in this model goes through the Linear class, while non-matmul params
         (embeddings = lookups, per-layer scalars) are nn.Embedding or raw Parameters.
         """
-        matmul_params = sum(m.weight.numel() for m in self.modules() if isinstance(m, Linear))
+        # Count subclasses too: FP8 conversion replaces Linear with Float8Linear,
+        # which remains an nn.Linear but is no longer an instance of this class.
+        matmul_params = sum(m.weight.numel() for m in self.modules() if isinstance(m, nn.Linear))
         return matmul_params
 
     def estimate_decode_flops(self, context_len):
