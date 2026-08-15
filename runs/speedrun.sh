@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # This script is configured to train your own GPT-2 grade LLM (pretraining + finetuning)
-# It is designed to run on a blank 8XH100 GPU node and takes approximately 1.5 hours to complete.
+# It is designed to run on a blank 8XH100 GPU node. Base pretraining takes
+# approximately 82 minutes; leaderboard timing excludes setup, eval, and SFT.
 
 # 1) Example launch (simplest):
 # bash runs/speedrun.sh
@@ -23,7 +24,7 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # create a .venv local virtual environment (if it doesn't exist)
 [ -d ".venv" ] || uv venv
 # install the repo dependencies
-uv sync --extra gpu
+uv sync --extra gpu --extra liger
 # activate venv so that `python` uses the project's venv instead of system python
 source .venv/bin/activate
 
@@ -53,8 +54,8 @@ python -m nanochat.dataset -n 8
 # The maximum total number of shards available in the entire dataset is 6542.
 python -m nanochat.dataset -n 170 &
 DATASET_DOWNLOAD_PID=$!
-# train the tokenizer with vocab size 2**15 = 32768 on ~2B characters of data
-python -m scripts.tok_train
+# Train the measured 49k tokenizer on the default ClimbMix data.
+python -m scripts.tok_train --vocab-size=49152
 # evaluate the tokenizer (report compression ratio etc.)
 python -m scripts.tok_eval
 
@@ -63,17 +64,22 @@ python -m scripts.tok_eval
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
-# d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 8)
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=24 --target-param-data-ratio=8 --device-batch-size=16 --fp8 --run=$WANDB_RUN
+# The in-place loss makes the preferred device batch 32 fit at this vocabulary.
+torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+    --depth=22 --target-param-data-ratio=9.4 \
+    --device-batch-size=32 --total-batch-size=524288 \
+    --fp8 --liger-cross-entropy --learnable-rmsnorm \
+    --eval-every=999999 --core-metric-every=-1 --sample-every=-1 \
+    --run="$WANDB_RUN"
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
-torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size=16
+torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --model-tag=d22 --device-batch-size=16
 
 # -----------------------------------------------------------------------------
 # SFT (teach the model conversation special tokens, tool use, multiple choice)
 
-# run SFT and eval the model
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
+# SFT is BF16, so use accumulation instead of the FP8 pretraining device batch.
+torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --model-tag=d22 --device-batch-size=16 --run="$WANDB_RUN"
+torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft --model-tag=d22
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"

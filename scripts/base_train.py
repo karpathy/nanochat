@@ -46,12 +46,14 @@ parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (e
 # FP8 training
 parser.add_argument("--fp8", action="store_true", help="enable FP8 training (requires H100+ GPU)")
 parser.add_argument("--fp8-recipe", type=str, default="tensorwise", choices=["rowwise", "tensorwise"], help="FP8 scaling recipe: tensorwise (faster, recommended) or rowwise (more accurate but slower)")
+parser.add_argument("--liger-cross-entropy", action="store_true", help="use Liger's in-place softcapped cross entropy for training")
 # Model architecture
 parser.add_argument("--depth", type=int, default=20, help="depth of the Transformer model")
 parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+parser.add_argument("--learnable-rmsnorm", action="store_true", help="learn gamma on MLP-input and final RMSNorms")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -83,6 +85,8 @@ user_config = vars(args).copy()  # for logging
 # Compute init and wandb logging
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
+if args.liger_cross_entropy and device_type != "cuda":
+    parser.error("--liger-cross-entropy requires a CUDA device")
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
@@ -137,6 +141,7 @@ def build_model_meta(depth):
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        learnable_rmsnorm=args.learnable_rmsnorm,
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -190,6 +195,16 @@ if args.fp8:
         num_fp8 = sum(1 for m in model.modules() if 'Float8' in type(m).__name__)
         num_skipped = num_linear - num_fp8
         print0(f"✓ FP8 training enabled ({args.fp8_recipe} scaling) - converted {num_fp8}/{num_linear} linear layers, skipped {num_skipped} (too small)")
+
+if args.liger_cross_entropy:
+    try:
+        from liger_kernel.transformers import LigerCrossEntropyLoss
+    except ImportError as exc:
+        raise RuntimeError("Install the optional 'liger' dependency to use --liger-cross-entropy") from exc
+    model.set_training_loss(LigerCrossEntropyLoss(
+        ignore_index=-1, reduction="mean", softcap=15, lse_square_scale=0.0,
+    ))
+    print0("✓ Liger in-place softcapped cross entropy enabled")
 
 # Context manager to temporarily disable FP8 so that model evaluation remains in BF16
 @contextmanager
