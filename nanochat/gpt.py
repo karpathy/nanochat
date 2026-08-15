@@ -175,6 +175,7 @@ class GPT(nn.Module):
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
+        self._training_loss = None
         # Per-layer learnable scalars (inspired by modded-nanogpt)
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
         # x0_lambdas: blends initial embedding back in at each layer (init 0.0 = disabled)
@@ -199,6 +200,14 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
         self.register_buffer("sin", sin, persistent=False)
+
+    def set_training_loss(self, loss):
+        """Install an optional fused mean loss without changing eval or inference."""
+        if not isinstance(loss, nn.Module):
+            raise TypeError("training loss must be an nn.Module")
+        if next(loss.parameters(), None) is not None or next(loss.buffers(), None) is not None:
+            raise ValueError("training loss must not own parameters or buffers")
+        self._training_loss = loss.to(device=self.get_device())
 
     @torch.no_grad()
     def init_weights(self):
@@ -509,6 +518,18 @@ class GPT(nn.Module):
 
         # Forward the lm_head (compute logits)
         softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
+        if (
+            self._training_loss is not None
+            and self.training
+            and targets is not None
+            and loss_reduction == "mean"
+        ):
+            logits = self.lm_head(x)[..., :self.config.vocab_size]
+            return self._training_loss(
+                logits.reshape(-1, logits.size(-1)),
+                targets.reshape(-1),
+            ).float()
+
         logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
         logits = logits[..., :self.config.vocab_size] # slice to remove padding
         logits = logits.float() # switch to fp32 for logit softcap and loss computation

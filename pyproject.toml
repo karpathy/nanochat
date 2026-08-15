@@ -58,6 +58,10 @@ cpu = [
 gpu = [
     "torch==2.9.1",
 ]
+liger = [
+    # Optional fused training losses; depends only on Torch and Triton already in the GPU stack.
+    "liger-kernel==0.8.0",
+]
 
 [tool.uv]
 default-groups = []
