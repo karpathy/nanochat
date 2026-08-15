@@ -63,13 +63,32 @@ class CausalSelfAttention(nn.Module):
         self.c_v = nn.Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
 
+    def fuse_qkv(self):
+        """Pack Q/K/V into one GEMM. Cuts kernel launches on decode (important on MI300X)."""
+        if getattr(self, "_qkv_weight", None) is not None:
+            return
+        qkv_weight = torch.cat([self.c_q.weight, self.c_k.weight, self.c_v.weight], dim=0)
+        self.register_buffer("_qkv_weight", qkv_weight, persistent=False)
+        self._qkv_split = (
+            self.n_head * self.head_dim,
+            self.n_kv_head * self.head_dim,
+            self.n_kv_head * self.head_dim,
+        )
+
     def forward(self, x, cos_sin, kv_cache):
         B, T, C = x.size()
 
         # Project the input to get queries, keys, and values
-        q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
-        k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
-        v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
+        qkv_weight = getattr(self, "_qkv_weight", None)
+        if qkv_weight is not None:
+            q, k, v = F.linear(x, qkv_weight).split(self._qkv_split, dim=-1)
+            q = q.view(B, T, self.n_head, self.head_dim)
+            k = k.view(B, T, self.n_kv_head, self.head_dim)
+            v = v.view(B, T, self.n_kv_head, self.head_dim)
+        else:
+            q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
+            k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
+            v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
 
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
         cos, sin = cos_sin
@@ -244,7 +263,13 @@ class GPT(nn.Module):
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+    def prepare_for_inference(self):
+        """Eval-only tweaks: fuse QKV GEMMs. Idempotent. Safe for existing checkpoints."""
+        for block in self.transformer.h:
+            block.attn.fuse_qkv()
+        return self
+
+    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean', last_logits_only=False):
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
@@ -262,21 +287,25 @@ class GPT(nn.Module):
             x = block(x, cos_sin, kv_cache)
         x = norm(x)
 
+        # Generation only needs the newest position. Skip the huge vocab GEMM on the prefix.
+        # CORE / categorical eval still need full-sequence logits (no kv_cache, no flag).
+        if last_logits_only or (targets is None and kv_cache is not None):
+            x = x[:, -1:]
+
         # Forward the lm_head (compute logits)
         softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
         logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
         logits = logits[..., :self.config.vocab_size] # slice to remove padding
-        logits = logits.float() # switch to fp32 for logit softcap and loss computation
-        logits = softcap * torch.tanh(logits / softcap) # squash the logits
-
         if targets is not None:
             # training: given the targets, compute and return the loss
+            logits = logits.float() # switch to fp32 for logit softcap and loss computation
+            logits = softcap * torch.tanh(logits / softcap) # squash the logits
             # TODO experiment with chunked cross-entropy?
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
             return loss
-        else:
-            # inference: just return the logits directly
-            return logits
+        # inference: keep autocast dtype (bf16 on MI300X); sampling upcasts the (B, V) row
+        logits = softcap * torch.tanh(logits / softcap)
+        return logits
 
     @torch.inference_mode()
     def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
@@ -294,7 +323,7 @@ class GPT(nn.Module):
             rng.manual_seed(seed)
         ids = torch.tensor([tokens], dtype=torch.long, device=device) # add batch dim
         for _ in range(max_tokens):
-            logits = self.forward(ids) # (B, T, vocab_size)
+            logits = self.forward(ids, last_logits_only=True) # (B, 1, vocab_size)
             logits = logits[:, -1, :] # (B, vocab_size)
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))

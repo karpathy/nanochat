@@ -167,6 +167,8 @@ def sample_next_token(logits, rng, temperature=1.0, top_k=None):
     assert temperature >= 0.0, "temperature must be non-negative"
     if temperature == 0.0:
         return torch.argmax(logits, dim=-1, keepdim=True)
+    # Autocast decode may pass bf16; softmax/multinomial want fp32. Cheap: this is (B, V).
+    logits = logits.float()
     if top_k is not None:
         k = min(top_k, logits.size(-1))
         vals, idx = torch.topk(logits, k, dim=-1)
@@ -192,15 +194,25 @@ class RowState:
 
 class Engine:
 
-    def __init__(self, model, tokenizer):
+    def __init__(self, model, tokenizer, compile_model=False, fuse_qkv=False):
+        # fuse_qkv copies Q/K/V into one GEMM. Do not enable on a module that will keep training
+        # (SFT/RL/base_train sampling): the packed weights would not track optimizer updates.
+        if (fuse_qkv or compile_model) and hasattr(model, "prepare_for_inference"):
+            model.prepare_for_inference()
+        if compile_model:
+            model = torch.compile(model, dynamic=True)
         self.model = model
         self.tokenizer = tokenizer # needed for tool use
+
+    def _raw_model(self):
+        # torch.compile wraps the module; config / get_device live on the original.
+        return getattr(self.model, "_orig_mod", self.model)
 
     @torch.inference_mode()
     def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
         """Same as generate, but does single prefill and then clones the KV cache."""
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
-        device = self.model.get_device()
+        device = self._raw_model().get_device()
         rng = torch.Generator(device=device)
         rng.manual_seed(seed)
 
@@ -214,7 +226,7 @@ class Engine:
         bos = self.tokenizer.get_bos_token_id() # if sampled, ends row
 
         # 1) Run a batch 1 prefill of the prompt tokens
-        m = self.model.config
+        m = self._raw_model().config
         kv_model_kwargs = {"num_heads": m.n_kv_head, "head_dim": m.n_embd // m.n_head, "num_layers": m.n_layer}
         kv_cache_prefill = KVCache(
             batch_size=1,
@@ -222,13 +234,13 @@ class Engine:
             **kv_model_kwargs,
         )
         ids = torch.tensor([tokens], dtype=torch.long, device=device)
-        logits = self.model.forward(ids, kv_cache=kv_cache_prefill)
+        logits = self.model(ids, kv_cache=kv_cache_prefill)
         logits = logits[:, -1, :]
         next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
         sampled_tokens = next_ids[:, 0].tolist()
 
         # 2) Replicate the KV cache for each sample/row
-        kv_length_hint = (len(tokens) + max_tokens) if max_tokens is not None else self.model.config.sequence_len
+        kv_length_hint = (len(tokens) + max_tokens) if max_tokens is not None else self._raw_model().config.sequence_len
         kv_cache_decode = KVCache(
             batch_size=num_samples,
             seq_len=kv_length_hint,
@@ -243,6 +255,7 @@ class Engine:
         # 4) Main generation loop
         num_generated = 0
         first_iteration = True
+        decode_ids = torch.empty((num_samples, 1), dtype=torch.long, device=device)
         while True:
             # Stop condition: we've reached max tokens
             if max_tokens is not None and num_generated >= max_tokens:
@@ -259,7 +272,7 @@ class Engine:
                 first_iteration = False
             else:
                 # Forward the model and get the next token for each row
-                logits = self.model.forward(ids, kv_cache=kv_cache_decode)  # (B, T, vocab_size)
+                logits = self.model(decode_ids, kv_cache=kv_cache_decode)  # (B, 1, vocab_size)
                 logits = logits[:, -1, :]  # (B, vocab_size) at last time step
                 next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
                 sampled_tokens = next_ids[:, 0].tolist()
@@ -299,8 +312,8 @@ class Engine:
             # Yield the token column
             yield token_column, token_masks
             num_generated += 1
-            # Prepare ids for next iteration
-            ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
+            # Reuse the decode buffer; avoid a fresh (B, 1) alloc each step
+            decode_ids[:, 0] = torch.tensor(token_column, dtype=torch.long, device=device)
 
     def generate_batch(self, tokens, num_samples=1, **kwargs):
         """
@@ -362,7 +375,7 @@ if __name__ == "__main__":
     reference_ids = generated_tokens
     # generate tokens with Engine
     generated_tokens = []
-    engine = Engine(model, tokenizer)
+    engine = Engine(model, tokenizer, fuse_qkv=True)
     stream = engine.generate(prompt_tokens, num_samples=1, **kwargs) # note: runs in fp32
     torch.cuda.synchronize()
     t0 = time.time()

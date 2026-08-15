@@ -20,6 +20,7 @@ parser.add_argument('-t', '--temperature', type=float, default=0.6, help='Temper
 parser.add_argument('-k', '--top-k', type=int, default=50, help='Top-k sampling parameter')
 parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
 parser.add_argument('-d', '--dtype', type=str, default='bfloat16', choices=['float32', 'bfloat16'])
+parser.add_argument('--compile', action=argparse.BooleanOptionalAction, default=None, help='torch.compile the model (default: on for CUDA/ROCm)')
 args = parser.parse_args()
 
 # Init the model and tokenizer
@@ -36,7 +37,10 @@ user_start, user_end = tokenizer.encode_special("<|user_start|>"), tokenizer.enc
 assistant_start, assistant_end = tokenizer.encode_special("<|assistant_start|>"), tokenizer.encode_special("<|assistant_end|>")
 
 # Create Engine for efficient generation
-engine = Engine(model, tokenizer)
+compile_model = args.compile if args.compile is not None else (device_type == "cuda")
+if compile_model:
+    print("Compiling model with torch.compile (first tokens will be slower)...")
+engine = Engine(model, tokenizer, compile_model=compile_model, fuse_qkv=True)
 
 print("\nNanoChat Interactive Mode")
 print("-" * 50)

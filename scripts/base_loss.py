@@ -56,7 +56,7 @@ if ddp_rank == 0:
         "My favorite color is",
         "If 5*x + 3 = 13, then x is",
     ]
-    engine = Engine(model, tokenizer)
+    engine = Engine(model, tokenizer, fuse_qkv=True)
     for prompt in prompts:
         tokens = tokenizer(prompt, prepend="<|bos|>")
         with autocast_ctx:

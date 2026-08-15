@@ -3,6 +3,8 @@ Common utilities for nanochat.
 """
 
 import os
+# Prefer hipBLASLt GEMMs on ROCm (MI300X). Harmless on NVIDIA. Set before HIP/CUDA init.
+os.environ.setdefault("TORCH_BLAS_PREFER_HIPBLASLT", "1")
 import re
 import logging
 import urllib.request
@@ -159,6 +161,10 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     # Precision
     if device_type == "cuda":
         torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls
+        # Flash / mem-efficient SDPA. On ROCm/MI300X this selects aotriton or CK when available.
+        torch.backends.cuda.enable_flash_sdp(True)
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
+        torch.backends.cuda.enable_math_sdp(True)
 
     # Distributed setup: Distributed Data Parallel (DDP), optional, and requires CUDA
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
