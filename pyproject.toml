@@ -13,7 +13,7 @@ dependencies = [
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
     "torch==2.9.1",
-    "wandb>=0.21.3",
+    "wandb>=0.28.2",
 ]
 
 [dependency-groups]
