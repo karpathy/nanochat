@@ -100,21 +100,15 @@ use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
 
 # Flash Attention status
-from nanochat.flash_attention import USE_FA3
-using_fa3 = USE_FA3
-if using_fa3:
-    print0("✓ Using Flash Attention 3: efficient, new and awesome.")
+from nanochat.flash_attention import ATTENTION_BACKEND, USE_FA3, USE_FA2, IS_ROCM, HAS_FA3, HAS_FA2
+print0(f"Attention Engine: {ATTENTION_BACKEND}")
+if USE_FA3 or USE_FA2:
+    print0(f"✓ Using {ATTENTION_BACKEND}: high-performance GPU kernel active.")
+elif IS_ROCM:
+    print0("✓ Using AMD ROCm SDPA: automatically dispatches to AMD Composable Kernel (CK) FlashAttention.")
 else:
-    print0("!" * 80)
-    if HAS_FA3 and COMPUTE_DTYPE != torch.bfloat16:
-        print0(f"WARNING: Flash Attention 3 only supports bf16, but COMPUTE_DTYPE={COMPUTE_DTYPE}. Using PyTorch SDPA fallback")
-    else:
-        print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback")
-    print0("WARNING: Training will be less efficient without FA3")
     if args.window_pattern != "L":
-        print0(f"WARNING: SDPA has no support for sliding window attention (window_pattern='{args.window_pattern}'). Your GPU utilization will be terrible.")
-        print0("WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.")
-    print0("!" * 80)
+        print0(f"Note: SDPA fallback active. Recommend using --window-pattern L for full context attention.")
 
 # -----------------------------------------------------------------------------
 # Tokenizer will be useful for evaluation and also we need the vocab size to init the model
