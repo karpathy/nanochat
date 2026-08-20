@@ -12,7 +12,6 @@ dependencies = [
     "pyarrow>=21.0.0",
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
-    "torch==2.9.1",
     "wandb>=0.21.3",
 ]
 
@@ -33,11 +32,18 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-# target torch to cuda 12.8 or CPU
+[tool.setuptools.packages.find]
+include = ["nanochat*"]
+
+# target torch to cuda 12.8, ROCm, or CPU
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu128", extra = "gpu" },
+    { index = "pytorch-rocm", extra = "amd" },
+]
+triton-rocm = [
+    { index = "pytorch-rocm", extra = "amd" },
 ]
 
 [[tool.uv.index]]
@@ -50,13 +56,22 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/nightly/rocm7.2"
+explicit = true
+
 [project.optional-dependencies]
 cpu = [
     "setuptools>=65.0.0",
-    "torch==2.9.1",
+    "torch>=2.9.1",
 ]
 gpu = [
-    "torch==2.9.1",
+    "torch>=2.9.1",
+]
+amd = [
+    "torch==2.15.0.dev20260815+rocm7.2",
+    "triton-rocm==3.8.0+gitdf3f91dd",
 ]
 
 [tool.uv]
@@ -65,5 +80,6 @@ conflicts = [
     [
         { extra = "cpu" },
         { extra = "gpu" },
+        { extra = "amd" },
     ],
 ]
