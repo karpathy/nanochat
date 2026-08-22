@@ -205,7 +205,7 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
         nonlocal cursor, epoch
         while len(conv_buffer) < buffer_size:
             conversation = dataset[cursor]
-            ids, mask = tokenizer.render_conversation(conversation)
+            ids, mask = tokenizer.render_conversation(conversation, max_tokens=row_capacity)
             conv_buffer.append((ids, mask))
             cursor += ddp_world_size
             if cursor >= dataset_size:
