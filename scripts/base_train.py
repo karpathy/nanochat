@@ -164,14 +164,16 @@ if resuming:
 # -----------------------------------------------------------------------------
 # FP8 training initialization and management (this has to be done before torch.compile)
 
+fp8_modules = []
+
 # Convert Linear layers to Float8Linear if --fp8 is set
 if args.fp8:
     if device_type != "cuda":
         print0("Warning: FP8 training requires CUDA, ignoring --fp8 flag")
     else:
-        # our custom fp8 is simpler than torchao, written for exact API compatibility
-        from nanochat.fp8 import Float8LinearConfig, convert_to_float8_training
-        # from torchao.float8 import Float8LinearConfig, convert_to_float8_training
+        # our custom fp8 is simpler than torchao and mirrors its API apart from quantize_weight()
+        from nanochat.fp8 import Float8Linear, Float8LinearConfig, convert_to_float8_training
+        # from torchao.float8 import Float8Linear, Float8LinearConfig, convert_to_float8_training
         import torch.nn as nn
 
         # Filter: dims must be divisible by 16 (FP8 hardware requirement) large enough
@@ -187,6 +189,7 @@ if args.fp8:
         fp8_config = Float8LinearConfig.from_recipe_name(args.fp8_recipe)
         num_linear = sum(1 for m in model.modules() if isinstance(m, nn.Linear))
         convert_to_float8_training(model, config=fp8_config, module_filter_fn=fp8_module_filter)
+        fp8_modules = [m for m in model.modules() if isinstance(m, Float8Linear)]
         num_fp8 = sum(1 for m in model.modules() if 'Float8' in type(m).__name__)
         num_skipped = num_linear - num_fp8
         print0(f"✓ FP8 training enabled ({args.fp8_recipe} scaling) - converted {num_fp8}/{num_linear} linear layers, skipped {num_skipped} (too small)")
@@ -507,6 +510,9 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+    # The weight only changes once per step, so one quantization covers every micro-step
+    for m in fp8_modules:
+        m.quantize_weight()
     for micro_step in range(grad_accum_steps):
         loss = model(x, y)
         train_loss = loss.detach() # for logging
