@@ -49,9 +49,10 @@ torch._scaled_mm behind the scenes. This is ~2000 lines of code because you need
 a handler for every tensor operation that might touch an FP8 tensor.
 
 We take a simpler approach: a single autograd.Function (_Float8Matmul) that takes
-full-precision inputs, quantizes to FP8 internally, calls _scaled_mm, and returns
-full-precision outputs. Marked @allow_in_graph so torch.compile treats it as one
-opaque node rather than trying to trace inside.
+full-precision inputs, quantizes them to FP8 (the weight may arrive already
+quantized), calls _scaled_mm, and returns full-precision outputs. Marked
+@allow_in_graph so torch.compile treats it as one opaque node rather than trying
+to trace inside.
 
 The trade-off is in how torch.compile sees the two approaches:
   - torchao: compile decomposes the tensor subclass (via __tensor_flatten__) and
@@ -107,6 +108,11 @@ def _to_fp8(x, fp8_dtype):
     return x_fp8, inv_scale
 
 
+# Compiled so the amax reduction and the cast fuse into two kernels; run eagerly
+# this chain materialises five full-size fp32 intermediates per weight.
+_to_fp8_compiled = torch.compile(_to_fp8, dynamic=False)
+
+
 def _to_col_major(x):
     """Rearrange a 2D tensor's memory to column-major layout.
 
@@ -123,17 +129,15 @@ def _to_col_major(x):
 # for how this differs from torchao's tensor subclass approach.
 @torch._dynamo.allow_in_graph
 class _Float8Matmul(torch.autograd.Function):
-    """Custom autograd for the three FP8 GEMMs of a Linear layer.
-
-    The forward quantizes input and weight to FP8 and saves
-    the quantized tensors + scales for backward.
-    """
+    """Custom autograd for the three FP8 GEMMs of a Linear layer."""
 
     @staticmethod
-    def forward(ctx, input_2d, weight):
-        # Quantize both operands to e4m3 (higher precision format)
+    def forward(ctx, input_2d, weight, weight_fp8=None, weight_inv=None):
+        # Quantize to e4m3 (higher precision format). weight is still an input even
+        # when its fp8 form is supplied, so autograd routes grad_weight to it.
         input_fp8, input_inv = _to_fp8(input_2d, torch.float8_e4m3fn)
-        weight_fp8, weight_inv = _to_fp8(weight, torch.float8_e4m3fn)
+        if weight_fp8 is None:
+            weight_fp8, weight_inv = _to_fp8(weight, torch.float8_e4m3fn)
         ctx.save_for_backward(input_fp8, input_inv, weight_fp8, weight_inv)
 
         # output = input @ weight.T
@@ -189,7 +193,7 @@ class _Float8Matmul(torch.autograd.Function):
             use_fast_accum=False,
         )
 
-        return grad_input, grad_weight
+        return grad_input, grad_weight, None, None
 
 
 class Float8Linear(nn.Linear):
@@ -197,7 +201,20 @@ class Float8Linear(nn.Linear):
 
     Weights and biases remain in their original precision (e.g. fp32/bf16).
     Only the matmul is performed in FP8 via the _Float8Matmul autograd function.
+
+    The input changes every call and is quantized inside the matmul; the weight
+    changes only per optimizer step, so its quantization is held here. A held value
+    is used as-is until quantize_weight() replaces it — while it is None the matmul
+    quantizes the weight per call.
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.w_fp8 = None
+        self.w_inv_scale = None
+
+    def quantize_weight(self):
+        self.w_fp8, self.w_inv_scale = _to_fp8_compiled(self.weight, torch.float8_e4m3fn)
 
     def forward(self, input):
         # Cast input to COMPUTE_DTYPE (typically bf16) since _scaled_mm expects
@@ -206,7 +223,7 @@ class Float8Linear(nn.Linear):
         # _scaled_mm only works on 2D tensors, so flatten batch dimensions
         orig_shape = input.shape
         input_2d = input.reshape(-1, orig_shape[-1])
-        output = _Float8Matmul.apply(input_2d, self.weight)
+        output = _Float8Matmul.apply(input_2d, self.weight, self.w_fp8, self.w_inv_scale)
         output = output.reshape(*orig_shape[:-1], output.shape[-1])
         if self.bias is not None:
             output = output + self.bias.to(output.dtype)
