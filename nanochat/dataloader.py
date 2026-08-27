@@ -108,14 +108,10 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
         for tokens in token_lists:
             doc_buffer.append(tokens)
 
-    # Pre-allocate buffers once: layout is [inputs (B*T) | targets (B*T)]
-    # This gives us contiguous views and a single HtoD transfer
-    use_cuda = device == "cuda"
+    # Layout is [inputs (B*T) | targets (B*T)], which gives contiguous views and a single HtoD transfer
+    use_cuda = torch.device(device).type == "cuda"
     row_buffer = torch.empty((B, row_capacity), dtype=torch.long) # for building rows without creating Python lists
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda) # staging area (CPU)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device) # on-device buffer
-    cpu_inputs = cpu_buffer[:B * T].view(B, T) # a few views into these buffers just for convenience
-    cpu_targets = cpu_buffer[B * T:].view(B, T)
+    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device) # on-device buffer, reused every batch
     inputs = gpu_buffer[:B * T].view(B, T)
     targets = gpu_buffer[B * T:].view(B, T)
 
@@ -150,7 +146,12 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
                     row_buffer[row_idx, pos:pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
                     pos += remaining
 
-        # Copy to pinned CPU buffer, then single HtoD transfer
+        # The staging buffer is allocated per batch rather than hoisted: the caching host
+        # allocator will not recycle a pinned block while the async copy that reads it is
+        # still outstanding.
+        cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda) # staging area (CPU)
+        cpu_inputs = cpu_buffer[:B * T].view(B, T)
+        cpu_targets = cpu_buffer[B * T:].view(B, T)
         cpu_inputs.copy_(row_buffer[:, :-1])
         cpu_targets.copy_(row_buffer[:, 1:])
 
