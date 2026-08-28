@@ -213,6 +213,30 @@ def compute_cleanup():
     if is_ddp_initialized():
         dist.destroy_process_group()
 
+class PeakMemoryTracker:
+    """Peak device memory allocated over a run, in bytes (0 if N/A).
+
+    cuda keeps a true high-water mark in the allocator, so update() is a no-op.
+    mps has no peak API, so we sample current_allocated_memory() once per step and
+    keep the running max. We can't use driver_allocated_memory(): that's the Metal
+    allocator's *reserved* pool (the analogue of max_memory_reserved), which reads
+    far above what's allocated and barely moves for spikes that fit inside the pool.
+    The mps number is a lower bound -- the true peak is mid-backward, which only the
+    allocator can see.
+    """
+    def __init__(self, device_type):
+        self.device_type = device_type
+        self._peak = 0
+
+    def update(self):
+        if self.device_type == "mps":
+            self._peak = max(self._peak, torch.mps.current_allocated_memory())
+
+    def peak(self):
+        if self.device_type == "cuda":
+            return torch.cuda.max_memory_allocated()
+        return self._peak
+
 class DummyWandb:
     """Useful if we wish to not use wandb but have all the same signatures"""
     def __init__(self):
