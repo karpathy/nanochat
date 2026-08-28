@@ -161,29 +161,6 @@ class TaskMixture(Task):
         return self.tasks[task_idx][local_idx]
 
 
-class TaskSequence(Task):
-    """
-    For SFT Training sometimes we want to sequentially train on a list of tasks.
-    This is useful for cases that require a training curriculum.
-    """
-
-    def __init__(self, tasks, **kwargs):
-        super().__init__(**kwargs)
-        self.tasks = tasks
-        self.lengths = [len(task) for task in self.tasks]
-        self.num_conversations = sum(self.lengths)
-
-    def num_examples(self):
-        return self.num_conversations
-
-    def get_example(self, index):
-        assert 0 <= index < self.num_conversations, f"Index {index} out of range for sequence with {self.num_conversations} conversations"
-        for task_idx, task_length in enumerate(self.lengths):
-            if index < task_length:
-                return self.tasks[task_idx][index]
-            index -= task_length
-
-
 def render_mc(question, letters, choices):
     """
     The common multiple choice rendering format we will use.

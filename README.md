@@ -181,7 +181,7 @@ I've published a number of guides that might contain helpful information, most r
 │   └── tok_train.py                # Tokenizer: train it
 ├── tasks
 │   ├── arc.py                      # Multiple choice science questions
-│   ├── common.py                   # TaskMixture | TaskSequence
+│   ├── common.py                   # TaskMixture
 │   ├── gsm8k.py                    # 8K Grade School Math questions
 │   ├── humaneval.py                # Misnomer; Simple Python coding task
 │   ├── mmlu.py                     # Multiple choice questions, broad topics
