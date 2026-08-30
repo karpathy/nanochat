@@ -27,10 +27,13 @@ def timeout(duration, formula):
     def timeout_handler(signum, frame):
         raise Exception(f"'{formula}': timed out after {duration} seconds")
 
-    signal.signal(signal.SIGALRM, timeout_handler)
+    original_handler = signal.signal(signal.SIGALRM, timeout_handler)
     signal.alarm(duration)
-    yield
-    signal.alarm(0)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, original_handler)
 
 def eval_with_timeout(formula, max_time=3):
     try:
