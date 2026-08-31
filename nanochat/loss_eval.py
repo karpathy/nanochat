@@ -5,6 +5,26 @@ import math
 import torch
 import torch.distributed as dist
 
+
+@torch.no_grad()
+def assert_causal_logits(model, sequence_len=64):
+    """Fail if changing suffix tokens changes logits for the unchanged prefix."""
+    sequence_len = min(sequence_len, model.config.sequence_len)
+    split = sequence_len // 2
+    device = model.get_device()
+    tokens = (
+        torch.arange(sequence_len, device=device).unsqueeze(0)
+        % model.config.vocab_size
+    )
+    changed = tokens.clone()
+    changed[:, split:] = (changed[:, split:] + 1) % model.config.vocab_size
+    logits = model(tokens)
+    changed_logits = model(changed)
+    if not torch.allclose(
+        logits[:, :split], changed_logits[:, :split], atol=1e-5, rtol=1e-5
+    ):
+        raise RuntimeError("model is not causal: suffix tokens changed prefix logits")
+
 @torch.no_grad()
 def evaluate_bpb(model, batches, steps, token_bytes):
     """
