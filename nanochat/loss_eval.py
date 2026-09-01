@@ -5,6 +5,43 @@ import math
 import torch
 import torch.distributed as dist
 
+
+@torch.no_grad()
+def assert_causal_logits(model, sequence_len=64):
+    """Fail if changing suffix tokens changes logits for any probed prefix.
+
+    Probe immediately before power-of-two boundaries in addition to the midpoint.
+    A single midpoint check can miss aligned chunk-local leaks (for example, a
+    32-token aggregation block when a 64-token probe is split at position 32).
+    """
+    sequence_len = min(sequence_len, model.config.sequence_len)
+    if sequence_len < 2:
+        return
+    device = model.get_device()
+    tokens = (
+        torch.arange(sequence_len, device=device).unsqueeze(0)
+        % model.config.vocab_size
+    )
+    logits = model(tokens)
+
+    split_points = {sequence_len // 2}
+    split = 1
+    while split < sequence_len:
+        split_points.add(split)
+        split = 2 * split + 1
+
+    for split in sorted(split_points):
+        changed = tokens.clone()
+        changed[:, split:] = (changed[:, split:] + 1) % model.config.vocab_size
+        changed_logits = model(changed)
+        if not torch.allclose(
+            logits[:, :split], changed_logits[:, :split], atol=1e-5, rtol=1e-5
+        ):
+            raise RuntimeError(
+                "model is not causal: suffix tokens changed prefix logits "
+                f"at split {split}"
+            )
+
 @torch.no_grad()
 def evaluate_bpb(model, batches, steps, token_bytes):
     """
