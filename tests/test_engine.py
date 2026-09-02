@@ -47,6 +47,18 @@ class MockModel:
         return logits
 
 
+class TerminalModel(MockModel):
+    """Model that deterministically emits the terminal token."""
+
+    def forward(self, ids, kv_cache=None):
+        B, T = ids.shape
+        if kv_cache is not None:
+            kv_cache.advance(T)
+        logits = torch.full((B, T, self.vocab_size), float("-inf"))
+        logits[..., 260] = 0.0  # <|assistant_end|> in ByteTokenizer
+        return logits
+
+
 class ByteTokenizer:
     """
     Simple byte-level tokenizer for testing.
@@ -233,6 +245,28 @@ def test_max_tokens_respected():
         results, _ = engine.generate_batch(prompt, max_tokens=max_tokens)
         num_generated_tokens = len(results[0]) - len(prompt)
         assert num_generated_tokens <= max_tokens, f"Generated {num_generated_tokens} tokens, expected max_tokens={max_tokens} or less."
+
+
+def test_generate_batch_can_retain_sampled_terminal_token():
+    """A sampled stop must be distinguishable from post-rollout padding."""
+    model = TerminalModel()
+    engine = Engine(model, ByteTokenizer())
+    prompt = [261, 72, 101]
+
+    # Preserve the inference API: terminal tokens remain omitted by default.
+    results, masks = engine.generate_batch(prompt, temperature=0.0, max_tokens=4)
+    assert results == [prompt]
+    assert masks == [[0] * len(prompt)]
+
+    # RL callers can retain the sampled terminal and its sampled-token mask.
+    results, masks = engine.generate_batch(
+        prompt,
+        temperature=0.0,
+        max_tokens=4,
+        include_terminal_tokens=True,
+    )
+    assert results == [prompt + [260]]
+    assert masks == [[0] * len(prompt) + [1]]
 
 
 def test_num_samples_count():

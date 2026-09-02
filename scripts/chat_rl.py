@@ -84,7 +84,8 @@ print0(f"Calculated number of steps: {num_steps}")
 
 @torch.no_grad()
 def get_batch():
-    assistant_end = tokenizer.encode_special("<|assistant_end|>") # ok to use this token, it's only for padding and isn't used in the loss.
+    assistant_end = tokenizer.encode_special("<|assistant_end|>")  # Also used to pad completed rollouts.
+    terminal_tokens = {assistant_end, tokenizer.get_bos_token_id()}
     rank_indices = range(ddp_rank, len(train_task), ddp_world_size) # each rank is responsible for different examples in the training data
     for example_idx in itertools.cycle(rank_indices):
 
@@ -110,6 +111,7 @@ def get_batch():
                 temperature=args.temperature,
                 top_k=args.top_k,
                 seed=seed, # must make sure to change the seed for each sampling step
+                include_terminal_tokens=True,
             )
             generated_token_sequences.extend(generated_token_sequences_batch)
             masks.extend(masks_batch)
@@ -119,6 +121,10 @@ def get_batch():
         for sample_tokens in generated_token_sequences:
             # Get just the generated tokens (after the prompt)
             generated_tokens = sample_tokens[prefix_length:]
+            # Keep the sampled stop token for policy-gradient training, but do
+            # not include it in the text scored by the task reward.
+            if generated_tokens and generated_tokens[-1] in terminal_tokens:
+                generated_tokens = generated_tokens[:-1]
             # Decode the generated response
             generated_text = tokenizer.decode(generated_tokens)
             # Calculate the reward
@@ -136,8 +142,8 @@ def get_batch():
         inputs = ids[:, :-1]
         targets = ids[:, 1:].clone() # clone to avoid in-place modification:
         targets[mask_ids[:, 1:] == 0] = -1 # <-- inplace modification right here. -1 is the ignore index
-        # NOTE also that the Engine returns mask=0 for BOTH the prompt tokens AND the tool use tokens.
-        # So we will (correctly) end up not training on the prompt tokens, or the tool use forced tokens.
+        # The Engine returns mask=0 for prompt and forced tokens, while
+        # a sampled terminal token is retained with mask=1 for RL training.
         rewards = torch.tensor(rewards, dtype=torch.float, device=device)
         # Calculate the advantages by simply subtracting the mean (instead of z-score (x-mu)/sigma)
         mu = rewards.mean()
