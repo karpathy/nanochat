@@ -27,7 +27,7 @@ import torch.distributed as dist
 
 from nanochat.gpt import GPT, GPTConfig, Linear
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, add_effective_learning_rates
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -292,6 +292,11 @@ if batch_ratio != 1.0:
     # Muon: we will use the same scaling for Muon as for AdamW: η ∝ √(B/B_ref) (not studied carefully, assumption!)
     batch_lr_scale = batch_ratio ** 0.5 # η ∝ √(B/B_ref)
     print0(f"Scaling LRs by {batch_lr_scale:.4f} for batch size {total_batch_size:,} (reference: {B_REF:,})")
+
+# Keep the original CLI values for reproducibility while recording the rates
+# that are actually passed to the optimizer.  SFT uses these effective values
+# when inheriting hyperparameters from this checkpoint.
+user_config = add_effective_learning_rates(user_config, batch_lr_scale)
 
 # 4) Knowing the batch size and the token horizon, we can now calculate the appropriate weight decay scaling
 # We adopt the T_epoch framework from https://arxiv.org/abs/2405.13698
