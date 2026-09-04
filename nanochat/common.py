@@ -31,6 +31,37 @@ def _detect_compute_dtype():
     return torch.float32, "auto-detected: no CUDA (CPU/MPS)"
 COMPUTE_DTYPE, COMPUTE_DTYPE_REASON = _detect_compute_dtype()
 
+# Learning-rate fields persisted by base pretraining and consumed by SFT.
+# Keeping this list in one place avoids silently dropping a newly scaled field
+# from checkpoint metadata when the batch-size correction is changed.
+PRETRAIN_LR_FIELDS = ("embedding_lr", "unembedding_lr", "matrix_lr", "scalar_lr")
+
+
+def add_effective_learning_rates(user_config, batch_lr_scale):
+    """Persist batch-size-adjusted learning rates alongside CLI values.
+
+    ``user_config`` intentionally retains the original command-line inputs for
+    reproducibility.  The ``effective_*`` values are the rates actually passed
+    to the optimizer and allow downstream stages (such as SFT) to inherit the
+    same rates even when pretraining used a non-reference batch size.
+    """
+    config = dict(user_config)
+    config["batch_lr_scale"] = batch_lr_scale
+    for field in PRETRAIN_LR_FIELDS:
+        value = config.get(field)
+        if value is not None:
+            config[f"effective_{field}"] = value * batch_lr_scale
+    return config
+
+
+def inherited_learning_rate(pretrain_config, field, fallback):
+    """Read an effective pretraining LR, with compatibility for old checkpoints."""
+    effective = pretrain_config.get(f"effective_{field}")
+    if effective is not None:
+        return effective
+    value = pretrain_config.get(field)
+    return fallback if value is None else value
+
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
     # ANSI color codes

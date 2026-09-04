@@ -16,7 +16,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
 import torch
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, inherited_learning_rate
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state
 from nanochat.loss_eval import evaluate_bpb
@@ -104,7 +104,10 @@ for name, fallback, source in [
     ("matrix_lr",         0.02,  pretrain_user_config),
 ]:
     arg_val = getattr(args, name)
-    pretrain_val = source.get(name)
+    # New checkpoints expose the batch-size-adjusted rate. Fall back to the
+    # legacy field so checkpoints created before this metadata was added remain
+    # loadable and behave exactly as before.
+    pretrain_val = inherited_learning_rate(source, name, None)
     if arg_val is None:
         resolved = pretrain_val if pretrain_val is not None else fallback
         setattr(args, name, resolved)
