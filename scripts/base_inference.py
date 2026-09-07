@@ -17,25 +17,25 @@ counterpart of training MFU: achieved bytes/sec over the peak bandwidth of
 the GPU. It measures how far the implementation is from the physical ceiling.
 
 Output: a human-readable card and table, plus machine-readable record lines
-following the log grammar (see nanochat/logfmt.py): one `prefill` record, one
+following the log grammar (see harness/experiment.py): one `prefill` record, one
 `bench` record per batch size, and a final `summary` record.
 
 Examples:
 
     # benchmark a base model checkpoint on one GPU
-    python -m scripts.infer_bench -i base -g d12
+    python -m scripts.base_inference -i base -g d12
 
     # benchmark the SFT model, custom sweep
-    python -m scripts.infer_bench -i sft --batch-sizes 1,4,16,64 --decode-tokens 512
+    python -m scripts.base_inference -i chat --batch-sizes 1,4,16,64 --decode-tokens 512
 """
 
 import argparse
 import time
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, autodetect_device_type, get_peak_bandwidth, get_peak_flops
-from nanochat.logfmt import format_record, format_invocation
-from nanochat.checkpoint_manager import load_model, find_largest_model
+from harness.runtime import compute_init, compute_cleanup, autodetect_device_type, get_peak_bandwidth, get_peak_flops
+from harness.experiment import format_record, format_invocation
+from harness.checkpoint import load_model, find_largest_model
 from nanochat.engine import Engine
 
 # -----------------------------------------------------------------------------
@@ -91,7 +91,7 @@ def build_prompt(tokenizer, num_tokens):
 
 def main():
     parser = argparse.ArgumentParser(description="Inference benchmark")
-    parser.add_argument("-i", "--source", type=str, default="base", help="Checkpoint source: base|mid|sft")
+    parser.add_argument("-i", "--source", type=str, default="base", help="Checkpoint source: base|chat")
     parser.add_argument("-g", "--model-tag", type=str, default=None, help="Model tag to load")
     parser.add_argument("-s", "--step", type=int, default=None, help="Step to load (default = last)")
     parser.add_argument("--prompt-tokens", type=int, default=2048, help="Prompt length for prefill")
@@ -102,9 +102,9 @@ def main():
     print(format_invocation(args))
 
     device_type = autodetect_device_type()
-    assert device_type == "cuda", "infer_bench currently assumes a CUDA GPU (for timing and VRAM measurement)"
+    assert device_type == "cuda", "base_inference currently assumes a CUDA GPU (for timing and VRAM measurement)"
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
-    assert ddp_world_size == 1, "infer_bench is a single GPU benchmark, run without torchrun"
+    assert ddp_world_size == 1, "base_inference is a single GPU benchmark, run without torchrun"
 
     model_tag = args.model_tag if args.model_tag is not None else find_largest_model(args.source)
     model, tokenizer, meta = load_model(args.source, device, model_tag=model_tag, step=args.step)
@@ -215,7 +215,7 @@ def main():
     print("-" * len(header))
 
     # ------------------------------------------------------------------------
-    # The stage records (see nanochat/logfmt.py); everything above, machine-readable
+    # The stage records (see harness/experiment.py); everything above, machine-readable
     print()
     print(format_record("prefill",
         tok_per_sec=round(prefill_tok_per_sec, 1),

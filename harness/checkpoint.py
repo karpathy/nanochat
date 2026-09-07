@@ -10,7 +10,7 @@ import torch
 from nanochat.common import get_experiment_dir, get_experiment_name
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.tokenizer import get_tokenizer
-from nanochat.common import setup_default_logging
+from harness.runtime import setup_default_logging
 
 # Set up logging
 setup_default_logging()
@@ -25,7 +25,7 @@ def get_checkpoint_dir(model_tag, source):
     e.g. experiments/my_exp/d12/base/. The model_tag defaults to d<depth> in the
     training scripts but can be overridden (the --model-tag escape hatch).
     """
-    assert source in ["base", "mid", "sft", "rl"], f"Invalid source: {source}"
+    assert source in ["base", "chat"], f"Invalid source: {source}"
     experiment_dir = get_experiment_dir()
     checkpoint_dir = os.path.join(experiment_dir, model_tag, source)
     return checkpoint_dir
@@ -84,12 +84,6 @@ def build_model(checkpoint_dir, step, device):
     - meta data saved during base model training
     """
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, device, load_optimizer=False)
-    if device.type in {"cpu", "mps"}:
-        # Convert bfloat16 tensors to float for CPU inference
-        model_data = {
-            k: v.float() if v.dtype == torch.bfloat16 else v
-            for k, v in model_data.items()
-        }
     model_config_kwargs = meta_data["model_config"]
     log0(f"Building model with config: {model_config_kwargs}")
     model_config = GPTConfig(**model_config_kwargs)
@@ -150,18 +144,3 @@ def load_model(source, device, model_tag=None, step=None):
     log0(f"Loading model from {checkpoint_dir} with step {step}")
     model, tokenizer, meta_data = build_model(checkpoint_dir, step, device)
     return model, tokenizer, meta_data
-
-def load_optimizer_state(source, device, rank, model_tag=None, step=None):
-    """Load just the optimizer shard for a given rank, without re-loading the model."""
-    if model_tag is None:
-        model_tag = find_largest_model(source)
-    checkpoint_dir = get_checkpoint_dir(model_tag, source)
-    if step is None:
-        step = find_last_step(checkpoint_dir)
-    optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
-    if not os.path.exists(optimizer_path):
-        log0(f"Optimizer checkpoint not found: {optimizer_path}")
-        return None
-    log0(f"Loading optimizer state from {optimizer_path}")
-    optimizer_data = torch.load(optimizer_path, map_location=device)
-    return optimizer_data

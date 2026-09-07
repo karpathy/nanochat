@@ -1,66 +1,12 @@
 """
-Test the Task container machinery: slicing views, mixtures, and the
-HubDataset parquet wrapper (in-memory, no network).
+Test the hub dataset wrapper and the multiple choice prompt (in-memory, no network).
 
 python -m pytest tests/test_tasks.py -v
 """
 
 import numpy as np
 import pyarrow as pa
-from tasks.common import Task, TaskMixture, HubDataset, render_mc
-
-
-class ToyTask(Task):
-    """A trivial task: example i is just {'i': i, 'tag': tag}."""
-
-    def __init__(self, n=10, tag="a", **kwargs):
-        super().__init__(**kwargs)
-        self.n = n
-        self.tag = tag
-
-    def num_examples(self):
-        return self.n
-
-    def get_example(self, index):
-        return {"i": index, "tag": self.tag}
-
-
-def test_task_full():
-    task = ToyTask(n=10)
-    assert len(task) == 10
-    assert task[0] == {"i": 0, "tag": "a"}
-    assert task[9] == {"i": 9, "tag": "a"}
-
-
-def test_task_slicing():
-    # a view of [5, 10) has 5 examples and maps logical to physical indices
-    task = ToyTask(n=10, start=5, stop=10)
-    assert len(task) == 5
-    assert task[0]["i"] == 5
-    # step slicing uses ceil division for the length
-    task = ToyTask(n=10, start=0, stop=10, step=3) # 0, 3, 6, 9
-    assert len(task) == 4
-    assert [task[i]["i"] for i in range(4)] == [0, 3, 6, 9]
-
-
-def test_mixture_covers_all_examples_deterministically():
-    mixture = TaskMixture([ToyTask(n=3, tag="a"), ToyTask(n=5, tag="b")])
-    assert len(mixture) == 8
-    examples = [mixture[i] for i in range(8)]
-    # every example appears exactly once
-    keys = sorted((ex["tag"], ex["i"]) for ex in examples)
-    assert keys == [("a", 0), ("a", 1), ("a", 2), ("b", 0), ("b", 1), ("b", 2), ("b", 3), ("b", 4)]
-    # the shuffle is deterministic: a second instance yields the same order
-    mixture2 = TaskMixture([ToyTask(n=3, tag="a"), ToyTask(n=5, tag="b")])
-    assert examples == [mixture2[i] for i in range(8)]
-    # and the tasks are actually interleaved, not concatenated
-    assert [ex["tag"] for ex in examples] != ["a"] * 3 + ["b"] * 5
-
-
-def test_mixture_oversampling():
-    # passing a task twice doubles its examples
-    mixture = TaskMixture([ToyTask(n=3), ToyTask(n=3)])
-    assert len(mixture) == 6
+from harness.tasks import HubDataset, render_mc
 
 
 def test_hub_dataset_rows():

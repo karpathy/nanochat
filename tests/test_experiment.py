@@ -1,12 +1,12 @@
 """
 Test the log line grammar: the machine-readable contract inside stage logs.
 
-python -m pytest tests/test_logfmt.py -v
+python -m pytest tests/test_experiment.py -v
 """
 
 import argparse
 
-from nanochat.logfmt import format_record, format_invocation, parse_record, parse_records
+from harness.experiment import format_record, format_invocation, parse_record, parse_records
 
 
 def test_roundtrip_types():

@@ -16,6 +16,8 @@ Usage (drop-in replacement for FA3):
 import torch
 import torch.nn.functional as F
 
+from nanochat.common import COMPUTE_DTYPE
+
 
 # =============================================================================
 # Detection: Try to load FA3 on CUDA GPUs
@@ -49,26 +51,8 @@ def _load_flash_attention_3():
 _fa3 = _load_flash_attention_3()
 HAS_FA3 = _fa3 is not None
 
-# Override for testing: set to 'fa3', 'sdpa', or None (auto)
-_override_impl = None
-
-
-def _resolve_use_fa3():
-    """Decide once whether to use FA3, based on availability, override, and dtype."""
-    if _override_impl == 'fa3':
-        assert HAS_FA3, "Cannot override to FA3: not available on this hardware"
-        return True
-    if _override_impl == 'sdpa':
-        return False
-    if HAS_FA3:
-        # FA3 Hopper kernels only support bf16 and fp8; fp16/fp32 must use SDPA fallback
-        from nanochat.common import COMPUTE_DTYPE
-        if COMPUTE_DTYPE == torch.bfloat16:
-            return True
-        return False
-    return False
-
-USE_FA3 = _resolve_use_fa3()
+# FA3 Hopper kernels only support bf16 and fp8; fp16/fp32 must use the SDPA fallback
+USE_FA3 = HAS_FA3 and COMPUTE_DTYPE == torch.bfloat16
 
 
 # =============================================================================

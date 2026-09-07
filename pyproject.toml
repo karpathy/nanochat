@@ -20,14 +20,12 @@ dependencies = [
 dev = [
     "ipykernel>=7.1.0",
     "matplotlib>=3.10.8",
+    "pandas>=2.3.3",
     "pytest>=8.0.0",
     "python-dotenv>=1.2.1",
 ]
 
 [tool.pytest.ini_options]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]

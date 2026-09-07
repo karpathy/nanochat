@@ -2,6 +2,10 @@
 
 A running summary documenting some experiments and findings. Started ~Jan 7 2026.
 
+## 2026-08-22: fp32 embeddings (merged), bf16 storage validated loss-neutral
+
+wte/value_embeds were bf16 with bf16 Adam moments and no fp32 master, so sub-half-ulp updates were discarded, freezing most embedding coords during the LR warmdown (modded-nanogpt guards this with fp32 state + a mantissa side-buffer; we'd ported only the storage). Full d12-d28 ladder vs ve_n01: loss deltas alternate sign within noise at every rung, so the swallowed updates were pure noise. Merged fp32 anyway for description length (~0.3% wall clock at d20+): all params and optimizer state fp32, bf16 only at matmul boundaries, which also deleted the fp32 round-trip inside adamw_step_fused. Insight: a mechanistically real precision pathology still needs the end-to-end A/B — frozen coordinates aren't lost signal if all they carried was noise.
+
 ---
 
 ## 2026-08-02: Functional rewrite of gpt.py + optim.py (merged)

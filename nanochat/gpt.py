@@ -51,9 +51,10 @@ class GPTConfig:
     n_kv_head: int = 6 # number of key/value heads (GQA)
     n_embd: int = 768
     # Sliding window attention pattern string, tiled across layers. Final layer always L.
-    # Characters: L=long (full context), S=short (quarter context)
+    # Characters: L=long (full context), S=short (short_seq_len window)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    short_seq_len: int = 512 # window of the S layers (absolute, independent of sequence_len)
 
 
 # Number of leading channels of the (normed) block input that feed the value-embedding gate
@@ -122,13 +123,14 @@ def compute_window_sizes(config):
     - right: how many tokens after current position to attend to (0 for causal)
 
     Pattern string is tiled across layers. Final layer always gets L (full context).
-    Characters: L=long (full context), S=short (quarter context)
+    Characters: L=long (full context), S=short (short_seq_len window)
     """
     pattern = config.window_pattern.upper()
     assert all(c in "SL" for c in pattern), f"Invalid window_pattern: {pattern}. Use only S and L."
     # Map characters to window sizes
     long_window = config.sequence_len
-    short_window = -(-long_window // 4 // 128) * 128  # ceil to FA3 tile size (2048 -> 768)
+    short_window = config.short_seq_len
+    assert short_window % 128 == 0, f"short_seq_len ({short_window}) must be a multiple of the FA3 tile size (128)"
     char_to_window = {
         "L": (long_window, 0),
         "S": (short_window, 0),
@@ -149,7 +151,7 @@ def init_params(config, device):
     The names match nn.Module state_dict conventions (e.g. "transformer.h.3.attn.c_q.weight")
     so checkpoints remain interchangeable with the previous module-based implementation.
 
-    wte (embedding):     normal, std=0.8 (cast to COMPUTE_DTYPE at the end)
+    wte (embedding):     normal, std=0.8
     lm_head:             normal, std=0.001
     for each block:
         attn.c_q:        uniform, std=1/sqrt(n_embd)
@@ -158,7 +160,7 @@ def init_params(config, device):
         attn.c_proj:     zeros
         mlp.c_fc:        uniform, std=0.4/sqrt(n_embd)
         mlp.c_proj:      zeros
-    value_embeds:        uniform, like c_v (cast to COMPUTE_DTYPE at the end)
+    value_embeds:        normal, std=1.0, output-rms parity with v
     ve_gates:            uniform, small positive so gates start slightly above neutral
 
     Note: weights use Uniform (bound = sqrt(3) * std, same standard deviation as the
@@ -205,23 +207,16 @@ def init_params(config, device):
     params["x0_lambdas"] = torch.tensor(x0_init, dtype=torch.float32, device=device)
     # Backout: subtract cached mid-layer residual before final norm to remove low-level features
     params["backout_lambda"] = torch.full((1,), 0.2, dtype=torch.float32, device=device)
-    # Value embeddings (ResFormer-style): alternating layers, last layer always included (init like c_v)
+    # Value embeddings (ResFormer-style): alternating layers, last layer always included.
+    # N(0,1) entries: a lookup's output rms IS its entry std, so this matches v's rms ~1
+    # (the previous "init like c_v" matched element std, which left ve outputs ~sqrt(n_embd)x too small)
     for i in range(n_layer):
         if has_ve(i, n_layer):
-            params[f"value_embeds.{i}.weight"] = uniform((padded_vocab, kv_dim), -s, s)
+            params[f"value_embeds.{i}.weight"] = normal((padded_vocab, kv_dim), 1.0)
     # Gate weights init with small positive values so gates start slightly above neutral
     for i in range(n_layer):
         if has_ve(i, n_layer):
             params[f"transformer.h.{i}.attn.ve_gate.weight"] = uniform((config.n_kv_head, VE_GATE_CHANNELS), 0.0, 0.02)
-
-    # Cast embeddings to COMPUTE_DTYPE: optimizer can tolerate reduced-precision
-    # embeddings and it saves memory. Exception: fp16 requires fp32 embeddings
-    # because GradScaler cannot unscale fp16 gradients.
-    if COMPUTE_DTYPE != torch.float16:
-        params["transformer.wte.weight"] = params["transformer.wte.weight"].to(COMPUTE_DTYPE)
-        for i in range(n_layer):
-            if has_ve(i, n_layer):
-                params[f"value_embeds.{i}.weight"] = params[f"value_embeds.{i}.weight"].to(COMPUTE_DTYPE)
 
     # All params are trainable leaves
     for p in params.values():
@@ -259,7 +254,7 @@ def forward(params, buffers, idx, *, config, targets=None, kv_cache=None, loss_r
 
     # Embed the tokens (F.embedding, not wte[idx]: same gather, but a much faster specialized backward)
     x = F.embedding(idx, params["transformer.wte.weight"])
-    x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
+    x = x.to(COMPUTE_DTYPE) # the embeddings are fp32; activations run in the compute dtype
     x = norm(x)
 
     # Forward the trunk of the Transformer
@@ -510,16 +505,20 @@ class GPT:
         num_grouped = len(matrix_params) + len(value_embeds_params) + len(embedding_params) + len(lm_head_params) + len(resid_params) + len(x0_params) + len(backout_params)
         assert len(self.params) == num_grouped, "some parameters were not assigned to an optimizer group"
 
-        # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
-        dmodel_lr_scale = (model_dim / 768) ** -0.5
-        print0(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
+        # muP width scaling of the AdamW LRs (LRs are tuned at 768 dim). Per Tensor Programs V
+        # (github.com/microsoft/mup): embeddings are unscaled (one-hot rows see no width-summed
+        # accumulation) and the unembedding LR is ∝ 1/width (equivalent to MuReadout's 1/width
+        # forward multiplier under Adam's per-coord updates). Validated by a d20 exponent sweep.
+        width_mult = model_dim / 768
+        unemb_lr_scale = 1 / width_mult
+        print0(f"Scaling the unembedding LR ∝1/width: {unemb_lr_scale:.6f}")
 
         # Build param_groups with all required fields explicit
         param_groups = [
             # AdamW groups (embeddings, lm_head, scalars)
-            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale, betas=(0.8, 0.96), eps=1e-10, weight_decay=0.01),
-            dict(kind='adamw', params=embedding_params, lr=embedding_lr * dmodel_lr_scale, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.001),
-            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * dmodel_lr_scale * 0.5, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.01),
+            dict(kind='adamw', params=lm_head_params, lr=unembedding_lr * unemb_lr_scale, betas=(0.8, 0.96), eps=1e-10, weight_decay=0.01),
+            dict(kind='adamw', params=embedding_params, lr=embedding_lr, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.001),
+            dict(kind='adamw', params=value_embeds_params, lr=embedding_lr * 0.5, betas=(0.8, 0.995), eps=1e-10, weight_decay=0.01),
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.05),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
             dict(kind='adamw', params=backout_params, lr=0.2, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0),
@@ -537,33 +536,3 @@ class GPT:
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    @torch.inference_mode()
-    def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
-        """
-        Naive autoregressive streaming inference.
-        To make it super simple, let's assume:
-        - batch size is 1
-        - ids and the yielded tokens are simple Python lists and ints
-        """
-        assert isinstance(tokens, list)
-        device = self.get_device()
-        rng = None
-        if temperature > 0:
-            rng = torch.Generator(device=device)
-            rng.manual_seed(seed)
-        ids = torch.tensor([tokens], dtype=torch.long, device=device) # add batch dim
-        for _ in range(max_tokens):
-            logits = self.forward(ids) # (B, T, vocab_size)
-            logits = logits[:, -1, :] # (B, vocab_size)
-            if top_k is not None and top_k > 0:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float('Inf')
-            if temperature > 0:
-                logits = logits / temperature
-                probs = F.softmax(logits, dim=-1)
-                next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
-            else:
-                next_ids = torch.argmax(logits, dim=-1, keepdim=True)
-            ids = torch.cat((ids, next_ids), dim=1)
-            token = next_ids.item()
-            yield token

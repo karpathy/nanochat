@@ -14,7 +14,6 @@ directory and select it, e.g. NANOCHAT_DATASET=my_remix. This opens the data to
 experimentation while everything downstream stays fixed.
 
 This file contains utilities for:
-- resolving a dataset name to its directory
 - materializing and verifying the canonical dataset (quiet when already cached)
 - iterating over the parquet files and yielding documents
 
@@ -22,20 +21,20 @@ For details of how the canonical dataset was prepared, see dev/repackage_data_re
 """
 
 import os
-import argparse
+import json
 import time
 from functools import partial
 from multiprocessing import Pool
 
-import requests
+import shutil
+import urllib.request
 import pyarrow.parquet as pq
 
-from nanochat.common import get_base_dir
+from nanochat.common import get_base_dir, get_dataset_dir, CANONICAL_DATASET
 
 # -----------------------------------------------------------------------------
 # The canonical dataset: hosted, downloaded on demand
 
-CANONICAL_DATASET = "climbmix"
 BASE_URL = "https://huggingface.co/datasets/karpathy/climbmix-400b-shuffle/resolve/main"
 MAX_SHARD = 6542 # the last datashard is shard_06542.parquet, and it is the val split
 MIN_SHARD_BYTES = 1024 * 1024 # a healthy shard is ~100MB, anything under 1MB is corrupt
@@ -43,15 +42,6 @@ index_to_filename = lambda index: f"shard_{index:05d}.parquet" # format of the f
 
 # -----------------------------------------------------------------------------
 # These functions are useful utilities to other modules, can/should be imported
-
-def get_dataset_name():
-    """The active dataset name: $NANOCHAT_DATASET, defaulting to the canonical dataset."""
-    return os.environ.get("NANOCHAT_DATASET", CANONICAL_DATASET)
-
-def get_dataset_dir(name=None):
-    """Resolve a dataset name to its directory in the shared store."""
-    name = get_dataset_name() if name is None else name
-    return os.path.join(get_base_dir(), "datasets", name)
 
 def maybe_notice_legacy_migration(data_dir):
     """
@@ -90,7 +80,7 @@ def list_parquet_files(data_dir=None):
             raise FileNotFoundError(f"Dataset found at the pre-refactor location, see the migration notice above")
         raise FileNotFoundError(
             f"Dataset directory not found: {data_dir}\n"
-            f"For the canonical dataset, download shards first, e.g.: python -m nanochat.dataset -n 240\n"
+            f"For the canonical dataset, run: python -m scripts.base_prepare -n 240\n"
             f"For a custom dataset, place parquet shards (with a 'text' column) in that directory.\n"
             f"(the last shard, in sorted filename order, is used as the validation split)"
         )
@@ -142,19 +132,15 @@ def download_single_file(index, data_dir):
     max_attempts = 5
     for attempt in range(1, max_attempts + 1):
         try:
-            response = requests.get(url, stream=True, timeout=30)
-            response.raise_for_status()
             # Write to temporary file first, then move into place atomically
             temp_path = filepath + ".tmp"
-            with open(temp_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024): # 1MB chunks
-                    if chunk:
-                        f.write(chunk)
+            with urllib.request.urlopen(url, timeout=30) as response, open(temp_path, "wb") as f:
+                shutil.copyfileobj(response, f, length=1024 * 1024) # 1MB chunks
             os.rename(temp_path, filepath)
             print(f"Successfully downloaded {filename}")
             return True
 
-        except (requests.RequestException, IOError) as e:
+        except OSError as e: # URLError/HTTPError, timeouts and disk errors all subclass it
             print(f"Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
             # Clean up any partial files
             for path in [filepath + ".tmp", filepath]:
@@ -175,40 +161,30 @@ def download_single_file(index, data_dir):
     return False
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Materialize/verify a pretraining dataset")
-    parser.add_argument("-d", "--dataset", type=str, default=None, help="Dataset name (default: $NANOCHAT_DATASET or the canonical dataset)")
-    parser.add_argument("-n", "--num-files", type=int, default=-1, help="Number of canonical train shards to ensure on disk (-1 = all)")
-    parser.add_argument("-w", "--num-workers", type=int, default=4, help="Number of parallel download workers (default: 4)")
-    args = parser.parse_args()
-
-    name = args.dataset if args.dataset is not None else get_dataset_name()
+def materialize(name, num_train_shards, num_workers=8):
+    """
+    Ensure a dataset is on disk. The canonical dataset: download the first n train shards
+    and the pinned val shard (the last shard of the full dataset), skipping what is there.
+    Any other name is user-provided: just verify it satisfies the contract.
+    """
     data_dir = get_dataset_dir(name)
-
     if name != CANONICAL_DATASET:
-        # user-provided dataset: nothing to download, just verify it satisfies the contract
         parquet_paths = list_parquet_files(data_dir) # raises with instructions if missing
         assert len(parquet_paths) >= 2, f"Dataset {name} needs at least 2 parquet files (train + val), found {len(parquet_paths)}"
         print_summary(name, data_dir)
-        raise SystemExit(0)
-
-    # The canonical dataset: ensure the requested train shards + the val shard are on disk.
-    # The user asks for the first n train shards; the val shard is pinned to be the last shard.
+        return
     if maybe_notice_legacy_migration(data_dir):
         raise SystemExit(1) # abort so the user can mv their download instead of re-downloading
     os.makedirs(data_dir, exist_ok=True)
-    num_train_shards = MAX_SHARD if args.num_files == -1 else min(args.num_files, MAX_SHARD)
+    num_train_shards = min(num_train_shards, MAX_SHARD)
     ids_needed = list(range(num_train_shards))
     ids_needed.append(MAX_SHARD) # the val shard
     ids_missing = [i for i in ids_needed if not is_valid_shard(os.path.join(data_dir, index_to_filename(i)))]
-
     if ids_missing:
-        print(f"Downloading {len(ids_missing)} shards using {args.num_workers} workers...")
-        with Pool(processes=args.num_workers) as pool:
+        print(f"Downloading {len(ids_missing)} shards using {num_workers} workers...")
+        with Pool(processes=num_workers) as pool:
             results = pool.map(partial(download_single_file, data_dir=data_dir), ids_missing)
-        successful = sum(1 for success in results if success)
-        print(f"Downloaded {successful}/{len(ids_missing)} shards")
-        if successful < len(ids_missing):
-            raise SystemExit(1) # fail loudly so a driving script (e.g. runs/run.sh) stops
-
+        num_ok = sum(1 for success in results if success)
+        print(f"Downloaded {num_ok}/{len(ids_missing)} shards")
+        assert num_ok == len(ids_missing), "some shards failed to download; re-run to retry"
     print_summary(name, data_dir)

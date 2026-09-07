@@ -7,13 +7,13 @@ set -e -o pipefail
 # run; the `params`/`summary` records in each base_train.log carry the details).
 #
 # Usage:
-#   bash runs/scaling_laws.sh <experiment_name>
+#   bash dev/scaling_laws.sh <experiment_name>
 # Example:
-#   bash runs/scaling_laws.sh scaling_jul4
+#   bash dev/scaling_laws.sh scaling_jul4
 # The grid is env-overridable:
-#   FLOPS_BUDGETS="1e18 1e19" DEPTHS="10 14 18" bash runs/scaling_laws.sh scaling_jul4
+#   FLOPS_BUDGETS="1e18 1e19" DEPTHS="10 14 18" bash dev/scaling_laws.sh scaling_jul4
 
-EXPERIMENT_NAME="${1:?usage: bash runs/scaling_laws.sh <experiment_name>}"
+EXPERIMENT_NAME="${1:?usage: bash dev/scaling_laws.sh <experiment_name>}"
 export NANOCHAT_EXPERIMENT="$EXPERIMENT_NAME"
 
 export OMP_NUM_THREADS=1
@@ -31,12 +31,9 @@ WANDB_RUN="${WANDB_RUN:-dummy}"
 
 source .venv/bin/activate
 
-# experiment identity, dataset, tokenizer (idempotent, shared with runs/run.sh conventions)
-python -m nanochat.experiment
-python -m nanochat.dataset -n "$NUM_SHARDS"
-if [ ! -f "$EXPERIMENT_DIR/tokenizer/tokenizer.pkl" ]; then
-    python -m scripts.tok_train --max-chars=2000000000 --vocab-size=32768 2>&1 | tee "$EXPERIMENT_DIR/tok_train.log"
-fi
+# experiment identity and data (idempotent, shared with run.sh conventions)
+python -m harness.experiment init
+python -m scripts.base_prepare -n "$NUM_SHARDS"
 
 # the grid: one model per (flops budget, depth), tagged e.g. flops1e18_d12.
 # a cell is complete when its log contains a `summary` record, so re-running
@@ -58,13 +55,11 @@ for flops in $FLOPS_BUDGETS; do
             --target-param-data-ratio=-1 \
             --model-tag="$TAG" \
             --eval-tokens="$EVAL_TOKENS" \
-            --core-metric-every=999999 \
             --core-metric-max-per-task=-1 \
-            --sample-every=-1 \
             --run="$RUN_NAME" \
             2>&1 | tee "$LOG"
     done
 done
 
 # aggregate all runs into the experiment's curve.log
-python -m scripts.curve
+python -m harness.experiment curve

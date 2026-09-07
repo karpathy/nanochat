@@ -37,30 +37,20 @@ def adamw_step_fused(
     Fused AdamW step: weight_decay -> momentum_update -> bias_correction -> param_update
     All in one compiled graph to eliminate Python overhead between ops.
     The 0-D CPU tensors avoid recompilation when hyperparameter values change.
+    All params and optimizer state are fp32 (asserted in MuonAdamW.__init__).
     """
-    # Some params (wte, value_embeds) are stored in bf16, so do the math in fp32 and
-    # cast back at the end. MPS errors on mixed-dtype ops (CUDA promotes them), and
-    # scalar arithmetic like 1 - beta2 loses all precision in bf16. compile fuses the casts.
-    p32 = p.float()
-    exp_avg32 = exp_avg.float()
-    exp_avg_sq32 = exp_avg_sq.float()
-    grad32 = grad.float()
     # Weight decay (decoupled, applied before the update)
-    p32.mul_(1 - lr_t * wd_t)
+    p.mul_(1 - lr_t * wd_t)
     # Update running averages (lerp_ is cleaner and fuses well)
-    exp_avg32.lerp_(grad32, 1 - beta1_t)
-    exp_avg_sq32.lerp_(grad32.square(), 1 - beta2_t)
+    exp_avg.lerp_(grad, 1 - beta1_t)
+    exp_avg_sq.lerp_(grad.square(), 1 - beta2_t)
     # Bias corrections
     bias1 = 1 - beta1_t ** step_t
     bias2 = 1 - beta2_t ** step_t
     # Compute update and apply
-    denom = (exp_avg_sq32 / bias2).sqrt() + eps_t
+    denom = (exp_avg_sq / bias2).sqrt() + eps_t
     step_size = lr_t / bias1
-    p32.add_(exp_avg32 / denom, alpha=-step_size)
-    # Write back (no-ops in the common case where everything is already fp32)
-    p.copy_(p32)
-    exp_avg.copy_(exp_avg32)
-    exp_avg_sq.copy_(exp_avg_sq32)
+    p.add_(exp_avg / denom, alpha=-step_size)
 
 # -----------------------------------------------------------------------------
 """
@@ -234,6 +224,10 @@ class MuonAdamW(torch.optim.Optimizer):
     """
     def __init__(self, param_groups: list[dict]):
         super().__init__(param_groups, defaults={})
+        # The fused kernels do their math directly in the storage dtype
+        for group in self.param_groups:
+            for p in group['params']:
+                assert p.dtype == torch.float32, f"MuonAdamW expects fp32 params, got {p.dtype}"
         # 0-D CPU tensors to avoid torch.compile recompilation when values change
         self._adamw_step_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
         self._adamw_lr_t = torch.tensor(0.0, dtype=torch.float32, device="cpu")
