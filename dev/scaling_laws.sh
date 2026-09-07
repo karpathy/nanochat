@@ -55,7 +55,6 @@ for flops in $FLOPS_BUDGETS; do
             --target-param-data-ratio=-1 \
             --model-tag="$TAG" \
             --eval-tokens="$EVAL_TOKENS" \
-            --core-metric-max-per-task=-1 \
             --run="$RUN_NAME" \
             2>&1 | tee "$LOG"
     done

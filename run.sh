@@ -77,7 +77,8 @@ stopped() { [ -f "$EXPERIMENT_DIR/stop" ]; }
 skipped() { [ -f "$EXPERIMENT_DIR/skip_d$1" ] || [ -f "$EXPERIMENT_DIR/skip_$2" ] || [ -f "$EXPERIMENT_DIR/skip_d$1_$2" ]; }
 # gpus to train on
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
-# explicit number of training steps, for debugging (-1 = compute optimal horizon)
+# explicit number of training steps, for debugging (-1 = compute optimal horizon). base_train
+# then also needs a batch size, e.g. NUM_ITERATIONS=20 BASE_TRAIN_FLAGS="--total-batch-size=524288"
 NUM_ITERATIONS="${NUM_ITERATIONS:--1}"
 # extra flags passed verbatim to base_train, e.g. a single d24 on fewer tokens with fp8 matmuls:
 #   DEPTHS="24" BASE_TRAIN_FLAGS="--target-param-data-ratio=8 --fp8" bash run.sh fast_d24

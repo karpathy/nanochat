@@ -51,7 +51,7 @@ parser.add_argument("--num-shards", type=int, default=-1, help="train on the fir
 parser.add_argument("--short-seq-len", type=int, default=512, help="attention window of the S layers (absolute, independent of --max-seq-len)")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=short (e.g. 'SSL')")
 # Training horizon (only one used, in order of precedence)
-parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
+parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps, needs --total-batch-size too (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
 parser.add_argument("--target-param-data-ratio", type=float, default=12, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
 # Optimization
@@ -188,21 +188,34 @@ num_params = param_counts['total']
 num_flops_per_token = model.estimate_flops()
 print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
-# 1) Use scaling laws to determine the optimal training horizon in tokens
-# The compute-optimal models satisfy the Tokens:Params ratio of --target-param-data-ratio (derived experimentally via scaling laws analysis).
-# We've already initialized the model so we have Params. Optimal Tokens is now simply target-param-data-ratio * Params
+# 1) The training horizon in tokens. Everything below (batch size, learning rates, weight decay)
+# scales with it, so it is resolved first, from whichever budget was given (in order of precedence):
+# an explicit number of iterations, a FLOPs budget (scaling laws), or the data:param ratio (the
+# common case: compute-optimal models satisfy Tokens = --target-param-data-ratio * Params).
 def get_scaling_params(m):
     # As for which params to use exactly, transformer matrices + lm_head gives cleanest scaling laws (see dev/LOG.md Jan 27, 2026)
     params_counts = m.num_scaling_params()
     scaling_params = params_counts['transformer_matrices'] + params_counts['lm_head']
     return scaling_params
 num_scaling_params = get_scaling_params(model)
-target_tokens = int(args.target_param_data_ratio * num_scaling_params) # optimal tokens for the model we are about to train
+assert args.num_iterations > 0 or args.target_flops > 0 or args.target_param_data_ratio > 0, "No training horizon specified"
+if args.num_iterations > 0:
+    assert args.total_batch_size > 0, "--num-iterations needs an explicit --total-batch-size (the auto batch size depends on the horizon)"
+    target_tokens = args.num_iterations * args.total_batch_size
+    print0(f"Training horizon from user-provided iterations: {target_tokens:,} tokens")
+elif args.target_flops > 0:
+    target_tokens = int(args.target_flops / num_flops_per_token)
+    print0(f"Training horizon from target FLOPs: {target_tokens:,} tokens")
+else:
+    target_tokens = int(args.target_param_data_ratio * num_scaling_params)
+    print0(f"Training horizon from target data:param ratio: {target_tokens:,} tokens")
 
-# Our reference model is d12, this is where a lot of hyperparameters are tuned and then transfered to higher depths (muP style)
+# Our reference point is d12 at the default data:param ratio: the batch size, learning rates and
+# weight decay were tuned there and are transferred to other depths and horizons (muP style)
+REFERENCE_RATIO = 12 # the data:param ratio of the reference run (not the --target-param-data-ratio of this run)
 d12_ref = GPT(build_config(12), device="meta") # meta device: shapes only, no data, just for param counts
-D_REF = args.target_param_data_ratio * get_scaling_params(d12_ref) # compute-optimal d12 training horizon in tokens (measured empirically)
-B_REF = 2**19 # optimal batch size at d12 ~= 524,288 tokens (measured empirically)
+D_REF = REFERENCE_RATIO * get_scaling_params(d12_ref) # the reference training horizon in tokens
+B_REF = 2**19 # optimal batch size at the reference point ~= 524,288 tokens (measured empirically)
 
 # 2) Now that we have the token horizon, we can calculate the optimal batch size
 # We follow the Power Lines paper (Bopt ∝ D^0.383), ref: https://arxiv.org/abs/2505.13738
@@ -268,25 +281,12 @@ build_val_loader = lambda: data_loader_batches(args.device_batch_size, args.max_
 x, y, dataloader_row = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
-# Calculate the number of iterations we will train for and set up the various schedulers
+# The number of iterations follows from the horizon and the batch size; then the schedulers
 
-# num_iterations: either it is given, or from target flops, or from target data:param ratio (in that order)
-assert args.num_iterations > 0 or args.target_param_data_ratio > 0 or args.target_flops > 0
-if args.num_iterations > 0:
-    # Override num_iterations to a specific value if given
-    num_iterations = args.num_iterations
-    print0(f"Using user-provided number of iterations: {num_iterations:,}")
-elif args.target_flops > 0:
-    # Calculate the number of iterations from the target flops (used in scaling laws analysis, e.g. dev/scaling_laws.sh)
-    num_iterations = round(args.target_flops / (num_flops_per_token * total_batch_size))
-    print0(f"Calculated number of iterations from target FLOPs: {num_iterations:,}")
-elif args.target_param_data_ratio > 0:
-    # Calculate the number of iterations from the target param data ratio (the most common use case)
-    num_iterations = target_tokens // total_batch_size
-    print0(f"Calculated number of iterations from target data:param ratio: {num_iterations:,}")
-else:
-    raise ValueError("No training horizon specified")
+num_iterations = args.num_iterations if args.num_iterations > 0 else target_tokens // total_batch_size
+assert num_iterations > 0, f"the training horizon ({target_tokens:,} tokens) is smaller than one batch ({total_batch_size:,} tokens)"
 total_tokens = total_batch_size * num_iterations # the actual number of tokens we will train for
+print0(f"Number of iterations: {num_iterations:,}")
 print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
