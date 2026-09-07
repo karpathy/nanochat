@@ -92,28 +92,6 @@ def test_render_conversation_system_message_merged(tokenizer):
     assert tokenizer.render_conversation(with_system) == tokenizer.render_conversation(without_system)
 
 
-def test_render_conversation_tool_parts(tokenizer):
-    # python tool calls are supervised, python outputs (come from the interpreter) are not
-    conversation = {"messages": [
-        {"role": "user", "content": "add"},
-        {"role": "assistant", "content": [
-            {"type": "text", "text": "sure"},
-            {"type": "python", "text": "1+1"},
-            {"type": "python_output", "text": "2"},
-            {"type": "text", "text": "it is 2"},
-        ]},
-    ]}
-    ids, mask = tokenizer.render_conversation(conversation)
-    python_start = tokenizer.encode_special("<|python_start|>")
-    output_start = tokenizer.encode_special("<|output_start|>")
-    output_end = tokenizer.encode_special("<|output_end|>")
-    # the tool call and its delimiters are supervised
-    assert mask[ids.index(python_start)] == 1
-    # the interpreter output and its delimiters are not
-    start, end = ids.index(output_start), ids.index(output_end)
-    assert all(m == 0 for m in mask[start:end + 1])
-
-
 def test_render_conversation_truncation(tokenizer):
     conversation = {"messages": [
         {"role": "user", "content": "hello " * 100},

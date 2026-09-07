@@ -5,10 +5,10 @@ Repackage a given dataset into simple parquet shards:
 - parquets are written with row group size of 1000
 - shuffle the dataset
 
-This will be uploaded to HuggingFace for hosting.
-The big deal is that our DataLoader will be able to stream
-the data and cache it along the way on disk, decreasing the
-training latency.
+This will be uploaded to HuggingFace for hosting. scripts/base_prepare.py
+downloads these shards (harness/dataset.py has the contract: a directory of
+parquet files with a 'text' column, sorted filenames, the last one is val) and
+packs them into token shards once.
 
 Historical context:
 Originally, nanochat used the FinewebEdu-100B dataset.
@@ -71,7 +71,8 @@ ndocs = len(ds) # total number of documents to process
 print(f"Total number of documents: {ndocs}")
 
 # Repackage into parquet files
-output_dir = f"/home/ubuntu/.cache/nanochat/base_data_{output_dirname}"
+base_dir = os.environ.get("NANOCHAT_BASE_DIR", os.path.expanduser("~/.cache/nanochat"))
+output_dir = os.path.join(base_dir, "datasets", output_dirname) # where base_prepare looks for a dataset
 os.makedirs(output_dir, exist_ok=True)
 
 # Write to parquet files

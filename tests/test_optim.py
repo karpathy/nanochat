@@ -32,10 +32,12 @@ def make_params_and_groups(seed=1337, offset=0.0, targets=None):
     gen = torch.Generator(device=DEVICE).manual_seed(seed)
     def rand(shape):
         base = torch.randn(shape, generator=gen, device=DEVICE) * 0.05
-        return torch.nn.Parameter(base + offset)
+        return (base + offset).requires_grad_()
     params = [rand(ADAMW_SMALL_SHAPE), rand(ADAMW_LARGE_SHAPE)]
     params += [rand(MUON_WIDE_SHAPE) for _ in range(3)]
     params += [rand(MUON_TALL_SHAPE) for _ in range(2)]
+    # note: after MuonAdamW construction, Muon params' .grad are views into the
+    # optimizer's grad stacks - write gradients in place, don't reassign p.grad
     groups = [
         dict(kind="adamw", params=params[0:1], lr=0.02, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0),
         dict(kind="adamw", params=params[1:2], lr=0.02, betas=(0.8, 0.96), eps=1e-10, weight_decay=0.0),
@@ -48,8 +50,8 @@ def make_params_and_groups(seed=1337, offset=0.0, targets=None):
 def test_adamw_matches_torch_reference():
     """Our fused AdamW must agree with torch.optim.AdamW (both decoupled wd)."""
     hypers = dict(lr=0.01, betas=(0.9, 0.95), eps=1e-8, weight_decay=0.1)
-    p_ours = torch.nn.Parameter(torch.randn(64, 32, device=DEVICE))
-    p_ref = torch.nn.Parameter(p_ours.detach().clone())
+    p_ours = torch.randn(64, 32, device=DEVICE).requires_grad_()
+    p_ref = p_ours.detach().clone().requires_grad_()
     opt_ours = MuonAdamW([dict(kind="adamw", params=[p_ours], **hypers)])
     opt_ref = torch.optim.AdamW([p_ref], **hypers)
     for step in range(10):
@@ -70,7 +72,11 @@ def test_determinism():
         for step in range(5):
             gen = torch.Generator(device=DEVICE).manual_seed(step)
             for p in params:
-                p.grad = torch.randn(p.shape, generator=gen, device=DEVICE) * 0.01
+                grad = torch.randn(p.shape, generator=gen, device=DEVICE) * 0.01
+                if p.grad is None:
+                    p.grad = grad
+                else:
+                    p.grad.copy_(grad)
             opt.step()
         results.append([p.detach().clone() for p in params])
     for pa, pb in zip(*results):
@@ -88,7 +94,11 @@ def test_convergence():
     initial = distances()
     for _ in range(50):
         for p, t in zip(params, targets):
-            p.grad = 2 * (p.detach() - t) # gradient of ||p - t||^2
+            grad = 2 * (p.detach() - t) # gradient of ||p - t||^2
+            if p.grad is None:
+                p.grad = grad
+            else:
+                p.grad.copy_(grad)
         opt.step()
     final = distances()
     for i, (d0, d1) in enumerate(zip(initial, final)):
@@ -102,10 +112,10 @@ def test_muon_update_is_orthogonalized():
     should be (near) semi-orthogonal after the polar iteration: its nonzero
     singular values land in a band around 1, rather than being spread out.
     """
-    p = torch.nn.Parameter(torch.zeros(MUON_WIDE_SHAPE, device=DEVICE))
+    p = torch.zeros(MUON_WIDE_SHAPE, device=DEVICE).requires_grad_()
     group = dict(kind="muon", params=[p], lr=1.0, momentum=0.0, ns_steps=5, beta2=1.0, weight_decay=0.0)
     opt = MuonAdamW([group])
-    p.grad = torch.randn(p.shape, generator=torch.Generator(device=DEVICE).manual_seed(0), device=DEVICE)
+    p.grad.copy_(torch.randn(p.shape, generator=torch.Generator(device=DEVICE).manual_seed(0), device=DEVICE))
     opt.step()
     # with lr=1, wd=0: p_new = -update, so the update is just -p
     svals = torch.linalg.svdvals(-p.detach().float())

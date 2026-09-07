@@ -6,8 +6,11 @@ import torch
 import torch.distributed as dist
 
 @torch.no_grad()
-def evaluate_bpb(model, batches, steps, token_bytes):
+def evaluate_bpb(model_fn, batches, steps, token_bytes):
     """
+    model_fn is any callable(x, y, loss_reduction=...) returning the loss - e.g. a
+    GPT shell, or a compiled forward closure from a training script.
+
     Instead of the naive 'mean loss', this function returns the bits per byte (bpb),
     which is a tokenization vocab size-independent metric, meaning you are still comparing
     apples:apples if you change the vocab size. The way this works is that instead of just
@@ -25,12 +28,13 @@ def evaluate_bpb(model, batches, steps, token_bytes):
     each token id, or 0 if the token is to not be counted (e.g. special tokens).
     """
     # record the losses
-    total_nats = torch.tensor(0.0, dtype=torch.float32, device=model.get_device())
-    total_bytes = torch.tensor(0, dtype=torch.int64, device=model.get_device())
+    device = token_bytes.device
+    total_nats = torch.tensor(0.0, dtype=torch.float32, device=device)
+    total_bytes = torch.tensor(0, dtype=torch.int64, device=device)
     batch_iter = iter(batches)
     for _ in range(steps):
         x, y = next(batch_iter)
-        loss2d = model(x, y, loss_reduction='none') # (B, T)
+        loss2d = model_fn(x, y, loss_reduction='none') # (B, T)
         loss2d = loss2d.view(-1) # flatten
         y = y.view(-1) # flatten
         if (y.int() < 0).any(): # mps does not currently have kernel for < 0 for int64, only int32

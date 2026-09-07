@@ -4,6 +4,7 @@ BPE Tokenizer in the style of GPT-4: train with rustbpe, inference with tiktoken
 
 import os
 import copy
+import zlib
 from functools import lru_cache
 
 SPECIAL_TOKENS = [
@@ -14,10 +15,6 @@ SPECIAL_TOKENS = [
     "<|user_end|>",
     "<|assistant_start|>", # assistant messages
     "<|assistant_end|>",
-    "<|python_start|>", # assistant invokes python REPL tool
-    "<|python_end|>",
-    "<|output_start|>", # python REPL outputs back to assistant
-    "<|output_end|>",
 ]
 
 # NOTE: this split pattern deviates from GPT-4 in that we use \p{N}{1,2} instead of \p{N}{1,3}
@@ -67,24 +64,11 @@ class RustBPETokenizer:
             enc = pickle.load(f)
         return cls(enc, "<|bos|>")
 
-    @classmethod
-    def from_pretrained(cls, tiktoken_name):
-        # https://github.com/openai/tiktoken/blob/eedc8563/tiktoken_ext/openai_public.py
-        enc = tiktoken.get_encoding(tiktoken_name)
-        # tiktoken calls the special document delimiter token "<|endoftext|>"
-        # yes this is confusing because this token is almost always PREPENDED to the beginning of the document
-        # it most often is used to signal the start of a new sequence to the LLM during inference etc.
-        # so in nanoChat we always use "<|bos|>" short for "beginning of sequence", but historically it is often called "<|endoftext|>".
-        return cls(enc, "<|endoftext|>")
-
     def get_vocab_size(self):
         return self.enc.n_vocab
 
     def get_special_tokens(self):
         return self.enc.special_tokens_set
-
-    def id_to_token(self, id):
-        return self.enc.decode([id])
 
     @lru_cache(maxsize=32)
     def encode_special(self, text):
@@ -169,53 +153,22 @@ class RustBPETokenizer:
         bos = self.get_bos_token_id()
         user_start, user_end = self.encode_special("<|user_start|>"), self.encode_special("<|user_end|>")
         assistant_start, assistant_end = self.encode_special("<|assistant_start|>"), self.encode_special("<|assistant_end|>")
-        python_start, python_end = self.encode_special("<|python_start|>"), self.encode_special("<|python_end|>")
-        output_start, output_end = self.encode_special("<|output_start|>"), self.encode_special("<|output_end|>")
 
-        # now we can tokenize the conversation
+        # now we can tokenize the conversation: only the assistant's tokens (and its end token) are supervised
         add_tokens(bos, 0)
         for i, message in enumerate(messages):
-
-            # some sanity checking here around assumptions, to prevent footguns
             must_be_from = "user" if i % 2 == 0 else "assistant"
             assert message["role"] == must_be_from, f"Message {i} is from {message['role']} but should be from {must_be_from}"
-
-            # content can be either a simple string or a list of parts (e.g. containing tool calls)
             content = message["content"]
-
+            assert isinstance(content, str), "Message contents are expected to be strings"
+            value_ids = self.encode(content)
             if message["role"] == "user":
-                assert isinstance(content, str), "User messages are simply expected to be strings"
-                value_ids = self.encode(content)
                 add_tokens(user_start, 0)
                 add_tokens(value_ids, 0)
                 add_tokens(user_end, 0)
-            elif message["role"] == "assistant":
+            else:
                 add_tokens(assistant_start, 0)
-                if isinstance(content, str):
-                    # simple string => simply add the tokens
-                    value_ids = self.encode(content)
-                    add_tokens(value_ids, 1)
-                elif isinstance(content, list):
-                    for part in content:
-                        value_ids = self.encode(part["text"])
-                        if part["type"] == "text":
-                            # string part => simply add the tokens
-                            add_tokens(value_ids, 1)
-                        elif part["type"] == "python":
-                            # python tool call => add the tokens inside <|python_start|> and <|python_end|>
-                            add_tokens(python_start, 1)
-                            add_tokens(value_ids, 1)
-                            add_tokens(python_end, 1)
-                        elif part["type"] == "python_output":
-                            # python output => add the tokens inside <|output_start|> and <|output_end|>
-                            # none of these tokens are supervised because the tokens come from Python at test time
-                            add_tokens(output_start, 0)
-                            add_tokens(value_ids, 0)
-                            add_tokens(output_end, 0)
-                        else:
-                            raise ValueError(f"Unknown part type: {part['type']}")
-                else:
-                    raise ValueError(f"Unknown content type: {type(content)}")
+                add_tokens(value_ids, 1)
                 add_tokens(assistant_end, 1)
 
         # truncate to max_tokens tokens MAX (helps prevent OOMs)
@@ -223,26 +176,11 @@ class RustBPETokenizer:
         mask = mask[:max_tokens]
         return ids, mask
 
-    def visualize_tokenization(self, ids, mask, with_token_id=False):
-        """Small helper function useful in debugging: visualize the tokenization of render_conversation"""
-        RED = '\033[91m'
-        GREEN = '\033[92m'
-        RESET = '\033[0m'
-        GRAY = '\033[90m'
-        tokens = []
-        for i, (token_id, mask_val) in enumerate(zip(ids, mask)):
-            token_str = self.decode([token_id])
-            color = GREEN if mask_val == 1 else RED
-            tokens.append(f"{color}{token_str}{RESET}")
-            if with_token_id:
-                tokens.append(f"{GRAY}({token_id}){RESET}")
-        return '|'.join(tokens)
-
     def render_for_completion(self, conversation):
         """
-        Used during Reinforcement Learning. In that setting, we want to
-        render the conversation priming the Assistant for a completion.
-        Unlike the Chat SFT case, we don't need to return the mask.
+        Render a conversation up to and including the Assistant's start token, i.e.
+        primed for the Assistant's reply (the multiple-choice eval reads the logits
+        at that position). The final Assistant message is dropped; no mask is needed.
         """
         # We have some surgery to do: we need to pop the last message (of the Assistant)
         conversation = copy.deepcopy(conversation) # avoid mutating the original
@@ -261,19 +199,32 @@ class RustBPETokenizer:
 # -----------------------------------------------------------------------------
 # nanochat-specific convenience functions
 
+def get_tokenizer_dir():
+    """The tokenizer belongs to the dataset: scripts/base_prepare.py trains it there, and the
+    packed token shards next to it are meaningless without it."""
+    from nanochat.common import get_dataset_dir
+    tokenizer_dir = os.path.join(get_dataset_dir(), "tokenizer")
+    return tokenizer_dir
+
+def tokenizer_id(tokenizer_dir):
+    """A fingerprint of a saved tokenizer (CRC32 of tokenizer.pkl). base_prepare.py records it
+    in every shard packed with that tokenizer and the loader checks it, so the data on
+    disk and the tokenizer that reads it can never silently disagree."""
+    with open(os.path.join(tokenizer_dir, "tokenizer.pkl"), "rb") as f:
+        crc = zlib.crc32(f.read())
+    return crc & 0x7FFFFFFF # fits an int32 header field
+
 def get_tokenizer():
-    from nanochat.common import get_base_dir
-    base_dir = get_base_dir()
-    tokenizer_dir = os.path.join(base_dir, "tokenizer")
+    tokenizer_dir = get_tokenizer_dir()
+    tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
+    assert os.path.exists(tokenizer_path), f"No tokenizer at {tokenizer_path}. Run: python -m scripts.base_prepare (NANOCHAT_DATASET selects the dataset)"
     return RustBPETokenizer.from_directory(tokenizer_dir)
 
 def get_token_bytes(device="cpu"):
     import torch
-    from nanochat.common import get_base_dir
-    base_dir = get_base_dir()
-    tokenizer_dir = os.path.join(base_dir, "tokenizer")
+    tokenizer_dir = get_tokenizer_dir()
     token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
-    assert os.path.exists(token_bytes_path), f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"
+    assert os.path.exists(token_bytes_path), f"Token bytes not found at {token_bytes_path}? It gets written by scripts/base_prepare.py"
     with open(token_bytes_path, "rb") as f:
         token_bytes = torch.load(f, map_location=device)
     return token_bytes

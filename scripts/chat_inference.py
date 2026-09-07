@@ -2,16 +2,16 @@
 New and upgraded chat mode because a lot of the code has changed since the last one.
 
 Intended to be run single GPU only atm:
-python -m scripts.chat_cli
+python -m scripts.chat_inference
 """
 import argparse
 import torch
-from nanochat.common import compute_init, autodetect_device_type
+from harness.runtime import compute_init, autodetect_device_type
 from nanochat.engine import Engine
-from nanochat.checkpoint_manager import load_model
+from harness.checkpoint import load_model
 
 parser = argparse.ArgumentParser(description='Chat with the model')
-parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|rl")
+parser.add_argument('-i', '--source', type=str, default="chat", help="Source of the model: base|chat")
 parser.add_argument('-g', '--model-tag', type=str, default=None, help='Model tag to load')
 parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
 parser.add_argument('-p', '--prompt', type=str, default='', help='Prompt the model, get a single response back')
@@ -24,7 +24,7 @@ args = parser.parse_args()
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
-model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
+model, tokenizer, meta = load_model(args.source, device, model_tag=args.model_tag, step=args.step)
 
 # Special tokens for the chat state machine
 bos = tokenizer.get_bos_token_id()
@@ -83,7 +83,7 @@ while True:
     }
     response_tokens = []
     print("\nAssistant: ", end="", flush=True)
-    for token_column, token_masks in engine.generate(conversation_tokens, **generate_kwargs):
+    for token_column in engine.generate(conversation_tokens, **generate_kwargs):
         token = token_column[0] # pop the batch dimension (num_samples=1)
         response_tokens.append(token)
         token_text = tokenizer.decode([token])

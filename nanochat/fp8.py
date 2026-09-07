@@ -1,9 +1,14 @@
 """Minimal FP8 training for nanochat — tensorwise dynamic scaling only.
 
-Drop-in replacement for torchao's Float8Linear (~2000 lines) with ~150 lines.
-We only need the "tensorwise" recipe (one scalar scale per tensor), not the full
-generality of torchao (rowwise scaling, FSDP float8 all-gather, DTensor, tensor
-subclass dispatch tables, etc.)
+The public API is a single function, fp8_matmul(x, w): a drop-in replacement for
+gpt.bf16_matmul that runs the three GEMMs of a Linear layer in FP8. The training
+script threads it into the functional forward pass:
+
+    forward(params, x, ..., matmul=fp8_matmul)   # FP8 training
+    forward(params, x, ...)                      # BF16 (default), e.g. for evals
+
+This replaces ~2000 lines of torchao (Float8Linear, tensor subclass dispatch,
+module tree surgery) with ~150 lines around PyTorch built-ins.
 
 How FP8 training works
 ======================
@@ -37,29 +42,25 @@ The cuBLAS FP8 kernel requires specific memory layouts:
 If B is obtained by transposing a contiguous tensor (e.g. weight.t()), it is
 already column-major — no copy needed. Otherwise we use _to_col_major().
 
+Also note the dimension requirements: all matmul dims must be divisible by 16,
+and very small matmuls aren't worth it. The model's ve_gate matmul (12 input
+channels) stays in bf16 for this reason; the forward pass hardcodes that.
+
 How this differs from torchao's approach
 ========================================
-torchao uses a "tensor subclass" architecture: Float8TrainingTensor is a subclass
-of torch.Tensor that bundles FP8 data + scale + metadata. It implements
-__torch_dispatch__ with a dispatch table that intercepts every aten op (mm, t,
-reshape, clone, ...) and handles it in FP8-aware fashion. When you call
-  output = input @ weight.T
-the @ operator dispatches to aten.mm, which gets intercepted and routed to
-torch._scaled_mm behind the scenes. This is ~2000 lines of code because you need
-a handler for every tensor operation that might touch an FP8 tensor.
-
-We take a simpler approach: a single autograd.Function (_Float8Matmul) that takes
+torchao uses a "tensor subclass" architecture: Float8TrainingTensor bundles FP8
+data + scale + metadata and intercepts every aten op via __torch_dispatch__.
+We instead use a single autograd.Function (_Float8Matmul) that takes
 full-precision inputs, quantizes to FP8 internally, calls _scaled_mm, and returns
 full-precision outputs. Marked @allow_in_graph so torch.compile treats it as one
 opaque node rather than trying to trace inside.
 
 The trade-off is in how torch.compile sees the two approaches:
-  - torchao: compile decomposes the tensor subclass (via __tensor_flatten__) and
-    sees every individual op (amax, scale, cast, _scaled_mm) as separate graph
-    nodes. Inductor can fuse these with surrounding operations (e.g. fuse the
-    amax computation with the preceding layer's activation function).
+  - torchao: compile decomposes the tensor subclass and sees every individual op
+    (amax, scale, cast, _scaled_mm) as separate graph nodes that Inductor can fuse
+    with surrounding operations.
   - ours: compile sees a single opaque call. It can optimize everything around
-    the FP8 linear (attention, norms, etc.) but cannot fuse across the boundary.
+    the FP8 matmul (attention, norms, etc.) but cannot fuse across the boundary.
 
 Both call the exact same cuBLAS _scaled_mm kernel — the GPU matmul is identical.
 The difference is only in the "glue" ops (amax, scale, cast) which are tiny
@@ -70,7 +71,6 @@ generates a different graph. Numerics are bitwise identical in eager mode.
 """
 
 import torch
-import torch.nn as nn
 
 from nanochat.common import COMPUTE_DTYPE
 
@@ -192,75 +192,18 @@ class _Float8Matmul(torch.autograd.Function):
         return grad_input, grad_weight
 
 
-class Float8Linear(nn.Linear):
-    """Drop-in nn.Linear replacement that does FP8 compute.
+def fp8_matmul(x, w):
+    """Drop-in replacement for gpt.bf16_matmul that computes x @ w.T in FP8.
 
-    Weights and biases remain in their original precision (e.g. fp32/bf16).
-    Only the matmul is performed in FP8 via the _Float8Matmul autograd function.
+    The weight stays in its original precision (fp32 master weights); only the
+    matmuls run in FP8 via the _Float8Matmul autograd function above.
     """
-
-    def forward(self, input):
-        # Cast input to COMPUTE_DTYPE (typically bf16) since _scaled_mm expects
-        # reduced precision input, and we no longer rely on autocast to do this.
-        input = input.to(COMPUTE_DTYPE)
-        # _scaled_mm only works on 2D tensors, so flatten batch dimensions
-        orig_shape = input.shape
-        input_2d = input.reshape(-1, orig_shape[-1])
-        output = _Float8Matmul.apply(input_2d, self.weight)
-        output = output.reshape(*orig_shape[:-1], output.shape[-1])
-        if self.bias is not None:
-            output = output + self.bias.to(output.dtype)
-        return output
-
-    @classmethod
-    def from_float(cls, mod):
-        """Create Float8Linear from nn.Linear, sharing the same weight and bias.
-
-        Uses meta device to avoid allocating a temporary weight tensor — we
-        create the module shell on meta (shapes/dtypes only, no memory), then
-        point .weight and .bias to the original module's parameters.
-        """
-        with torch.device("meta"):
-            new_mod = cls(mod.in_features, mod.out_features, bias=False)
-        new_mod.weight = mod.weight
-        new_mod.bias = mod.bias
-        return new_mod
-
-
-class Float8LinearConfig:
-    """Minimal config matching torchao's API. Only tensorwise recipe is supported."""
-
-    @staticmethod
-    def from_recipe_name(recipe_name):
-        if recipe_name != "tensorwise":
-            raise ValueError(
-                f"Only 'tensorwise' recipe is supported, got '{recipe_name}'. "
-                f"Rowwise/axiswise recipes require the full torchao library."
-            )
-        return Float8LinearConfig()
-
-
-def convert_to_float8_training(module, *, config=None, module_filter_fn=None):
-    """Replace nn.Linear layers with Float8Linear throughout a module.
-
-    Walks the module tree in post-order (children before parents) and swaps
-    each nn.Linear that passes the optional filter. The new Float8Linear shares
-    the original weight and bias tensors — no copies, no extra memory.
-
-    Args:
-        module: Root module to convert.
-        config: Float8LinearConfig (accepted for API compat, only tensorwise supported).
-        module_filter_fn: Optional filter(module, fqn) -> bool. Only matching Linears
-            are converted. Common use: skip layers with dims not divisible by 16
-            (hardware requirement for FP8 matmuls on H100).
-    """
-    def _convert(mod, prefix=""):
-        for name, child in mod.named_children():
-            fqn = f"{prefix}.{name}" if prefix else name
-            _convert(child, fqn)
-            if isinstance(child, nn.Linear) and not isinstance(child, Float8Linear):
-                if module_filter_fn is None or module_filter_fn(child, fqn):
-                    setattr(mod, name, Float8Linear.from_float(child))
-
-    _convert(module)
-    return module
+    # Cast input to COMPUTE_DTYPE (typically bf16) since _scaled_mm expects
+    # reduced precision input, and we no longer rely on autocast to do this.
+    x = x.to(COMPUTE_DTYPE)
+    # _scaled_mm only works on 2D tensors, so flatten batch dimensions
+    orig_shape = x.shape
+    x_2d = x.reshape(-1, orig_shape[-1])
+    out_2d = _Float8Matmul.apply(x_2d, w)
+    out = out_2d.reshape(*orig_shape[:-1], out_2d.shape[-1])
+    return out

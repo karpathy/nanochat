@@ -2,6 +2,28 @@
 
 A running summary documenting some experiments and findings. Started ~Jan 7 2026.
 
+## 2026-08-22: fp32 embeddings (merged), bf16 storage validated loss-neutral
+
+wte/value_embeds were bf16 with bf16 Adam moments and no fp32 master, so sub-half-ulp updates were discarded, freezing most embedding coords during the LR warmdown (modded-nanogpt guards this with fp32 state + a mantissa side-buffer; we'd ported only the storage). Full d12-d28 ladder vs ve_n01: loss deltas alternate sign within noise at every rung, so the swallowed updates were pure noise. Merged fp32 anyway for description length (~0.3% wall clock at d20+): all params and optimizer state fp32, bf16 only at matmul boundaries, which also deleted the fp32 round-trip inside adamw_step_fused. Insight: a mechanistically real precision pathology still needs the end-to-end A/B — frozen coordinates aren't lost signal if all they carried was noise.
+
+---
+
+## 2026-08-02: Functional rewrite of gpt.py + optim.py (merged)
+
+Removed nn.Module entirely: `init_params()`/`init_buffers()` return flat name -> tensor dicts, `forward(params, buffers, idx, ...)` is a pure function, and a thin GPT shell keeps the downstream API (checkpoint keys unchanged). FP8 is now just a `matmul=fp8_matmul` argument, and in MuonAdamW each Muon group's matrices live permanently in one stacked (K, m, n) tensor with params/grads as views into it, so the optimizer step is in-place reduce_scatter -> fused update -> in-place all_gather with no per-step stack/copy. Verified bitwise-identical init/logits/grads at d12, and a full d12 A/B is statistical twins with master at parity wall clock; -132 LOC, ~0.5 GiB less peak VRAM. Gotchas for the future: use F.embedding (not `wte[idx]`, whose scatter-add backward cost ~5%/step), and Optimizer.load_state_dict replaces the param_group dicts, so access groups by index.
+
+---
+
+## 2026-08-02: Softcap on the relu^2 MLP activation, from Kimi K3 (negative)
+
+Tried `cap * tanh(x / cap)` after relu^2 with cap=100 (K3's motivation: bound activation outliers for low-precision training). Slightly worse results, skipping given that we don't currently quantize for inference anyway, but when we do this might be worth revisiting.
+
+---
+
+## 2026-08-02: Per-head Muon, from Kimi K3 (negative)
+
+K3 orthogonalizes q/k/v Muon updates per attention head instead of per matrix. Tried it: neutral at d12-d16, then ~1.3% compute cost at d20/d24. Likely our MuonEq row equilibration already flattens the per-head scale disparity that K3's baseline suffers from. Not adopted.
+
 ---
 
 ## 2026-05-05: DyT for d12 pretraining (negative)
