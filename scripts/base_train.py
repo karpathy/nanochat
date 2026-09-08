@@ -59,6 +59,7 @@ parser.add_argument("--target-param-data-ratio", type=float, default=12, help="c
 # Optimization
 parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size. good number to reduce to 16,8,4,... if you OOM on VRAM.")
 parser.add_argument("--total-batch-size", type=int, default=-1, help="total batch size in tokens. decent numbers are e.g. 524288. (-1 = auto-compute optimal)")
+parser.add_argument("--batch-ramp", type=int, default=0, help="1 = train at 1/4 of the batch for the first 3% of tokens and 1/2 for the next 7% (sqrt LR scaling), then the full batch")
 parser.add_argument("--embedding-lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
 parser.add_argument("--unembedding-lr", type=float, default=0.008, help="learning rate for unembedding parameters (Adam)")
 parser.add_argument("--weight-decay", type=float, default=0.28, help="cautious weight decay for the Muon optimizer (for weights)")
@@ -281,6 +282,7 @@ if total_batch_size == -1:
     batch_size_ratio = target_tokens / D_REF
     predicted_batch_size = B_REF * batch_size_ratio ** 0.383
     total_batch_size = 2 ** round(math.log2(predicted_batch_size)) # clamp to nearest power of 2 for efficiency
+    total_batch_size = min(total_batch_size, 2**20) # cap at the largest validated batch (d26); the extrapolation to 2^21 hurt a d34 run
     print0(f"Auto-computed optimal batch size: {total_batch_size:,} tokens")
 
 # 3) Knowing the batch size, we can now calculate a learning rate correction (bigger batch size allows higher learning rates)
@@ -354,6 +356,30 @@ else:
 total_tokens = total_batch_size * num_iterations # the actual number of tokens we will train for
 print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20
+
+# 5) Batch size ramp: the critical batch size is small early in training, so a fixed large batch wastes the early tokens.
+# With --batch-ramp we train at 1/4 of the batch for the first 3% of the token budget and 1/2 for the next 7%, then the full
+# batch, scaling the LR by sqrt(batch) per stage. The token budget is unchanged; the number of optimizer steps grows ~16%.
+ramp_stages = [] # list of (first step of the NEXT stage, batch divisor of this stage)
+if args.batch_ramp:
+    budget_tokens = num_iterations * total_batch_size
+    max_div = max(1, total_batch_size // world_tokens_per_fwdbwd) # a stage batch can't be smaller than one micro-batch
+    cum_steps, cum_tokens = 0, 0
+    for frac, div in [(0.03, 4), (0.07, 2)]:
+        div = min(div, max_div)
+        stage_batch = total_batch_size // div
+        stage_steps = round(frac * budget_tokens / stage_batch)
+        cum_steps += stage_steps
+        cum_tokens += stage_steps * stage_batch
+        ramp_stages.append((cum_steps, div))
+    num_iterations = cum_steps + round((budget_tokens - cum_tokens) / total_batch_size)
+    print0(f"Batch ramp: {' -> '.join(f'{total_batch_size // d:,} until step {e:,}' for e, d in ramp_stages)} -> {total_batch_size:,}; {num_iterations:,} steps for the same {budget_tokens:,} tokens")
+
+def batch_divisor(it):
+    for next_stage_step, div in ramp_stages:
+        if it < next_stage_step:
+            return div
+    return 1
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # Learning rate schedule (linear warmup, constant, linear warmdown)
@@ -507,6 +533,9 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+    ramp_div = batch_divisor(step)
+    step_batch_size = total_batch_size // ramp_div
+    grad_accum_steps = step_batch_size // world_tokens_per_fwdbwd
     for micro_step in range(grad_accum_steps):
         loss = model(x, y)
         train_loss = loss.detach() # for logging
@@ -521,7 +550,7 @@ while True:
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(step)
     for group in optimizer.param_groups:
-        group["lr"] = group["initial_lr"] * lrm
+        group["lr"] = group["initial_lr"] * lrm * ramp_div ** -0.5 # sqrt LR scaling during the batch ramp
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
@@ -549,8 +578,8 @@ while True:
     smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f # EMA the training loss
     debiased_smooth_loss = smooth_train_loss / (1 - ema_beta**(step + 1)) # debias the EMA
     pct_done = 100 * step / num_iterations
-    tok_per_sec = int(total_batch_size / dt)
-    flops_per_sec = num_flops_per_token * total_batch_size / dt
+    tok_per_sec = int(step_batch_size / dt)
+    flops_per_sec = num_flops_per_token * step_batch_size / dt
     mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
