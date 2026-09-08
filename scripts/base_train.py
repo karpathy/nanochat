@@ -281,6 +281,14 @@ if total_batch_size == -1:
     batch_size_ratio = target_tokens / D_REF
     predicted_batch_size = B_REF * batch_size_ratio ** 0.383
     total_batch_size = 2 ** round(math.log2(predicted_batch_size)) # clamp to nearest power of 2 for efficiency
+    # Cap at the largest empirically validated batch (2^20, tuned at d26). The D^0.383 extrapolation reaches 2^21 at d32+,
+    # and a d34 trained at 2^21 was ~4-6x less token-efficient than the d24 speedrun (see the PR that added this cap):
+    # early in training the critical batch size is small, so a fixed batch this large mostly wastes tokens per update.
+    # Larger models want a batch size ramp, not a larger fixed batch. --total-batch-size still overrides everything.
+    B_MAX = 2**20
+    if total_batch_size > B_MAX:
+        print0(f"Auto batch size {total_batch_size:,} exceeds the largest validated batch {B_MAX:,}; capping (pass --total-batch-size to override)")
+        total_batch_size = B_MAX
     print0(f"Auto-computed optimal batch size: {total_batch_size:,} tokens")
 
 # 3) Knowing the batch size, we can now calculate a learning rate correction (bigger batch size allows higher learning rates)
