@@ -356,30 +356,6 @@ else:
 total_tokens = total_batch_size * num_iterations # the actual number of tokens we will train for
 print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20
-
-# 5) Batch size ramp: the critical batch size is small early in training, so a fixed large batch wastes the early tokens.
-# With --batch-ramp we train at 1/4 of the batch for the first 3% of the token budget and 1/2 for the next 7%, then the full
-# batch, scaling the LR by sqrt(batch) per stage. The token budget is unchanged; the number of optimizer steps grows ~16%.
-ramp_stages = [] # list of (first step of the NEXT stage, batch divisor of this stage)
-if args.batch_ramp:
-    budget_tokens = num_iterations * total_batch_size
-    max_div = max(1, total_batch_size // world_tokens_per_fwdbwd) # a stage batch can't be smaller than one micro-batch
-    cum_steps, cum_tokens = 0, 0
-    for frac, div in [(0.03, 4), (0.07, 2)]:
-        div = min(div, max_div)
-        stage_batch = total_batch_size // div
-        stage_steps = round(frac * budget_tokens / stage_batch)
-        cum_steps += stage_steps
-        cum_tokens += stage_steps * stage_batch
-        ramp_stages.append((cum_steps, div))
-    num_iterations = cum_steps + round((budget_tokens - cum_tokens) / total_batch_size)
-    print0(f"Batch ramp: {' -> '.join(f'{total_batch_size // d:,} until step {e:,}' for e, d in ramp_stages)} -> {total_batch_size:,}; {num_iterations:,} steps for the same {budget_tokens:,} tokens")
-
-def batch_divisor(it):
-    for next_stage_step, div in ramp_stages:
-        if it < next_stage_step:
-            return div
-    return 1
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # Learning rate schedule (linear warmup, constant, linear warmdown)
@@ -434,6 +410,30 @@ tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per itera
 world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
 assert total_batch_size % world_tokens_per_fwdbwd == 0, f"total_batch_size ({total_batch_size}) must be a multiple of {world_tokens_per_fwdbwd}."
 grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
+# 5) Batch size ramp: the critical batch size is small early in training, so a fixed large batch wastes the early tokens.
+# With --batch-ramp we train at 1/4 of the batch for the first 3% of the token budget and 1/2 for the next 7%, then the full
+# batch, scaling the LR by sqrt(batch) per stage. The token budget is unchanged; the number of optimizer steps grows ~16%.
+ramp_stages = [] # list of (first step of the NEXT stage, batch divisor of this stage)
+if args.batch_ramp:
+    budget_tokens = num_iterations * total_batch_size
+    max_div = max(1, total_batch_size // world_tokens_per_fwdbwd) # a stage batch can't be smaller than one micro-batch
+    cum_steps, cum_tokens = 0, 0
+    for frac, div in [(0.03, 4), (0.07, 2)]:
+        div = min(div, max_div)
+        stage_batch = total_batch_size // div
+        stage_steps = round(frac * budget_tokens / stage_batch)
+        cum_steps += stage_steps
+        cum_tokens += stage_steps * stage_batch
+        ramp_stages.append((cum_steps, div))
+    num_iterations = cum_steps + round((budget_tokens - cum_tokens) / total_batch_size)
+    print0(f"Batch ramp: {' -> '.join(f'{total_batch_size // d:,} until step {e:,}' for e, d in ramp_stages)} -> {total_batch_size:,}; {num_iterations:,} steps for the same {budget_tokens:,} tokens")
+
+def batch_divisor(it):
+    for next_stage_step, div in ramp_stages:
+        if it < next_stage_step:
+            return div
+    return 1
+
 print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
