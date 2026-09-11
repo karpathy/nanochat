@@ -24,6 +24,7 @@ from nanochat.optim import MuonAdamW
 
 # Our custom Flash Attention module that automatically uses FA3 when compatible and SDPA fallback otherwise
 from nanochat.flash_attention import flash_attn
+from nanochat.engram import EngramBank, EngramLayer, ngram_hash, largest_prime_at_most
 
 @dataclass
 class GPTConfig:
@@ -37,6 +38,15 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    # Engram: hashed n-gram lookup table in host memory (see nanochat/engram.py)
+    engram_table_size: int = 0 # rows (0 = disabled)
+    engram_layers: str = "" # layers that read the table, e.g. "3,7,11,15"
+    engram_rank: int = 0 # embedding width per layer, split across the hash slots
+    engram_orders: str = "" # n-gram orders, e.g. "2,3"
+    engram_order_weights: str = "" # independently salted hash slots per order, e.g. "2,2"
+    engram_gate_channels: int = 12 # leading residual channels the gate reads
+    engram_decay: float = 0.0 # row decay per touch
+    engram_accum_beta: float = 0.0 # EMA coefficient of the row optimizer's second moment
 
 
 def norm(x):
@@ -81,7 +91,7 @@ class CausalSelfAttention(nn.Module):
         self.ve_gate_channels = 12
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache):
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, eng_v=None):
         B, T, C = x.size()
 
         # Project the input to get queries, keys, and values
@@ -95,6 +105,9 @@ class CausalSelfAttention(nn.Module):
             ve = ve.view(B, T, self.n_kv_head, self.head_dim)
             gate = 3 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))  # (B, T, n_kv_head), range (0, 3)
             v = v + gate.unsqueeze(-1) * ve
+        if eng_v is not None:
+            assert self.n_kv_head * self.head_dim == eng_v.size(-1), "engram value injection assumes no GQA"
+            v = v + eng_v.view(B, T, self.n_kv_head, self.head_dim)
 
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
         cos, sin = cos_sin
@@ -147,8 +160,8 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache):
-        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
+    def forward(self, x, ve, cos_sin, window_size, kv_cache, eng_v=None):
+        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache, eng_v)
         x = x + self.mlp(norm(x))
         return x
 
@@ -190,6 +203,26 @@ class GPT(nn.Module):
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
         self.value_embeds = nn.ModuleDict({str(i): nn.Embedding(padded_vocab_size, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
+        # Engram: one host-resident table, a slice per engram layer, a gate + up-projection per layer
+        if config.engram_table_size > 0:
+            eng_layers = [int(v) for v in config.engram_layers.split(",") if v != ""]
+            assert eng_layers and all(0 <= L < config.n_layer for L in eng_layers), "engram_layers, e.g. 3,7,11,15"
+            self.engram_orders = [int(v) for v in config.engram_orders.split(",") if v != ""]
+            assert self.engram_orders, "engram_orders, e.g. 2,3"
+            w = [int(v) for v in config.engram_order_weights.split(",") if v != ""]
+            self.engram_order_weights = w or [1] * len(self.engram_orders)
+            assert len(self.engram_order_weights) == len(self.engram_orders) and min(self.engram_order_weights) >= 1
+            n_slot = sum(self.engram_order_weights)
+            rank = config.engram_rank
+            assert rank > 0 and rank % n_slot == 0, "engram rank must be a positive multiple of the slot count"
+            rows = largest_prime_at_most(config.engram_table_size)
+            self.engram_table_rows = rows
+            self.engram_bank = EngramBank(rows, len(eng_layers), rank // n_slot, config.engram_decay, config.engram_accum_beta)
+            self.engrams = nn.ModuleDict({str(L): EngramLayer(slot, rank, config.n_embd, config.engram_gate_channels) for slot, L in enumerate(eng_layers)})
+            print0(f"Engram on layers {eng_layers} | embedding {rank} -> {config.n_embd} | orders {self.engram_orders} x slots {self.engram_order_weights} | rows {rows:,}")
+        else:
+            self.engram_bank = None
+            self.engrams = nn.ModuleDict({})
         # To support meta device initialization, we init the rotary embeddings here, but it's just "fake" meta tensors only.
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
@@ -201,7 +234,7 @@ class GPT(nn.Module):
         self.register_buffer("sin", sin, persistent=False)
 
     @torch.no_grad()
-    def init_weights(self):
+    def init_weights(self, engram_shared_path=None, engram_rank=0):
         """
         Initialize the full model in this one function for maximum clarity.
 
@@ -253,6 +286,11 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
                 torch.nn.init.uniform_(block.attn.ve_gate.weight, 0.0, 0.02)
+
+        if self.engram_bank is not None:
+            self.engram_bank.init_weights(engram_shared_path, rank=engram_rank)
+        for e in self.engrams.values():
+            e.init_weights()
 
         # Rotary embeddings
         head_dim = self.config.n_embd // self.config.n_head
@@ -405,9 +443,11 @@ class GPT(nn.Module):
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel()
-        total = wte + value_embeds + lm_head + transformer_matrices + scalars
+        engram = sum(p.numel() for p in self.engrams.parameters())
+        total = wte + value_embeds + lm_head + transformer_matrices + scalars + engram
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
+            'engram': engram,
             'wte': wte,
             'value_embeds': value_embeds,
             'lm_head': lm_head,
@@ -427,6 +467,9 @@ class GPT(nn.Module):
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
         smear_params = [self.smear_gate.weight, self.smear_lambda, self.backout_lambda]
+        smear_params = smear_params + [m.gate.weight for m in self.engrams.values()] # engram gates: same treatment as the smear gate
+        matrix_params = matrix_params + [m.up.weight for m in self.engrams.values()] # engram up-projections: Muon like any matrix
+        # (the engram table itself is a buffer, updated by engram_bank.step() in the training script)
         assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(smear_params)
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
@@ -455,6 +498,24 @@ class GPT(nn.Module):
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
         return optimizer
+
+    def engram_buckets(self, idx, kv_cache=None):
+        """(G, B, T) bucket ids, one hash per slot, shared by every engram layer."""
+        ngram = max(self.engram_orders)
+        hash_idx = idx
+        if kv_cache is not None: # during decoding, keep the trailing tokens the hashes need
+            hist = getattr(kv_cache, "engram_hist", None)
+            if hist is not None:
+                hash_idx = torch.cat([hist, idx], dim=1)
+            kv_cache.engram_hist = hash_idx[:, -(ngram - 1):] if ngram > 1 else None
+        hs = [ngram_hash(hash_idx, self.engram_table_rows, order, salt=1 + oi * 97 + w * 7919)
+              for oi, order in enumerate(self.engram_orders) for w in range(self.engram_order_weights[oi])]
+        return torch.stack(hs)[..., -idx.size(1):]
+
+    def engram_prefetch(self, idx):
+        """Call between a forward and its backward to gather the next batch's rows during the backward."""
+        if self.engram_bank is not None:
+            self.engram_bank.prefetch(self.engram_buckets(idx))
 
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
         B, T = idx.size()
@@ -493,13 +554,19 @@ class GPT(nn.Module):
 
         # Forward the trunk of the Transformer
         x0 = x  # save initial normalized embedding for x0 residual
+        engram_out = None
+        if self.engram_bank is not None:
+            raw = self.engram_bank.lookup(self.engram_buckets(idx, kv_cache), x.device, x.dtype) # (G, B, T, n_layer*per_slot)
+            G, n_eng = sum(self.engram_order_weights), len(self.engrams)
+            engram_out = raw.view(G, B, T, n_eng, -1).permute(1, 2, 3, 0, 4).reshape(B, T, n_eng, -1) # (B, T, layer, rank)
         n_layer = self.config.n_layer
         backout_layer = n_layer // 2  # cache at halfway point
         x_backout = None
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
+            eng = self.engrams[str(i)](x, engram_out) if (engram_out is not None and str(i) in self.engrams) else None
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+            x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache, eng)
             if i == backout_layer:
                 x_backout = x
         # Subtract mid-layer residual to remove low-level features before logit projection
