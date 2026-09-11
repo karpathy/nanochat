@@ -52,6 +52,16 @@ parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = de
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+# Engram (hashed n-gram tables in host memory; 0 = disabled)
+parser.add_argument("--engram-table-size", type=int, default=0, help="rows in the engram table (0 = disabled)")
+parser.add_argument("--engram-layers", type=str, default="", help="layers that read the table, e.g. 3,7,11,15")
+parser.add_argument("--engram-rank", type=int, default=0, help="engram embedding width per layer, split across the hash slots")
+parser.add_argument("--engram-orders", type=str, default="", help="n-gram orders to combine, e.g. 2,3")
+parser.add_argument("--engram-order-weights", type=str, default="", help="hash slots per order, e.g. 2,2 (default one each)")
+parser.add_argument("--engram-gate-channels", type=int, default=12, help="leading residual-stream channels the engram gate reads")
+parser.add_argument("--engram-lr", type=float, default=0.1, help="row-wise LR for the host-resident engram table")
+parser.add_argument("--engram-decay", type=float, default=0.0, help="decay applied to a row each time it is written (0 = never forget)")
+parser.add_argument("--engram-accum-beta", type=float, default=0.0, help="EMA coefficient of the row optimizer's second-moment accumulator, e.g. 0.99")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -137,6 +147,12 @@ def build_model_meta(depth):
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        engram_table_size=args.engram_table_size if depth == args.depth else 0, # the d12 reference model has no engram
+        engram_rank=args.engram_rank,
+        engram_layers=args.engram_layers, engram_orders=args.engram_orders,
+        engram_order_weights=args.engram_order_weights,
+        engram_gate_channels=args.engram_gate_channels,
+        engram_decay=args.engram_decay, engram_accum_beta=args.engram_accum_beta,
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -148,7 +164,14 @@ model_config = model.config
 model_config_kwargs = asdict(model_config)
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
 model.to_empty(device=device) # 2) All tensors get storage on target device but with uninitialized (garbage) data
-model.init_weights() # 3) All tensors get initialized
+# Engram: one table in tmpfs, mapped into every rank and updated lock-free (Hogwild!)
+engram_shared_path = None
+if args.engram_table_size > 0:
+    engram_shared_path = f"/dev/shm/nanochat_engram_{args.model_tag or ('d%d' % args.depth)}_{args.engram_table_size}.bin"
+model.init_weights(engram_shared_path=engram_shared_path, engram_rank=ddp_rank) # 3) All tensors get initialized
+if engram_shared_path is not None and ddp_world_size > 1:
+    dist.barrier() # rank 0 has zeroed the shared table before anyone reads it
+    print0(f"Engram: shared table at {engram_shared_path} across {ddp_world_size} ranks")
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 base_dir = get_base_dir()
@@ -319,6 +342,12 @@ if resuming:
     optimizer.load_state_dict(optimizer_data)
     del optimizer_data
 
+engram_enabled = args.engram_table_size > 0
+if engram_enabled:
+    assert COMPUTE_DTYPE != torch.float16, "engram rows are outside the optimizer, so the fp16 GradScaler would not unscale them"
+    w = orig_model.engram_bank.weight
+    print0(f"Engram enabled: {orig_model.engram_table_rows:,} rows ({w.numel() * w.element_size() / 1e9:.2f} GB host memory), row lr={args.engram_lr}")
+
 # -----------------------------------------------------------------------------
 # GradScaler for fp16 training (bf16/fp32 don't need it — bf16 has the same exponent range as fp32)
 scaler = torch.amp.GradScaler() if COMPUTE_DTYPE == torch.float16 else None
@@ -331,6 +360,7 @@ dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_s
 train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
 build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
+x, y = x.clone(), y.clone() # the loader reuses its buffers; see the micro-step loop
 
 # -----------------------------------------------------------------------------
 # Calculate the number of iterations we will train for and set up the various schedulers
@@ -511,11 +541,15 @@ while True:
         loss = model(x, y)
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
+        # fetch the next batch before backward so its engram rows are gathered during the backward
+        x, y, dataloader_state_dict = next(train_loader)
+        x, y = x.clone(), y.clone() # the loader reuses its buffers and backward still needs the current ids
+        if engram_enabled:
+            orig_model.engram_prefetch(x)
         if scaler is not None:
             scaler.scale(loss).backward()
         else:
             loss.backward()
-        x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
     # step the optimizer
     lrm = get_lr_multiplier(step)
     muon_momentum = get_muon_momentum(step)
@@ -525,6 +559,8 @@ while True:
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+    if engram_enabled:
+        orig_model.engram_bank.step(args.engram_lr * lrm)
     if scaler is not None:
         scaler.unscale_(optimizer)
         # In distributed training, all ranks must agree on whether to skip the step.
@@ -592,6 +628,11 @@ while True:
         gc.disable() # nuclear intervention here: disable GC entirely except:
     elif step % 5000 == 0: # every 5000 steps...
         gc.collect() # manually collect, just to be safe for very, very long runs
+
+if engram_enabled: # land the last host write, stop the worker thread, release the shared table
+    if ddp_world_size > 1:
+        dist.barrier()
+    orig_model.engram_bank.shutdown(unlink_shared=master_process)
 
 # print a few more stats
 print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
