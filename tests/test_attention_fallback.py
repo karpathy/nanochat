@@ -4,7 +4,7 @@ Test Flash Attention unified interface - verify FA3 and SDPA produce identical r
 Run: python -m pytest tests/test_attention_fallback.py -v -s
 
 Note on test structure:
-    Tests are split into two classes due to dtype/device constraints:
+    Attention execution tests are split into two classes due to dtype/device constraints:
 
     1. TestFA3VsSDPA: Comparison tests that run both FA3 and SDPA on the same inputs
        and verify they produce identical results. These require a compatible GPU (FA3 only
@@ -13,6 +13,10 @@ Note on test structure:
     2. TestSDPAOnly: Tests that only exercise the SDPA fallback path. These can run
        on any device (CUDA, CPU, MPS) with the appropriate dtype for that device.
 """
+import sys
+from types import SimpleNamespace
+from unittest.mock import Mock, call, sentinel
+
 import torch
 import pytest
 import nanochat.flash_attention as fa_module
@@ -43,6 +47,43 @@ def assert_close(t1, t2, name, atol=1e-2, rtol=1e-2):
     assert torch.allclose(t1, t2, atol=atol, rtol=rtol), \
         f"{name}: max_diff={max_diff:.6f}, mean_diff={mean_diff:.6f}"
     return max_diff, mean_diff
+
+
+# =============================================================================
+# FA3 backend selection (no GPU required)
+# =============================================================================
+@pytest.mark.parametrize("cuda_available,capability_value,kernel_available,expected_repo", [
+    (True, (10, 0), True, None),
+    (True, (12, 0), True, None),
+    (True, (13, 0), True, None),
+    (True, (8, 0), True, "kernels-community/flash-attn3"),
+    (True, (8, 9), True, "kernels-community/flash-attn3"),
+    (True, (8, 0), False, None),
+    (True, (8, 9), False, None),
+    (True, (9, 0), True, "varunneal/flash-attention-3"),
+    (False, (9, 0), True, None),
+])
+def test_fa3_loading(monkeypatch, cuda_available, capability_value, kernel_available, expected_repo):
+    """Select compatible kernels without requiring a GPU or downloading kernels."""
+    kernels = SimpleNamespace(
+        has_kernel=Mock(return_value=kernel_available),
+        get_kernel=Mock(return_value=SimpleNamespace(
+            flash_attn_interface=sentinel.flash_attn_interface,
+        )),
+    )
+    capability = Mock(return_value=capability_value)
+    monkeypatch.setitem(sys.modules, "kernels", kernels)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_available)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", capability)
+
+    expected = sentinel.flash_attn_interface if expected_repo else None
+    assert fa_module._load_flash_attention_3() is expected
+    assert capability.call_args_list == ([call()] if cuda_available else [])
+    checks_community = cuda_available and capability_value[0] == 8
+    assert kernels.has_kernel.call_args_list == (
+        [call("kernels-community/flash-attn3")] if checks_community else []
+    )
+    assert kernels.get_kernel.call_args_list == ([call(expected_repo)] if expected_repo else [])
 
 
 # =============================================================================
