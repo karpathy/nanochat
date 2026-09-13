@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # rustbpe/tiktoken are imported at module level by nanochat.tokenizer
+      # (engine -> checkpoint_manager -> tokenizer), so they are needed even for
+      # tests that never tokenize. `kernels` is a lazy import, only used on CUDA.
+      - name: Install CPU-only PyTorch and test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install filelock rustbpe tiktoken pytest
+
+      # `python -m pytest` so the repo root is on sys.path without installing the package.
+      # test_execution.py needs Unix `resource`; test_tokenizer/test_tasks need data.
+      - name: Unit tests (fast CPU subset)
+        run: |
+          python -m pytest tests/test_kvcache_equiv.py tests/test_engine.py \
+                 tests/test_attention_fallback.py tests/test_optim.py -q
