@@ -432,6 +432,11 @@ while True:
             loss.backward()
         x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
         progress = max(progress, approx_progress) # only increase progress monotonically
+    # Use the furthest rank's progress for a shared LR schedule (training stops when any rank finishes).
+    if ddp:
+        progress_tensor = torch.tensor(progress, dtype=torch.float64, device=device)
+        dist.all_reduce(progress_tensor, op=dist.ReduceOp.MAX)
+        progress = progress_tensor.item()
     # step the optimizer
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
