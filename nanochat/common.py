@@ -5,6 +5,7 @@ Common utilities for nanochat.
 import os
 import re
 import logging
+import copy
 import urllib.request
 import torch
 import torch.distributed as dist
@@ -32,7 +33,7 @@ def _detect_compute_dtype():
 COMPUTE_DTYPE, COMPUTE_DTYPE_REASON = _detect_compute_dtype()
 
 class ColoredFormatter(logging.Formatter):
-    """Custom formatter that adds colors to log messages."""
+    """Add colors to log messages without modifying records shared with other handlers."""
     # ANSI color codes
     COLORS = {
         'DEBUG': '\033[36m',    # Cyan
@@ -44,6 +45,7 @@ class ColoredFormatter(logging.Formatter):
     RESET = '\033[0m'
     BOLD = '\033[1m'
     def format(self, record):
+        record = copy.copy(record)
         # Add color to the level name
         levelname = record.levelname
         if levelname in self.COLORS:
