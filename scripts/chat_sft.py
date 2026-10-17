@@ -401,7 +401,7 @@ while True:
                 "step": step,
                 "val_bpb": val_bpb, # loss at last step
                 "model_config": {
-                    "sequence_len": args.max_seq_len,
+                    "sequence_len": model.config.sequence_len, # not args.max_seq_len: the window sizes derive from it
                     "vocab_size": tokenizer.get_vocab_size(),
                     "n_layer": depth,
                     "n_head": model.config.n_head,
