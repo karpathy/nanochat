@@ -1,7 +1,7 @@
 """
 GPT model (rewrite, a lot simpler)
 Notable features:
-- rotary embeddings (and no positional embeddings)
+- rotary embeddings (and no positional embeddings)J
 - QK norm
 - untied weights for token embedding and lm_head
 - relu^2 activation in MLP

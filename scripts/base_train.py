@@ -75,10 +75,12 @@ parser.add_argument("--core-metric-every", type=int, default=2000, help="evaluat
 parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
+parser.add_argument("--time-budget", type=float, default=-1, help="wall-clock minutes after which to save a checkpoint and exit, for time-limited sessions e.g. Kaggle (-1 = disable)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
+script_t0 = time.time() # for --time-budget
 # -----------------------------------------------------------------------------
 # Compute init and wandb logging
 
@@ -417,6 +419,16 @@ while True:
     last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
     flops_so_far = num_flops_per_token * total_batch_size * step
 
+    # out of time budget: save a checkpoint and exit, so that training can be resumed in a later session
+    # all ranks must agree, otherwise one rank exits while the others hang in a collective
+    out_of_time = False
+    if args.time_budget > 0 and not last_step:
+        out_of_time = time.time() - script_t0 > args.time_budget * 60
+        if is_ddp_initialized():
+            flag = torch.tensor(int(out_of_time), device=device)
+            dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+            out_of_time = bool(flag.item())
+
     # once in a while: evaluate the val bpb (all ranks participate)
     if args.eval_every > 0 and (last_step or step % args.eval_every == 0):
         model.eval()
@@ -474,7 +486,7 @@ while True:
         model.train()
 
     # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step
-    if last_step or (step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0):
+    if last_step or (out_of_time and step != args.resume_from_step) or (step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0):
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -482,6 +494,7 @@ while True:
             optimizer.state_dict(), # optimizer state
             { # metadata saved as json
                 "step": step,
+                "num_iterations": num_iterations, # step == num_iterations means pretraining is complete
                 "val_bpb": val_bpb, # loss at last step
                 "model_config": model_config_kwargs,
                 "user_config": user_config, # inputs to the training script
@@ -500,6 +513,9 @@ while True:
 
     # termination conditions (TODO: possibly also add loss explosions etc.)
     if last_step:
+        break
+    if out_of_time:
+        print0(f"Time budget of {args.time_budget:.0f}m reached at step {step}, exiting. Resume with --resume-from-step={step}")
         break
 
     # -------------------------------------------------------------------------
