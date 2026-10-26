@@ -159,8 +159,7 @@ def sample_next_token(logits, rng, temperature=1.0, top_k=None):
 
 class RowState:
     # Per-row state tracking during generation
-    def __init__(self, current_tokens=None):
-        self.current_tokens = current_tokens or [] # Current token sequence for this row
+    def __init__(self):
         self.forced_tokens = deque() # Queue of tokens to force inject
         self.in_python_block = False # Whether we are inside a python block
         self.python_expr_tokens = [] # Tokens of the current python expression
@@ -218,7 +217,7 @@ class Engine:
         del kv_cache_prefill # no need to keep this memory around
 
         # 3) Initialize states for each sample
-        row_states = [RowState(tokens.copy()) for _ in range(num_samples)]
+        row_states = [RowState() for _ in range(num_samples)]
 
         # 4) Main generation loop
         num_generated = 0
@@ -243,8 +242,6 @@ class Engine:
                 token_masks.append(0 if is_forced else 1) # mask is 0 if forced, 1 if sampled
                 next_token = state.forced_tokens.popleft() if is_forced else sampled_tokens[i]
                 token_column.append(next_token)
-                # Update the state of this row to include the next token
-                state.current_tokens.append(next_token)
                 # On <|assistant_end|> or <|bos|>, mark the row as completed
                 if next_token == assistant_end or next_token == bos:
                     state.completed = True
