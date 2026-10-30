@@ -17,7 +17,7 @@ import signal
 import warnings
 from contextlib import contextmanager
 from collections import deque
-from nanochat.common import compute_init, autodetect_device_type
+from nanochat.common import compute_init, autodetect_device_type, COMPUTE_DTYPE
 from nanochat.checkpoint_manager import load_model
 
 # -----------------------------------------------------------------------------
@@ -100,10 +100,13 @@ class KVCache:
         self.v_cache = torch.zeros(num_layers, batch_size, seq_len, num_heads, head_dim, device=device, dtype=dtype)
         # Current sequence length per batch element (FA3 needs int32)
         self.cache_seqlens = torch.zeros(batch_size, dtype=torch.int32, device=device)
+        # Previous token's normalized embedding for smear (set by model forward pass)
+        self.prev_embedding = None
 
     def reset(self):
         """Reset cache to empty state."""
         self.cache_seqlens.zero_()
+        self.prev_embedding = None
 
     def get_pos(self):
         """Get current position (assumes all batch elements at same position)."""
@@ -129,6 +132,9 @@ class KVCache:
         self.k_cache[:, :, :other_pos, :, :] = other.k_cache[:, :, :other_pos, :, :]
         self.v_cache[:, :, :other_pos, :, :] = other.v_cache[:, :, :other_pos, :, :]
         self.cache_seqlens.fill_(other_pos)
+        # Copy smear state: expand batch=1 prev_embedding to num_samples
+        if other.prev_embedding is not None:
+            self.prev_embedding = other.prev_embedding.expand(self.batch_size, -1, -1).clone()
 
 # -----------------------------------------------------------------------------
 @torch.inference_mode()
@@ -171,13 +177,8 @@ class Engine:
         """Same as generate, but does single prefill and then clones the KV cache."""
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
         device = self.model.get_device()
-        # NOTE: setting the dtype here and in this way is an ugly hack.
-        # Currently the repo assumes that cuda -> bfloat16 and everything else -> float32.
-        # We need to know the dtype here to call __init__ on KVCache and pre-allocate its tensors.
-        # As a quick hack, we're making generate() function inherit and know about this repo-wise assumption.
-        # I think there has to be a bigger refactor to deal with device/dtype tracking across the codebase.
-        # In particular, the KVCache should allocate its tensors lazily
-        dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
+        # Allocate the KV cache in the compute dtype so it matches what the forward pass emits
+        dtype = COMPUTE_DTYPE
         rng = torch.Generator(device=device)
         rng.manual_seed(seed)
 

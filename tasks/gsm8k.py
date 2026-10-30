@@ -15,8 +15,7 @@ Notice that GSM8K uses tool calls inside << >> tags.
 """
 
 import re
-from datasets import load_dataset
-from tasks.common import Task
+from tasks.common import Task, load_hub_dataset
 
 
 GSM_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
@@ -40,7 +39,7 @@ class GSM8K(Task):
         super().__init__(**kwargs)
         assert subset in ["main", "socratic"], "GSM8K subset must be main|socratic"
         assert split in ["train", "test"], "GSM8K split must be train|test"
-        self.ds = load_dataset("openai/gsm8k", subset, split=split).shuffle(seed=42)
+        self.ds = load_hub_dataset("openai/gsm8k", subset, split=split).shuffle(seed=42)
 
     @property
     def eval_type(self):

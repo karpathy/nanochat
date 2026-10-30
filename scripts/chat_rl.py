@@ -322,11 +322,5 @@ for step in range(num_steps):
         )
         print(f"✅ Saved model checkpoint to {checkpoint_dir}")
 
-# Log to report
-from nanochat.report import get_report
-get_report().log(section="Chat RL", data=[
-    user_config, # CLI args
-])
-
 wandb_run.finish() # wandb run finish
 compute_cleanup()

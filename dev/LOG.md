@@ -4,6 +4,71 @@ A running summary documenting some experiments and findings. Started ~Jan 7 2026
 
 ---
 
+## 2026-05-05: DyT for d12 pretraining (negative)
+
+Tried replacing normalization with [DyT](https://arxiv.org/abs/2503.10622) for d12-scale pretraining following some [hype](https://x.com/LodestoneRock/status/2050367217087512953) on X.
+
+- DyT uses `gamma * tanh(alpha * x) + beta` with learnable scalar `alpha` and per-channel `gamma`/`beta`.
+- Added separate alpha initializers for attention vs other normalization sites, following the paper's width-dependent heuristic unless overridden.
+- Added optional embedding DyT plus the LLM-specific `sqrt(d_model)` embedding scale from the paper.
+
+Every variation of the idea that was attempted, including after a bunch of parameter tuning did not outperform the baseline d12 model on master, even with steps on the x-axis. In addition, the throughput (tokens per second) was ~10% lower.
+
+---
+
+## 2026-03-24: Parameter-Golf Ideas Sweep (Negative)
+
+Reviewed `openai/parameter-golf` for small/simple ideas that might transfer to nanochat pretraining without bloating the codebase. Cached notes are in `knowledge/parameter_golf.md`.
+
+### Rationale
+
+The parameter-golf leaderboard is a useful source of:
+
+- tiny architecture tweaks
+- short-run optimizer/schedule tricks
+- Muon-related systems ideas
+
+But much of that repo is optimized for a very different objective:
+
+- fit in a 16MB artifact
+- train in under 10 minutes on 8xH100
+- evaluate on compression / bpb
+
+So only a small subset of ideas looked worth trying in nanochat.
+
+### Ideas Tried
+
+**1. LeakyReLU(0.5)^2**
+- Replaced `relu^2` in the MLP with `leaky_relu(x, 0.5)^2`
+- **Result:** Slightly better per-step quality, but slightly slower. Net worse on wall clock.
+
+**2. Partial RoPE**
+- Applied rotary embeddings to only the first quarter of each head dimension
+- **Result:** Slightly worse.
+
+**3. LN Scale**
+- Multiplied each block's normalized input by `1/sqrt(layer_idx+1)` before attention and MLP
+- **Result:** Did not help.
+
+**4. Orthogonal init**
+- Switched the non-zero transformer matrices to orthogonal init while preserving zero-init output projections
+- **Result:** Did not help.
+
+**5. XSA (Exclusive Self Attention)**
+- Implemented XSA on the deepest 3 non-VE layers only, so it projected against the plain `v` path rather than `v + VE`
+- **Result:** Slightly better step quality but not wall clock. Not worth the extra compute in the hot attention path.
+
+### Notes
+
+- EMA/SWA had already been tried earlier (I skipped recording it) and did not help.
+- Bigram hash embeddings had already been explored much earlier and did help somewhat, but the added parameters / VRAM / complexity were not justified at larger scale. See the Jan 27-28 entries above.
+
+### Conclusion
+
+This pass did not find any cheap parameter-golf transfer that clearly improves nanochat on the metric that matters: wall clock time to capability.
+
+---
+
 ## 2026-03-04: Remove autocast, explicit dtype management, fp16 GradScaler
 
 Replaced `torch.amp.autocast` throughout the codebase with explicit dtype management via a single `COMPUTE_DTYPE` global. Also added fp16 training support with GradScaler.
