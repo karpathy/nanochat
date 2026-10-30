@@ -42,10 +42,11 @@ python -m scripts.base_train \
     --sample-every=100 \
     --num-iterations=5000 \
     --run=$WANDB_RUN
-python -m scripts.base_eval --device-batch-size=1 --split-tokens=16384 --max-per-task=16
+python -m scripts.base_eval --model-tag=d6 --device-batch-size=1 --split-tokens=16384 --max-per-task=16
 
 # SFT (~10 minutes on my MacBook Pro M3 Max)
 python -m scripts.chat_sft \
+    --model-tag=d6 \
     --eval-every=200 \
     --eval-tokens=524288 \
     --num-iterations=1500 \
@@ -55,4 +56,4 @@ python -m scripts.chat_sft \
 # The model should be able to say that it is Paris.
 # It might even know that the color of the sky is blue.
 # Sometimes the model likes it if you first say Hi before you ask it questions.
-# python -m scripts.chat_cli -p "What is the capital of France?"
+# python -m scripts.chat_cli --model-tag=d6 -p "What is the capital of France?"
