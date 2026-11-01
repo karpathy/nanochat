@@ -29,9 +29,8 @@ APP_NAME = "nanochat-picochat"
 VOLUME_DIR = "/data"
 REPO_DIR = "/root/nanochat"
 
-# GPU config. 8xH100 makes a d12 run take minutes; total $ is similar to 1xH100
-# (you pay GPU-hours either way), you just wait less. Override with NANOCHAT_GPU=H100:1 etc.
-GPU = os.environ.get("NANOCHAT_GPU", "H100:8")
+# GPU config. Defaults to 1xH100. Override with NANOCHAT_GPU=H100:8 etc. to change hardware.
+GPU = os.environ.get("NANOCHAT_GPU", "H100:1")
 NUM_GPUS = int(GPU.split(":")[1]) if ":" in GPU else 1
 
 image = (
@@ -56,6 +55,7 @@ image = (
         "NANOCHAT_BASE_DIR": VOLUME_DIR,
         "OMP_NUM_THREADS": "1",
         "PYTHONPATH": REPO_DIR,
+        "NANOCHAT_GPU": GPU,  # keep NUM_GPUS in the container in sync with the GPUs requested
     })
     # mounted at container start (not baked in), so code edits don't rebuild the image
     .add_local_dir(
