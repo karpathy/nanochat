@@ -29,8 +29,8 @@ APP_NAME = "nanochat-picochat"
 VOLUME_DIR = "/data"
 REPO_DIR = "/root/nanochat"
 
-# GPU config. Defaults to 1xH100. Override with NANOCHAT_GPU=H100:8 etc. to change hardware.
-GPU = os.environ.get("NANOCHAT_GPU", "H100:1")
+# GPU config. Defaults to 8xH100. Override with NANOCHAT_GPU=H100:1 etc. to change hardware.
+GPU = os.environ.get("NANOCHAT_GPU", "H100:8")
 NUM_GPUS = int(GPU.split(":")[1]) if ":" in GPU else 1
 
 image = (
