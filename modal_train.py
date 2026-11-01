@@ -45,7 +45,9 @@ image = (
     )
     .pip_install(
         "filelock>=3.19.0",
-        "kernels>=0.11.7",
+        # pinned to uv.lock: newer kernels releases change the get_kernel API that FA3 loading uses
+        "kernels==0.11.7",
+        "huggingface-hub==0.34.4",
         "numpy>=1.26.0",
         "psutil>=7.1.0",
         "pyarrow>=21.0.0",
