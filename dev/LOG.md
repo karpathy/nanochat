@@ -1,5 +1,7 @@
 # Experiment Log
 
+> Archived experiment notes from the original nanochat implementation; code paths and shell commands below may no longer exist. See [README.md](../README.md) for current Rust usage.
+
 A running summary documenting some experiments and findings. Started ~Jan 7 2026.
 
 ---

@@ -1,0 +1,16 @@
+[package]
+name = "rustbpe"
+version = "0.1.0"
+edition = "2021"
+description = "A BPE (Byte Pair Encoding) tokenizer written in Rust"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+dary_heap = "0.3"
+indexmap = "2.2"
+fancy-regex = "0.16.1"
+log = "0.4.28"
+ahash = "0.8.12"
+rayon = "1.11.0"
+compact_str = "0.9.0"

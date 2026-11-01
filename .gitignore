@@ -1,9 +1,9 @@
-.venv/
-__pycache__/
-*.pyc
 dev-ignore/
 report.md
 eval_bundle/
+/logs/
+/output/
+/target/
 
 # Secrets
 .env

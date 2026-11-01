@@ -1,0 +1,57 @@
+[package]
+name = "rust-agent"
+version = "0.1.0"
+edition = "2024"
+description = "A Rust rewrite of nanoAgent's LLM training and inference stack"
+license = "MIT"
+
+[[bin]]
+name = "rust-agent"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", features = ["json"] }
+base64 = "0.22"
+candle-core = "0.11.1"
+candle-nn = "0.11.1"
+candle-flash-attn = { version = "0.11.1", optional = true }
+libloading = { version = "0.8", optional = true }
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+encoding_rs = "0.8"
+fancy-regex = "0.17"
+fs2 = "0.4"
+parquet = { version = "60.1.0", default-features = false, features = ["snap", "zstd", "lz4", "brotli", "flate2-zlib-rs"] }
+prost = "0.13"
+rand = "0.9"
+rand_chacha = "0.9"
+rayon = "1.11"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rustpython = { version = "0.6", default-features = false, features = ["stdlib", "stdio", "importlib", "host_env"] }
+rustbpe = { path = "vendor/rustbpe" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml = "0.9"
+sha2 = "0.10"
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros"] }
+tokio-stream = "0.1"
+zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
+
+[features]
+default = []
+cuda = ["flash-attention"]
+cuda-base = ["candle-core/cuda", "candle-nn/cuda"]
+flash-attention = ["cuda-base", "dep:candle-flash-attn"]
+cuda-nccl = ["cuda-base", "dep:libloading"]
+metal = ["candle-core/metal", "candle-nn/metal"]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
