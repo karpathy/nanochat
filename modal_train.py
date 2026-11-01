@@ -72,7 +72,7 @@ wandb_secret = modal.Secret.from_name("wandb-secret")
 
 def _run(cmd: str):
     print(f"\n>>> {cmd}\n", flush=True)
-    subprocess.run(cmd, shell=True, check=True, cwd=REPO_DIR)
+    subprocess.run(cmd, shell=True, executable="/bin/bash", check=True, cwd=REPO_DIR)  # bash for pipefail
 
 
 @app.function(volumes={VOLUME_DIR: volume}, cpu=16, memory=32768, timeout=3 * 3600)
