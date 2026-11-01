@@ -15,6 +15,9 @@ One-time setup on your machine:
    Later, for an ablation, pass a different name/tag and any extra flags:
     modal run modal_train.py::train --run-name d12_myablation --extra-args "--some-flag=1"
 
+To see why Flash Attention 3 fails to load (uses 1 GPU briefly):
+    modal run modal_train.py::check_fa3
+
 Everything (shards, tokenizer, checkpoints, logs) lives on the Modal volume
 "nanochat-data", mounted at /data, so it persists across runs.
 """
@@ -113,6 +116,27 @@ def train_remote(run_name: str, depth: int, extra_args: str, run_eval: bool):
         )
         _run(f"set -o pipefail; {eval_cmd} 2>&1 | tee {log_dir}/{tag}_eval.log")
         volume.commit()
+
+
+@app.function(gpu="H100:1", timeout=10 * 60)
+def check_fa3():
+    """Try to load Flash Attention 3 and print the real error if it fails."""
+    import platform
+    import traceback
+    from importlib.metadata import version
+
+    import torch
+
+    print(f"torch {torch.__version__} | CUDA {torch.version.cuda} | kernels {version('kernels')}")
+    print(f"python {platform.python_version()} | glibc {platform.libc_ver()[1]}")
+    print(f"GPU: {torch.cuda.get_device_name(0)} | SM {torch.cuda.get_device_capability()}")
+    try:
+        from kernels import get_kernel
+
+        print("FA3 LOADED:", get_kernel("varunneal/flash-attention-3").flash_attn_interface)
+    except Exception:
+        print("FA3 FAILED:")
+        traceback.print_exc()
 
 
 @app.local_entrypoint()
