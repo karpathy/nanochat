@@ -58,13 +58,7 @@ fn quantize_e4m3_tensorwise(input: &Tensor) -> Result<ScaledFp8> {
     let scale = scale
         .to_dtype(DType::F32)
         .context("cast E4M3 scale to FP32")?;
-    let scaled = input_f32
-        .broadcast_mul(&scale)
-        .context("scale E4M3 source")?;
-    let scaled = scaled
-        .clamp(-448.0_f64, 448.0_f64)
-        .context("clamp E4M3 source")?;
-    let values = encode_e4m3(&scaled)?;
+    let values = encode_e4m3_scaled(&input_f32, &scale)?;
 
     Ok(ScaledFp8 {
         values,
@@ -77,7 +71,14 @@ fn quantize_e4m3_tensorwise(input: &Tensor) -> Result<ScaledFp8> {
 /// for E4M3 is not available on all supported CUDA builds, while cuBLASLt
 /// accepts the byte representation directly when its operand type is E4M3.
 #[cfg(feature = "cuda-base")]
+#[cfg(test)]
 fn encode_e4m3(input: &Tensor) -> Result<Tensor> {
+    let scale = Tensor::ones((), DType::F32, input.device())?;
+    encode_e4m3_scaled(input, &scale)
+}
+
+#[cfg(feature = "cuda-base")]
+fn encode_e4m3_scaled(input: &Tensor, scale: &Tensor) -> Result<Tensor> {
     use std::sync::OnceLock;
 
     use anyhow::Context;
@@ -96,17 +97,30 @@ fn encode_e4m3(input: &Tensor) -> Result<Tensor> {
     let CudaStorageSlice::F32(input_slice) = &input_storage.slice else {
         anyhow::bail!("E4M3 input storage must be FP32")
     };
+    let (scale_storage, scale_layout) = scale.storage_and_layout();
+    ensure!(
+        scale_layout.shape().elem_count() == 1,
+        "E4M3 scale must be scalar"
+    );
+    let Storage::Cuda(scale_storage) = &*scale_storage else {
+        anyhow::bail!("E4M3 scale must be on CUDA")
+    };
+    let CudaStorageSlice::F32(scale_slice) = &scale_storage.slice else {
+        anyhow::bail!("E4M3 scale must be FP32")
+    };
     let device = &input_storage.device;
     let stream = device.cuda_stream();
     let (src, _src_record) = input_slice.device_ptr(&stream);
+    let (scale_ptr, _scale_record) = scale_slice.device_ptr(&stream);
     let mut output = unsafe { device.alloc::<u8>(layout.shape().elem_count()) }?;
     let kernel = r#"
-    extern "C" __global__ void fp32_to_e4m3(const float* x, unsigned char* y, unsigned long long n) {
+    extern "C" __global__ void fp32_to_e4m3(const float* x, const float* s, unsigned char* y, unsigned long long n) {
       unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
       if (i >= n) return;
-      unsigned int u = __float_as_uint(x[i]);
+      float v = x[i] * s[0];
+      unsigned int u = __float_as_uint(v);
       unsigned int sign = (u >> 24) & 0x80;
-      float a = fabsf(x[i]);
+      float a = fabsf(v);
       if (a == 0.0f) { y[i] = (unsigned char)sign; return; }
       if (isnan(a)) { y[i] = (unsigned char)(sign | 0x7f); return; }
       if (isinf(a)) { y[i] = (unsigned char)(sign | 0x7f); return; }
@@ -149,6 +163,7 @@ fn encode_e4m3(input: &Tensor) -> Result<Tensor> {
     let cfg = LaunchConfig::for_num_elems(n as u32);
     let mut launch = func.builder();
     launch.arg(&src);
+    launch.arg(&scale_ptr);
     launch.arg(&mut output);
     launch.arg(&n);
     unsafe { launch.launch(cfg) }.context("launch E4M3 conversion kernel")?;
@@ -167,7 +182,6 @@ fn encode_e4m3(input: &Tensor) -> Result<Tensor> {
 /// E5M2 quantization used for the output gradient in nanochat's FP8 backward.
 #[cfg(feature = "cuda-base")]
 fn quantize_e5m2_tensorwise(input: &Tensor) -> Result<ScaledFp8> {
-    use anyhow::Context;
     use candle_core::{Storage, cuda::CudaStorageSlice};
 
     ensure!(
@@ -191,12 +205,7 @@ fn quantize_e5m2_tensorwise(input: &Tensor) -> Result<ScaledFp8> {
     let scale = Tensor::full(57344.0_f64, (), amax.device())?
         .broadcast_div(&amax)?
         .to_dtype(DType::F32)?;
-    let scaled = input
-        .broadcast_mul(&scale)?
-        .clamp(-57344.0_f64, 57344.0_f64)?
-        .contiguous()
-        .context("prepare scaled CUDA tensor for E5M2 conversion")?;
-    let values = encode_e5m2(&scaled)?;
+    let values = encode_e5m2_scaled(&input, &scale)?;
     Ok(ScaledFp8 {
         values,
         inverse_scale: scale.recip()?,
@@ -206,7 +215,14 @@ fn quantize_e5m2_tensorwise(input: &Tensor) -> Result<ScaledFp8> {
 
 /// Encode FP32 CUDA values as IEEE E5M2 bytes using round-to-nearest-even.
 #[cfg(feature = "cuda-base")]
+#[cfg(test)]
 fn encode_e5m2(input: &Tensor) -> Result<Tensor> {
+    let scale = Tensor::ones((), DType::F32, input.device())?;
+    encode_e5m2_scaled(input, &scale)
+}
+
+#[cfg(feature = "cuda-base")]
+fn encode_e5m2_scaled(input: &Tensor, scale: &Tensor) -> Result<Tensor> {
     use std::sync::OnceLock;
 
     use anyhow::Context;
@@ -225,17 +241,30 @@ fn encode_e5m2(input: &Tensor) -> Result<Tensor> {
     let CudaStorageSlice::F32(input_slice) = &input_storage.slice else {
         anyhow::bail!("E5M2 input storage must be FP32")
     };
+    let (scale_storage, scale_layout) = scale.storage_and_layout();
+    ensure!(
+        scale_layout.shape().elem_count() == 1,
+        "E5M2 scale must be scalar"
+    );
+    let Storage::Cuda(scale_storage) = &*scale_storage else {
+        anyhow::bail!("E5M2 scale must be on CUDA")
+    };
+    let CudaStorageSlice::F32(scale_slice) = &scale_storage.slice else {
+        anyhow::bail!("E5M2 scale must be FP32")
+    };
     let device = &input_storage.device;
     let stream = device.cuda_stream();
     let (src, _src_record) = input_slice.device_ptr(&stream);
+    let (scale_ptr, _scale_record) = scale_slice.device_ptr(&stream);
     let mut output = unsafe { device.alloc::<u8>(layout.shape().elem_count()) }?;
     const KERNEL: &str = r#"
-    extern "C" __global__ void fp32_to_e5m2(const float* x, unsigned char* y, unsigned long long n) {
+    extern "C" __global__ void fp32_to_e5m2(const float* x, const float* s, unsigned char* y, unsigned long long n) {
       unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
       if (i >= n) return;
-      unsigned int u = __float_as_uint(x[i]);
+      float v = x[i] * s[0];
+      unsigned int u = __float_as_uint(v);
       unsigned int sign = (u >> 24) & 0x80;
-      float a = fabsf(x[i]);
+      float a = fabsf(v);
       if (a == 0.0f) { y[i] = (unsigned char)sign; return; }
       if (isnan(a)) { y[i] = (unsigned char)(sign | 0x7f); return; }
       if (isinf(a)) { y[i] = (unsigned char)(sign | 0x7c); return; }
@@ -269,6 +298,7 @@ fn encode_e5m2(input: &Tensor) -> Result<Tensor> {
     let cfg = LaunchConfig::for_num_elems(n as u32);
     let mut launch = func.builder();
     launch.arg(&src);
+    launch.arg(&scale_ptr);
     launch.arg(&mut output);
     launch.arg(&n);
     unsafe { launch.launch(cfg) }.context("launch E5M2 conversion kernel")?;

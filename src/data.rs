@@ -31,7 +31,7 @@ pub struct TokenBatch {
     pub valid_targets: Vec<u32>,
 }
 
-pub trait BatchSource {
+pub trait BatchSource: Send {
     fn next_batch(&mut self) -> Result<TokenBatch>;
 
     fn prefetch_batch(&mut self) -> Result<()> {

@@ -251,9 +251,614 @@ pub(crate) fn training_cross_entropy(logits: &Tensor, targets: &Tensor) -> Resul
         let targets = targets.to_vec1::<u32>()?;
         Ok(logits.apply_op1(CpuCrossEntropy { targets })?)
     } else {
+        #[cfg(feature = "cuda-base")]
+        if logits.device().is_cuda() && logits.dtype() == DType::F32 {
+            return Ok(logits
+                .contiguous()?
+                .apply_op2(&targets.contiguous()?, CudaCrossEntropy { softcap: false })?);
+        }
         Ok(candle_nn::loss::cross_entropy(logits, targets)?)
     }
 }
+
+pub(crate) fn training_softcap_cross_entropy(logits: &Tensor, targets: &Tensor) -> Result<Tensor> {
+    #[cfg(feature = "cuda-base")]
+    if logits.device().is_cuda() && logits.dtype() == DType::F32 {
+        return Ok(logits
+            .contiguous()?
+            .apply_op2(&targets.contiguous()?, CudaCrossEntropy { softcap: true })?);
+    }
+    let scaled = if logits.device().is_cpu() && logits.dtype() == DType::F32 {
+        logits.apply_op1(CpuDivideScalar(LOGIT_SOFTCAP as f32))?
+    } else {
+        (logits / LOGIT_SOFTCAP)?
+    };
+    let softcapped = scaled.tanh()?.affine(LOGIT_SOFTCAP, 0.0)?;
+    training_cross_entropy(&softcapped, targets)
+}
+
+#[cfg(feature = "cuda-base")]
+struct CudaReluSquared;
+
+#[cfg(feature = "cuda-base")]
+impl CustomOp1 for CudaReluSquared {
+    fn name(&self) -> &'static str {
+        "cuda_fused_relu_squared"
+    }
+
+    fn cpu_fwd(&self, _: &CpuStorage, _: &Layout) -> candle_core::Result<(CpuStorage, Shape)> {
+        candle_core::bail!("fused ReLU-squared requires CUDA")
+    }
+
+    fn cuda_fwd(
+        &self,
+        input: &candle_core::CudaStorage,
+        layout: &Layout,
+    ) -> candle_core::Result<(candle_core::CudaStorage, Shape)> {
+        use candle_core::cuda::CudaStorageSlice;
+
+        ensure_cuda_contiguous_layout(layout, "fused ReLU-squared")?;
+        let device = &input.device;
+        let n = layout.shape().elem_count() as u64;
+        let ptx = cuda_relu_squared_ptx()?;
+        let output = match &input.slice {
+            CudaStorageSlice::F16(source) => candle_core::CudaStorage::wrap_cuda_slice(
+                launch_cuda_unary(source, device, "relu_squared_f16", ptx, n)?,
+                device.clone(),
+            ),
+            CudaStorageSlice::BF16(source) => candle_core::CudaStorage::wrap_cuda_slice(
+                launch_cuda_unary(source, device, "relu_squared_bf16", ptx, n)?,
+                device.clone(),
+            ),
+            CudaStorageSlice::F32(source) => candle_core::CudaStorage::wrap_cuda_slice(
+                launch_cuda_unary(source, device, "relu_squared_f32", ptx, n)?,
+                device.clone(),
+            ),
+            _ => candle_core::bail!("fused ReLU-squared expects F16, BF16, or F32"),
+        };
+        Ok((output, layout.shape().clone()))
+    }
+
+    fn bwd(
+        &self,
+        input: &Tensor,
+        _: &Tensor,
+        grad: &Tensor,
+    ) -> candle_core::Result<Option<Tensor>> {
+        Ok(Some(input.apply_op2(grad, CudaReluSquaredGrad)?))
+    }
+}
+
+#[cfg(feature = "cuda-base")]
+struct CudaReluSquaredGrad;
+
+#[cfg(feature = "cuda-base")]
+impl CustomOp2 for CudaReluSquaredGrad {
+    fn name(&self) -> &'static str {
+        "cuda_fused_relu_squared_backward"
+    }
+
+    fn cpu_fwd(
+        &self,
+        _: &CpuStorage,
+        _: &Layout,
+        _: &CpuStorage,
+        _: &Layout,
+    ) -> candle_core::Result<(CpuStorage, Shape)> {
+        candle_core::bail!("fused ReLU-squared backward requires CUDA")
+    }
+
+    fn cuda_fwd(
+        &self,
+        input: &candle_core::CudaStorage,
+        input_layout: &Layout,
+        grad: &candle_core::CudaStorage,
+        grad_layout: &Layout,
+    ) -> candle_core::Result<(candle_core::CudaStorage, Shape)> {
+        use candle_core::backend::BackendStorage;
+        use candle_core::cuda::CudaStorageSlice;
+
+        ensure_cuda_contiguous_layout(input_layout, "fused ReLU-squared backward")?;
+        ensure_cuda_contiguous_layout(grad_layout, "fused ReLU-squared gradient")?;
+        if input_layout.shape() != grad_layout.shape() || input.dtype() != grad.dtype() {
+            candle_core::bail!("fused ReLU-squared backward input/gradient mismatch")
+        }
+        let device = &input.device;
+        let n = input_layout.shape().elem_count() as u64;
+        let ptx = cuda_relu_squared_ptx()?;
+        let output = match (&input.slice, &grad.slice) {
+            (CudaStorageSlice::F16(source), CudaStorageSlice::F16(upstream)) => {
+                candle_core::CudaStorage::wrap_cuda_slice(
+                    launch_cuda_binary(
+                        source,
+                        upstream,
+                        device,
+                        "relu_squared_backward_f16",
+                        ptx,
+                        n,
+                    )?,
+                    device.clone(),
+                )
+            }
+            (CudaStorageSlice::BF16(source), CudaStorageSlice::BF16(upstream)) => {
+                candle_core::CudaStorage::wrap_cuda_slice(
+                    launch_cuda_binary(
+                        source,
+                        upstream,
+                        device,
+                        "relu_squared_backward_bf16",
+                        ptx,
+                        n,
+                    )?,
+                    device.clone(),
+                )
+            }
+            (CudaStorageSlice::F32(source), CudaStorageSlice::F32(upstream)) => {
+                candle_core::CudaStorage::wrap_cuda_slice(
+                    launch_cuda_binary(
+                        source,
+                        upstream,
+                        device,
+                        "relu_squared_backward_f32",
+                        ptx,
+                        n,
+                    )?,
+                    device.clone(),
+                )
+            }
+            _ => candle_core::bail!("fused ReLU-squared backward expects matching float dtypes"),
+        };
+        Ok((output, input_layout.shape().clone()))
+    }
+}
+
+#[cfg(feature = "cuda-base")]
+fn ensure_cuda_contiguous_layout(layout: &Layout, operation: &str) -> candle_core::Result<()> {
+    if !layout.is_contiguous() || layout.start_offset() != 0 {
+        candle_core::bail!("{operation} expects contiguous tensors")
+    }
+    Ok(())
+}
+
+#[cfg(feature = "cuda-base")]
+fn launch_cuda_unary<T: candle_core::cuda::cudarc::driver::DeviceRepr>(
+    source: &candle_core::cuda::cudarc::driver::CudaSlice<T>,
+    device: &candle_core::CudaDevice,
+    function_name: &'static str,
+    ptx: &str,
+    n: u64,
+) -> candle_core::Result<candle_core::cuda::cudarc::driver::CudaSlice<T>> {
+    use candle_core::cuda::cudarc::driver::{DevicePtr, LaunchConfig, PushKernelArg};
+
+    let stream = device.cuda_stream();
+    let (source, source_record) = source.device_ptr(&stream);
+    let mut output = unsafe { device.alloc::<T>(n as usize)? };
+    let function =
+        device.get_or_load_custom_func(function_name, "rust_agent_fused_relu_squared", ptx)?;
+    let config = LaunchConfig::for_num_elems(n as u32);
+    let mut launch = function.builder();
+    launch.arg(&source);
+    launch.arg(&mut output);
+    launch.arg(&n);
+    unsafe { launch.launch(config) }.map_err(|error| {
+        candle_core::Error::Msg(format!("launch fused ReLU-squared kernel: {error}"))
+    })?;
+    drop(source_record);
+    Ok(output)
+}
+
+#[cfg(feature = "cuda-base")]
+fn launch_cuda_binary<T: candle_core::cuda::cudarc::driver::DeviceRepr>(
+    input: &candle_core::cuda::cudarc::driver::CudaSlice<T>,
+    grad: &candle_core::cuda::cudarc::driver::CudaSlice<T>,
+    device: &candle_core::CudaDevice,
+    function_name: &'static str,
+    ptx: &str,
+    n: u64,
+) -> candle_core::Result<candle_core::cuda::cudarc::driver::CudaSlice<T>> {
+    use candle_core::cuda::cudarc::driver::{DevicePtr, LaunchConfig, PushKernelArg};
+
+    let stream = device.cuda_stream();
+    let (input, input_record) = input.device_ptr(&stream);
+    let (grad, grad_record) = grad.device_ptr(&stream);
+    let mut output = unsafe { device.alloc::<T>(n as usize)? };
+    let function =
+        device.get_or_load_custom_func(function_name, "rust_agent_fused_relu_squared", ptx)?;
+    let config = LaunchConfig::for_num_elems(n as u32);
+    let mut launch = function.builder();
+    launch.arg(&input);
+    launch.arg(&grad);
+    launch.arg(&mut output);
+    launch.arg(&n);
+    unsafe { launch.launch(config) }.map_err(|error| {
+        candle_core::Error::Msg(format!(
+            "launch fused ReLU-squared backward kernel: {error}"
+        ))
+    })?;
+    drop(input_record);
+    drop(grad_record);
+    Ok(output)
+}
+
+#[cfg(feature = "cuda-base")]
+fn cuda_relu_squared_ptx() -> candle_core::Result<&'static str> {
+    use std::sync::OnceLock;
+
+    const KERNEL: &str = r#"
+    __device__ float half_to_float(unsigned short h) {
+      unsigned int sign = ((unsigned int)h & 0x8000u) << 16;
+      unsigned int exp = ((unsigned int)h >> 10) & 0x1fu;
+      unsigned int mant = (unsigned int)h & 0x3ffu;
+      unsigned int bits;
+      if (exp == 0) {
+        if (mant == 0) bits = sign;
+        else {
+          int unbiased = -14;
+          while ((mant & 0x400u) == 0) { mant <<= 1; unbiased -= 1; }
+          mant &= 0x3ffu;
+          bits = sign | ((unsigned int)(unbiased + 127) << 23) | (mant << 13);
+        }
+      } else if (exp == 31) bits = sign | 0x7f800000u | (mant << 13);
+      else bits = sign | ((exp + 112u) << 23) | (mant << 13);
+      return __uint_as_float(bits);
+    }
+    __device__ unsigned short float_to_half_rn(float value) {
+      unsigned int bits = __float_as_uint(value);
+      unsigned int sign = (bits >> 16) & 0x8000u;
+      unsigned int exp = (bits >> 23) & 0xffu;
+      unsigned int mant = bits & 0x7fffffu;
+      if (exp == 0xffu) return (unsigned short)(sign | 0x7c00u | (mant ? 0x0200u : 0));
+      int half_exp = (int)exp - 127 + 15;
+      if (half_exp >= 31) return (unsigned short)(sign | 0x7c00u);
+      if (half_exp <= 0) {
+        if (half_exp < -10) return (unsigned short)sign;
+        mant |= 0x800000u;
+        unsigned int shift = (unsigned int)(14 - half_exp);
+        unsigned int result = mant >> shift;
+        unsigned int remainder = mant & ((1u << shift) - 1u);
+        unsigned int halfway = 1u << (shift - 1u);
+        if (remainder > halfway || (remainder == halfway && (result & 1u))) result += 1u;
+        return (unsigned short)(sign | result);
+      }
+      unsigned int result_mant = mant >> 13;
+      unsigned int remainder = mant & 0x1fffu;
+      if (remainder > 0x1000u || (remainder == 0x1000u && (result_mant & 1u))) {
+        result_mant += 1u;
+        if (result_mant == 0x400u) { result_mant = 0; half_exp += 1; }
+      }
+      if (half_exp >= 31) return (unsigned short)(sign | 0x7c00u);
+      return (unsigned short)(sign | ((unsigned int)half_exp << 10) | result_mant);
+    }
+    __device__ float bf16_to_float(unsigned short value) {
+      return __uint_as_float((unsigned int)value << 16);
+    }
+    __device__ unsigned short float_to_bf16_rn(float value) {
+      unsigned int bits = __float_as_uint(value);
+      bits += 0x7fffu + ((bits >> 16) & 1u);
+      return (unsigned short)(bits >> 16);
+    }
+    extern "C" __global__ void relu_squared_f32(const float* x, float* y, unsigned long long n) {
+      unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+      if (i < n) { float v = x[i]; y[i] = v > 0.0f ? v * v : 0.0f; }
+    }
+    extern "C" __global__ void relu_squared_f16(const unsigned short* x, unsigned short* y, unsigned long long n) {
+      unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+      if (i < n) { float v = half_to_float(x[i]); y[i] = float_to_half_rn(v > 0.0f ? v * v : 0.0f); }
+    }
+    extern "C" __global__ void relu_squared_bf16(const unsigned short* x, unsigned short* y, unsigned long long n) {
+      unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+      if (i < n) { float v = bf16_to_float(x[i]); y[i] = float_to_bf16_rn(v > 0.0f ? v * v : 0.0f); }
+    }
+    extern "C" __global__ void relu_squared_backward_f32(const float* x, const float* g, float* y, unsigned long long n) {
+      unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+      if (i < n) { float v = x[i]; y[i] = v > 0.0f ? (2.0f * v) * g[i] : 0.0f; }
+    }
+    extern "C" __global__ void relu_squared_backward_f16(const unsigned short* x, const unsigned short* g, unsigned short* y, unsigned long long n) {
+      unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+      if (i < n) { float v = half_to_float(x[i]); float d = half_to_float(g[i]); y[i] = float_to_half_rn(v > 0.0f ? (2.0f * v) * d : 0.0f); }
+    }
+    extern "C" __global__ void relu_squared_backward_bf16(const unsigned short* x, const unsigned short* g, unsigned short* y, unsigned long long n) {
+      unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+      if (i < n) { float v = bf16_to_float(x[i]); float d = bf16_to_float(g[i]); y[i] = float_to_bf16_rn(v > 0.0f ? (2.0f * v) * d : 0.0f); }
+    }"#;
+    static PTX: OnceLock<std::result::Result<String, String>> = OnceLock::new();
+    let ptx = PTX.get_or_init(|| {
+        candle_core::cuda::cudarc::nvrtc::compile_ptx(KERNEL)
+            .map(|ptx| ptx.to_src())
+            .map_err(|error| error.to_string())
+    });
+    ptx.as_ref().map(String::as_str).map_err(|error| {
+        candle_core::Error::Msg(format!("compile fused ReLU-squared kernels: {error}"))
+    })
+}
+
+#[cfg(feature = "cuda-base")]
+struct CudaCrossEntropy {
+    softcap: bool,
+}
+
+#[cfg(feature = "cuda-base")]
+impl candle_core::CustomOp2 for CudaCrossEntropy {
+    fn name(&self) -> &'static str {
+        "cuda_fused_cross_entropy"
+    }
+
+    fn cpu_fwd(
+        &self,
+        _: &CpuStorage,
+        _: &Layout,
+        _: &CpuStorage,
+        _: &Layout,
+    ) -> candle_core::Result<(CpuStorage, Shape)> {
+        candle_core::bail!("CUDA fused cross entropy requires CUDA")
+    }
+
+    fn cuda_fwd(
+        &self,
+        input: &candle_core::CudaStorage,
+        input_layout: &Layout,
+        target: &candle_core::CudaStorage,
+        target_layout: &Layout,
+    ) -> candle_core::Result<(candle_core::CudaStorage, Shape)> {
+        use candle_core::cuda::{
+            CudaStorageSlice,
+            cudarc::driver::{DevicePtr, DevicePtrMut, LaunchConfig, PushKernelArg},
+        };
+
+        let [rows, classes] = input_layout.dims() else {
+            candle_core::bail!("CUDA fused cross entropy expects rank-2 logits")
+        };
+        if target_layout.dims() != [*rows]
+            || !input_layout.is_contiguous()
+            || !target_layout.is_contiguous()
+            || input_layout.start_offset() != 0
+            || target_layout.start_offset() != 0
+        {
+            candle_core::bail!("CUDA fused cross entropy expects contiguous logits and targets")
+        }
+        let CudaStorageSlice::F32(input_slice) = &input.slice else {
+            candle_core::bail!("CUDA fused cross entropy expects F32 logits")
+        };
+        let CudaStorageSlice::U32(target_slice) = &target.slice else {
+            candle_core::bail!("CUDA fused cross entropy expects U32 targets")
+        };
+        let device = &input.device;
+        let stream = device.cuda_stream();
+        let (input_ptr, _input_record) = input_slice.device_ptr(&stream);
+        let (target_ptr, _target_record) = target_slice.device_ptr(&stream);
+        let mut output = device.alloc_zeros::<f32>(1)?;
+        let (output_ptr, output_record) = output.device_ptr_mut(&stream);
+        let softcap = u32::from(self.softcap);
+        let ptx = cuda_cross_entropy_ptx(FORWARD_KERNEL, true)?;
+        let function = device.get_or_load_custom_func(
+            "fused_cross_entropy_forward",
+            "rust_agent_fused_cross_entropy_forward",
+            ptx,
+        )?;
+        let rows = *rows as u32;
+        let classes = *classes as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (rows, 1, 1),
+            block_dim: (256, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let mut launch = function.builder();
+        launch.arg(&input_ptr);
+        launch.arg(&target_ptr);
+        launch.arg(&output_ptr);
+        launch.arg(&rows);
+        launch.arg(&classes);
+        launch.arg(&softcap);
+        unsafe { launch.launch(cfg) }.map_err(|error| {
+            candle_core::Error::Msg(format!("launch fused cross-entropy forward: {error}"))
+        })?;
+        drop(output_record);
+        Ok((
+            candle_core::CudaStorage::wrap_cuda_slice(output, device.clone()),
+            Shape::from(()),
+        ))
+    }
+
+    fn bwd(
+        &self,
+        input: &Tensor,
+        target: &Tensor,
+        _: &Tensor,
+        output_grad: &Tensor,
+    ) -> candle_core::Result<(Option<Tensor>, Option<Tensor>)> {
+        use candle_core::{
+            Storage,
+            cuda::{
+                CudaStorageSlice,
+                cudarc::driver::{DevicePtr, DevicePtrMut, LaunchConfig, PushKernelArg},
+            },
+        };
+
+        let (rows, classes) = input.dims2()?;
+        let (input_storage, input_layout) = input.storage_and_layout();
+        let (target_storage, target_layout) = target.storage_and_layout();
+        let (grad_storage, grad_layout) = output_grad.storage_and_layout();
+        let (
+            Storage::Cuda(input_storage),
+            Storage::Cuda(target_storage),
+            Storage::Cuda(grad_storage),
+        ) = (&*input_storage, &*target_storage, &*grad_storage)
+        else {
+            candle_core::bail!("CUDA fused cross entropy backward expects CUDA tensors")
+        };
+        let (
+            CudaStorageSlice::F32(input_slice),
+            CudaStorageSlice::U32(target_slice),
+            CudaStorageSlice::F32(grad_slice),
+        ) = (
+            &input_storage.slice,
+            &target_storage.slice,
+            &grad_storage.slice,
+        )
+        else {
+            candle_core::bail!("CUDA fused cross entropy backward dtype mismatch")
+        };
+        if !input_layout.is_contiguous()
+            || !target_layout.is_contiguous()
+            || !grad_layout.is_contiguous()
+            || input_layout.start_offset() != 0
+            || target_layout.start_offset() != 0
+            || grad_layout.start_offset() != 0
+        {
+            candle_core::bail!("CUDA fused cross entropy backward expects contiguous tensors")
+        }
+        let device = &input_storage.device;
+        let stream = device.cuda_stream();
+        let (input_ptr, _input_record) = input_slice.device_ptr(&stream);
+        let (target_ptr, _target_record) = target_slice.device_ptr(&stream);
+        let (grad_ptr, _grad_record) = grad_slice.device_ptr(&stream);
+        // SAFETY: the backward kernel writes every element of this output.
+        let mut gradient = unsafe { device.alloc::<f32>(rows * classes)? };
+        let (gradient_ptr, gradient_record) = gradient.device_ptr_mut(&stream);
+        let softcap = u32::from(self.softcap);
+        let ptx = cuda_cross_entropy_ptx(BACKWARD_KERNEL, false)?;
+        let function = device.get_or_load_custom_func(
+            "fused_cross_entropy_backward",
+            "rust_agent_fused_cross_entropy_backward",
+            ptx,
+        )?;
+        let rows = rows as u32;
+        let classes = classes as u32;
+        let cfg = LaunchConfig {
+            grid_dim: (rows, 1, 1),
+            block_dim: (256, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        let mut launch = function.builder();
+        launch.arg(&input_ptr);
+        launch.arg(&target_ptr);
+        launch.arg(&grad_ptr);
+        launch.arg(&gradient_ptr);
+        launch.arg(&rows);
+        launch.arg(&classes);
+        launch.arg(&softcap);
+        unsafe { launch.launch(cfg) }.map_err(|error| {
+            candle_core::Error::Msg(format!("launch fused cross-entropy backward: {error}"))
+        })?;
+        drop(gradient_record);
+        let gradient = Tensor::from_storage(
+            Storage::Cuda(candle_core::CudaStorage::wrap_cuda_slice(
+                gradient,
+                device.clone(),
+            )),
+            input.shape().clone(),
+            candle_core::op::BackpropOp::none(),
+            false,
+        );
+        Ok((Some(gradient), None))
+    }
+}
+
+#[cfg(feature = "cuda-base")]
+fn cuda_cross_entropy_ptx(kernel: &str, forward: bool) -> candle_core::Result<&'static str> {
+    use std::sync::OnceLock;
+
+    static FORWARD_PTX: OnceLock<std::result::Result<String, String>> = OnceLock::new();
+    static BACKWARD_PTX: OnceLock<std::result::Result<String, String>> = OnceLock::new();
+    let slot = if forward { &FORWARD_PTX } else { &BACKWARD_PTX };
+    let ptx = slot.get_or_init(|| {
+        candle_core::cuda::cudarc::nvrtc::compile_ptx(kernel)
+            .map(|ptx| ptx.to_src())
+            .map_err(|error| error.to_string())
+    });
+    let ptx = ptx.as_ref().map_err(|error| {
+        candle_core::Error::Msg(format!("compile fused cross-entropy kernel: {error}"))
+    })?;
+    Ok(ptx.as_str())
+}
+
+#[cfg(feature = "cuda-base")]
+const FORWARD_KERNEL: &str = r#"
+extern "C" __global__ void fused_cross_entropy_forward(
+    const float* logits, const unsigned int* targets, float* loss,
+    unsigned int rows, unsigned int classes, unsigned int softcap) {
+  unsigned int row = blockIdx.x;
+  unsigned int tid = threadIdx.x;
+  if (row >= rows) return;
+  __shared__ float shared[256];
+  float maximum = -3.402823466e+38F;
+  const unsigned long long offset = (unsigned long long)row * classes;
+  for (unsigned int col = tid; col < classes; col += blockDim.x) {
+    float value = logits[offset + col];
+    if (softcap) value = 15.0f * tanhf(value / 15.0f);
+    maximum = fmaxf(maximum, value);
+  }
+  shared[tid] = maximum;
+  __syncthreads();
+  for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+    if (tid < stride) shared[tid] = fmaxf(shared[tid], shared[tid + stride]);
+    __syncthreads();
+  }
+  maximum = shared[0];
+  float denominator = 0.0f;
+  for (unsigned int col = tid; col < classes; col += blockDim.x) {
+    float value = logits[offset + col];
+    if (softcap) value = 15.0f * tanhf(value / 15.0f);
+    denominator += expf(value - maximum);
+  }
+  shared[tid] = denominator;
+  __syncthreads();
+  for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+    if (tid < stride) shared[tid] += shared[tid + stride];
+    __syncthreads();
+  }
+  if (tid == 0) {
+    float target = logits[offset + targets[row]];
+    if (softcap) target = 15.0f * tanhf(target / 15.0f);
+    atomicAdd(loss, (maximum + logf(shared[0]) - target) / rows);
+  }
+}"#;
+
+#[cfg(feature = "cuda-base")]
+const BACKWARD_KERNEL: &str = r#"
+extern "C" __global__ void fused_cross_entropy_backward(
+    const float* logits, const unsigned int* targets, const float* loss_grad,
+    float* gradient, unsigned int rows, unsigned int classes, unsigned int softcap) {
+  unsigned int row = blockIdx.x;
+  unsigned int tid = threadIdx.x;
+  if (row >= rows) return;
+  __shared__ float shared[256];
+  float maximum = -3.402823466e+38F;
+  const unsigned long long offset = (unsigned long long)row * classes;
+  for (unsigned int col = tid; col < classes; col += blockDim.x) {
+    float value = logits[offset + col];
+    if (softcap) value = 15.0f * tanhf(value / 15.0f);
+    maximum = fmaxf(maximum, value);
+  }
+  shared[tid] = maximum;
+  __syncthreads();
+  for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+    if (tid < stride) shared[tid] = fmaxf(shared[tid], shared[tid + stride]);
+    __syncthreads();
+  }
+  maximum = shared[0];
+  float denominator = 0.0f;
+  for (unsigned int col = tid; col < classes; col += blockDim.x) {
+    float value = logits[offset + col];
+    if (softcap) value = 15.0f * tanhf(value / 15.0f);
+    denominator += expf(value - maximum);
+  }
+  shared[tid] = denominator;
+  __syncthreads();
+  for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+    if (tid < stride) shared[tid] += shared[tid + stride];
+    __syncthreads();
+  }
+  denominator = shared[0];
+  const float scale = loss_grad[0] / rows;
+  for (unsigned int col = tid; col < classes; col += blockDim.x) {
+    float raw = logits[offset + col];
+    float value = softcap ? 15.0f * tanhf(raw / 15.0f) : raw;
+    float probability = expf(value - maximum) / denominator;
+    float derivative = softcap ? 1.0f - tanhf(raw / 15.0f) * tanhf(raw / 15.0f) : 1.0f;
+    gradient[offset + col] = (probability - (col == targets[row] ? 1.0f : 0.0f)) * derivative * scale;
+  }
+}"#;
 
 fn pytorch_cpu_f32_sum(values: &[f32]) -> f32 {
     const VECTOR_WIDTH: usize = 8;
@@ -1093,7 +1698,28 @@ impl GptModel {
         time: usize,
         positions: &[u32],
     ) -> Result<Tensor> {
-        self.forward_internal(token_ids, batch, time, None, Some(positions))
+        self.forward_internal(token_ids, batch, time, None, Some(positions), true)
+    }
+
+    /// Training-only logits before the output softcap. CUDA training applies
+    /// the softcap inside its fused cross-entropy kernel.
+    pub(crate) fn forward_training_logits(
+        &self,
+        token_ids: &[u32],
+        batch: usize,
+        time: usize,
+    ) -> Result<Tensor> {
+        self.forward_internal(token_ids, batch, time, None, None, false)
+    }
+
+    pub(crate) fn forward_positions_training_logits(
+        &self,
+        token_ids: &[u32],
+        batch: usize,
+        time: usize,
+        positions: &[u32],
+    ) -> Result<Tensor> {
+        self.forward_internal(token_ids, batch, time, None, Some(positions), false)
     }
 
     pub fn forward_with_cache(
@@ -1103,7 +1729,7 @@ impl GptModel {
         time: usize,
         cache: Option<&mut KvCache>,
     ) -> Result<Tensor> {
-        self.forward_internal(token_ids, batch, time, cache, None)
+        self.forward_internal(token_ids, batch, time, cache, None, true)
     }
 
     fn forward_internal(
@@ -1113,6 +1739,7 @@ impl GptModel {
         time: usize,
         mut cache: Option<&mut KvCache>,
         positions: Option<&[u32]>,
+        softcap_logits: bool,
     ) -> Result<Tensor> {
         ensure!(
             batch > 0 && time > 0,
@@ -1197,6 +1824,16 @@ impl GptModel {
             cache.previous_embedding = Some(normalized_embedding.narrow(1, time - 1, 1)?);
         }
         let x0 = x.clone();
+        // The same RoPE tables are used by every transformer block for this
+        // batch. Build and transfer them once per forward instead of once per
+        // layer.
+        let (rope_cos, rope_sin) = rope_tables(
+            time,
+            start_position,
+            self.config.n_embd / self.config.n_head,
+            device,
+            self.dtype,
+        )?;
         let mut backout = None;
         for (layer, block) in self.blocks.iter().enumerate() {
             let resid = self
@@ -1236,7 +1873,7 @@ impl GptModel {
                     })
                 })
                 .transpose()?;
-            x = block_forward(
+            x = block_forward_with_rope(
                 block,
                 &x,
                 value.as_ref(),
@@ -1245,6 +1882,8 @@ impl GptModel {
                 self.dtype,
                 self.fp8_training,
                 self.inference_attention,
+                &rope_cos,
+                &rope_sin,
                 start_position,
                 cache.as_deref_mut(),
             )?;
@@ -1281,12 +1920,16 @@ impl GptModel {
             logits.narrow(2, 0, self.config.vocab_size)?
         };
         let logits = logits.to_dtype(DType::F32)?;
-        let scaled_logits = if device.is_cpu() && logits.dtype() == DType::F32 {
-            logits.apply_op1(CpuDivideScalar(LOGIT_SOFTCAP as f32))?
+        let logits = if softcap_logits {
+            let scaled_logits = if device.is_cpu() && logits.dtype() == DType::F32 {
+                logits.apply_op1(CpuDivideScalar(LOGIT_SOFTCAP as f32))?
+            } else {
+                (logits / LOGIT_SOFTCAP)?
+            };
+            scaled_logits.tanh()?.affine(LOGIT_SOFTCAP, 0.0)?
         } else {
-            (logits / LOGIT_SOFTCAP)?
+            logits
         };
-        let logits = scaled_logits.tanh()?.affine(LOGIT_SOFTCAP, 0.0)?;
         if let Some(cache) = cache {
             cache.position += time;
         }
@@ -1690,6 +2333,14 @@ fn linear_forward(
     Ok(compute_layer.forward(&input)?)
 }
 
+fn relu_squared(input: &Tensor) -> Result<Tensor> {
+    #[cfg(feature = "cuda-base")]
+    if input.device().is_cuda() {
+        return Ok(input.apply_op1(CudaReluSquared)?);
+    }
+    Ok(input.relu()?.sqr()?)
+}
+
 fn apply_rope(x: &Tensor, cos: &Tensor, sin: &Tensor) -> Result<Tensor> {
     let width = x.dim(3)? / 2;
     let x1 = x.narrow(3, 0, width)?;
@@ -1719,11 +2370,15 @@ fn rope_tables(
     let half = head_dim / 2;
     let mut cos = Vec::with_capacity(time * half);
     let mut sin = Vec::with_capacity(time * half);
-    for position in start_position..start_position + time {
-        for channel in 0..half {
+    let inv_freq = (0..half)
+        .map(|channel| {
             let exponent = (2 * channel) as f32 / head_dim as f32;
-            let inv_freq = 1.0f32 / (ROPE_BASE as f32).powf(exponent);
-            let angle = position as f32 * inv_freq;
+            1.0f32 / (ROPE_BASE as f32).powf(exponent)
+        })
+        .collect::<Vec<_>>();
+    for position in start_position..start_position + time {
+        for &frequency in &inv_freq {
+            let angle = position as f32 * frequency;
             cos.push(angle.cos());
             sin.push(angle.sin());
         }
@@ -1738,6 +2393,7 @@ fn mix_value_embeddings(v: &Tensor, embedding: &Tensor, gate_logits: &Tensor) ->
     Ok(v.broadcast_add(&embedding.broadcast_mul(&gate)?)?)
 }
 
+#[cfg(test)]
 fn block_forward(
     block: &Block,
     x: &Tensor,
@@ -1748,14 +2404,50 @@ fn block_forward(
     fp8_training: bool,
     inference_attention: bool,
     start_position: usize,
+    cache: Option<&mut KvCache>,
+) -> Result<Tensor> {
+    let time = x.dim(1)?;
+    let (cos, sin) = rope_tables(
+        time,
+        start_position,
+        config.n_embd / config.n_head,
+        x.device(),
+        dtype,
+    )?;
+    block_forward_with_rope(
+        block,
+        x,
+        value_embedding,
+        config,
+        layer,
+        dtype,
+        fp8_training,
+        inference_attention,
+        &cos,
+        &sin,
+        start_position,
+        cache,
+    )
+}
+
+fn block_forward_with_rope(
+    block: &Block,
+    x: &Tensor,
+    value_embedding: Option<&Tensor>,
+    config: &GptConfig,
+    layer: usize,
+    dtype: DType,
+    fp8_training: bool,
+    inference_attention: bool,
+    cos: &Tensor,
+    sin: &Tensor,
+    start_position: usize,
     mut cache: Option<&mut KvCache>,
 ) -> Result<Tensor> {
     let (batch, time, _) = x.dims3()?;
     let head_dim = config.n_embd / config.n_head;
     let kv_heads = config.n_kv_head;
     let groups = config.n_head / kv_heads;
-    let (cos, sin) = rope_tables(time, start_position, head_dim, x.device(), dtype)?;
-
     let normalized = rms_norm_for(x, dtype, inference_attention)?;
     let mut q = linear_forward(&block.attn.q, &normalized, dtype, fp8_training)?.reshape((
         batch,
@@ -1772,8 +2464,8 @@ fn block_forward(
         let gate_logits = linear_forward(gate_layer, &gate_input, dtype, fp8_training)?;
         v = mix_value_embeddings(&v, ve, &gate_logits)?;
     }
-    q = apply_rope(&q, &cos, &sin)?;
-    k = apply_rope(&k, &cos, &sin)?;
+    q = apply_rope(&q, cos, sin)?;
+    k = apply_rope(&k, cos, sin)?;
     q = scale_qk(&rms_norm_for(&q, dtype, inference_attention)?, dtype)?.transpose(1, 2)?;
     k = scale_qk(&rms_norm_for(&k, dtype, inference_attention)?, dtype)?.transpose(1, 2)?;
     v = v.transpose(1, 2)?;
@@ -1801,25 +2493,32 @@ fn block_forward(
         ((config.sequence_len + 511) / 512) * 128
     };
     #[cfg(feature = "flash-attention")]
-    let attended = if inference_attention
-        && x.device().is_cuda()
-        && matches!(q.dtype(), DType::F16 | DType::BF16)
-    {
-        // The Candle FlashAttention op has no backward implementation, so
-        // use it only for inference. Training keeps the differentiable path.
+    let attended = if x.device().is_cuda() && matches!(q.dtype(), DType::F16 | DType::BF16) {
         let q_flash = q.transpose(1, 2)?;
         let k_flash = k.transpose(1, 2)?;
         let v_flash = v.transpose(1, 2)?;
         let left_window = (!config.is_long_window_layer(layer)).then_some(mask_width);
-        candle_flash_attn::flash_attn_windowed(
-            &q_flash,
-            &k_flash,
-            &v_flash,
-            1.0 / (head_dim as f32).sqrt(),
-            left_window,
-            Some(0),
-        )?
-        .reshape((batch, time, config.n_embd))?
+        let scale = 1.0 / (head_dim as f32).sqrt();
+        let output = if differentiable_attention {
+            q_flash.apply_op3(
+                &k_flash,
+                &v_flash,
+                TrainFlashAttention {
+                    scale,
+                    window: left_window,
+                },
+            )?
+        } else {
+            candle_flash_attn::flash_attn_windowed(
+                &q_flash,
+                &k_flash,
+                &v_flash,
+                scale,
+                left_window,
+                Some(0),
+            )?
+        };
+        output.reshape((batch, time, config.n_embd))?
     } else {
         fallback_attention(
             &q,
@@ -1857,9 +2556,12 @@ fn block_forward(
     let x = x.broadcast_add(&attended)?;
 
     let normalized = rms_norm_for(&x, dtype, inference_attention)?;
-    let hidden = linear_forward(&block.mlp.fc, &normalized, dtype, fp8_training)?
-        .relu()?
-        .sqr()?;
+    let hidden = relu_squared(&linear_forward(
+        &block.mlp.fc,
+        &normalized,
+        dtype,
+        fp8_training,
+    )?)?;
     let mlp = linear_forward(&block.mlp.proj, &hidden, dtype, fp8_training)?;
     Ok(x.broadcast_add(&mlp)?)
 }
@@ -1952,6 +2654,401 @@ fn fallback_attention(
     })
 }
 
+// FlashAttention's Candle binding supplies a forward kernel only. Recompute
+// bounded query blocks in the backward pass instead of retaining every score
+// matrix in the forward graph. This supports the same causal window and GQA
+// layouts as the normal attention path.
+#[cfg(feature = "flash-attention")]
+struct CudaAttentionScaleMask {
+    scale: f32,
+    query_start: usize,
+    key_start: usize,
+    window: Option<usize>,
+}
+
+#[cfg(feature = "flash-attention")]
+impl CustomOp1 for CudaAttentionScaleMask {
+    fn name(&self) -> &'static str {
+        "cuda_attention_scale_causal_mask"
+    }
+
+    fn cpu_fwd(&self, _: &CpuStorage, _: &Layout) -> candle_core::Result<(CpuStorage, Shape)> {
+        candle_core::bail!("CUDA attention mask requires CUDA")
+    }
+
+    fn cuda_fwd(
+        &self,
+        input: &candle_core::CudaStorage,
+        layout: &Layout,
+    ) -> candle_core::Result<(candle_core::CudaStorage, Shape)> {
+        use candle_core::cuda::{
+            CudaStorageSlice,
+            cudarc::driver::{DevicePtr, LaunchConfig, PushKernelArg},
+        };
+
+        let dims = layout.dims();
+        if dims.len() != 4 || !layout.is_contiguous() || layout.start_offset() != 0 {
+            candle_core::bail!(
+                "CUDA attention mask expects contiguous rank-4 scores, got {layout:?}"
+            )
+        }
+        let [_, _, queries, keys] = [dims[0], dims[1], dims[2], dims[3]];
+        let CudaStorageSlice::F32(input_slice) = &input.slice else {
+            candle_core::bail!("CUDA attention mask expects FP32 scores")
+        };
+        let device = &input.device;
+        let stream = device.cuda_stream();
+        let (src, _src_record) = input_slice.device_ptr(&stream);
+        let mut output = unsafe { device.alloc::<f32>(layout.shape().elem_count())? };
+        let kernel = r#"
+        extern "C" __global__ void scale_causal_mask(
+            const float* x, float* y, unsigned long long n,
+            unsigned int queries, unsigned int keys, unsigned int query_start,
+            unsigned int key_start, unsigned int window, float scale
+        ) {
+          unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+          if (i >= n) return;
+          unsigned int query = query_start + (unsigned int)((i / keys) % queries);
+          unsigned int key = key_start + (unsigned int)(i % keys);
+          bool masked = key > query || (window != 0xffffffffu && query - key > window);
+          y[i] = masked ? -1.0e30f : x[i] * scale;
+        }"#;
+        use std::sync::OnceLock;
+        static PTX: OnceLock<std::result::Result<String, String>> = OnceLock::new();
+        let ptx = PTX.get_or_init(|| {
+            candle_core::cuda::cudarc::nvrtc::compile_ptx(kernel)
+                .map(|ptx| ptx.to_src())
+                .map_err(|error| error.to_string())
+        });
+        let ptx = ptx.as_ref().map_err(|error| {
+            candle_core::Error::Msg(format!("compile attention scale-mask kernel: {error}"))
+        })?;
+        let function = device.get_or_load_custom_func(
+            "scale_causal_mask",
+            "rust_agent_attention_scale_mask",
+            ptx,
+        )?;
+        let n = layout.shape().elem_count() as u64;
+        let queries = queries as u32;
+        let keys = keys as u32;
+        let query_start = self.query_start as u32;
+        let key_start = self.key_start as u32;
+        let window = self.window.map_or(u32::MAX, |value| value as u32);
+        let scale = self.scale;
+        let config = LaunchConfig::for_num_elems(n as u32);
+        let mut launch = function.builder();
+        launch.arg(&src);
+        launch.arg(&mut output);
+        launch.arg(&n);
+        launch.arg(&queries);
+        launch.arg(&keys);
+        launch.arg(&query_start);
+        launch.arg(&key_start);
+        launch.arg(&window);
+        launch.arg(&scale);
+        unsafe { launch.launch(config) }.map_err(|error| {
+            candle_core::Error::Msg(format!("launch attention scale-mask kernel: {error}"))
+        })?;
+        drop(_src_record);
+        Ok((
+            candle_core::CudaStorage::wrap_cuda_slice(output, device.clone()),
+            layout.shape().clone(),
+        ))
+    }
+}
+
+#[cfg(feature = "flash-attention")]
+struct TrainFlashAttention {
+    scale: f32,
+    window: Option<usize>,
+}
+
+#[cfg(feature = "flash-attention")]
+impl candle_core::CustomOp3 for TrainFlashAttention {
+    fn name(&self) -> &'static str {
+        "train-flash-attention"
+    }
+
+    fn cpu_fwd(
+        &self,
+        _: &CpuStorage,
+        _: &Layout,
+        _: &CpuStorage,
+        _: &Layout,
+        _: &CpuStorage,
+        _: &Layout,
+    ) -> candle_core::Result<(CpuStorage, Shape)> {
+        candle_core::bail!("train-flash-attention requires CUDA")
+    }
+
+    fn cuda_fwd(
+        &self,
+        q: &candle_core::CudaStorage,
+        ql: &Layout,
+        k: &candle_core::CudaStorage,
+        kl: &Layout,
+        v: &candle_core::CudaStorage,
+        vl: &Layout,
+    ) -> candle_core::Result<(candle_core::CudaStorage, Shape)> {
+        let op = candle_flash_attn::FlashAttn {
+            softmax_scale: self.scale,
+            alibi_slopes: None,
+            window_size_left: self.window,
+            window_size_right: Some(0),
+            softcap: None,
+        };
+        candle_core::CustomOp3::cuda_fwd(&op, q, ql, k, kl, v, vl)
+    }
+
+    fn bwd(
+        &self,
+        q: &Tensor,
+        k: &Tensor,
+        v: &Tensor,
+        _: &Tensor,
+        grad: &Tensor,
+    ) -> candle_core::Result<(Option<Tensor>, Option<Tensor>, Option<Tensor>)> {
+        let (batch, time, heads, width) = q.dims4()?;
+        let (_, key_time, kv_heads, _) = k.dims4()?;
+        if time != key_time || heads % kv_heads != 0 {
+            candle_core::bail!(
+                "training attention expects matching sequence lengths and grouped heads"
+            );
+        }
+        let mut q_parts = Vec::new();
+        let cuda_device = q.device().as_cuda_device()?;
+        let mut k_grad = cuda_device.alloc_zeros::<f32>(k.elem_count())?;
+        let mut v_grad = cuda_device.alloc_zeros::<f32>(v.elem_count())?;
+        const BLOCK: usize = 256;
+        let groups = heads / kv_heads;
+        let scale = self.scale as f64;
+        // Convert and expand the shared K/V heads only once. Doing this per
+        // query block repeatedly copied a quadratic amount of data for dense
+        // attention, even though the underlying keys and values are fixed.
+        let k_full = k
+            .to_dtype(DType::F16)?
+            .transpose(1, 2)?
+            .reshape((batch, kv_heads, 1, key_time, width))?
+            .broadcast_as((batch, kv_heads, groups, key_time, width))?
+            .contiguous()?
+            .reshape((batch, heads, key_time, width))?;
+        let v_full = v
+            .to_dtype(DType::F16)?
+            .transpose(1, 2)?
+            .reshape((batch, kv_heads, 1, key_time, width))?
+            .broadcast_as((batch, kv_heads, groups, key_time, width))?
+            .contiguous()?
+            .reshape((batch, heads, key_time, width))?;
+        for start in (0..time).step_by(BLOCK) {
+            let count = BLOCK.min(time - start);
+            let key_start = self.window.map_or(0, |window| start.saturating_sub(window));
+            let end = start + count;
+            let key_count = end - key_start;
+            // Use the standard attention derivative directly instead of
+            // constructing an autograd graph for every query block. The
+            // block keeps the score/probability tensors bounded at long
+            // context lengths and removes the graph-building overhead from
+            // the prior per-block autograd implementation.
+            let q_block = q
+                .narrow(1, start, count)?
+                .to_dtype(DType::F16)?
+                .transpose(1, 2)?
+                .contiguous()?;
+            let k_block = k_full.narrow(2, key_start, key_count)?.contiguous()?;
+            let v_block = v_full.narrow(2, key_start, key_count)?.contiguous()?;
+            let upstream = grad
+                .narrow(1, start, count)?
+                .to_dtype(DType::F16)?
+                .transpose(1, 2)?
+                .contiguous()?;
+            let scores = q_block
+                .broadcast_matmul(&k_block.transpose(2, 3)?.contiguous()?)?
+                .to_dtype(DType::F32)?
+                .apply_op1(CudaAttentionScaleMask {
+                    scale: self.scale,
+                    query_start: start,
+                    key_start,
+                    window: self.window,
+                })?;
+            let probabilities = ops::softmax_last_dim(&scores)?;
+            let d_probabilities = upstream
+                .broadcast_matmul(&v_block.transpose(2, 3)?.contiguous()?)?
+                .to_dtype(DType::F32)?;
+            let d_values = probabilities
+                .to_dtype(DType::F16)?
+                .transpose(2, 3)?
+                .contiguous()?
+                .broadcast_matmul(&upstream)?
+                .to_dtype(DType::F32)?
+                .reshape((batch, kv_heads, groups, key_count, width))?
+                .sum(2)?;
+            let d_scores = probabilities.broadcast_mul(
+                &d_probabilities.broadcast_sub(
+                    &d_probabilities
+                        .broadcast_mul(&probabilities)?
+                        .sum_keepdim(3)?,
+                )?,
+            )?;
+            let d_queries = d_scores
+                .to_dtype(DType::F16)?
+                .broadcast_matmul(&k_block)?
+                .to_dtype(DType::F32)?
+                .affine(scale, 0.0)?
+                .transpose(1, 2)?;
+            let d_keys = d_scores
+                .to_dtype(DType::F16)?
+                .transpose(2, 3)?
+                .contiguous()?
+                .broadcast_matmul(&q_block)?
+                .to_dtype(DType::F32)?
+                .affine(scale, 0.0)?
+                .reshape((batch, kv_heads, groups, key_count, width))?
+                .sum(2)?;
+            q_parts.push(d_queries.detach());
+            accumulate_attention_gradient(
+                &mut k_grad,
+                &d_keys,
+                batch,
+                kv_heads,
+                key_time,
+                key_start,
+                key_count,
+                width,
+            )?;
+            accumulate_attention_gradient(
+                &mut v_grad,
+                &d_values,
+                batch,
+                kv_heads,
+                key_time,
+                key_start,
+                key_count,
+                width,
+            )?;
+        }
+        let k_grad = cuda_f32_buffer_tensor(k_grad, k.shape().clone(), q.device())?;
+        let v_grad = cuda_f32_buffer_tensor(v_grad, v.shape().clone(), q.device())?;
+        Ok((
+            Some(Tensor::cat(&q_parts, 1)?.to_dtype(q.dtype())?),
+            Some(k_grad.to_dtype(k.dtype())?),
+            Some(v_grad.to_dtype(v.dtype())?),
+        ))
+    }
+}
+
+#[cfg(feature = "flash-attention")]
+fn cuda_f32_buffer_tensor(
+    buffer: candle_core::cuda::cudarc::driver::CudaSlice<f32>,
+    shape: Shape,
+    device: &Device,
+) -> candle_core::Result<Tensor> {
+    use candle_core::{Storage, op::BackpropOp};
+
+    Ok(Tensor::from_storage(
+        Storage::Cuda(candle_core::CudaStorage::wrap_cuda_slice(
+            buffer,
+            device.as_cuda_device()?.clone(),
+        )),
+        shape,
+        BackpropOp::none(),
+        false,
+    ))
+}
+
+#[cfg(feature = "flash-attention")]
+#[allow(clippy::too_many_arguments)]
+fn accumulate_attention_gradient(
+    destination: &mut candle_core::cuda::cudarc::driver::CudaSlice<f32>,
+    contribution: &Tensor,
+    batch: usize,
+    heads: usize,
+    full_time: usize,
+    start_time: usize,
+    time: usize,
+    width: usize,
+) -> candle_core::Result<()> {
+    use std::sync::OnceLock;
+
+    use candle_core::{
+        Storage,
+        cuda::{
+            CudaStorageSlice,
+            cudarc::driver::{DevicePtr, DevicePtrMut, LaunchConfig, PushKernelArg},
+        },
+    };
+
+    let contribution = contribution.contiguous()?;
+    let (storage, layout) = contribution.storage_and_layout();
+    let Storage::Cuda(storage) = &*storage else {
+        candle_core::bail!("attention gradient contribution must be on CUDA")
+    };
+    let CudaStorageSlice::F32(source) = &storage.slice else {
+        candle_core::bail!("attention gradient contribution must be FP32")
+    };
+    if !layout.is_contiguous() || layout.start_offset() != 0 {
+        candle_core::bail!("attention gradient contribution must be contiguous")
+    }
+    let device = &storage.device;
+    let stream = device.cuda_stream();
+    let (source_ptr, _source_record) = source.device_ptr(&stream);
+    let (destination_ptr, _destination_record) = destination.device_ptr_mut(&stream);
+    const KERNEL: &str = r#"
+    extern "C" __global__ void accumulate_attention_gradient(
+        const float* source, float* destination,
+        unsigned long long n, unsigned int heads,
+        unsigned int full_time, unsigned int start_time,
+        unsigned int time, unsigned int width) {
+      unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+      if (i >= n) return;
+      unsigned int dim = i % width;
+      unsigned int token = (i / width) % time;
+      unsigned int head = (i / (width * time)) % heads;
+      unsigned int batch = i / ((unsigned long long)width * time * heads);
+      unsigned long long dst = ((batch * full_time + start_time + token) * heads + head) * width + dim;
+      destination[dst] += source[i];
+    }"#;
+    static PTX: OnceLock<std::result::Result<String, String>> = OnceLock::new();
+    let ptx = PTX.get_or_init(|| {
+        candle_core::cuda::cudarc::nvrtc::compile_ptx(KERNEL)
+            .map(|ptx| ptx.to_src())
+            .map_err(|error| error.to_string())
+    });
+    let ptx = ptx.as_ref().map_err(|error| {
+        candle_core::Error::Msg(format!(
+            "compile attention gradient accumulation kernel: {error}"
+        ))
+    })?;
+    let function = device.get_or_load_custom_func(
+        "accumulate_attention_gradient",
+        "rust_agent_attention_grad",
+        ptx,
+    )?;
+    let count = (batch * heads * time * width) as u64;
+    let heads = heads as u32;
+    let full_time = full_time as u32;
+    let start_time = start_time as u32;
+    let time = time as u32;
+    let width = width as u32;
+    let cfg = LaunchConfig::for_num_elems(count as u32);
+    let mut launch = function.builder();
+    launch.arg(&source_ptr);
+    launch.arg(&destination_ptr);
+    launch.arg(&count);
+    launch.arg(&heads);
+    launch.arg(&full_time);
+    launch.arg(&start_time);
+    launch.arg(&time);
+    launch.arg(&width);
+    unsafe { launch.launch(cfg) }.map_err(|error| {
+        candle_core::Error::Msg(format!(
+            "launch attention gradient accumulation kernel: {error}"
+        ))
+    })?;
+    drop(_source_record);
+    drop(_destination_record);
+    Ok(())
+}
+
 fn attention_softmax(scores: &Tensor, differentiable: bool) -> Result<Tensor> {
     if differentiable {
         Ok(ops::softmax(scores, scores.rank() - 1)?)
@@ -1962,7 +3059,201 @@ fn attention_softmax(scores: &Tensor, differentiable: bool) -> Result<Tensor> {
 
 #[cfg(test)]
 mod attention_gradient_tests {
-    use super::{CpuDivideScalar, attention_softmax, fallback_attention, rms_norm, rope_tables};
+    use super::{
+        CpuDivideScalar, LOGIT_SOFTCAP, attention_softmax, fallback_attention, rms_norm,
+        rope_tables,
+    };
+
+    #[cfg(feature = "flash-attention")]
+    #[test]
+    fn cuda_train_flash_gradients_track_fallback_for_causal_and_windowed_attention() {
+        use super::TrainFlashAttention;
+        let device = Device::new_cuda(0).unwrap();
+        for window in [None, Some(3)] {
+            let make_var = |offset: f32| {
+                let data = (0..(2 * 529 * 128))
+                    .map(|i| ((i as f32 * 0.017 + offset).sin()) * 0.3)
+                    .collect::<Vec<_>>();
+                Var::from_tensor(
+                    &Tensor::from_vec(data, (1, 529, 2, 128), &device)
+                        .unwrap()
+                        .to_dtype(DType::BF16)
+                        .unwrap(),
+                )
+                .unwrap()
+            };
+            let (q, k, v) = (make_var(0.1), make_var(0.4), make_var(0.7));
+            let flash = q
+                .apply_op3(
+                    &k,
+                    &v,
+                    TrainFlashAttention {
+                        scale: 1.0 / (128.0f32).sqrt(),
+                        window,
+                    },
+                )
+                .unwrap();
+            let reference = fallback_attention(
+                &q.transpose(1, 2).unwrap(),
+                &k.transpose(1, 2).unwrap(),
+                &v.transpose(1, 2).unwrap(),
+                1,
+                529,
+                0,
+                0,
+                529,
+                window.unwrap_or(529),
+                1,
+                128,
+                &device,
+                true,
+            )
+            .unwrap()
+            .reshape((1, 529, 2, 128))
+            .unwrap();
+            let flash_grads = flash
+                .to_dtype(DType::F32)
+                .unwrap()
+                .sum_all()
+                .unwrap()
+                .backward()
+                .unwrap();
+            let ref_grads = reference
+                .to_dtype(DType::F32)
+                .unwrap()
+                .sum_all()
+                .unwrap()
+                .backward()
+                .unwrap();
+            for var in [&q, &k, &v] {
+                let a = flash_grads
+                    .get(var)
+                    .unwrap()
+                    .to_dtype(DType::F32)
+                    .unwrap()
+                    .flatten_all()
+                    .unwrap()
+                    .to_vec1::<f32>()
+                    .unwrap();
+                let b = ref_grads
+                    .get(var)
+                    .unwrap()
+                    .to_dtype(DType::F32)
+                    .unwrap()
+                    .flatten_all()
+                    .unwrap()
+                    .to_vec1::<f32>()
+                    .unwrap();
+                let max = a
+                    .iter()
+                    .zip(b.iter())
+                    .map(|(x, y)| (x - y).abs())
+                    .fold(0.0f32, f32::max);
+                assert!(
+                    max < 0.04,
+                    "window={window:?} gradient max difference={max}"
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "cuda-base")]
+    #[test]
+    fn cuda_fused_cross_entropy_matches_candle_loss_and_gradients() {
+        let device = Device::new_cuda(0).unwrap();
+        let values = (0..(3 * 17))
+            .map(|index| (index as f32 * 0.13).sin() * 4.0)
+            .collect::<Vec<_>>();
+        let targets = Tensor::from_vec(vec![1u32, 8, 16], (3,), &device).unwrap();
+        let fused_logits =
+            Var::from_tensor(&Tensor::from_vec(values.clone(), (3, 17), &device).unwrap()).unwrap();
+        let reference_logits =
+            Var::from_tensor(&Tensor::from_vec(values, (3, 17), &device).unwrap()).unwrap();
+        let fused_loss = super::training_cross_entropy(fused_logits.as_tensor(), &targets).unwrap();
+        let reference_loss =
+            candle_nn::loss::cross_entropy(reference_logits.as_tensor(), &targets).unwrap();
+        let loss_difference = (fused_loss.to_scalar::<f32>().unwrap()
+            - reference_loss.to_scalar::<f32>().unwrap())
+        .abs();
+        assert!(loss_difference < 1e-5, "loss difference={loss_difference}");
+        let fused_gradient = fused_loss
+            .backward()
+            .unwrap()
+            .get(&fused_logits)
+            .unwrap()
+            .to_vec2::<f32>()
+            .unwrap();
+        let reference_gradient = reference_loss
+            .backward()
+            .unwrap()
+            .get(&reference_logits)
+            .unwrap()
+            .to_vec2::<f32>()
+            .unwrap();
+        let gradient_difference = fused_gradient
+            .iter()
+            .flatten()
+            .zip(reference_gradient.iter().flatten())
+            .map(|(actual, expected)| (actual - expected).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            gradient_difference < 1e-5,
+            "gradient difference={gradient_difference}"
+        );
+
+        let softcap_values = (0..(3 * 17))
+            .map(|index| (index as f32 * 0.13).sin() * 20.0)
+            .collect::<Vec<_>>();
+        let fused_softcap_logits =
+            Var::from_tensor(&Tensor::from_vec(softcap_values.clone(), (3, 17), &device).unwrap())
+                .unwrap();
+        let reference_softcap_logits =
+            Var::from_tensor(&Tensor::from_vec(softcap_values, (3, 17), &device).unwrap()).unwrap();
+        let fused_softcap_loss =
+            super::training_softcap_cross_entropy(fused_softcap_logits.as_tensor(), &targets)
+                .unwrap();
+        let reference_softcapped = reference_softcap_logits
+            .as_tensor()
+            .affine(1.0 / LOGIT_SOFTCAP, 0.0)
+            .unwrap()
+            .tanh()
+            .unwrap()
+            .affine(LOGIT_SOFTCAP, 0.0)
+            .unwrap();
+        let reference_softcap_loss =
+            candle_nn::loss::cross_entropy(&reference_softcapped, &targets).unwrap();
+        let softcap_loss_difference = (fused_softcap_loss.to_scalar::<f32>().unwrap()
+            - reference_softcap_loss.to_scalar::<f32>().unwrap())
+        .abs();
+        assert!(
+            softcap_loss_difference < 1e-5,
+            "softcap loss difference={softcap_loss_difference}"
+        );
+        let fused_softcap_gradient = fused_softcap_loss
+            .backward()
+            .unwrap()
+            .get(&fused_softcap_logits)
+            .unwrap()
+            .to_vec2::<f32>()
+            .unwrap();
+        let reference_softcap_gradient = reference_softcap_loss
+            .backward()
+            .unwrap()
+            .get(&reference_softcap_logits)
+            .unwrap()
+            .to_vec2::<f32>()
+            .unwrap();
+        let softcap_gradient_difference = fused_softcap_gradient
+            .iter()
+            .flatten()
+            .zip(reference_softcap_gradient.iter().flatten())
+            .map(|(actual, expected)| (actual - expected).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            softcap_gradient_difference < 1e-5,
+            "softcap gradient difference={softcap_gradient_difference}"
+        );
+    }
 
     #[test]
     fn cpu_scalar_division_supports_strided_views() {

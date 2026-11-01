@@ -405,6 +405,21 @@ fn sft_updates_for_batch_limit(limit: usize, grad_accum_steps: usize) -> usize {
     limit.saturating_sub(1).div_ceil(grad_accum_steps)
 }
 
+fn run_with_prefetched_batch<T>(
+    batches: &mut impl BatchSource,
+    compute: impl FnOnce() -> Result<T>,
+) -> Result<(T, TokenBatch, f64)> {
+    std::thread::scope(|scope| -> Result<_> {
+        let prefetch = scope.spawn(|| batches.next_batch());
+        let compute = compute();
+        let wait_started = Instant::now();
+        let next_batch = prefetch
+            .join()
+            .map_err(|_| anyhow::anyhow!("batch prefetch thread panicked"))??;
+        Ok((compute?, next_batch, wait_started.elapsed().as_secs_f64()))
+    })
+}
+
 fn resolve_sft_progress(
     step: usize,
     total_steps: usize,
@@ -427,8 +442,112 @@ fn resolve_sft_progress(
 mod tests {
     use super::{
         reference_log_step, reference_wandb_log_step, resolve_loop_horizon, resolve_sft_progress,
-        sft_updates_for_batch_limit,
+        run_with_prefetched_batch, sft_updates_for_batch_limit, training_logits_for_positions,
     };
+
+    #[test]
+    fn next_training_batch_is_prefetched_during_microbatch_compute() {
+        use anyhow::Result;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        use std::time::{Duration, Instant};
+
+        use crate::data::{BatchSource, TokenBatch};
+
+        struct Source(Arc<AtomicBool>);
+
+        impl BatchSource for Source {
+            fn next_batch(&mut self) -> Result<TokenBatch> {
+                self.0.store(true, Ordering::Release);
+                Ok(TokenBatch {
+                    inputs: vec![1, 2],
+                    valid_positions: vec![0],
+                    valid_targets: vec![2],
+                })
+            }
+        }
+
+        let started = Arc::new(AtomicBool::new(false));
+        let mut source = Source(Arc::clone(&started));
+        let (value, batch, _) = run_with_prefetched_batch(&mut source, || {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while !started.load(Ordering::Acquire) {
+                assert!(
+                    Instant::now() < deadline,
+                    "prefetch did not overlap compute"
+                );
+                std::thread::yield_now();
+            }
+            Ok(75)
+        })
+        .unwrap();
+        assert_eq!(value, 75);
+        assert_eq!(batch.valid_targets, vec![2]);
+    }
+
+    #[test]
+    fn selected_training_logits_match_full_projection_and_gradients() {
+        use crate::{model::GptModel, model_config::GptConfig};
+        use candle_core::{DType, Device, Tensor};
+        let config = GptConfig {
+            sequence_len: 8,
+            vocab_size: 64,
+            n_layer: 2,
+            n_head: 2,
+            n_kv_head: 2,
+            n_embd: 32,
+            window_pattern: "L".into(),
+        };
+        let (model, variables) =
+            GptModel::new_trainable_with_compute_dtype(config, &Device::Cpu, DType::F32).unwrap();
+        let inputs: Vec<u32> = (0..8).collect();
+        for positions in [vec![0, 1, 2, 3, 4, 5, 6, 7], vec![1, 4, 7]] {
+            let actual = training_logits_for_positions(&model, &inputs, 1, 8, &positions).unwrap();
+            let full = model
+                .forward_training_logits(&inputs, 1, 8)
+                .unwrap()
+                .reshape((8, 64))
+                .unwrap();
+            let reference = full
+                .index_select(
+                    &Tensor::from_vec(positions.clone(), positions.len(), &Device::Cpu).unwrap(),
+                    0,
+                )
+                .unwrap();
+            let max_error = actual
+                .sub(&reference)
+                .unwrap()
+                .abs()
+                .unwrap()
+                .max_all()
+                .unwrap()
+                .to_scalar::<f32>()
+                .unwrap();
+            assert!(max_error < 1e-5, "logits differ: {max_error}");
+            let actual_grad = actual.sum_all().unwrap().backward().unwrap();
+            let reference_grad = reference.sum_all().unwrap().backward().unwrap();
+            for variable in variables.all_vars() {
+                match (actual_grad.get(&variable), reference_grad.get(&variable)) {
+                    (Some(a), Some(b)) => {
+                        let error = a
+                            .sub(b)
+                            .unwrap()
+                            .abs()
+                            .unwrap()
+                            .max_all()
+                            .unwrap()
+                            .to_scalar::<f32>()
+                            .unwrap();
+                        assert!(error < 1e-4, "gradient differs: {error}");
+                    }
+                    (None, None) => (),
+                    _ => panic!("gradient missing from one path"),
+                }
+            }
+        }
+    }
 
     #[test]
     fn base_resume_uses_absolute_global_horizon() {
@@ -762,6 +881,7 @@ fn train_model(
         batches.prefetch_batch()?;
     }
     let mut local_step = 0usize;
+    let profile_steps = std::env::var_os("RUST_AGENT_PROFILE_STEPS").is_some();
     while local_step < steps_to_run {
         let stop_at_epoch =
             options.full_epoch || (options.sft_schedule && batches.training_progress().is_some());
@@ -879,38 +999,106 @@ fn train_model(
         let mut supervised_tokens = 0usize;
         let mut weighted_loss = 0.0f64;
         let mut last_batch_loss = 0.0f64;
-        for _ in 0..options.grad_accum_steps {
-            let batch = batches.next_batch()?;
-            let logits = model
-                .forward(&batch.inputs, options.batch_size, options.sequence_len)?
-                .reshape((
-                    options.batch_size * options.sequence_len,
-                    model.config.vocab_size,
-                ))?;
+        let mut data_seconds = 0.0f64;
+        let mut forward_loss_seconds = 0.0f64;
+        let mut backward_seconds = 0.0f64;
+        let mut gradient_transfer_seconds = 0.0f64;
+        // Long-context CUDA training can use most device memory for one
+        // microbatch. Keep gradients from earlier microbatches on the host so
+        // they do not compete with the next forward/backward pass.
+        let host_accumulation = device.is_cuda() && options.grad_accum_steps > 1;
+        let mut prefetched_batch = None;
+        for microbatch_index in 0..options.grad_accum_steps {
+            let data_started = Instant::now();
+            let mut batch = match prefetched_batch.take() {
+                Some(batch) => batch,
+                None => batches.next_batch()?,
+            };
+            data_seconds += data_started.elapsed().as_secs_f64();
             let batch_tokens = batch.valid_targets.len();
-            let selected = logits.index_select(
-                &Tensor::from_vec(batch.valid_positions, (batch_tokens,), device)?,
-                0,
-            )?;
-            let targets = Tensor::from_vec(batch.valid_targets, (selected.dim(0)?,), device)?;
-            let loss = crate::model::training_cross_entropy(&selected, &targets)?;
-            last_batch_loss = loss.to_scalar::<f32>()? as f64;
+            let forward_started = Instant::now();
+            let mut run_microbatch = || -> Result<(GradStore, f64, f64, f64)> {
+                let selected = training_logits_for_positions(
+                    &model,
+                    &batch.inputs,
+                    options.batch_size,
+                    options.sequence_len,
+                    &batch.valid_positions,
+                )?;
+                let targets = Tensor::from_vec(
+                    std::mem::take(&mut batch.valid_targets),
+                    (selected.dim(0)?,),
+                    device,
+                )?;
+                let loss = crate::model::training_softcap_cross_entropy(&selected, &targets)?;
+                let loss_value = loss.to_scalar::<f32>()? as f64;
+                let forward_seconds = forward_started.elapsed().as_secs_f64();
+                // Python's train loops average each microbatch's mean loss
+                // equally, even when SFT batches contain different numbers
+                // of supervised assistant tokens.
+                let scaled_loss = loss.affine(loss_scale / options.grad_accum_steps as f64, 0.0)?;
+                let backward_started = Instant::now();
+                let gradients = scaled_loss.backward()?;
+                let backward_seconds = backward_started.elapsed().as_secs_f64();
+                Ok((gradients, loss_value, forward_seconds, backward_seconds))
+            };
+            let (
+                mut batch_gradients,
+                batch_loss,
+                forward_seconds,
+                backward_elapsed,
+                next_batch,
+                wait,
+            ) = if microbatch_index + 1 < options.grad_accum_steps {
+                let ((gradients, loss, forward, backward), next_batch, wait) =
+                    run_with_prefetched_batch(batches, run_microbatch)?;
+                (gradients, loss, forward, backward, Some(next_batch), wait)
+            } else {
+                let (gradients, loss, forward, backward) = run_microbatch()?;
+                (gradients, loss, forward, backward, None, 0.0)
+            };
+            prefetched_batch = next_batch;
+            data_seconds += wait;
+            last_batch_loss = batch_loss;
+            forward_loss_seconds += forward_seconds;
             weighted_loss += last_batch_loss * batch_tokens as f64;
-            // Python's train loops average each microbatch's mean loss
-            // equally, even when SFT batches contain different numbers of
-            // supervised assistant tokens.
-            let scaled_loss = loss.affine(loss_scale / options.grad_accum_steps as f64, 0.0)?;
-            let batch_gradients = scaled_loss.backward()?;
-            accumulated.extend(batch_gradients)?;
-            supervised_tokens += batch_tokens;
-            if options.sft_schedule {
-                batches.prefetch_batch()?;
+            backward_seconds += backward_elapsed;
+            let gradient_transfer_started = Instant::now();
+            if host_accumulation {
+                for (_, parameter) in &parameters {
+                    if let Some(gradient) = batch_gradients.remove(parameter.as_tensor()) {
+                        let gradient = gradient.to_device(&Device::Cpu)?;
+                        let combined = match accumulated.remove(parameter.as_tensor()) {
+                            Some(previous) => previous.add(&gradient)?.detach(),
+                            None => gradient,
+                        };
+                        accumulated.insert(parameter.as_tensor(), combined);
+                    }
+                }
+            } else {
+                accumulated.extend(batch_gradients)?;
             }
+            gradient_transfer_seconds += gradient_transfer_started.elapsed().as_secs_f64();
+            supervised_tokens += batch_tokens;
+        }
+        if options.sft_schedule {
+            let data_started = Instant::now();
+            batches.prefetch_batch()?;
+            data_seconds += data_started.elapsed().as_secs_f64();
         }
         ensure!(
             supervised_tokens > 0,
             "accumulated batches contain no supervised targets"
         );
+        if host_accumulation {
+            let gradient_transfer_started = Instant::now();
+            for (_, parameter) in &parameters {
+                if let Some(gradient) = accumulated.remove(parameter.as_tensor()) {
+                    accumulated.insert(parameter.as_tensor(), gradient.to_device(device)?);
+                }
+            }
+            gradient_transfer_seconds += gradient_transfer_started.elapsed().as_secs_f64();
+        }
         // Gradients already contain the per-microbatch mean divided by the
         // accumulation count. Average ranks equally, as PyTorch DDP does;
         // supervised-token weighting is used only for the aggregate metric.
@@ -930,6 +1118,7 @@ fn train_model(
             .transpose()?
             .unwrap_or(false);
         let mut gradients = GradStore::default();
+        let optimizer_started = Instant::now();
         if !overflow {
             for (_, parameter) in &parameters {
                 if let Some(gradient) = scaled_gradients.get(parameter.as_tensor()) {
@@ -1030,6 +1219,7 @@ fn train_model(
                 &mut distributed,
             )?;
         }
+        let optimizer_seconds = optimizer_started.elapsed().as_secs_f64();
         let mean_loss = weighted_loss / supervised_tokens as f64;
         if distributed.rank() == 0 {
             let step_elapsed = step_started.elapsed().as_secs_f64();
@@ -1114,6 +1304,19 @@ fn train_model(
                 total_training_time / 60.0,
                 eta_seconds
             );
+            if profile_steps {
+                let other_seconds = (step_elapsed
+                    - data_seconds
+                    - forward_loss_seconds
+                    - backward_seconds
+                    - gradient_transfer_seconds
+                    - optimizer_seconds)
+                    .max(0.0);
+                println!(
+                    "profile step {display_step:05}: data={data_seconds:.3}s forward_loss={forward_loss_seconds:.3}s backward={backward_seconds:.3}s grad_transfer={gradient_transfer_seconds:.3}s optimizer={optimizer_seconds:.3}s other={other_seconds:.3}s"
+                );
+            }
+            std::io::stdout().flush()?;
             append_training_metric_with_payload(
                 &options.output,
                 serde_json::json!({
@@ -1296,6 +1499,32 @@ fn train_model(
         run.finish()?;
     }
     Ok(())
+}
+
+/// Avoid copying a complete logits matrix for dense batches, and avoid
+/// projecting unsupervised positions through the vocabulary head for SFT.
+fn training_logits_for_positions(
+    model: &GptModel,
+    inputs: &[u32],
+    batch_size: usize,
+    sequence_len: usize,
+    positions: &[u32],
+) -> Result<Tensor> {
+    let total = batch_size
+        .checked_mul(sequence_len)
+        .context("batch size overflow")?;
+    let dense = positions.len() == total
+        && positions
+            .iter()
+            .enumerate()
+            .all(|(index, &position)| position as usize == index);
+    if dense {
+        Ok(model
+            .forward_training_logits(inputs, batch_size, sequence_len)?
+            .reshape((total, model.config.vocab_size))?)
+    } else {
+        model.forward_positions_training_logits(inputs, batch_size, sequence_len, positions)
+    }
 }
 
 fn device_peak_flops(device: &Device) -> Option<f64> {
