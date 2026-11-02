@@ -37,6 +37,9 @@ def _document_batches(split, resume_state_dict, tokenizer_batch_size):
     assert len(parquet_paths) != 0, "No dataset parquet files found, did you run dataset.py?"
     parquet_paths = parquet_paths[:-1] if split == "train" else parquet_paths[-1:]
 
+    if not parquet_paths:
+        raise ValueError(f"No parquet files remain for the {split} split")
+
     resume_pq_idx = resume_state_dict["pq_idx"] if resume_state_dict is not None else 0
     resume_rg_idx = resume_state_dict["rg_idx"] if resume_state_dict is not None else None
     resume_epoch = resume_state_dict.get("epoch", 1) if resume_state_dict is not None else 1
@@ -45,6 +48,7 @@ def _document_batches(split, resume_state_dict, tokenizer_batch_size):
     epoch = resume_epoch
 
     while True:  # iterate infinitely (multi-epoch)
+        produced_batches = False
         pq_idx = resume_pq_idx if first_pass else 0
         while pq_idx < len(parquet_paths):
             filepath = parquet_paths[pq_idx]
@@ -64,9 +68,13 @@ def _document_batches(split, resume_state_dict, tokenizer_batch_size):
                 rg = pf.read_row_group(rg_idx)
                 batch = rg.column('text').to_pylist()
                 for i in range(0, len(batch), tokenizer_batch_size):
+                    produced_batches = True
                     yield batch[i:i+tokenizer_batch_size], (pq_idx, rg_idx, epoch)
                 rg_idx += ddp_world_size
             pq_idx += 1
+        # A resumed tail may be empty; retry once from the start of the partition.
+        if not produced_batches and (resume_state_dict is None or not first_pass):
+            raise ValueError(f"No document batches found for {split} split on rank {ddp_rank}")
         first_pass = False
         epoch += 1
 
