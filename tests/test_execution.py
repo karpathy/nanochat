@@ -8,6 +8,8 @@ python -m pytest tests/test_execution.py -v
 import os
 import time
 import pytest
+import pytest
+
 from nanochat.execution import execute_code
 
 
@@ -81,3 +83,27 @@ def test_fresh_globals():
     # user code must not see the guard prelude's imports
     result = execute_code("print('GUARD' in dir())")
     assert result.success and result.stdout.strip() == "False"
+
+
+@pytest.mark.parametrize("code", ["import sys; sys.exit(0)", "raise SystemExit(0)", "import os; os._exit(0)"])
+def test_system_exit_does_not_count_as_completed_execution(code):
+    result = execute_code(code)
+    assert not result.success
+    assert result.error == "Execution did not complete"
+
+
+def test_nonzero_exit_is_still_a_failure():
+    result = execute_code("import sys; sys.exit(1)")
+    assert not result.success
+
+
+def test_normal_completion_does_not_change_captured_output():
+    result = execute_code("import sys; print('ok'); print('warning', file=sys.stderr)")
+    assert result.success
+    assert result.stdout == "ok\n"
+    assert result.stderr == "warning\n"
+
+
+def test_fresh_working_directory_is_empty():
+    result = execute_code("import os; assert os.listdir('.') == []")
+    assert result.success, result.error
