@@ -1,0 +1,37 @@
+{
+  "source": "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip",
+  "configured_num_fewshot": 0,
+  "delimiter": " ",
+  "items": [
+    {
+      "dataset": "winograd_wsc",
+      "index": 26,
+      "item": {
+        "context_options": [
+          "Sam's drawing was hung just above Tina's and Sam's drawing",
+          "Sam's drawing was hung just above Tina's and Tina's drawing"
+        ],
+        "continuation": "did look much better with another one below it.",
+        "gold": 0
+      }
+    },
+    {
+      "dataset": "winograd_wsc",
+      "index": 40,
+      "item": {
+        "context_options": [
+          "The older students were bullying the younger ones, so we punished the older students",
+          "The older students were bullying the younger ones, so we punished the younger students"
+        ],
+        "continuation": ".",
+        "gold": 0
+      }
+    }
+  ],
+  "source_url": "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip",
+  "source_sha256": "90a7c19e28ee7a52b4f6e1f87658deb9fde7f63deba2379045bdb1fe9ea5d200",
+  "license": "CC-BY-4.0",
+  "license_url": "https://creativecommons.org/licenses/by/4.0/",
+  "attribution": "Winograd Schema Challenge collection, Ernest Davis, Leora Morgenstern, and Charles Ortiz",
+  "original_collection": "https://cs.nyu.edu/~davise/papers/WinogradSchemas/WS.html"
+}

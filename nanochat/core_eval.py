@@ -110,24 +110,23 @@ def stack_sequences(tokens, pad_token_id):
     return input_ids
 
 
-def batch_sequences_mc(tokenizer, prompts):
-    # In multiple choice, contexts are the same but the continuation is different (common prefix)
-    tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
-    # figure out the start and end of each continuation
-    answer_start_idx = find_common_length(tokens, direction='left')
-    start_indices = [answer_start_idx] * len(prompts)
-    end_indices = [len(x) for x in tokens]
-    return tokens, start_indices, end_indices
+def _batch_sequences_with_context(tokenizer, prompts, context_prompts):
+    # Keep joint prompt tokenization, including context/answer boundary merges.
+    encoded = tokenizer(context_prompts + prompts, prepend=tokenizer.get_bos_token_id())
+    contexts, tokens = encoded[:len(prompts)], encoded[len(prompts):]
+    # Answers can share a prefix, and contexts can share a suffix. Neither is
+    # evidence of the answer boundary: compare each full prompt to its context.
+    start_indices = [find_common_length([context, full], direction='left')
+                     for context, full in zip(contexts, tokens)]
+    return tokens, start_indices, [len(full) for full in tokens]
 
 
-def batch_sequences_schema(tokenizer, prompts):
-    # In schema tasks, contexts vary but continuation is the same (common suffix)
-    tokens = tokenizer(prompts, prepend=tokenizer.get_bos_token_id())
-    # figure out the start and end of each context
-    suffix_length = find_common_length(tokens, direction='right')
-    end_indices = [len(x) for x in tokens]
-    start_indices = [ei - suffix_length for ei in end_indices]
-    return tokens, start_indices, end_indices
+def batch_sequences_mc(tokenizer, prompts, context_prompt):
+    return _batch_sequences_with_context(tokenizer, prompts, [context_prompt] * len(prompts))
+
+
+def batch_sequences_schema(tokenizer, prompts, context_prompts):
+    return _batch_sequences_with_context(tokenizer, prompts, context_prompts)
 
 
 def batch_sequences_lm(tokenizer, prompts):
@@ -183,10 +182,12 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
     # Render prompts and batch sequences based on task type
     if task_type == 'multiple_choice':
         prompts = render_prompts_mc(item, continuation_delimiter, fewshot_examples)
-        tokens, start_idxs, end_idxs = batch_sequences_mc(tokenizer, prompts)
+        context_prompt = render_prompts_mc({**item, 'choices': ['']}, continuation_delimiter, fewshot_examples)[0]
+        tokens, start_idxs, end_idxs = batch_sequences_mc(tokenizer, prompts, context_prompt)
     elif task_type == 'schema':
         prompts = render_prompts_schema(item, continuation_delimiter, fewshot_examples)
-        tokens, start_idxs, end_idxs = batch_sequences_schema(tokenizer, prompts)
+        context_prompts = render_prompts_schema({**item, 'continuation': ''}, continuation_delimiter, fewshot_examples)
+        tokens, start_idxs, end_idxs = batch_sequences_schema(tokenizer, prompts, context_prompts)
     elif task_type == 'language_modeling':
         prompts = render_prompts_lm(item, continuation_delimiter, fewshot_examples)
         tokens, start_idxs, end_idxs = batch_sequences_lm(tokenizer, prompts)
