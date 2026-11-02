@@ -13,6 +13,7 @@ import time
 import requests
 import pyarrow.parquet as pq
 from multiprocessing import Pool
+from filelock import FileLock
 
 from nanochat.common import get_base_dir
 
@@ -82,55 +83,48 @@ def parquets_iter_batched(split, start=0, step=1):
 
 # -----------------------------------------------------------------------------
 def download_single_file(index):
-    """ Downloads a single file index, with some backoff """
-
-    # Construct the local filepath for this file and skip if it already exists
+    """Download one shard, serializing writers that share the cache."""
     filename = index_to_filename(index)
     filepath = os.path.join(DATA_DIR, filename)
-    if os.path.exists(filepath):
-        print(f"Skipping {filepath} (already exists)")
-        return True
-
-    # Construct the remote URL for this file
-    url = f"{BASE_URL}/{filename}"
-    print(f"Downloading {filename}...")
-
-    # Download with retries
-    max_attempts = 5
-    for attempt in range(1, max_attempts + 1):
-        try:
-            response = requests.get(url, stream=True, timeout=30)
-            response.raise_for_status()
-            # Write to temporary file first
-            temp_path = filepath + f".tmp"
-            with open(temp_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
-                    if chunk:
-                        f.write(chunk)
-            # Move temp file to final location
-            os.rename(temp_path, filepath)
-            print(f"Successfully downloaded {filename}")
+    with FileLock(filepath + ".lock"):
+        if os.path.exists(filepath):
+            print(f"Skipping {filepath} (already exists)")
             return True
 
-        except (requests.RequestException, IOError) as e:
-            print(f"Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
-            # Clean up any partial files
-            for path in [filepath + f".tmp", filepath]:
-                if os.path.exists(path):
+        url = f"{BASE_URL}/{filename}"
+        print(f"Downloading {filename}...")
+        max_attempts = 5
+        for attempt in range(1, max_attempts + 1):
+            temp_path = filepath + ".tmp"
+            try:
+                response = requests.get(url, stream=True, timeout=30)
+                response.raise_for_status()
+                with open(temp_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+                os.rename(temp_path, filepath)
+            except (requests.RequestException, IOError) as e:
+                print(f"Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
+                # The final path is a completed publication, never retry scratch.
+                if os.path.exists(temp_path):
                     try:
-                        os.remove(path)
-                    except:
+                        os.remove(temp_path)
+                    except OSError:
                         pass
-            # Try a few times with exponential backoff: 2^attempt seconds
-            if attempt < max_attempts:
-                wait_time = 2 ** attempt
-                print(f"Waiting {wait_time} seconds before retry...")
-                time.sleep(wait_time)
+                if attempt < max_attempts:
+                    wait_time = 2 ** attempt
+                    print(f"Waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Failed to download {filename} after {max_attempts} attempts")
+                    return False
             else:
-                print(f"Failed to download {filename} after {max_attempts} attempts")
-                return False
+                # Output failures must not roll back a successfully published shard.
+                print(f"Successfully downloaded {filename}")
+                return True
 
-    return False
+        return False
 
 
 if __name__ == "__main__":
