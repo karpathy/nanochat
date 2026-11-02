@@ -24,6 +24,7 @@ import torch.distributed as dist
 from nanochat.flash_attention import HAS_FA3
 from nanochat.engine import Engine
 from scripts.chat_eval import run_chat_eval
+from scripts.sft_config import inherit_sft_config
 
 from tasks.common import TaskMixture
 from tasks.gsm8k import GSM8K
@@ -94,25 +95,7 @@ if not HAS_FA3:
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=args.model_tag, step=args.model_step)
 
 # Inherit training hyperparameters from pretrained checkpoint (None = inherit, explicit value = override)
-pretrain_user_config = meta.get("user_config", {})
-for name, fallback, source in [
-    ("max_seq_len",       2048,  meta),
-    ("device_batch_size", 32,    meta),
-    ("total_batch_size",  524288, meta),
-    ("embedding_lr",      0.3,   pretrain_user_config),
-    ("unembedding_lr",    0.004, pretrain_user_config),
-    ("matrix_lr",         0.02,  pretrain_user_config),
-]:
-    arg_val = getattr(args, name)
-    pretrain_val = source.get(name)
-    if arg_val is None:
-        resolved = pretrain_val if pretrain_val is not None else fallback
-        setattr(args, name, resolved)
-        print0(f"Inherited {name}={resolved} from pretrained checkpoint")
-    elif pretrain_val is not None and arg_val != pretrain_val:
-        print0(f"NOTE: --{name.replace('_', '-')}={arg_val} overrides pretrained value of {pretrain_val}")
-    else:
-        print0(f"Using {name}={arg_val}")
+inherit_sft_config(args, meta, print0)
 
 orig_model = model
 model = torch.compile(model, dynamic=False)
