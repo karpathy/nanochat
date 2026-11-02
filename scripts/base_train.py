@@ -397,6 +397,10 @@ if not resuming:
     total_training_time = 0 # total wall-clock time of training
 else:
     step = meta_data["step"]
+    if step > num_iterations:
+        raise ValueError(
+            f"Cannot resume from checkpoint step {step} beyond training horizon {num_iterations}"
+        )
     loop_state = meta_data["loop_state"]
     val_bpb = meta_data["val_bpb"]
     min_val_bpb = loop_state["min_val_bpb"]
