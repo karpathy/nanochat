@@ -96,9 +96,16 @@ def execute_code(
     """
     # the guard runs first, then the untrusted code (with fresh globals, as a repr'd literal)
     guard = GUARD.format(maximum_memory_bytes=maximum_memory_bytes)
-    program = guard + f"\nexec(compile({code!r}, '<llm>', 'exec'), {{'__name__': '__main__'}})\n"
-
     with tempfile.TemporaryDirectory() as tmpdir:
+        # An exit status of zero can also come from sys.exit(0) or os._exit(0).
+        # Record normal completion separately, after all candidate code returns.
+        with tempfile.NamedTemporaryFile(dir=tmpdir, delete=False) as completion:
+            completion_path = completion.name
+        program = guard + (
+            f"\nexec(compile({code!r}, '<llm>', 'exec'), {{'__name__': '__main__'}})\n"
+            f"with open({completion_path!r}, 'wb') as completion:\n"
+            "    completion.write(b'completed')\n"
+        )
         try:
             process = subprocess.run(
                 [sys.executable, "-c", program],
@@ -119,10 +126,18 @@ def execute_code(
                 timeout=True,
             )
 
-    success = process.returncode == 0
+        try:
+            with open(completion_path, "rb") as completion:
+                completed = completion.read(len(b"completed") + 1) == b"completed"
+        except OSError:
+            completed = False
+
+    success = process.returncode == 0 and completed
     stderr = process.stderr
     # the last line of the traceback identifies the exception, e.g. "TypeError: ..."
-    error = None if success else (stderr.strip().splitlines() or ["Execution failed"])[-1]
+    error = None if success else (stderr.strip().splitlines() or [
+        "Execution did not complete" if process.returncode == 0 else "Execution failed"
+    ])[-1]
     memory_exceeded = "MemoryError" in stderr
     result = ExecutionResult(
         success=success,
