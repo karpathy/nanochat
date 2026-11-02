@@ -37,6 +37,8 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    # Ablation (the default is the unchanged July architecture)
+    mlp_type: str = "relu2" # "relu2" | "geglu"
 
 
 def norm(x):
@@ -131,12 +133,20 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
+        assert config.mlp_type in ("relu2", "geglu"), f"Invalid mlp_type: {config.mlp_type}"
+        n_embd = config.n_embd
+        # GeGLU has 3 matrices instead of 2, so 8/3x hidden (a multiple of 64) keeps params about equal
+        hidden = 64 * round(8 * n_embd / 3 / 64) if config.mlp_type == "geglu" else 4 * n_embd
+        self.c_fc = Linear(n_embd, hidden, bias=False)
+        self.c_gate = Linear(n_embd, hidden, bias=False) if config.mlp_type == "geglu" else None
+        self.c_proj = Linear(hidden, n_embd, bias=False)
 
     def forward(self, x):
-        x = self.c_fc(x)
-        x = F.relu(x).square()
+        if self.c_gate is not None:
+            x = F.gelu(self.c_gate(x)) * self.c_fc(x)
+        else:
+            x = self.c_fc(x)
+            x = F.relu(x).square()
         x = self.c_proj(x)
         return x
 
@@ -213,6 +223,7 @@ class GPT(nn.Module):
             attn.c_v:        uniform, std=1/sqrt(n_embd)
             attn.c_proj:     zeros
             mlp.c_fc:        uniform, std=1/sqrt(n_embd)
+            mlp.c_gate:      same as mlp.c_fc (GeGLU only)
             mlp.c_proj:      zeros
         """
 
@@ -229,6 +240,8 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)  # 0.4x init scale for c_fc
+            if block.mlp.c_gate is not None:
+                torch.nn.init.uniform_(block.mlp.c_gate.weight, -s * 0.4, s * 0.4)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
         # Per-layer scalars
