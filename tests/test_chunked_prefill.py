@@ -6,10 +6,12 @@ from nanochat.engine import KVCache
 from nanochat.gpt import GPT, GPTConfig
 
 
+@pytest.mark.parametrize("device", ["cpu", pytest.param("mps", marks=pytest.mark.skipif(
+    not torch.backends.mps.is_available(), reason="MPS unavailable"))])
 @pytest.mark.parametrize("chunks", [(2, 4), (1, 3, 2), (3, 2, 1)])
 @torch.no_grad()
-def test_chunked_prefill_preserves_token_smearing(chunks, monkeypatch):
-    # Exercise CPU/float32 consistently even on CUDA-capable test hosts.
+def test_chunked_prefill_preserves_token_smearing(chunks, device, monkeypatch):
+    # Exercise the SDPA/float32 path consistently even on CUDA-capable test hosts.
     monkeypatch.setattr("nanochat.gpt.COMPUTE_DTYPE", torch.float32)
     monkeypatch.setattr("nanochat.flash_attention.USE_FA3", False)
     torch.manual_seed(42)
@@ -23,12 +25,13 @@ def test_chunked_prefill_preserves_token_smearing(chunks, monkeypatch):
     for block in model.transformer.h:
         block.attn.c_proj.weight.normal_(std=0.02)
         block.mlp.c_proj.weight.normal_(std=0.02)
-    tokens = torch.tensor([[1, 2, 3, 4, 5, 6], [6, 5, 4, 3, 2, 1]])
+    model.to(device)
+    tokens = torch.tensor([[1, 2, 3, 4, 5, 6], [6, 5, 4, 3, 2, 1]], device=device)
     expected = model(tokens)
 
     def cached_logits(sizes):
         cache = KVCache(batch_size=2, num_heads=2, seq_len=16, head_dim=16,
-                        num_layers=2, device="cpu", dtype=torch.float32)
+                        num_layers=2, device=device, dtype=torch.float32)
         outputs = []
         position = 0
         for size in sizes:
