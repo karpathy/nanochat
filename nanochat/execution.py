@@ -21,6 +21,7 @@ Overall this sandbox is good for evaluation of generated code and protects again
 accidental destructive behavior, but it is not safe against malicious adversarial code.
 """
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,8 @@ def execute_code(
     # the guard runs first, then the untrusted code (with fresh globals, as a repr'd literal)
     guard = GUARD.format(maximum_memory_bytes=maximum_memory_bytes)
     with tempfile.TemporaryDirectory() as tmpdir:
+        workdir = os.path.join(tmpdir, "work")
+        os.mkdir(workdir)
         # An exit status of zero can also come from sys.exit(0) or os._exit(0).
         # Record normal completion separately, after all candidate code returns.
         with tempfile.NamedTemporaryFile(dir=tmpdir, delete=False) as completion:
@@ -109,7 +112,7 @@ def execute_code(
         try:
             process = subprocess.run(
                 [sys.executable, "-c", program],
-                cwd=tmpdir, # writes land in the tempdir, deleted afterwards
+                cwd=workdir, # keep the marker outside the initially empty working directory
                 env={"PATH": "/usr/bin:/bin"}, # scrub the environment
                 stdin=subprocess.DEVNULL,
                 capture_output=True,

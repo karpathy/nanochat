@@ -102,3 +102,8 @@ def test_normal_completion_does_not_change_captured_output():
     assert result.success
     assert result.stdout == "ok\n"
     assert result.stderr == "warning\n"
+
+
+def test_fresh_working_directory_is_empty():
+    result = execute_code("import os; assert os.listdir('.') == []")
+    assert result.success, result.error
