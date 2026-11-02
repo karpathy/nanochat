@@ -1,0 +1,136 @@
+{
+  "dataset": "world_knowledge/arc_easy.jsonl",
+  "dataset_size": 2376,
+  "index": 254,
+  "item": {
+    "choices": [
+      "C",
+      "Co",
+      "Cp",
+      "Cu"
+    ],
+    "query": "Question: What chemical symbol represents the element copper?",
+    "gold": 3
+  },
+  "fewshot_indices": [
+    1127,
+    589,
+    534,
+    857,
+    2250,
+    1941,
+    2220,
+    1204,
+    1165,
+    1955
+  ],
+  "fewshot_examples": [
+    {
+      "choices": [
+        "Picking apples",
+        "Feeding animals",
+        "Selling clothes",
+        "Building houses"
+      ],
+      "query": "Question: Which job is done in Virginia only during the fall season?",
+      "gold": 0
+    },
+    {
+      "choices": [
+        "by checking the amount of water in the soil",
+        "by checking how often the pea plant receives sunlight",
+        "by checking how much space the plant will have to grow",
+        "by checking the type of peas growing on the parent plants"
+      ],
+      "query": "Question: Some pea plants always have peas with smooth skin. Other pea plants always have peas with wrinkled skin. How can a student best predict which kind of pea will grow from a seed that is planted?",
+      "gold": 3
+    },
+    {
+      "choices": [
+        "1 year",
+        "1 week",
+        "1 day",
+        "1 hour"
+      ],
+      "query": "Question: About how long does it take Earth to make a complete revolution around the Sun?",
+      "gold": 0
+    },
+    {
+      "choices": [
+        "ruler",
+        "telescope",
+        "microscope",
+        "meter stick"
+      ],
+      "query": "Question: Which of these tools is most helpful to a scientist observing very small bacteria?",
+      "gold": 2
+    },
+    {
+      "choices": [
+        "a change in phase",
+        "thermal expansion",
+        "an increase in entropy",
+        "mechanical advantage"
+      ],
+      "query": "Question: When Dennis operates his lawnmower, he notices the engine makes a lot of noise. He also notices that the engine gets very hot. Which best describes the heat and noise generated from the lawnmower?",
+      "gold": 2
+    },
+    {
+      "choices": [
+        "solid to gas",
+        "liquid to gas",
+        "liquid to solid",
+        "gas to liquid"
+      ],
+      "query": "Question: The boiling point of nitrogen is -196\u00b0C. What states of matter are involved when nitrogen boils?",
+      "gold": 1
+    },
+    {
+      "choices": [
+        "The cell wall performs photosynthesis.",
+        "The cell wall stores DNA.",
+        "The cell wall provides structural support.",
+        "The cell wall manufactures proteins."
+      ],
+      "query": "Question: Which statement describes a primary function of the cell wall of a plant cell?",
+      "gold": 2
+    },
+    {
+      "choices": [
+        "conglomerate rock",
+        "volcanic rock",
+        "sedimentary rock",
+        "metamorphic rock"
+      ],
+      "query": "Question: Rock that is made of material that has settled to the bottom of lakes and oceans and been compressed and hardened is",
+      "gold": 2
+    },
+    {
+      "choices": [
+        "deep-sea currents",
+        "earthquake formation",
+        "spreading of the sea floor",
+        "sedimentary rocks"
+      ],
+      "query": "Question: When scientists proposed the Theory of Continental Drift, there were many skeptics. Which discovery confirmed that the continents move on plates?",
+      "gold": 2
+    },
+    {
+      "choices": [
+        "Copper is strong.",
+        "Copper is flexible.",
+        "Copper is a conductor.",
+        "Copper is an insulator."
+      ],
+      "query": "Question: Which statement best explains the reason that electrical wires are made of copper?",
+      "gold": 2
+    }
+  ],
+  "delimiter": "\nAnswer: ",
+  "source_url": "https://karpathy-public.s3.us-west-2.amazonaws.com/eval_bundle.zip",
+  "source_sha256": "90a7c19e28ee7a52b4f6e1f87658deb9fde7f63deba2379045bdb1fe9ea5d200",
+  "license": "CC-BY-SA-4.0",
+  "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "attribution": "AI2 Reasoning Challenge (ARC), Peter Clark and colleagues, Allen Institute for Artificial Intelligence",
+  "dataset_card": "https://huggingface.co/datasets/allenai/ai2_arc"
+}
