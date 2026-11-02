@@ -107,6 +107,8 @@ def execute_code(
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace", # generated code may write arbitrary bytes to either stream
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired:
