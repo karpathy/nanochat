@@ -87,7 +87,7 @@ def build_prompt(tokenizer, num_tokens):
     paragraph = ("The history of science is the study of the development of science, "
                  "including both the natural and social sciences. Science is a body of "
                  "empirical, theoretical, and practical knowledge about the natural world. ")
-    text = paragraph * (num_tokens // 10) # more than enough tokens
+    text = paragraph * ((num_tokens + 9) // 10) # more than enough tokens
     tokens = tokenizer.encode(text, prepend="<|bos|>")
     assert len(tokens) >= num_tokens, "prompt text too short, increase the repetition"
     return tokens[:num_tokens]
