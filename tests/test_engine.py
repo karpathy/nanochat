@@ -4,6 +4,7 @@ Test Engine class. Example run:
 python -m pytest tests/test_engine.py -v
 """
 
+import pytest
 import torch
 from nanochat.engine import KVCache, Engine
 from dataclasses import dataclass
@@ -265,3 +266,31 @@ def test_different_seeds_introduce_variation_when_temperature_nonzero():
 
     # Sanity check: sampling actually introduces variation
     assert len(outputs) > 1, "All seeds produced the same output which is statistically highly improbable."
+
+
+@pytest.mark.parametrize("terminal", [260, 261])  # assistant_end and bos
+def test_generate_batch_retains_stop_target(monkeypatch, terminal):
+    """A sampled stop remains trainable when shorter rollouts are padded for RL."""
+    engine = Engine(MockModel(), ByteTokenizer())
+    prompt = [261, 72]
+
+    def generate(tokens, num_samples, **kwargs):
+        assert tokens == prompt and num_samples == 2
+        yield [terminal, 65], [1, 1]  # first row stops immediately
+        yield [99, 258], [1, 0]  # forced tool output in the second row
+        yield [99, terminal], [1, 1]
+        raise AssertionError("generate_batch must stop once all rows finish")
+
+    monkeypatch.setattr(engine, "generate", generate)
+    results, masks = engine.generate_batch(prompt, num_samples=2)
+    assert results == [prompt + [terminal], prompt + [65, 258, terminal]]
+    assert masks == [[0, 0, 1], [0, 0, 1, 0, 1]]
+    assert prompt == [261, 72]
+
+    # Apply the same padding and shifted target masking as chat_rl.get_batch.
+    max_length = max(map(len, results))
+    ids = torch.tensor([row + [260] * (max_length - len(row)) for row in results])
+    mask_ids = torch.tensor([row + [0] * (max_length - len(row)) for row in masks])
+    targets = ids[:, 1:].clone()
+    targets[mask_ids[:, 1:] == 0] = -1
+    assert targets.tolist() == [[-1, terminal, -1, -1], [-1, 65, -1, terminal]]
