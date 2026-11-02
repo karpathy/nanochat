@@ -5,6 +5,9 @@ import os
 import re
 import json
 import logging
+import shutil
+import tempfile
+from contextlib import ExitStack
 import torch
 
 from nanochat.common import get_base_dir
@@ -39,23 +42,60 @@ def _patch_missing_keys(model_data, model_config):
         log0(f"Patching missing x0_lambdas in model data to 0.0")
 
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
-    if rank == 0:
-        os.makedirs(checkpoint_dir, exist_ok=True)
-        # Save the model state parameters
-        model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
-        torch.save(model_data, model_path)
-        logger.info(f"Saved model parameters to: {model_path}")
-        # Save the metadata dict as json
-        meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta_data, f, indent=2)
-        logger.info(f"Saved metadata to: {meta_path}")
-    # Note that optimizer state is sharded across ranks, so each rank must save its own.
-    if optimizer_data is not None:
-        os.makedirs(checkpoint_dir, exist_ok=True)
-        optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
-        torch.save(optimizer_data, optimizer_path)
-        logger.info(f"Saved optimizer state to: {optimizer_path}")
+    if rank != 0 and optimizer_data is None:
+        return
+    model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt") if rank == 0 else None
+    meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json") if rank == 0 else None
+    optimizer_path = (os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
+                      if optimizer_data is not None else None)
+    targets = {path: os.path.realpath(path) for path in (model_path, meta_path, optimizer_path)
+               if path is not None}
+    for logical, target in targets.items():
+        if os.path.isfile(target) and os.stat(target).st_nlink > 1:
+            raise ValueError(f"Cannot atomically save hard-linked checkpoint file: {logical}")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    # Serialize this rank's files completely before replacing any checkpoint.
+    # The model is published last, so a newly discoverable step has its metadata.
+    with ExitStack() as cleanup:
+        staging_dirs = {}
+
+        def stage_path(final):
+            # Match torch.save/open: an existing symlink selects its target.
+            target = targets[final]
+            parent = os.path.dirname(target)
+            if parent not in staging_dirs:
+                staging_dirs[parent] = cleanup.enter_context(
+                    tempfile.TemporaryDirectory(prefix=".checkpoint-", dir=parent)
+                )
+            temporary = os.path.join(staging_dirs[parent], os.path.basename(final) + ".tmp")
+            return temporary, target
+
+        pending = []
+        model_file = None
+        if rank == 0:
+            model_temp, model_target = stage_path(model_path)
+            torch.save(model_data, model_temp)
+            model_file = (model_temp, model_target, model_path, "model parameters")
+
+            meta_temp, meta_target = stage_path(meta_path)
+            with open(meta_temp, "w", encoding="utf-8") as f:
+                json.dump(meta_data, f, indent=2)
+            pending.append((meta_temp, meta_target, meta_path, "metadata"))
+
+        # Optimizer state is sharded; every rank serializes its own shard.
+        if optimizer_data is not None:
+            optimizer_temp, optimizer_target = stage_path(optimizer_path)
+            torch.save(optimizer_data, optimizer_temp)
+            pending.append((optimizer_temp, optimizer_target, optimizer_path, "optimizer state"))
+        if model_file is not None:
+            pending.append(model_file)
+
+        for temporary, target, _, _ in pending:
+            if os.path.exists(target):
+                shutil.copymode(target, temporary)
+        for temporary, target, logical, label in pending:
+            os.replace(temporary, target)
+            logger.info(f"Saved {label} to: {logical}")
 
 def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
     # Load the model state
