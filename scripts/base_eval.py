@@ -21,10 +21,10 @@ import csv
 import time
 import json
 import yaml
-import shutil
 import random
 import zipfile
 import tempfile
+from filelock import FileLock
 import argparse
 import torch
 
@@ -46,11 +46,12 @@ def place_eval_bundle(file_path):
     """Unzip eval_bundle.zip and place it in the base directory."""
     base_dir = get_base_dir()
     eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
-    with tempfile.TemporaryDirectory() as tmpdir:
+    # Stage on the destination filesystem so publication is an atomic rename.
+    with tempfile.TemporaryDirectory(dir=base_dir) as tmpdir:
         with zipfile.ZipFile(file_path, 'r') as zip_ref:
             zip_ref.extractall(tmpdir)
         extracted_bundle_dir = os.path.join(tmpdir, "eval_bundle")
-        shutil.move(extracted_bundle_dir, eval_bundle_dir)
+        os.rename(extracted_bundle_dir, eval_bundle_dir)
     print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
 
@@ -61,9 +62,12 @@ def evaluate_core(model, tokenizer, device, max_per_task=-1):
     """
     base_dir = get_base_dir()
     eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
-    # Download the eval bundle if needed
-    if not os.path.exists(eval_bundle_dir):
-        download_file_with_lock(EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=place_eval_bundle)
+    # Archive existence does not establish that extraction completed. Every rank
+    # waits for the directory to be published before opening the bundle files.
+    with FileLock(eval_bundle_dir + ".lock"):
+        if not os.path.exists(eval_bundle_dir):
+            archive = download_file_with_lock(EVAL_BUNDLE_URL, "eval_bundle.zip")
+            place_eval_bundle(archive)
 
     config_path = os.path.join(eval_bundle_dir, "core.yaml")
     data_base_path = os.path.join(eval_bundle_dir, "eval_data")
