@@ -72,8 +72,9 @@ def load_hub_dataset(repo_id, subset="default", split="train"):
                     with open(os.path.join(shards_dir, filename), "wb") as f:
                         f.write(content)
                     filenames.append(filename)
-                with open(manifest_path, "w") as f:
+                with open(manifest_path + ".tmp", "w") as f:
                     json.dump(filenames, f)
+                os.replace(manifest_path + ".tmp", manifest_path)
     with open(manifest_path, "r") as f:
         filenames = json.load(f)
     shard_paths = [os.path.join(shards_dir, filename) for filename in filenames]
