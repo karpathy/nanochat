@@ -482,14 +482,15 @@ class GPT(nn.Module):
             # KV cache inference: read prev embedding from cache, store current for next step
             x_pre_smear = kv_cache.prev_embedding
             kv_cache.prev_embedding = x[:, -1:, :]
-            if T > 1:
-                # Prefill: apply smear to positions 1+, same as training
+            if x_pre_smear is not None:
+                # Continuation: the first token's predecessor is in the previous chunk.
+                gate = self.smear_lambda.to(x.dtype) * torch.sigmoid(self.smear_gate(x[:, :, :24]))
+                previous = x_pre_smear if T == 1 else torch.cat([x_pre_smear, x[:, :-1]], dim=1)
+                x = x + gate * previous
+            elif T > 1:
+                # Initial prefill: the first token has no predecessor.
                 gate = self.smear_lambda.to(x.dtype) * torch.sigmoid(self.smear_gate(x[:, 1:, :24]))
                 x = torch.cat([x[:, :1], x[:, 1:] + gate * x[:, :-1]], dim=1)
-            elif x_pre_smear is not None:
-                # Decode: single token, use cached prev embedding
-                gate = self.smear_lambda.to(x.dtype) * torch.sigmoid(self.smear_gate(x[:, :, :24]))
-                x = x + gate * x_pre_smear
 
         # Forward the trunk of the Transformer
         x0 = x  # save initial normalized embedding for x0 residual
