@@ -265,3 +265,36 @@ def test_different_seeds_introduce_variation_when_temperature_nonzero():
 
     # Sanity check: sampling actually introduces variation
     assert len(outputs) > 1, "All seeds produced the same output which is statistically highly improbable."
+
+
+class CountingModel(MockModel):
+    def __init__(self, next_token=65):
+        super().__init__()
+        self.next_token = next_token
+        self.calls = 0
+
+    def forward(self, ids, kv_cache=None):
+        self.calls += 1
+        logits = super().forward(ids, kv_cache=kv_cache)
+        logits[:, :, self.next_token] = 1
+        return logits
+
+
+def test_streaming_stops_before_unneeded_forward_at_token_limit():
+    for limit in (1, 4):
+        model = CountingModel()
+        engine = Engine(model, ByteTokenizer())
+        columns = list(engine.generate([261, 72], max_tokens=limit, temperature=0))
+        assert [tokens for tokens, _ in columns] == [[65]] * limit
+        # One prefill and limit-1 decode calls suffice for limit sampled tokens.
+        assert model.calls == limit
+
+
+def test_streaming_stops_before_unneeded_forward_after_terminal_token():
+    tokenizer = ByteTokenizer()
+    for terminal in (tokenizer.encode_special("<|assistant_end|>"), tokenizer.get_bos_token_id()):
+        model = CountingModel(next_token=terminal)
+        engine = Engine(model, tokenizer)
+        columns = list(engine.generate([261, 72], num_samples=2, max_tokens=8, temperature=0))
+        assert [tokens for tokens, _ in columns] == [[terminal, terminal]]
+        assert model.calls == 1

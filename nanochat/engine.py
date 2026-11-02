@@ -270,6 +270,10 @@ class Engine:
             yield token_column, token_masks
             num_generated += 1
 
+            # No next logits are needed once this stream has finished.
+            if (max_tokens is not None and num_generated >= max_tokens) or all(state.completed for state in row_states):
+                break
+
             # Prepare logits for next iteration
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
             logits = self.model.forward(ids, kv_cache=kv_cache_decode)[:, -1, :]  # (B, vocab_size)
