@@ -136,11 +136,18 @@ def find_largest_model(checkpoints_dir):
 
 def find_last_step(checkpoint_dir):
     # Look into checkpoint_dir and find model_<step>.pt with the highest step
-    checkpoint_files = [f for f in os.listdir(checkpoint_dir) if re.search(r'model_(\d+)\.pt$', f)]
-    if not checkpoint_files:
+    checkpoint_steps = []
+    for filename in os.listdir(checkpoint_dir):
+        match = re.fullmatch(r'model_(\d+)\.pt', filename)
+        if match is None:
+            continue
+        step = int(match.group(1))
+        # Match the filename load_checkpoint constructs, including its padding.
+        if filename == f"model_{step:06d}.pt" and os.path.isfile(os.path.join(checkpoint_dir, filename)):
+            checkpoint_steps.append(step)
+    if not checkpoint_steps:
         raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
-    last_step = max(int(f.split("_")[-1].split(".")[0]) for f in checkpoint_files)
-    return last_step
+    return max(checkpoint_steps)
 
 # -----------------------------------------------------------------------------
 # convenience functions that take into account nanochat's directory structure
