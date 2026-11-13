@@ -14,3 +14,4 @@ wandb/
 
 .omc/
 .gate-cache/
+.test-results/
