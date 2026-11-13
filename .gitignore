@@ -11,5 +11,6 @@ eval_bundle/
 # Local setup
 CLAUDE.md
 wandb/
+
 .omc/
 .gate-cache/
