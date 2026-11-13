@@ -30,7 +30,7 @@ flowchart LR
 - [x] defaults.py canonical; emit profiles.sh; test_defaults sync
 - [x] memory auto-fit echoes + OOM re-halve; plain-language mem fit line
 
-**Status:** VERIFIED — 2026-11-13 — PR https://github.com/neomatrix369/nanochat/pull/6  
+**Status:** PASSED (Phase 2) — 2026-11-13 — PR https://github.com/neomatrix369/nanochat/pull/6  
 **slice_id:** `fix-forward-mac-phase2`
 
 ## Reviewer fixes baked in (checklist)
