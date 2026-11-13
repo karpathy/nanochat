@@ -39,8 +39,20 @@ class GPTConfig:
     window_pattern: str = "SSSL"
 
 
-def norm(x):
+def _norm_manual(x):
+    # Fallback for torch<2.4 where F.rms_norm is missing
+    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-6)
+
+def _norm_native(x):
     return F.rms_norm(x, (x.size(-1),)) # note that this will run in bf16, seems ok
+
+# Bind once at import (no per-forward hasattr, keeps torch.compile happy)
+if hasattr(F, "rms_norm"):
+    norm = _norm_native
+    print0("[norm] using native F.rms_norm")
+else:
+    norm = _norm_manual
+    print0(f"[norm] original=F.rms_norm → adjusted=manual_rsqrt (reason: missing on torch {torch.__version__.split('+')[0]})")
 
 class Linear(nn.Linear):
     """nn.Linear that casts weights to match input dtype in forward.
