@@ -28,3 +28,20 @@
 - `scripts/{base_train,base_eval,chat_sft}.py` — `--auto-fit-batch` (mps on / cuda off); preflight fit; train OOM retry once then eager
 - `runs/runcpu.sh` / `runs/speedrun.sh` — `source profiles.sh`; knobs from `$RUNCPU_*` / `$SPEEDRUN_*` (runcpu batch 8)
 - `docs/RUNNING.md` / README — Phase 2 memory/auto-fit + defaults reference
+
+## fix-forward-mac-phase15
+
+**Added**
+- `nanochat/last_run.py` — knob diff + `last_run.json` write (CLI for shell)
+- `nanochat/metrics_trend.py` — trend crumb + fail-soft `emit_metric_trend`
+- `nanochat/run_tip.py` — tip text SSOT
+- `tests/test_phase15_enrichments.py` — knob/trend/tip/fail-soft coverage
+
+**Changed**
+- `runs/_stage_lib.sh` / `runcpu.sh` / `speedrun.sh` — script-start tip+knob; packed START `purpose · health`; write last_run on ALL DONE
+- `scripts/{base_train,base_eval}.py` — trend after val_bpb / CORE
+- `docs/RUNNING.md` — enrichment glossary for changed/health/trend/tip
+
+**Deferred**
+- Heartbeat / train-loop ETA (still planned)
+- Tip rotation / knob-diff vs last run UI beyond one line
