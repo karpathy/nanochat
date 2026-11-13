@@ -46,7 +46,7 @@ Torch is selected automatically from your OS and CPU architecture (no extra flag
 | macOS Apple Silicon | 2.9.1 | PyPI (MPS) |
 | macOS Intel (`x86_64`) | 2.2.2 | PyPI (last supported) |
 
-Same `uv sync` commands work everywhere; markers in `pyproject.toml` apply the right pin and index.
+Same `uv sync` commands work everywhere; markers in `pyproject.toml` apply the right pin and index. On a Mac or CPU box, see [Running on CPU / MPS](#running-on-cpu--mps) next.
 
 For development (adds pytest, matplotlib, ipykernel, transformers, etc.):
 
@@ -121,6 +121,12 @@ The important thing to note is that nanochat is written and configured around on
 ## Running on CPU / MPS
 
 The script [runs/runcpu.sh](runs/runcpu.sh) shows a very simple example of running on CPU or Apple Silicon. It dramatically shrinks the LLM that is being trained to make things fit into a reasonable time interval of a few ten minutes of training. You will not get strong results in this way.
+
+On a Mac (or any CPU/MPS machine) use `bash runs/runcpu.sh`, not `runs/speedrun.sh` (that one is for an 8XH100 node).
+
+- Re-runs are safe: finished stages print `SKIP` and cost nothing.
+- The script stops at the first failing stage. Fix the cause, then re-run the same command.
+- Stage markers, `FORCE_STAGES`, log legend, NaN and torch 2.2.2 notes: [docs/RUNNING.md](docs/RUNNING.md).
 
 ## Precision / dtype
 
