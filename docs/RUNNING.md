@@ -174,8 +174,8 @@ Think of training memory like packing a suitcase: most of the bulk is the **logi
 
 1. Before heavy allocation, estimate peak use (params + optim + logits, with a documented fudge factor of **1.5**).
 2. If the estimate exceeds `margin × available` memory, **halve** `device_batch_size` until it fits (floor **1**).
-3. Print an `[auto-fit]` line (`original → adjusted` with a reason), plus a plain-language `memory:` enrichment when the batch changed.
-4. If training still OOMs after that fit: empty the cache, **halve once more**, and **retry once**. If it still fails at batch 1, the stage `FAIL`s with a clear message.
+3. Print an `[auto-fit]` contract line (`original → adjusted`, or unchanged), then a plain-language `memory:` enrichment on every fit (including when the batch did not change).
+4. If **`base_train`** still OOMs after that fit: empty the cache, **halve once more**, and **retry that step once**. If it still fails at batch 1, the stage `FAIL`s with a clear message. (`base_eval` / `chat_sft` do preflight auto-fit only — they do not re-halve mid-run.)
 
 **Knobs**
 

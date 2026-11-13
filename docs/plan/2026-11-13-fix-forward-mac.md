@@ -27,8 +27,11 @@ flowchart LR
 **slice_id:** `fix-forward-mac-phase1`
 
 ### Phase 2
-- [ ] defaults.py canonical; emit profiles.sh; test_defaults sync
-- [ ] memory auto-fit echoes + OOM re-halve; plain-language mem fit line
+- [x] defaults.py canonical; emit profiles.sh; test_defaults sync
+- [x] memory auto-fit echoes + OOM re-halve; plain-language mem fit line
+
+**Status:** IMPLEMENTED (Gate 4 pending) — 2026-11-13 — branch `feat/fix-forward-mac-phase2`  
+**slice_id:** `fix-forward-mac-phase2`
 
 ## Reviewer fixes baked in (checklist)
 

@@ -21,7 +21,7 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | slice_id | state | evidence |
 |----------|-------|----------|
 | fix-forward-mac-phase1 | PASSED (merged) | [PR #4](https://github.com/neomatrix369/nanochat/pull/4) merged 2026-11-13; [PR #5](https://github.com/neomatrix369/nanochat/pull/5) follow-ups merged 2026-11-13 (`2aa56ed` on master); pytest 51p/18s; Gate 4 APPROVED (software-crafter after comment fix, acceptance, solution-architect); ddd N/A |
-| fix-forward-mac-phase2 | PARTIAL | Branch `feat/fix-forward-mac-phase2` @ `c548452` (master merged in; ahead 14 / behind 0). Landed: `defaults.py`+`emit-shell`+`runs/profiles.sh`, `memory.py`, `tests/test_defaults.py`+`test_memory.py` (38 passed), README/RUNNING Phase 2 docs, gpt/base_train SSOT wiring. **Open:** `--auto-fit-batch` not wired in `base_train`/`base_eval`/`chat_sft`; `runcpu.sh`/`speedrun.sh` still hardcode batch (do not source `profiles.sh`). Worktrees synced at tip: `.worktrees/p2-{defaults,memory,wire,docs}`. Gate 4 not closed. No PR yet. |
+| fix-forward-mac-phase2 | IMPLEMENTED | Branch `feat/fix-forward-mac-phase2` @ `f846f33` (master synced; ahead of origin). Streams merged: defaults SSOT + memory + docs + wire (`--auto-fit-batch`, OOM re-halve, profiles sourced in runcpu/speedrun). Evidence: `pytest tests/test_defaults.py tests/test_memory.py` → 55 passed; full `tests/` → 106 passed / 18 skipped; dry-run fit OK; worktrees `.worktrees/p2-*` synced to tip. Gate 4 in progress. No PR yet. |
 
 ## Recent merges (Mac fix-forward track)
 
