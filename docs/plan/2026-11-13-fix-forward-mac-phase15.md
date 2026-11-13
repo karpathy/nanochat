@@ -19,7 +19,7 @@
 ## Acceptance criteria
 
 1. **Knob diff:** On script start (after pipeline map), if `$NANOCHAT_BASE_DIR/last_run.json` exists, print exactly one enrichment line comparing current profile knobs to the stored run, e.g. `changed: device_batch_size 32→8; same: depth=6,profile=runcpu`. If missing, skip silently (first run). After a successful full script (`ALL DONE`), write/update `last_run.json` with at least: `profile`, `depth`, `device_batch_size`, `max_seq_len`, `git_sha`, `ts`.
-2. **Health strip:** At each stage `START` (one enrichment after `purpose:`), print `health: <mem> · ckpt=<size or n/a> · shards=<n/needed or n/a>` using best-effort discovery. Never fail the run if discovery fails.
+2. **Health strip:** At each stage `START`, pack health into the single enrichment line with purpose: `purpose: … · health: <mem> · ckpt=<size or n/a> · shards=<n/needed or n/a>` (best-effort discovery). Never fail the run if discovery fails.
 3. **Trend crumb:** When `base_train` / `base_eval` prints a new `val_bpb` or CORE metric and a prior value exists in `$NANOCHAT_BASE_DIR/last_metrics.json`, print one line e.g. `trend: val_bpb 7.47 → better than prior 8.1`. Update `last_metrics.json` on successful metric write. No trend line when no prior.
 4. **Tip once:** Each of `runcpu.sh` / `speedrun.sh` prints exactly one `tip:` line per invocation (script start, after knob diff or pipeline), not per stage. Tip text may be fixed or rotated from a tiny static list; must mention a real knob (e.g. `--device-batch-size` / grad accumulation).
 5. **Docs:** `docs/RUNNING.md` enrichment glossary documents `changed:`/`same:`, `health:`, `trend:`, `tip:`.
