@@ -36,6 +36,7 @@ from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from nanochat.flash_attention import HAS_FA3
+from nanochat.metrics_trend import load_metrics, format_trend, record_metric
 from scripts.base_eval import evaluate_core
 print_banner()
 
@@ -497,6 +498,13 @@ while True:
         with disable_fp8(model):
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
+        if master_process:
+            _metrics_path = os.path.join(get_base_dir(), "last_metrics.json")
+            _prior = load_metrics(_metrics_path).get("val_bpb")
+            _trend = format_trend("val_bpb", float(val_bpb), _prior, lower_is_better=True)
+            if _trend is not None:
+                print0(_trend)
+            record_metric(_metrics_path, "val_bpb", float(val_bpb))
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
         wandb_run.log({
@@ -516,6 +524,14 @@ while True:
         with disable_fp8(orig_model):
             results = evaluate_core(orig_model, tokenizer, device, max_per_task=args.core_metric_max_per_task)
         print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
+        if master_process:
+            _metrics_path = os.path.join(get_base_dir(), "last_metrics.json")
+            _core = float(results["core_metric"])
+            _prior = load_metrics(_metrics_path).get("CORE")
+            _trend = format_trend("CORE", _core, _prior, lower_is_better=False)
+            if _trend is not None:
+                print0(_trend)
+            record_metric(_metrics_path, "CORE", _core)
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
