@@ -5,7 +5,7 @@ Level 2 guide. The short version lives in the [README](../README.md#running-on-c
 Design source: [docs/plan/2026-11-13-fix-forward-mac.md](plan/2026-11-13-fix-forward-mac.md).
 
 **Contents**
-[1 Pick a script](#1-pick-a-script) · [2 First run](#2-first-run-expectations) · [3 Fix-forward loop](#3-the-fix-forward-loop) · [4 Re-run map](#4-what-a-re-run-keeps-and-skips) · [5 Echo legend](#5-reading-the-logs-echo-legend) · [6 Glossary](#6-enrichment-glossary) · [7 Mac / Intel torch](#7-mac--intel-torch) · [8 NaN](#8-nan-troubleshooting) · [9 Controls](#9-controls) · [10 Failure shapes](#10-common-failure-shapes) · [11 Phase 2 stubs](#11-coming-in-phase-2)
+[1 Pick a script](#1-pick-a-script) · [2 First run](#2-first-run-expectations) · [3 Fix-forward loop](#3-the-fix-forward-loop) · [4 Re-run map](#4-what-a-re-run-keeps-and-skips) · [5 Echo legend](#5-reading-the-logs-echo-legend) · [6 Glossary](#6-enrichment-glossary) · [7 Mac / Intel torch](#7-mac--intel-torch) · [8 NaN](#8-nan-troubleshooting) · [9 Controls](#9-controls) · [10 Failure shapes](#10-common-failure-shapes) · [11 Memory / OOM](#11-memory--oom) · [12 Defaults and profiles](#12-defaults-and-profiles)
 
 How-to first (§1–4, §8–10), then reference (§5–6, §9). Kept in one L2 file on purpose so a stuck runner can stay on one page (plan doc mapping); use the TOC to jump.
 
@@ -74,13 +74,14 @@ Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the p
 
 | Kind | Shape | Meaning |
 |------|-------|---------|
-| START | `[HH:MM:SS] START stage=base_train profile=runcpu depth=6 device_batch_size=32 ETA: not yet knowable` | Stage begins. Profile and key knobs are shown. |
+| START | `[HH:MM:SS] START stage=base_train profile=runcpu depth=6 device_batch_size=8 ETA: not yet knowable` | Stage begins. Profile and key knobs are shown. |
 | DONE | `[HH:MM:SS] DONE stage=base_train elapsed=71m cumulative=2h45m` | Stage finished; time for this stage and for the whole script run so far. |
 | SKIP | `[HH:MM:SS] SKIP stage=tok_train reason=artifact exists path=... (FORCE_STAGES=tok_train to redo)` | Artifact found; nothing ran. |
 | FORCE | `[HH:MM:SS] FORCE stage=tok_train reason=FORCE_STAGES=tok_train` | Artifact exists but you asked to redo it. |
 | FAIL | `[HH:MM:SS] FAIL stage=base_train elapsed=… hint=…` | Stage exited non-zero; the script stops here. |
 | rms_norm | `[norm] original=F.rms_norm → adjusted=manual_rsqrt (reason: missing on torch 2.2.2)` | Fallback in use. See [section 7](#7-mac--intel-torch). |
-| auto-fit | `[auto-fit] device_batch_size: original/default=8 → adjusted=2 (reason: …)` | **Phase 2** — not emitted yet. See [section 11](#11-coming-in-phase-2). |
+| auto-fit | `[auto-fit] device_batch_size: original/default=8 → adjusted=2 (reason: est_peak=12.4GiB > margin*avail=0.6*18.0GiB)` | Batch shrunk so the estimate fits under the memory margin. See [section 11](#11-memory--oom). |
+| unchanged | `[auto-fit] device_batch_size=8 (unchanged; estimate fits)` | Auto-fit ran; requested batch already fits. |
 
 **ETA rules** (one of three, never invented):
 
@@ -108,6 +109,7 @@ One extra line at most per event. These are hints, not part of the strict contra
 | `device:` line | Python startup | Torch version, device and world size, plus the base dir, e.g. `torch 2.2.2 \| device: mps (…) \| world size: 1`. |
 | `wrote:` | After `tok_train` / `base_train` / `chat_sft` `DONE` | Artifact path and approximate disk size, e.g. `wrote: ~/.cache/nanochat/base_checkpoints/d6 (1.2GiB)`. |
 | `mem:` | After `DONE` | Best-effort free/available memory snapshot (macOS `vm_stat` or Linux `MemAvailable`). |
+| `memory:` | After auto-fit | Plain-language fit, e.g. `memory: aiming to use ≤60% of ~18GiB; batch 8→2 so logits fit`. Complements the `[auto-fit]` contract line; does not replace it. |
 | `heartbeat:` | During training | Planned: optional one-line progress summary. |
 
 ## 7. Mac / Intel torch
@@ -143,6 +145,7 @@ Root-causing NaN beyond warn/abort is out of scope for Phase 1.
 |----------|--------|---------|
 | `FORCE_STAGES` | Redo stages even if artifacts exist. `all` or a comma-list of stage names. Never `=1`. | `FORCE_STAGES=tok_train,base_train bash runs/runcpu.sh` |
 | `NANOCHAT_BASE_DIR` | Where artifacts live for the Python scripts and checkpoint lookups. Default `~/.cache/nanochat`. | `NANOCHAT_BASE_DIR=/tmp/nc python -m scripts.chat_cli -p "hi"` |
+| `NANOCHAT_MEMORY_FIT_MARGIN` | Fraction of available device memory the auto-fit estimate may use (default `0.6`). See [section 11](#11-memory--oom). | `NANOCHAT_MEMORY_FIT_MARGIN=0.5 bash runs/runcpu.sh` |
 | `WANDB_RUN` | Weights & Biases run name. Unset means `dummy` (no logging). | `WANDB_RUN=mytest bash runs/runcpu.sh` |
 
 Caveat: `runcpu.sh` and `speedrun.sh` set `NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"` themselves, so setting it before them has no effect. It is for running individual Python scripts by hand. If you change the dir by hand, keep it the same across all stages.
@@ -156,15 +159,53 @@ Caveat: `runcpu.sh` and `speedrun.sh` set `NANOCHAT_BASE_DIR="$HOME/.cache/nanoc
 | `ERROR: FORCE_STAGES=… has unknown stage` | Typo, or `FORCE_STAGES=1` | Use `all` or names from the list in [section 4](#4-what-a-re-run-keeps-and-skips). |
 | `FAIL stage=base_train … exit code 1` right after startup on Intel Mac | torch 2.2.2 issue | Check for the `[norm]` line, see [section 7](#7-mac--intel-torch). |
 | `ERROR: 5 consecutive NaN losses` | Numerical blow-up | See [section 8](#8-nan-troubleshooting). |
+| Out-of-memory / MPS allocator failure during train | Batch too large for device RAM | Check for an `[auto-fit]` line; see [section 11](#11-memory--oom). Do not treat this as NaN. |
 | `WARN no CUDA device detected` (speedrun) | Wrong script for this machine | Use `runs/runcpu.sh`. |
 
 The missing-checkpoint error is almost always a **symptom**: scroll up to the first `FAIL`, because the checkpoint was never produced.
 
-## 11. Coming in Phase 2
+## 11. Memory / OOM
 
-Stubs only, so you know what is planned. None of this is in the current scripts.
+Think of training memory like packing a suitcase: most of the bulk is the **logits** tensor — shape roughly `B × T × V` (batch × sequence length × vocab). Weights and optimizer state matter too, but when you OOM on a laptop it is usually because `B` was too big for that product.
 
-- **Memory / OOM** — an auto-fit step that shrinks `device_batch_size` on MPS so it fits in memory, prints `[auto-fit] original → adjusted`, and retries once after an out-of-memory error. See plan Phase 2, section 2.1–2.2.
-- **Defaults / profiles** — one canonical source of defaults (`nanochat/defaults.py`) feeding both Python and shell, with a `runcpu` profile. Today the `runcpu.sh` flags are written directly in the script. See plan Phase 2, section 2.0.
+**What auto-fit does**
 
-Until then, if you hit an out-of-memory error on MPS, lower `--device-batch-size` in `runs/runcpu.sh` and re-run; finished stages skip.
+1. Before heavy allocation, estimate peak use (params + optim + logits, with a documented fudge factor of **1.5**).
+2. If the estimate exceeds `margin × available` memory, **halve** `device_batch_size` until it fits (floor **1**).
+3. Print an `[auto-fit]` line (`original → adjusted` with a reason), plus a plain-language `memory:` enrichment when the batch changed.
+4. If training still OOMs after that fit: empty the cache, **halve once more**, and **retry once**. If it still fails at batch 1, the stage `FAIL`s with a clear message.
+
+**Knobs**
+
+| Knob | Default | Notes |
+|------|---------|-------|
+| `--auto-fit-batch` | **True on `mps`**, **False on `cuda`** | CUDA/speedrun stays hands-off unless you opt in. CPU skips auto-fit (or treats capacity as effectively unlimited). |
+| `NANOCHAT_MEMORY_FIT_MARGIN` | `0.6` | Aim to use ≤60% of available device memory so the OS and fragmentation have headroom. |
+
+Gradient accumulation keeps the *total* batch size the same when the micro-batch shrinks — you just take more steps per update.
+
+**NaN is not a memory problem.** A `loss: nan` warning means the numbers blew up (learning rate, dtype, data). Lowering batch size will not fix it. See [section 8](#8-nan-troubleshooting).
+
+## 12. Defaults and profiles
+
+One place to turn the dials — no hunting through shell scripts and argparse for the same number.
+
+| Layer | File | Role |
+|-------|------|------|
+| Canonical | [`nanochat/defaults.py`](../nanochat/defaults.py) | Shared constants (`VOCAB_SIZE`, `LOGIT_SOFTCAP`, `MEMORY_FIT_MARGIN`, …) and profiles `PROFILE_RUNCPU` / `PROFILE_SPEEDRUN`. Python wins on conflict. |
+| Emitted shell | [`runs/profiles.sh`](../runs/profiles.sh) | Generated/emitted from Python for `runcpu.sh` / `speedrun.sh` to source. Do not hand-edit as a second source of truth. |
+
+**Batch sizes (easy to mix up)**
+
+| Source | `device_batch_size` | Why |
+|--------|---------------------|-----|
+| CLI / argparse default | **32** | Sensible for a big GPU when you call `python -m scripts.base_train` with no flags. |
+| `PROFILE_RUNCPU` | **8** | Safer educational default on a laptop; auto-fit may shrink further. |
+| `PROFILE_SPEEDRUN` | script/profile value (e.g. 16 on 8xH100) | CUDA speedrun; auto-fit off unless you pass `--auto-fit-batch`. |
+
+**How to change a run**
+
+- **Educational / Mac / CPU** — edit `PROFILE_RUNCPU` in `nanochat/defaults.py`, re-emit `runs/profiles.sh` if your workflow checks that file in, then re-run `bash runs/runcpu.sh` (use `FORCE_STAGES=…` if you need to redo a finished stage).
+- **GPU / speedrun** — edit `PROFILE_SPEEDRUN` the same way, or pass flags on the `torchrun` line; leave `--auto-fit-batch` off unless you want MPS-style fitting on CUDA.
+
+Sync is checked by `tests/test_defaults.py` (emitted shell vars must match `PROFILE_*`). Memory math is covered by `tests/test_memory.py`.
