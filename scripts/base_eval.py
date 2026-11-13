@@ -237,6 +237,10 @@ def main():
             print0(f"CORE metric: {core_results['core_metric']:.4f}")
 
     compute_cleanup()
+    if ddp_rank == 0: # marker: last action of a successful run
+        marker_dir = os.path.join(get_base_dir(), "base_checkpoints")
+        os.makedirs(marker_dir, exist_ok=True)
+        open(os.path.join(marker_dir, ".eval_ok"), "w").close()
 
 
 if __name__ == "__main__":

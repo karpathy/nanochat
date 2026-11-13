@@ -12,6 +12,7 @@ python -m scripts.base_train --depth=4 --max-seq-len=512 --device-batch-size=1 -
 """
 
 import os
+import sys
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import gc
 import json
@@ -94,6 +95,11 @@ if device_type == "cuda":
 else:
     gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
 print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
+_dev_name = torch.cuda.get_device_name(0) if device_type == "cuda" else ("Apple Silicon GPU (MPS)" if device_type == "mps" else "CPU")
+_base_dir = get_base_dir()
+print0(f"torch {torch.__version__} | device: {device_type} ({_dev_name}) | world size: {ddp_world_size}")
+print0(f"NANOCHAT_BASE_DIR: {os.environ.get('NANOCHAT_BASE_DIR', '(unset)')} | base_dir: {_base_dir}")
+print0(f"load/save roots: {os.path.join(_base_dir, 'base_checkpoints')} | tokenizer: {os.path.join(_base_dir, 'tokenizer')}")
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
@@ -389,6 +395,8 @@ def get_weight_decay(it):
 # Training loop
 
 # Loop state (variables updated by the training loop)
+nan_steps = 0 # consecutive NaN-loss steps
+MAX_NAN_STEPS = 5 # abort after this many consecutive NaN losses
 if not resuming:
     step = 0
     val_bpb = None # will be set if eval_every > 0
@@ -539,6 +547,15 @@ while True:
         optimizer.step()
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
+    if math.isnan(train_loss_f):
+        nan_steps += 1
+        if nan_steps == 1:
+            print0(f"WARNING: loss is NaN at step {step} (numerical instability, NOT a memory problem). Check lr / dtype / data; aborting after {MAX_NAN_STEPS} consecutive NaN steps.")
+        if nan_steps >= MAX_NAN_STEPS:
+            print0(f"ERROR: {MAX_NAN_STEPS} consecutive NaN losses (step {step}). Aborting. See docs/RUNNING.md for troubleshooting.")
+            sys.exit(1)
+    else:
+        nan_steps = 0
     synchronize()
     t1 = time.time()
     dt = t1 - t0
