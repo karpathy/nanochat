@@ -12,3 +12,4 @@ eval_bundle/
 CLAUDE.md
 wandb/
 .omc/
+.gate-cache/
