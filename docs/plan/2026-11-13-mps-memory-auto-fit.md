@@ -1,5 +1,7 @@
 # MPS memory auto-fit + centralized knobs
 
+> **Superseded** by [2026-11-13-fix-forward-mac.md](2026-11-13-fix-forward-mac.md) (merged + reviewer-fixed). Kept for history.
+
 > **Overview:** Memory preflight/auto-fit for MPS OOM, plus centralize duplicated run knobs (batch/seq/depth/vocab/softcap/margins) so shell + Python share one controllable source — still progressive docs and fix-forward.
 
 ## Todos

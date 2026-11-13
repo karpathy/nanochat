@@ -1,5 +1,7 @@
 # Echoes + idempotency + fix-forward loop
 
+> **Superseded** by [2026-11-13-fix-forward-mac.md](2026-11-13-fix-forward-mac.md) (merged + reviewer-fixed). Kept for history.
+
 > **Overview:** Triple goal — (1) stage echoes, (2) idempotent resume, (3) fix-forward blockers — plus progressive docs so a reader can smoothly wiz through setup → run → recover without this chat.
 
 ## In-repo plan home
