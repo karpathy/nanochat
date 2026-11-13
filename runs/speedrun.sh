@@ -22,6 +22,8 @@ export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p "$NANOCHAT_BASE_DIR"
 PROFILE=speedrun
 source "$(dirname "${BASH_SOURCE[0]}")/_stage_lib.sh"
+# Run knobs come from nanochat/defaults.py (PROFILE_SPEEDRUN); profiles.sh is its emitted shell form.
+source "$(dirname "${BASH_SOURCE[0]}")/profiles.sh"
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
@@ -81,11 +83,11 @@ log "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 8)
-run_stage base_train "depth=24 device_batch_size=16" "base_eval (or SKIP if .eval_ok)" -- \
-    torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=24 --target-param-data-ratio=8 --device-batch-size=16 --fp8 --run=$WANDB_RUN
+run_stage base_train "depth=$SPEEDRUN_DEPTH device_batch_size=$SPEEDRUN_DEVICE_BATCH_SIZE" "base_eval (or SKIP if .eval_ok)" -- \
+    torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth="$SPEEDRUN_DEPTH" --target-param-data-ratio="$SPEEDRUN_TARGET_PARAM_DATA_RATIO" --device-batch-size="$SPEEDRUN_DEVICE_BATCH_SIZE" --fp8 --run=$WANDB_RUN
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
-run_stage base_eval "device_batch_size=16" "chat_sft (or SKIP if checkpoints exist)" -- \
-    torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size=16
+run_stage base_eval "device_batch_size=$SPEEDRUN_EVAL_DEVICE_BATCH_SIZE" "chat_sft (or SKIP if checkpoints exist)" -- \
+    torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size="$SPEEDRUN_EVAL_DEVICE_BATCH_SIZE"
 
 # -----------------------------------------------------------------------------
 # SFT (teach the model conversation special tokens, tool use, multiple choice)
