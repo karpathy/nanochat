@@ -18,13 +18,14 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | 2026-11-13 | fix-forward-mac-phase2 | OOM re-halve mid-loop only in `base_train`; eval/SFT get preflight fit only | DDP-safe; avoids silent multi-rank shape drift; documented in RUNNING.md §11 |
 | 2026-11-13 | fix-forward-mac-phase2 | Keep third echo variant when batch already 1 and still over budget | Frozen table has shrink/unchanged; claiming "fits" would be false |
 | 2026-11-13 | fix-forward-mac-phase2 | chat_sft inherit fallbacks use DEFAULT_SEQ_LEN / DEFAULT_DEVICE_BATCH_SIZE from defaults | Gate 4 SA: avoid dual-truth literals 2048/32 |
+| 2026-11-13 | fix-forward-mac-phase2 | After OOM rehalve, train on eager `orig_model` (not compiled `dynamic=False` graph) | Fixed-shape compile cannot survive a mid-run batch change; matches eval/sample pattern |
 
 ## Slice states
 
 | slice_id | state | evidence |
 |----------|-------|----------|
 | fix-forward-mac-phase1 | PASSED (merged) | [PR #4](https://github.com/neomatrix369/nanochat/pull/4) merged 2026-11-13; [PR #5](https://github.com/neomatrix369/nanochat/pull/5) follow-ups merged 2026-11-13 (`2aa56ed` on master); pytest 51p/18s; Gate 4 APPROVED (software-crafter after comment fix, acceptance, solution-architect); ddd N/A |
-| fix-forward-mac-phase2 | IMPLEMENTED | [PR #6](https://github.com/neomatrix369/nanochat/pull/6); branch `feat/fix-forward-mac-phase2` (tip advancing). AC implemented (defaults+memory+wire+docs). pytest defaults+memory 58p after chat_sft SSOT fix; suite was 106p/18s. Gate 4: SA CHANGES→fix F1 chat_sft SSOT (resubmit); SC/AT re-check pending. Worktrees `.worktrees/p2-*` synced. Master synced (ahead 0 behind). |
+| fix-forward-mac-phase2 | VERIFIED | [PR #6](https://github.com/neomatrix369/nanochat/pull/6); branch `feat/fix-forward-mac-phase2` @ `3d84339`+. AC complete: defaults SSOT + memory auto-fit + wire (`--auto-fit-batch`, profiles sourced, OOM rehalve→eager). pytest defaults+memory 57p. Gate 4: acceptance APPROVED; solution-architect APPROVED; software-craft APPROVED after compile/OOM fix; ddd N/A. Documentarist split of RUNNING.md deferred (Phase 1 L2 decision). Merge/release human-owned. |
 
 ## Recent merges (Mac fix-forward track)
 
