@@ -37,16 +37,18 @@ uv sync --extra cpu    # (or) Use for CPU-only / MPS
 source .venv/bin/activate
 ```
 
-Torch is selected automatically from your OS and CPU architecture (no extra flags):
+Torch is selected automatically from your OS and Python architecture (no extra flags):
 
 | Platform | Torch | Wheel source |
 |----------|-------|--------------|
 | Linux CUDA (`--extra gpu`) | 2.9.1 | pytorch cu128 index |
 | Linux / Windows CPU | 2.9.1 | pytorch cpu index |
-| macOS Apple Silicon | 2.9.1 | PyPI (MPS) |
-| macOS Intel (`x86_64`) | 2.2.2 | PyPI (last supported) |
+| macOS Apple Silicon (native `arm64` Python) | 2.9.1 | PyPI (MPS) |
+| macOS `x86_64` (Intel Mac **or** Rosetta Python) | 2.2.2 | PyPI (last supported) |
 
-Same `uv sync` commands work everywhere; markers in `pyproject.toml` apply the right pin and index. On a Mac or CPU box, see [Running on CPU / MPS](#running-on-cpu--mps) next.
+On Mac prefer `uv sync --extra cpu` (MPS). `--extra gpu` is the CUDA/Linux path; markers keep it from pulling the cu128 index on darwin.
+
+Same commands work everywhere; markers in `pyproject.toml` apply the right pin and index. If you are on Apple Silicon but `python -c "import platform; print(platform.machine())"` prints `x86_64`, recreate the venv with a native arm64 Python to get torch 2.9.1 instead of the x86_64 fallback. On a Mac or CPU box, see [Running on CPU / MPS](#running-on-cpu--mps) next.
 
 For development (adds pytest, matplotlib, ipykernel, transformers, etc.):
 
