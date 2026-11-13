@@ -25,12 +25,13 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | slice_id | state | evidence |
 |----------|-------|----------|
 | fix-forward-mac-phase1 | PASSED (merged) | [PR #4](https://github.com/neomatrix369/nanochat/pull/4) merged 2026-11-13; [PR #5](https://github.com/neomatrix369/nanochat/pull/5) follow-ups merged 2026-11-13 (`2aa56ed` on master); pytest 51p/18s; Gate 4 APPROVED (software-crafter after comment fix, acceptance, solution-architect); ddd N/A |
-| fix-forward-mac-phase2 | VERIFIED | [PR #6](https://github.com/neomatrix369/nanochat/pull/6); branch `feat/fix-forward-mac-phase2` @ `e3ab2d4`. Master synced (ahead N / behind 0). AC complete: defaults SSOT + emit-shell + memory auto-fit + wire (`--auto-fit-batch`, profiles sourced, OOM rehalve→eager) + docs. pytest defaults+memory **58 passed**; full suite **109 passed / 18 skipped** on push. Gate 4: software-craft APPROVED; acceptance APPROVED; solution-architect APPROVED after chat_sft SSOT F1 fix; ddd N/A. Worktrees `.worktrees/p2-*` synced. Merge/release human-owned. |
+| fix-forward-mac-phase2 | PASSED (merged) | [PR #6](https://github.com/neomatrix369/nanochat/pull/6) merged 2026-11-13 (`f8d7174` on master); Gate 4 APPROVED (software-craft, acceptance, solution-architect); ddd N/A; pytest defaults+memory 58p / suite 109p/18s |
 
 ## Recent merges (Mac fix-forward track)
 
 | When (UTC) | PR | What landed |
 |------------|----|-------------|
+| 2026-11-13 16:02 | [#6](https://github.com/neomatrix369/nanochat/pull/6) | Phase 2: defaults SSOT, MPS auto-fit, profiles, RUNNING/README |
 | 2026-11-13 15:13 | [#5](https://github.com/neomatrix369/nanochat/pull/5) | Review follow-ups: `tok_eval` marker comment, RUNNING.md TOC note, `.gitignore` chore |
 | 2026-11-13 14:46 | [#4](https://github.com/neomatrix369/nanochat/pull/4) | Phase 1: fail-fast echoes/skip, rms_norm fallback, markers, NaN abort, RUNNING.md |
 | 2026-11-13 11:48 | [#3](https://github.com/neomatrix369/nanochat/pull/3) | SDPA GQA without `enable_gqa`; skip memory limit on darwin |
