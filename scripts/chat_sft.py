@@ -17,6 +17,7 @@ import time
 import wandb
 import torch
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.defaults import DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_SEQ_LEN
 from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state
@@ -99,8 +100,8 @@ model, tokenizer, meta = load_model("base", device, phase="train", model_tag=arg
 # Inherit training hyperparameters from pretrained checkpoint (None = inherit, explicit value = override)
 pretrain_user_config = meta.get("user_config", {})
 for name, fallback, source in [
-    ("max_seq_len",       2048,  meta),
-    ("device_batch_size", 32,    meta),
+    ("max_seq_len",       DEFAULT_SEQ_LEN,          meta),
+    ("device_batch_size", DEFAULT_DEVICE_BATCH_SIZE, meta),
     ("total_batch_size",  524288, meta),
     ("embedding_lr",      0.3,   pretrain_user_config),
     ("unembedding_lr",    0.004, pretrain_user_config),

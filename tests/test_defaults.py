@@ -116,3 +116,11 @@ def test_forward_saturates_logits_at_the_ssot_softcap():
         logits = model(torch.randint(0, config.vocab_size, (1, config.sequence_len)))
     # saturated tanh reaches the cap exactly in fp32, so this pins the value itself
     assert logits.abs().max().item() == pytest.approx(defaults.LOGIT_SOFTCAP, rel=1e-3)
+
+def test_chat_sft_fallback_batch_and_seq_come_from_the_ssot():
+    """Gate 4 SA: chat_sft must not re-literal 32/2048 when checkpoint inherit fails."""
+    source = Path(__file__).resolve().parents[1].joinpath("scripts", "chat_sft.py").read_text()
+    assert "from nanochat.defaults import DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_SEQ_LEN" in source
+    assert "DEFAULT_SEQ_LEN" in source and "DEFAULT_DEVICE_BATCH_SIZE" in source
+    assert '("max_seq_len",       2048,  meta)' not in source
+    assert '("device_batch_size", 32,    meta)' not in source

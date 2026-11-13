@@ -17,13 +17,14 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | 2026-11-13 | fix-forward-mac-phase2 | `PROFILE_RUNCPU.device_batch_size=8` while global argparse default stays 32 | Safer Mac educational default without changing CUDA/speedrun CLI default |
 | 2026-11-13 | fix-forward-mac-phase2 | OOM re-halve mid-loop only in `base_train`; eval/SFT get preflight fit only | DDP-safe; avoids silent multi-rank shape drift; documented in RUNNING.md §11 |
 | 2026-11-13 | fix-forward-mac-phase2 | Keep third echo variant when batch already 1 and still over budget | Frozen table has shrink/unchanged; claiming "fits" would be false |
+| 2026-11-13 | fix-forward-mac-phase2 | chat_sft inherit fallbacks use DEFAULT_SEQ_LEN / DEFAULT_DEVICE_BATCH_SIZE from defaults | Gate 4 SA: avoid dual-truth literals 2048/32 |
 
 ## Slice states
 
 | slice_id | state | evidence |
 |----------|-------|----------|
 | fix-forward-mac-phase1 | PASSED (merged) | [PR #4](https://github.com/neomatrix369/nanochat/pull/4) merged 2026-11-13; [PR #5](https://github.com/neomatrix369/nanochat/pull/5) follow-ups merged 2026-11-13 (`2aa56ed` on master); pytest 51p/18s; Gate 4 APPROVED (software-crafter after comment fix, acceptance, solution-architect); ddd N/A |
-| fix-forward-mac-phase2 | VERIFIED | [PR #6](https://github.com/neomatrix369/nanochat/pull/6); branch `feat/fix-forward-mac-phase2` @ `da9b324`; Gate 4 APPROVED (software-crafter, acceptance, solution-architect; ddd N/A); pytest defaults+memory 55p; suite 106p/18s; profiles RUNCPU batch=8 |
+| fix-forward-mac-phase2 | IMPLEMENTED | [PR #6](https://github.com/neomatrix369/nanochat/pull/6); branch `feat/fix-forward-mac-phase2` (tip advancing). AC implemented (defaults+memory+wire+docs). pytest defaults+memory 58p after chat_sft SSOT fix; suite was 106p/18s. Gate 4: SA CHANGES→fix F1 chat_sft SSOT (resubmit); SC/AT re-check pending. Worktrees `.worktrees/p2-*` synced. Master synced (ahead 0 behind). |
 
 ## Recent merges (Mac fix-forward track)
 
