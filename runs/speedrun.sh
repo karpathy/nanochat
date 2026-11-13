@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Audience: CUDA GPU users (designed for a blank 8XH100 node). On Mac/CPU use runs/runcpu.sh instead.
+# Fail-fast + idempotent: the first failed stage stops the run; re-run the same command and finished
+# stages are skipped (FORCE_STAGES=all or FORCE_STAGES=tok_train,base_train to redo). See docs/RUNNING.md.
+
 # This script is configured to train your own GPT-2 grade LLM (pretraining + finetuning)
 # It is designed to run on a blank 8XH100 GPU node and takes approximately 1.5 hours to complete.
 
@@ -10,10 +14,14 @@
 # 3) Example launch with wandb logging, but see below for setting up wandb first:
 # WANDB_RUN=speedrun screen -L -Logfile runs/speedrun.log -S speedrun bash runs/speedrun.sh
 
+set -euo pipefail
+
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
-mkdir -p $NANOCHAT_BASE_DIR
+mkdir -p "$NANOCHAT_BASE_DIR"
+PROFILE=speedrun
+source "$(dirname "${BASH_SOURCE[0]}")/_stage_lib.sh"
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
@@ -25,7 +33,12 @@ command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 # install the repo dependencies
 uv sync --extra gpu
 # activate venv so that `python` uses the project's venv instead of system python
-source .venv/bin/activate
+set +u; source .venv/bin/activate; set -u
+
+# Soft check only: warn but keep going (e.g. dry runs, or CUDA visible only to torchrun workers)
+if ! python -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+    log "WARN no CUDA device detected; speedrun expects 8xH100 (Mac/CPU: use runs/runcpu.sh). See docs/RUNNING.md"
+fi
 
 # -----------------------------------------------------------------------------
 # wandb setup
@@ -34,10 +47,12 @@ source .venv/bin/activate
 #    `wandb login`
 # 2) Set the WANDB_RUN environment variable when running this script, e.g.:
 #    `WANDB_RUN=d26 bash speedrun.sh`
-if [ -z "$WANDB_RUN" ]; then
+if [ -z "${WANDB_RUN:-}" ]; then
     # by default use "dummy" : it's handled as a special case, skips logging to wandb
     WANDB_RUN=dummy
 fi
+
+log "$(pipeline_map tok:tok_train base:base_train eval:base_eval sft:chat_sft chat_eval:chat_eval)"
 
 # -----------------------------------------------------------------------------
 # Tokenizer
@@ -54,26 +69,35 @@ python -m nanochat.dataset -n 8
 python -m nanochat.dataset -n 170 &
 DATASET_DOWNLOAD_PID=$!
 # train the tokenizer with vocab size 2**15 = 32768 on ~2B characters of data
-python -m scripts.tok_train
+run_stage tok_train "" "tok_eval (or SKIP if .tok_eval_ok)" -- \
+    python -m scripts.tok_train
 # evaluate the tokenizer (report compression ratio etc.)
-python -m scripts.tok_eval
+run_stage tok_eval "" "base_train (or SKIP if checkpoints exist)" -- \
+    python -m scripts.tok_eval
 
 # -----------------------------------------------------------------------------
 # Base model (pretraining)
-echo "Waiting for dataset download to complete..."
+log "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 8)
-torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=24 --target-param-data-ratio=8 --device-batch-size=16 --fp8 --run=$WANDB_RUN
+run_stage base_train "depth=24 device_batch_size=16" "base_eval (or SKIP if .eval_ok)" -- \
+    torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth=24 --target-param-data-ratio=8 --device-batch-size=16 --fp8 --run=$WANDB_RUN
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
-torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size=16
+run_stage base_eval "device_batch_size=16" "chat_sft (or SKIP if checkpoints exist)" -- \
+    torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size=16
 
 # -----------------------------------------------------------------------------
 # SFT (teach the model conversation special tokens, tool use, multiple choice)
 
 # run SFT and eval the model
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
+run_stage chat_sft "" "chat_eval (or SKIP if .eval_ok)" -- \
+    torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
+run_stage chat_eval "" "chat with your model (python -m scripts.chat_cli)" -- \
+    torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
+
+log "ALL DONE cumulative=$(fmt_dur "$SECONDS")"
+echo '  try: python -m scripts.chat_cli -p "Why is the sky blue?"'
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"
