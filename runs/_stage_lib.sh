@@ -142,10 +142,11 @@ _count_shards() {
 # Format: health: <mem> · ckpt=<size|n/a> · shards=<n/needed|n/a>
 # Optional SHARDS_NEEDED (set by caller profile); default n/a for needed.
 health_strip() {
-    local mem="unknown" ckpt="n/a" shards="n/a" n needed="${SHARDS_NEEDED:-}" p
+    local mem="unknown" ckpt="n/a" shards="n/a" n needed="${SHARDS_NEEDED:-}" p=""
     mem="$(mem_snapshot 2>/dev/null | sed 's/^mem: //')" || mem="unknown"
+    # Keep find stdout even when a root is missing (pipefail would otherwise wipe p).
     p="$(find "$NANOCHAT_BASE_DIR/base_checkpoints" "$NANOCHAT_BASE_DIR/chatsft_checkpoints" \
-        -name 'model_*.pt' -print 2>/dev/null | head -n 1)" || p=""
+        -name 'model_*.pt' -print 2>/dev/null | head -n 1 || true)" || true
     if [ -n "${p:-}" ]; then
         ckpt="$(fmt_bytes "$(dirname "$p")")" || ckpt="n/a"
     fi
@@ -179,8 +180,12 @@ write_last_run_json() {
 }
 
 # Exactly one tip: line per script invocation (call once at script start).
+# Text SSOT: nanochat/run_tip.py (unit-tested).
 print_run_tip() {
-    echo "  tip: smaller --device-batch-size uses grad accumulation to keep the same total batch"
+    local tip
+    tip="$(python -m nanochat.run_tip 2>/dev/null || true)"
+    [ -n "$tip" ] && echo "  $tip"
+    return 0
 }
 
 # pipeline_map "tok:tok_train base:base_train eval:base_eval ..." -> one line, first pending stage is ▶
@@ -223,9 +228,8 @@ run_stage() {
     fi
 
     log "START stage=$stage profile=$PROFILE${knobs:+ $knobs} ETA: not yet knowable"
-    echo "  purpose: $(stage_purpose "$stage")"
-    # Single enrichment after purpose: (best-effort; never fail the run).
-    echo "  $(health_strip)" || true
+    # One packed enrichment line (purpose + health) — Phase 1 sparsity discipline.
+    echo "  purpose: $(stage_purpose "$stage") · $(health_strip)" || true
 
     local t0=$SECONDS rc=0 elapsed
     "$@" || rc=$?

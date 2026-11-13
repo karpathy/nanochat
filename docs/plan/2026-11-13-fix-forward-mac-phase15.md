@@ -10,11 +10,11 @@
 
 ## Todos
 
-- [ ] Knob diff vs last run (`last_run.json`)
-- [ ] Health strip at stage boundaries (mem + ckpt size + shards)
-- [ ] Trend crumb after val_bpb / CORE
-- [ ] Educational tip once per script run
-- [ ] RUNNING.md glossary rows + tests
+- [x] Knob diff vs last run (`last_run.json`)
+- [x] Health strip at stage boundaries (mem + ckpt size + shards) — packed with `purpose:` on one START line
+- [x] Trend crumb after val_bpb / CORE — fail-soft `emit_metric_trend`
+- [x] Educational tip once per script run (`nanochat/run_tip.py`)
+- [x] RUNNING.md glossary rows + tests
 
 ## Acceptance criteria
 

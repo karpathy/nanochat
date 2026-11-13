@@ -9,7 +9,13 @@ Run: python -m pytest tests/test_phase15_enrichments.py -q
 from pathlib import Path
 
 from nanochat.last_run import format_knob_diff, load_last_run, write_last_run
-from nanochat.metrics_trend import format_trend, load_metrics, record_metric
+from nanochat.metrics_trend import (
+    emit_metric_trend,
+    format_trend,
+    load_metrics,
+    record_metric,
+)
+from nanochat.run_tip import run_tip
 
 
 # ----------------------------------------------------------------------------- last_run / knob diff
@@ -154,3 +160,60 @@ def test_record_metric_merges_without_clobbering_other_keys(tmp_path):
     loaded = load_metrics(path)
     assert loaded["val_bpb"] == 8.0
     assert loaded["CORE"] == 0.2
+
+
+def test_format_trend_returns_none_when_prior_is_non_numeric():
+    # Given: corrupt prior stored as a non-numeric string
+    # When: formatting
+    line = format_trend("val_bpb", 7.47, "not-a-number", lower_is_better=True)
+    # Then: treat as absent (no crash, no line)
+    assert line is None
+
+
+def test_emit_metric_trend_is_fail_soft_when_path_is_unwritable(tmp_path):
+    # Given: a path whose parent cannot be created as a file-as-dir trap
+    blocker = tmp_path / "not_a_dir"
+    blocker.write_text("x", encoding="utf-8")
+    path = blocker / "last_metrics.json"
+    printed: list[str] = []
+    # When: emit would fail on write
+    emit_metric_trend(
+        str(path),
+        "val_bpb",
+        7.47,
+        lower_is_better=True,
+        print_fn=printed.append,
+    )
+    # Then: no exception escapes (printed may be empty)
+    assert printed == [] or all(isinstance(x, str) for x in printed)
+
+
+def test_emit_metric_trend_prints_then_records(tmp_path):
+    # Given: a prior metric on disk
+    path = tmp_path / "last_metrics.json"
+    record_metric(path, "val_bpb", 8.1)
+    printed: list[str] = []
+    # When: emitting a better value
+    emit_metric_trend(
+        str(path),
+        "val_bpb",
+        7.47,
+        lower_is_better=True,
+        print_fn=printed.append,
+    )
+    # Then: one trend line and updated store
+    assert len(printed) == 1
+    assert printed[0].startswith("trend:")
+    assert load_metrics(path)["val_bpb"] == 7.47
+
+
+# ----------------------------------------------------------------------------- tip once
+
+def test_run_tip_is_one_line_mentioning_device_batch_size():
+    # Given: the tip SSOT helper
+    # When: fetching the tip
+    tip = run_tip()
+    # Then: exactly one tip: line mentioning the real knob
+    assert tip.startswith("tip:")
+    assert "--device-batch-size" in tip
+    assert tip.count("\n") == 0
