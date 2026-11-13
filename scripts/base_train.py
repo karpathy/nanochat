@@ -27,7 +27,7 @@ import torch
 import torch.distributed as dist
 
 from nanochat.defaults import DEFAULT_DEPTH, DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_SEQ_LEN
-from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size, format_oom_retry_line, is_out_of_memory_error, oom_rehalve_once
+from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size, format_oom_retry_line, is_out_of_memory_error, oom_after_rehalve_error, oom_rehalve_once, training_module_after_oom_rehalve
 from nanochat.gpt import GPT, GPTConfig, Linear
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
@@ -267,7 +267,8 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+# dynamic=False is safe while batch shape is fixed; an OOM rehalve falls back to orig_model
+model = torch.compile(model, dynamic=False)
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
@@ -470,15 +471,17 @@ def accumulate_gradients(x, y):
 def rehalve_after_oom():
     """
     Spend the one OOM retry the run gets: drop the dead gradients, free cached blocks, halve
-    the batch and rebuild the loader around it. Raises at batch 1, where nothing is left to halve.
+    the batch and rebuild the loader around it. Falls back to orig_model so torch.compile's
+    fixed-shape invariant is not violated. Raises at batch 1, where nothing is left to halve.
     """
-    global grad_accum_steps, train_loader
+    global grad_accum_steps, train_loader, model
     model.zero_grad(set_to_none=True) # the failed step's partial gradients are worthless
     rehalved_batch_size = oom_rehalve_once(args.device_batch_size, device_type)
     print0(format_oom_retry_line(args.device_batch_size, rehalved_batch_size))
     args.device_batch_size = rehalved_batch_size
     grad_accum_steps = resolve_grad_accum_steps()
     train_loader = build_train_loader(dataloader_state_dict)
+    model = training_module_after_oom_rehalve(orig_model)  # eager: batch shape just changed
     return next(train_loader)
 
 # Go!
@@ -583,7 +586,12 @@ while True:
             raise
         oom_retry_spent = True
         x, y, dataloader_state_dict = rehalve_after_oom()
-        train_loss, x, y, dataloader_state_dict = accumulate_gradients(x, y)
+        try:
+            train_loss, x, y, dataloader_state_dict = accumulate_gradients(x, y)
+        except (RuntimeError, MemoryError) as retry_error:
+            if is_out_of_memory_error(retry_error):
+                raise oom_after_rehalve_error(args.device_batch_size) from retry_error
+            raise
     # step the optimizer
     lrm = get_lr_multiplier(step)
     muon_momentum = get_muon_momentum(step)

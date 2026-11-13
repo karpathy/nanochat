@@ -149,6 +149,18 @@ def test_oom_retry_echo_shows_original_and_adjusted():
     assert line.startswith("[auto-fit] OOM recovery: device_batch_size: original/default=4 → adjusted=2 (reason:")
 
 
+def test_oom_rehalve_falls_back_to_uncompiled_module():
+    uncompiled = object()
+    assert memory.training_module_after_oom_rehalve(uncompiled) is uncompiled
+
+
+def test_oom_after_rehalve_error_mentions_batch_size_and_running_docs():
+    err = memory.oom_after_rehalve_error(2)
+    assert isinstance(err, MemoryError)
+    assert "device_batch_size=2" in str(err)
+    assert "RUNNING.md" in str(err)
+
+
 def test_mps_out_of_memory_runtime_error_is_recognised():
     assert memory.is_out_of_memory_error(RuntimeError("MPS backend out of memory (MPS allocated: 17.95 GB)"))
 

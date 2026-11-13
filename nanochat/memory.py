@@ -252,3 +252,21 @@ def oom_rehalve_once(batch_size, device_type="cpu"):
         )
     empty_device_cache(device_type)
     return max(MIN_DEVICE_BATCH_SIZE, batch_size // 2)
+
+
+def training_module_after_oom_rehalve(uncompiled_model):
+    """
+    After an OOM rehalve changes device_batch_size mid-run, training must continue on the
+    uncompiled module. torch.compile(..., dynamic=False) assumes fixed input shapes; the
+    same pattern is used for eval/sample when shapes vary.
+    """
+    return uncompiled_model
+
+
+def oom_after_rehalve_error(batch_size):
+    """Actionable MemoryError when the single post-rehalve retry still OOMs (any batch size)."""
+    return MemoryError(
+        f"out of memory again after rehalve at device_batch_size={batch_size}: "
+        "this model still does not fit this device. "
+        "Lower --max-seq-len or --depth, close other GPU/MPS processes, or see docs/RUNNING.md."
+    )
