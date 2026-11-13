@@ -176,7 +176,8 @@ run_stage() {
         exit "$rc"
     fi
 
-    # tok_eval has no Python-side marker yet; touching is idempotent if Python also writes it.
+    # tok_eval marker: primary writer is scripts/tok_eval.py (end of main); shell touch is
+    # idempotent insurance if Python exits 0 before writing (should not happen).
     if [ "$stage" = "tok_eval" ]; then
         mkdir -p "$(dirname "$(stage_path tok_eval)")"
         touch "$(stage_path tok_eval)"

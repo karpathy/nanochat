@@ -9,6 +9,8 @@ Design source: [docs/plan/2026-11-13-fix-forward-mac.md](plan/2026-11-13-fix-for
 
 How-to first (§1–4, §8–10), then reference (§5–6, §9). Kept in one L2 file on purpose so a stuck runner can stay on one page (plan doc mapping); use the TOC to jump.
 
+How-to first (§1–4, §8–10), then reference (§5–6, §9). Kept in one L2 file on purpose so a stuck runner can stay on one page (plan doc mapping); use the TOC to jump.
+
 ---
 
 ## 1. Pick a script
