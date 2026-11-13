@@ -13,6 +13,18 @@
 - `nanochat/checkpoint_manager.py` — actionable missing-dir errors
 - `scripts/{base_train,base_eval,tok_eval,chat_eval}.py` — NaN abort / eval markers / startup echo
 
-**Deferred (Phase 2)**
+**Deferred (Phase 2)** — now shipped; see `fix-forward-mac-phase2` below
 - `nanochat/defaults.py` + emitted `runs/profiles.sh` SSOT
 - `nanochat/memory.py` auto-fit + OOM re-halve
+
+## fix-forward-mac-phase2
+
+**Added**
+- `nanochat/defaults.py` — SSOT for profiles, vocab/softcap, memory margin/fudge; `emit-shell` → `runs/profiles.sh`
+- `nanochat/memory.py` — peak estimate, `fit_device_batch_size`, auto-fit echoes, OOM rehalve helpers (eager fallback after rehalve)
+- `tests/test_defaults.py`, extended `tests/test_memory.py` — SSOT sync + fit/echo/OOM coverage
+
+**Changed**
+- `scripts/{base_train,base_eval,chat_sft}.py` — `--auto-fit-batch` (mps on / cuda off); preflight fit; train OOM retry once then eager
+- `runs/runcpu.sh` / `runs/speedrun.sh` — `source profiles.sh`; knobs from `$RUNCPU_*` / `$SPEEDRUN_*` (runcpu batch 8)
+- `docs/RUNNING.md` / README — Phase 2 memory/auto-fit + defaults reference

@@ -126,7 +126,8 @@ On a Mac (or any CPU/MPS machine) use `bash runs/runcpu.sh`, not `runs/speedrun.
 
 - Re-runs are safe: finished stages print `SKIP` and cost nothing.
 - The script stops at the first failing stage. Fix the cause, then re-run the same command.
-- Stage markers, `FORCE_STAGES`, log legend, NaN and torch 2.2.2 notes: [docs/RUNNING.md](docs/RUNNING.md).
+- On MPS, auto-fit may shrink `device_batch_size` so the run fits in memory. Run knobs live in `nanochat/defaults.py` + `runs/profiles.sh`.
+- Stage markers, `FORCE_STAGES`, log legend, memory/OOM, NaN, and torch 2.2.2 notes: [docs/RUNNING.md](docs/RUNNING.md).
 
 ## Precision / dtype
 
