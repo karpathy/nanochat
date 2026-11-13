@@ -12,8 +12,10 @@ import sys
 from pathlib import Path
 
 import pytest
+import torch
 
 from nanochat import defaults
+from nanochat.gpt import GPT, GPTConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROFILES_SH = REPO_ROOT / "runs" / "profiles.sh"
@@ -98,3 +100,19 @@ def test_memory_fit_knobs_are_published_for_the_memory_helper():
 @pytest.mark.parametrize("knob", ["core_metric_every", "sample_every"])
 def test_runcpu_profile_covers_every_base_train_knob_the_mac_run_overrides(knob):
     assert knob in defaults.PROFILE_RUNCPU
+
+
+def test_model_config_defaults_come_from_the_ssot():
+    config = GPTConfig()
+    assert (config.vocab_size, config.sequence_len) == (defaults.VOCAB_SIZE, defaults.DEFAULT_SEQ_LEN)
+
+
+def test_forward_saturates_logits_at_the_ssot_softcap():
+    config = GPTConfig(sequence_len=16, vocab_size=64, n_layer=1, n_head=1,
+                       n_kv_head=1, n_embd=64, window_pattern="L")
+    model = GPT(config)
+    with torch.no_grad():
+        model.lm_head.weight.mul_(1000) # drive the raw logits far past the cap
+        logits = model(torch.randint(0, config.vocab_size, (1, config.sequence_len)))
+    # saturated tanh reaches the cap exactly in fp32, so this pins the value itself
+    assert logits.abs().max().item() == pytest.approx(defaults.LOGIT_SOFTCAP, rel=1e-3)
