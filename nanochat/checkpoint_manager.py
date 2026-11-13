@@ -19,6 +19,27 @@ def log0(message):
     if int(os.environ.get('RANK', 0)) == 0:
         logger.info(message)
 
+_SOURCE_DIRS = {
+    "base": "base_checkpoints",
+    "sft": "chatsft_checkpoints",
+    "rl": "chatrl_checkpoints",
+}
+_SOURCE_HINTS = {
+    "base": "run scripts/base_train.py first",
+    "sft": "run scripts/chat_sft.py first (after base_train)",
+    "rl": "run scripts/chat_rl.py first (after chat_sft)",
+}
+
+def _require_dir(path, source=None):
+    """Raise a FileNotFoundError that says what is missing and how to get it."""
+    if os.path.isdir(path):
+        return
+    msg = f"Checkpoint directory not found: {path}"
+    if source is not None:
+        msg += f"\n  Expected source: '{source}' ({_SOURCE_DIRS[source]}/). Hint: {_SOURCE_HINTS[source]}."
+    msg += f"\n  Base dir: {get_base_dir()} (override with NANOCHAT_BASE_DIR). See docs/RUNNING.md."
+    raise FileNotFoundError(msg)
+
 def _patch_missing_config_keys(model_config_kwargs):
     """Add default values for new config keys missing in old checkpoints."""
     # Old models were trained with full context (no sliding window)
@@ -116,6 +137,7 @@ def build_model(checkpoint_dir, step, device, phase):
 
 def find_largest_model(checkpoints_dir):
     # attempt to guess the model tag: take the biggest model available
+    _require_dir(checkpoints_dir)
     model_tags = [f for f in os.listdir(checkpoints_dir) if os.path.isdir(os.path.join(checkpoints_dir, f))]
     if not model_tags:
         raise FileNotFoundError(f"No checkpoints found in {checkpoints_dir}")
@@ -136,6 +158,7 @@ def find_largest_model(checkpoints_dir):
 
 def find_last_step(checkpoint_dir):
     # Look into checkpoint_dir and find model_<step>.pt with the highest step
+    _require_dir(checkpoint_dir)
     checkpoint_files = [f for f in os.listdir(checkpoint_dir) if re.search(r'model_(\d+)\.pt$', f)]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
@@ -145,12 +168,14 @@ def find_last_step(checkpoint_dir):
 # -----------------------------------------------------------------------------
 # convenience functions that take into account nanochat's directory structure
 
-def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None):
+def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=None, source=None):
+    _require_dir(checkpoints_dir, source)
     if model_tag is None:
         # guess the model tag by defaulting to the largest model
         model_tag = find_largest_model(checkpoints_dir)
         log0(f"No model tag provided, guessing model tag: {model_tag}")
     checkpoint_dir = os.path.join(checkpoints_dir, model_tag)
+    _require_dir(checkpoint_dir, source)
     if step is None:
         # guess the step by defaulting to the last step
         step = find_last_step(checkpoint_dir)
@@ -161,27 +186,21 @@ def load_model_from_dir(checkpoints_dir, device, phase, model_tag=None, step=Non
     return model, tokenizer, meta_data
 
 def load_model(source, *args, **kwargs):
-    model_dir = {
-        "base": "base_checkpoints",
-        "sft": "chatsft_checkpoints",
-        "rl": "chatrl_checkpoints",
-    }[source]
+    model_dir = _SOURCE_DIRS[source]
     base_dir = get_base_dir()
     checkpoints_dir = os.path.join(base_dir, model_dir)
-    return load_model_from_dir(checkpoints_dir, *args, **kwargs)
+    return load_model_from_dir(checkpoints_dir, *args, source=source, **kwargs)
 
 def load_optimizer_state(source, device, rank, model_tag=None, step=None):
     """Load just the optimizer shard for a given rank, without re-loading the model."""
-    model_dir = {
-        "base": "base_checkpoints",
-        "sft": "chatsft_checkpoints",
-        "rl": "chatrl_checkpoints",
-    }[source]
+    model_dir = _SOURCE_DIRS[source]
     base_dir = get_base_dir()
     checkpoints_dir = os.path.join(base_dir, model_dir)
+    _require_dir(checkpoints_dir, source)
     if model_tag is None:
         model_tag = find_largest_model(checkpoints_dir)
     checkpoint_dir = os.path.join(checkpoints_dir, model_tag)
+    _require_dir(checkpoint_dir, source)
     if step is None:
         step = find_last_step(checkpoint_dir)
     optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
