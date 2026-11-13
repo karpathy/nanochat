@@ -37,6 +37,17 @@ uv sync --extra cpu    # (or) Use for CPU-only / MPS
 source .venv/bin/activate
 ```
 
+Torch is selected automatically from your OS and CPU architecture (no extra flags):
+
+| Platform | Torch | Wheel source |
+|----------|-------|--------------|
+| Linux CUDA (`--extra gpu`) | 2.9.1 | pytorch cu128 index |
+| Linux / Windows CPU | 2.9.1 | pytorch cpu index |
+| macOS Apple Silicon | 2.9.1 | PyPI (MPS) |
+| macOS Intel (`x86_64`) | 2.2.2 | PyPI (last supported) |
+
+Same `uv sync` commands work everywhere; markers in `pyproject.toml` apply the right pin and index.
+
 For development (adds pytest, matplotlib, ipykernel, transformers, etc.):
 
 ```bash
