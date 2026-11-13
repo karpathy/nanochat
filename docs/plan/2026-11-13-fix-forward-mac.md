@@ -18,10 +18,13 @@ flowchart LR
 ## Todos
 
 ### Phase 1
-- [ ] Fail-fast, stage echoes+timing+ETA, pipeline map, skip-savings, markers
-- [ ] rms_norm fallback + compile smoke + norm echo
-- [ ] Stage purpose one-liner, next-action on DONE/FAIL, mem snapshot, disk artifact size
-- [ ] nan warn/abort-after-5; RUNNING.md echo legend + enrichment glossary
+- [x] Fail-fast, stage echoes+timing+ETA, pipeline map, skip-savings, markers
+- [x] rms_norm fallback + compile smoke + norm echo
+- [x] Stage purpose one-liner, next-action on DONE/FAIL, mem snapshot, disk artifact size
+- [x] nan warn/abort-after-5; RUNNING.md echo legend + enrichment glossary
+
+**Status:** PASSED (Phase 1) — 2026-11-13 — PR https://github.com/neomatrix369/nanochat/pull/4  
+**slice_id:** `fix-forward-mac-phase1`
 
 ### Phase 2
 - [ ] defaults.py canonical; emit profiles.sh; test_defaults sync
