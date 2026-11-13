@@ -39,10 +39,49 @@ FALLBACK_SYSTEM_RAM_BYTES = 8 * GIB
 MIN_DEVICE_BATCH_SIZE = 1
 SHRINK_REASON = "estimated peak exceeds margin * available memory"
 
+MARGIN_ENV_VAR = "NANOCHAT_MEMORY_FIT_MARGIN"
+
+# Both allocators say this in the message; MPS has no dedicated exception class to catch.
+OOM_MESSAGE_MARKER = "out of memory"
+
 
 def _device_type(device):
     """Accept either a torch.device or a string like "mps" / "cuda:0"."""
     return getattr(device, "type", None) or str(device).split(":")[0]
+
+
+def resolve_fit_margin():
+    """The fraction of available memory a fit may use: the run-time override, else the default."""
+    raw = os.environ.get(MARGIN_ENV_VAR)
+    if raw is None:
+        return MEMORY_FIT_MARGIN
+    try:
+        margin = float(raw)
+    except ValueError:
+        raise ValueError(
+            f"{MARGIN_ENV_VAR}={raw!r} is not a number, so the memory budget cannot be computed. "
+            f"Set it to a fraction of available device memory, e.g. {MARGIN_ENV_VAR}=0.5, or unset "
+            f"it to use the default of {MEMORY_FIT_MARGIN} (see docs/RUNNING.md)."
+        ) from None
+    if not 0 < margin <= 1:
+        raise ValueError(
+            f"{MARGIN_ENV_VAR}={raw} is not a fraction of available device memory, so it cannot be "
+            f"a memory budget. Set it above 0 and at most 1, e.g. {MARGIN_ENV_VAR}=0.5 "
+            f"(see docs/RUNNING.md)."
+        )
+    return margin
+
+
+def auto_fit_enabled(requested, device_type):
+    """
+    Resolve the --auto-fit-batch tri-state, where None means "decide from the device".
+
+    On by default on mps, where the unified-memory OOM is the failure this exists for; off on
+    cuda and cpu, so an unattended GPU run keeps exactly the batch size it was given.
+    """
+    if requested is None:
+        return _device_type(device_type) == "mps"
+    return requested
 
 
 def _system_ram_bytes():
@@ -97,8 +136,11 @@ def fit_device_batch_size(requested_batch_size, depth, seq_len=DEFAULT_SEQ_LEN, 
 
     Floors at 1: when even that does not fit, the report says so rather than claiming a fit.
     Returns (batch_size, report), the report carrying everything the [auto-fit] echo needs.
+
+    `margin=None` resolves the run-time override, so every call site honours
+    NANOCHAT_MEMORY_FIT_MARGIN without repeating the lookup.
     """
-    margin = MEMORY_FIT_MARGIN if margin is None else margin
+    margin = resolve_fit_margin() if margin is None else margin
     avail = available_memory_bytes(device_type) if available_bytes is None else available_bytes
     budget = margin * avail
 
@@ -147,6 +189,39 @@ def format_memory_fit_hint(report):
     if report["adjusted"] != report["original"]:
         return f"memory: aiming to use {budget}; batch {report['original']}→{report['adjusted']} so logits fit"
     return f"memory: aiming to use {budget}; batch {report['original']} fits as-is"
+
+
+def format_batch_size_precedence_line(sources):
+    """
+    Where the device batch size ended up coming from, as (layer, value) pairs ordered from
+    the weakest layer to the strongest, e.g. [("CLI_default", 32), ("profile", 8), ("fitted", 2)].
+    """
+    chain = " → ".join(f"{layer}={value}" for layer, value in sources)
+    return f"[auto-fit] device_batch_size precedence: {chain}"
+
+
+def auto_fit_echo_lines(report, sources):
+    """
+    Every line a call site echoes after a fit, in emission order: the [auto-fit] contract line,
+    the precedence chain when the layers disagree, then the single plain-language enrichment.
+    """
+    lines = [format_auto_fit_line(report)]
+    if len({value for _layer, value in sources}) > 1:
+        lines.append(format_batch_size_precedence_line(sources))
+    lines.append(format_memory_fit_hint(report))
+    return lines
+
+
+def is_out_of_memory_error(exception):
+    """
+    True for the allocator exhaustion a smaller batch can recover from.
+
+    CUDA raises torch.cuda.OutOfMemoryError, MPS only a plain RuntimeError, and the CPU
+    allocator a MemoryError, so the message is the one signal all three share.
+    """
+    if isinstance(exception, (MemoryError, torch.cuda.OutOfMemoryError)):
+        return True
+    return isinstance(exception, RuntimeError) and OOM_MESSAGE_MARKER in str(exception).lower()
 
 
 def format_oom_retry_line(original_batch_size, adjusted_batch_size):

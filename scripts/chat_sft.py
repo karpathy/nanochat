@@ -17,6 +17,7 @@ import time
 import wandb
 import torch
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state
 from nanochat.loss_eval import evaluate_bpb
@@ -46,6 +47,7 @@ parser.add_argument("--num-iterations", type=int, default=-1, help="number of op
 # Batch sizes (default: inherit from pretrained checkpoint)
 parser.add_argument("--max-seq-len", type=int, default=None, help="max context length (default: inherit from pretrain)")
 parser.add_argument("--device-batch-size", type=int, default=None, help="per-device batch size (default: inherit from pretrain)")
+parser.add_argument("--auto-fit-batch", action=argparse.BooleanOptionalAction, default=None, help="shrink the device batch size until the estimated peak fits device memory (default: on for mps, off for cuda/cpu)")
 parser.add_argument("--total-batch-size", type=int, default=None, help="total batch size in tokens (default: inherit from pretrain)")
 # Optimization (default: inherit from pretrained checkpoint)
 parser.add_argument("--embedding-lr", type=float, default=None, help="learning rate for embedding parameters (Adam) (default: inherit from pretrain)")
@@ -91,6 +93,7 @@ if not HAS_FA3:
     print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback. Training will be less efficient.")
 
 # Load the model and tokenizer
+empty_device_cache(device) # hand the weights a clean allocator; MPS OOMs on the load itself otherwise
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=args.model_tag, step=args.model_step)
 
 # Inherit training hyperparameters from pretrained checkpoint (None = inherit, explicit value = override)
@@ -113,6 +116,21 @@ for name, fallback, source in [
         print0(f"NOTE: --{name.replace('_', '-')}={arg_val} overrides pretrained value of {pretrain_val}")
     else:
         print0(f"Using {name}={arg_val}")
+
+# Memory preflight: run before the optimizer state and the SFT dataloader size themselves
+# off the batch. There is no profile layer here - the batch came from the CLI or the checkpoint.
+if auto_fit_enabled(args.auto_fit_batch, device_type):
+    fitted_batch_size, fit_report = fit_device_batch_size(
+        args.device_batch_size, depth=model.config.n_layer, seq_len=args.max_seq_len,
+        device_type=device_type, vocab_size=tokenizer.get_vocab_size(),
+    )
+    batch_size_source = "CLI" if user_config["device_batch_size"] is not None else "checkpoint"
+    for line in auto_fit_echo_lines(fit_report, [
+        (batch_size_source, args.device_batch_size),
+        ("fitted", fitted_batch_size),
+    ]):
+        print0(line)
+    args.device_batch_size = fitted_batch_size
 
 orig_model = model
 model = torch.compile(model, dynamic=False)

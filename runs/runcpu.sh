@@ -21,6 +21,8 @@ export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p "$NANOCHAT_BASE_DIR"
 PROFILE=runcpu
 source "$(dirname "${BASH_SOURCE[0]}")/_stage_lib.sh"
+# Run knobs come from nanochat/defaults.py (PROFILE_RUNCPU); profiles.sh is its emitted shell form.
+source "$(dirname "${BASH_SOURCE[0]}")/profiles.sh"
 
 command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 [ -d ".venv" ] || uv venv
@@ -42,22 +44,22 @@ run_stage tok_eval "" "base_train (or SKIP if checkpoints exist)" -- \
 # train a small 6 layer model
 # I tuned this run to complete in about 30 minutes on my MacBook Pro M3 Max.
 # To get better results, try increasing num_iterations, or get other ideas from your favorite LLM.
-run_stage base_train "depth=6 device_batch_size=32" "base_eval (or SKIP if .eval_ok)" -- \
+run_stage base_train "depth=$RUNCPU_DEPTH device_batch_size=$RUNCPU_DEVICE_BATCH_SIZE" "base_eval (or SKIP if .eval_ok)" -- \
     python -m scripts.base_train \
-    --depth=6 \
-    --head-dim=64 \
-    --window-pattern=L \
-    --max-seq-len=512 \
-    --device-batch-size=32 \
-    --total-batch-size=16384 \
-    --eval-every=100 \
-    --eval-tokens=524288 \
-    --core-metric-every=-1 \
-    --sample-every=100 \
-    --num-iterations=5000 \
+    --depth="$RUNCPU_DEPTH" \
+    --head-dim="$RUNCPU_HEAD_DIM" \
+    --window-pattern="$RUNCPU_WINDOW_PATTERN" \
+    --max-seq-len="$RUNCPU_MAX_SEQ_LEN" \
+    --device-batch-size="$RUNCPU_DEVICE_BATCH_SIZE" \
+    --total-batch-size="$RUNCPU_TOTAL_BATCH_SIZE" \
+    --eval-every="$RUNCPU_EVAL_EVERY" \
+    --eval-tokens="$RUNCPU_EVAL_TOKENS" \
+    --core-metric-every="$RUNCPU_CORE_METRIC_EVERY" \
+    --sample-every="$RUNCPU_SAMPLE_EVERY" \
+    --num-iterations="$RUNCPU_NUM_ITERATIONS" \
     --run=$WANDB_RUN
-run_stage base_eval "device_batch_size=1" "chat_sft (or SKIP if checkpoints exist)" -- \
-    python -m scripts.base_eval --device-batch-size=1 --split-tokens=16384 --max-per-task=16
+run_stage base_eval "device_batch_size=$RUNCPU_EVAL_DEVICE_BATCH_SIZE" "chat_sft (or SKIP if checkpoints exist)" -- \
+    python -m scripts.base_eval --device-batch-size="$RUNCPU_EVAL_DEVICE_BATCH_SIZE" --split-tokens=16384 --max-per-task=16
 
 # SFT (~10 minutes on my MacBook Pro M3 Max)
 run_stage chat_sft "" "chat with your model (python -m scripts.chat_cli)" -- \
