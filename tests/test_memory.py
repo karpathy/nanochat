@@ -147,3 +147,80 @@ def test_oom_rehalve_fails_with_an_actionable_message_at_the_floor():
 def test_oom_retry_echo_shows_original_and_adjusted():
     line = memory.format_oom_retry_line(4, 2)
     assert line.startswith("[auto-fit] OOM recovery: device_batch_size: original/default=4 → adjusted=2 (reason:")
+
+
+def test_mps_out_of_memory_runtime_error_is_recognised():
+    assert memory.is_out_of_memory_error(RuntimeError("MPS backend out of memory (MPS allocated: 17.95 GB)"))
+
+
+def test_unrelated_runtime_error_is_not_treated_as_out_of_memory():
+    assert not memory.is_out_of_memory_error(RuntimeError("shape mismatch"))
+
+
+# ----------------------------------------------------------------------------- margin override
+
+def test_margin_defaults_to_the_ssot_when_the_environment_is_unset(monkeypatch):
+    monkeypatch.delenv(memory.MARGIN_ENV_VAR, raising=False)
+    assert memory.resolve_fit_margin() == memory.MEMORY_FIT_MARGIN
+
+
+def test_margin_comes_from_the_environment_when_it_is_set(monkeypatch):
+    monkeypatch.setenv(memory.MARGIN_ENV_VAR, "0.25")
+    assert memory.resolve_fit_margin() == 0.25
+
+
+def test_a_fit_without_an_explicit_margin_honours_the_environment(monkeypatch):
+    monkeypatch.setenv(memory.MARGIN_ENV_VAR, "0.25")
+    _, report = memory.fit_device_batch_size(8, DEPTH, SEQ_LEN, available_bytes=AVAIL)
+    assert report["margin"] == 0.25
+
+
+def test_a_margin_that_is_not_a_number_is_refused_with_how_to_fix_it(monkeypatch):
+    monkeypatch.setenv(memory.MARGIN_ENV_VAR, "half")
+    with pytest.raises(ValueError, match="is not a number"):
+        memory.resolve_fit_margin()
+
+
+@pytest.mark.parametrize("out_of_range", ["0", "-0.5", "1.5"])
+def test_a_margin_outside_a_usable_fraction_is_refused(monkeypatch, out_of_range):
+    monkeypatch.setenv(memory.MARGIN_ENV_VAR, out_of_range)
+    with pytest.raises(ValueError, match="is not a fraction of available device memory"):
+        memory.resolve_fit_margin()
+
+
+# ----------------------------------------------------------------------------- auto-fit switch
+
+def test_auto_fit_is_on_by_default_on_mps():
+    assert memory.auto_fit_enabled(None, "mps")
+
+
+@pytest.mark.parametrize("device_type", ["cuda", "cpu"])
+def test_auto_fit_is_off_by_default_away_from_mps(device_type):
+    assert not memory.auto_fit_enabled(None, device_type)
+
+
+def test_an_explicit_choice_beats_the_device_default():
+    assert memory.auto_fit_enabled(True, "cuda") and not memory.auto_fit_enabled(False, "mps")
+
+
+# ----------------------------------------------------------------------------- precedence echo
+
+def test_precedence_echo_names_every_layer_that_set_the_batch_size():
+    line = memory.format_batch_size_precedence_line([("CLI_default", 32), ("profile", 8), ("fitted", 2)])
+    assert line == "[auto-fit] device_batch_size precedence: CLI_default=32 → profile=8 → fitted=2"
+
+
+def test_the_echo_adds_the_precedence_chain_when_the_layers_disagree():
+    lines = memory.auto_fit_echo_lines(_fit(16, avail=1 * GIB)[1], [("CLI_default", 32), ("profile", 16), ("fitted", 1)])
+    assert any(line.startswith("[auto-fit] device_batch_size precedence:") for line in lines)
+
+
+def test_the_echo_omits_the_precedence_chain_when_every_layer_agrees():
+    lines = memory.auto_fit_echo_lines(_fit(8)[1], [("CLI_default", 8), ("profile", 8), ("fitted", 8)])
+    assert lines == ["[auto-fit] device_batch_size=8 (unchanged; estimate fits)",
+                     "memory: aiming to use ≤60% of ~18GiB; batch 8 fits as-is"]
+
+
+def test_the_echo_keeps_the_contract_line_first_and_one_enrichment_last():
+    lines = memory.auto_fit_echo_lines(_fit(16, avail=1 * GIB)[1], [("CLI_default", 32), ("profile", 16), ("fitted", 1)])
+    assert lines[0].startswith("[auto-fit] device_batch_size:") and lines[-1].startswith("memory: ")
