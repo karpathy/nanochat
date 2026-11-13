@@ -2,9 +2,11 @@
 
 > **Overview:** Ship the four “cheap” enrichments deferred from [2026-11-13-fix-forward-mac.md](2026-11-13-fix-forward-mac.md) Phase 1.5 candidates — knob diff, health strip, trend crumb, one tip — without breaking the frozen echo contract.
 
-**Status:** PROPOSED  
+**Status:** IMPLEMENTED  
+<!-- transition: PROPOSED → IMPLEMENTED 2026-11-13 (execute-slice Phase 1 starting) -->  
 **slice_id:** `fix-forward-mac-phase15`  
-**Depends on:** Phase 1 + Phase 2 (merged)
+**Depends on:** Phase 1 + Phase 2 (merged)  
+**Branch:** `feat/fix-forward-mac-phase15` (streams: `stream/p15-{shell,trend,tests,docs}`)
 
 ## Todos
 

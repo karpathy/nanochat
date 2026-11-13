@@ -26,7 +26,7 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 |----------|-------|----------|
 | fix-forward-mac-phase1 | PASSED (merged) | [PR #4](https://github.com/neomatrix369/nanochat/pull/4) merged 2026-11-13; [PR #5](https://github.com/neomatrix369/nanochat/pull/5) follow-ups merged 2026-11-13 (`2aa56ed` on master); pytest 51p/18s; Gate 4 APPROVED (software-crafter after comment fix, acceptance, solution-architect); ddd N/A |
 | fix-forward-mac-phase2 | PASSED (merged) | [PR #6](https://github.com/neomatrix369/nanochat/pull/6) merged 2026-11-13 (`f8d7174` on master); Gate 4 APPROVED (software-craft, acceptance, solution-architect); ddd N/A; pytest defaults+memory 58p / suite 109p/18s |
-| fix-forward-mac-phase15 | PROPOSED | Plan stub [2026-11-13-fix-forward-mac-phase15.md](2026-11-13-fix-forward-mac-phase15.md); next pending after Phase 1+2 merged; execute-slice starting 2026-11-13 |
+| fix-forward-mac-phase15 | IMPLEMENTED | Branch `feat/fix-forward-mac-phase15`; parallel worktrees `.worktrees/p15-{shell,trend,tests,docs}`; plan [2026-11-13-fix-forward-mac-phase15.md](2026-11-13-fix-forward-mac-phase15.md) |
 
 ## Recent merges (Mac fix-forward track)
 
