@@ -126,6 +126,7 @@ One extra line at most per event. These are hints, not part of the strict contra
   - `[norm] using native F.rms_norm`
   - `[norm] original=F.rms_norm → adjusted=manual_rsqrt (reason: missing on torch 2.2.2)`
 - The fallback is covered by `tests/test_norm.py` (eager mode and `torch.compile`). Check it yourself with `pytest tests/test_norm.py`.
+- **`torch.compile` / Inductor on MPS:** TorchInductor has no MPS backend (`AssertionError: Device mps not supported`). On `device_type=mps`, training keeps the model and optimizer steps in **eager** mode and prints `[compile] original=torch.compile → adjusted=eager …`. CUDA/CPU still compile. Covered by `tests/test_compile_device.py`.
 - **Why a laptop + `speedrun.sh` looked like many failures:** `speedrun.sh` targets 8xH100. On a laptop, base training could not run because of the missing `rms_norm` (and the GPU-only setup), and the old script had no `set -e`, so it kept going into eval and SFT, each of which failed again on the missing checkpoint. One root cause produced a wall of errors. Now the script stops at the first `FAIL`, and the checkpoint error points back to the prior stage. On a Mac, use `runs/runcpu.sh`.
 
 ## 8. NaN troubleshooting
@@ -165,6 +166,7 @@ Caveat: `runcpu.sh` and `speedrun.sh` set `NANOCHAT_BASE_DIR="$HOME/.cache/nanoc
 | `FAIL stage=base_train … exit code 1` right after startup on Intel Mac | torch 2.2.2 issue | Check for the `[norm]` line, see [section 7](#7-mac--intel-torch). |
 | `ERROR: 5 consecutive NaN losses` | Numerical blow-up | See [section 8](#8-nan-troubleshooting). |
 | Out-of-memory / MPS allocator failure during train | Batch too large for device RAM | Check for an `[auto-fit]` line; see [section 11](#11-memory--oom). Do not treat this as NaN. |
+| `Device mps not supported` / `BackendCompilerFailed` (Inductor) | `torch.compile` ran on MPS (old build) | Re-run on a build that skips compile on MPS ([section 7](#7-mac--intel-torch)); you should see `[compile] … adjusted=eager`. |
 | `WARN no CUDA device detected` (speedrun) | Wrong script for this machine | Use `runs/runcpu.sh`. |
 
 The missing-checkpoint error is almost always a **symptom**: scroll up to the first `FAIL`, because the checkpoint was never produced.

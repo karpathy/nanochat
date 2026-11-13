@@ -20,8 +20,7 @@ Good old AdamW optimizer, fused kernel.
 https://arxiv.org/abs/1711.05101
 """
 
-@torch.compile(dynamic=False, fullgraph=True)
-def adamw_step_fused(
+def _adamw_step_impl(
     p: Tensor,              # (32768, 768) - parameter tensor
     grad: Tensor,           # (32768, 768) - gradient, same shape as p
     exp_avg: Tensor,        # (32768, 768) - first moment, same shape as p
@@ -61,6 +60,27 @@ def adamw_step_fused(
     p.copy_(p32)
     exp_avg.copy_(exp_avg32)
     exp_avg_sq.copy_(exp_avg_sq32)
+
+
+_adamw_step_compiled = torch.compile(_adamw_step_impl, dynamic=False, fullgraph=True)
+
+
+def adamw_step_fused(
+    p: Tensor,
+    grad: Tensor,
+    exp_avg: Tensor,
+    exp_avg_sq: Tensor,
+    step_t: Tensor,
+    lr_t: Tensor,
+    beta1_t: Tensor,
+    beta2_t: Tensor,
+    eps_t: Tensor,
+    wd_t: Tensor,
+) -> None:
+    # Inductor has no MPS backend; keep the fused math but run it eagerly on Apple Silicon.
+    step = _adamw_step_impl if p.device.type == "mps" else _adamw_step_compiled
+    step(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t)
+
 
 # -----------------------------------------------------------------------------
 """
@@ -108,8 +128,7 @@ polar_express_coeffs = [
 ]
 
 
-@torch.compile(dynamic=False, fullgraph=True)
-def muon_step_fused(
+def _muon_step_impl(
     stacked_grads: Tensor,          # (12, 768, 3072) - stacked gradients
     stacked_params: Tensor,         # (12, 768, 3072) - stacked parameters
     momentum_buffer: Tensor,        # (12, 768, 3072) - first moment buffer
@@ -178,6 +197,29 @@ def muon_step_fused(
     wd = wd_t.to(g.dtype)
     mask = (g * stacked_params) >= 0
     stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
+
+
+_muon_step_compiled = torch.compile(_muon_step_impl, dynamic=False, fullgraph=True)
+
+
+def muon_step_fused(
+    stacked_grads: Tensor,
+    stacked_params: Tensor,
+    momentum_buffer: Tensor,
+    second_momentum_buffer: Tensor,
+    momentum_t: Tensor,
+    lr_t: Tensor,
+    wd_t: Tensor,
+    beta2_t: Tensor,
+    ns_steps: int,
+    red_dim: int,
+) -> None:
+    # Inductor has no MPS backend; keep the fused math but run it eagerly on Apple Silicon.
+    step = _muon_step_impl if stacked_params.device.type == "mps" else _muon_step_compiled
+    step(
+        stacked_grads, stacked_params, momentum_buffer, second_momentum_buffer,
+        momentum_t, lr_t, wd_t, beta2_t, ns_steps, red_dim,
+    )
 
 # -----------------------------------------------------------------------------
 

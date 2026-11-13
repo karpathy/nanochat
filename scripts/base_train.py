@@ -30,7 +30,7 @@ from nanochat.defaults import DEFAULT_DEPTH, DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_
 from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size, format_oom_retry_line, is_out_of_memory_error, oom_after_rehalve_error, oom_rehalve_once, training_module_after_oom_rehalve
 from nanochat.gpt import GPT, GPTConfig, Linear
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, maybe_torch_compile
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -268,8 +268,11 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-# dynamic=False is safe while batch shape is fixed; an OOM rehalve falls back to orig_model
-model = torch.compile(model, dynamic=False)
+# dynamic=False is safe while batch shape is fixed; an OOM rehalve falls back to orig_model.
+# MPS: Inductor has no backend — maybe_torch_compile leaves the model eager.
+model = maybe_torch_compile(model, device_type, dynamic=False)
+if model is orig_model and device_type == "mps":
+    print0("[compile] original=torch.compile → adjusted=eager (reason: Inductor has no MPS backend)")
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.

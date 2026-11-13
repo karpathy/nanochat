@@ -171,6 +171,21 @@ def autodetect_device_type():
     print0(f"Autodetected device type: {device_type}")
     return device_type
 
+def inductor_supports_device(device_type):
+    """
+    TorchInductor (default torch.compile backend) codegens for cuda/cpu only.
+    On mps, compile raises: AssertionError: Device mps not supported.
+    """
+    return device_type != "mps"
+
+
+def maybe_torch_compile(module, device_type, **compile_kwargs):
+    """Compile when Inductor can target this device; otherwise return the module unchanged (eager)."""
+    if not inductor_supports_device(device_type):
+        return module
+    return torch.compile(module, **compile_kwargs)
+
+
 def compute_init(device_type="cuda"): # cuda|cpu|mps
     """Basic initialization that we keep doing over and over, so make common."""
 

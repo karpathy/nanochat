@@ -16,7 +16,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
 import torch
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, maybe_torch_compile
 from nanochat.defaults import DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_SEQ_LEN
 from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size
 from nanochat.tokenizer import get_token_bytes
@@ -134,7 +134,10 @@ if auto_fit_enabled(args.auto_fit_batch, device_type):
     args.device_batch_size = fitted_batch_size
 
 orig_model = model
-model = torch.compile(model, dynamic=False)
+# MPS: Inductor has no backend — maybe_torch_compile leaves the model eager.
+model = maybe_torch_compile(model, device_type, dynamic=False)
+if model is orig_model and device_type == "mps":
+    print0("[compile] original=torch.compile → adjusted=eager (reason: Inductor has no MPS backend)")
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank

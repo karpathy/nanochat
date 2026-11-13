@@ -45,3 +45,14 @@
 **Deferred**
 - Heartbeat / train-loop ETA (still planned)
 - Tip rotation / knob-diff vs last run UI beyond one line
+
+## fix-mps-skip-inductor-compile
+
+**Added**
+- `nanochat.common.inductor_supports_device` / `maybe_torch_compile` — skip Inductor on MPS
+- `tests/test_compile_device.py` — eager-on-mps + optim dispatch
+
+**Changed**
+- `scripts/{base_train,chat_sft}.py` — compile via helper; echo `[compile] … eager` on MPS
+- `nanochat/optim.py` — AdamW/Muon fused steps run eager when param device is `mps`
+- `docs/RUNNING.md` — Mac Inductor note + failure-shape row
