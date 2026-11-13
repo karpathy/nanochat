@@ -1,6 +1,7 @@
 #!/bin/bash
 # Shared stage helpers for runs/runcpu.sh and runs/speedrun.sh (source, don't execute).
-# Provides: log, fmt_dur, stage_done, pipeline_map, run_stage, FORCE_STAGES parsing.
+# Provides: log, fmt_dur, stage_done, pipeline_map, run_stage, FORCE_STAGES parsing,
+#           health_strip, print_knob_diff, write_last_run_json, print_run_tip.
 # Echo contract: docs/plan/2026-11-13-fix-forward-mac.md ("Echo contract"); legend: docs/RUNNING.md.
 # Requires the caller to have set NANOCHAT_BASE_DIR and PROFILE, and `set -euo pipefail`.
 
@@ -124,6 +125,69 @@ mem_snapshot() {
     echo "mem: $free_note"
 }
 
+# Best-effort shard count under the climbmix (or legacy) data dir. Never fails.
+_count_shards() {
+    local d n=0
+    for d in "$NANOCHAT_BASE_DIR/base_data_climbmix" "$NANOCHAT_BASE_DIR/base_data"; do
+        if [ -d "$d" ]; then
+            n="$(find "$d" -maxdepth 1 -name 'shard_*.parquet' 2>/dev/null | wc -l | tr -d ' ')" || n=0
+            echo "$n"
+            return 0
+        fi
+    done
+    echo "0"
+}
+
+# Health enrichment at stage START (after purpose:). Never fails the run.
+# Format: health: <mem> · ckpt=<size|n/a> · shards=<n/needed|n/a>
+# Optional SHARDS_NEEDED (set by caller profile); default n/a for needed.
+health_strip() {
+    local mem="unknown" ckpt="n/a" shards="n/a" n needed="${SHARDS_NEEDED:-}" p=""
+    mem="$(mem_snapshot 2>/dev/null | sed 's/^mem: //')" || mem="unknown"
+    # Keep find stdout even when a root is missing (pipefail would otherwise wipe p).
+    p="$(find "$NANOCHAT_BASE_DIR/base_checkpoints" "$NANOCHAT_BASE_DIR/chatsft_checkpoints" \
+        -name 'model_*.pt' -print 2>/dev/null | head -n 1 || true)" || true
+    if [ -n "${p:-}" ]; then
+        ckpt="$(fmt_bytes "$(dirname "$p")")" || ckpt="n/a"
+    fi
+    n="$(_count_shards)" || n="0"
+    if [ -n "$needed" ]; then
+        shards="${n}/${needed}"
+    elif [ "$n" != "0" ]; then
+        shards="${n}/n/a"
+    fi
+    echo "health: $mem · ckpt=$ckpt · shards=$shards"
+}
+
+# Knob diff vs $NANOCHAT_BASE_DIR/last_run.json (silent if missing). Args: profile depth batch seq.
+print_knob_diff() {
+    local line
+    line="$(python -m nanochat.last_run diff \
+        --path "$NANOCHAT_BASE_DIR/last_run.json" \
+        --profile "$1" --depth "$2" \
+        --device-batch-size "$3" --max-seq-len "$4" 2>/dev/null || true)"
+    [ -n "$line" ] && echo "  $line"
+    return 0
+}
+
+# Persist knobs after successful ALL DONE. Args: profile depth batch seq.
+write_last_run_json() {
+    python -m nanochat.last_run write \
+        --path "$NANOCHAT_BASE_DIR/last_run.json" \
+        --profile "$1" --depth "$2" \
+        --device-batch-size "$3" --max-seq-len "$4" 2>/dev/null || true
+    return 0
+}
+
+# Exactly one tip: line per script invocation (call once at script start).
+# Text SSOT: nanochat/run_tip.py (unit-tested).
+print_run_tip() {
+    local tip
+    tip="$(python -m nanochat.run_tip 2>/dev/null || true)"
+    [ -n "$tip" ] && echo "  $tip"
+    return 0
+}
+
 # pipeline_map "tok:tok_train base:base_train eval:base_eval ..." -> one line, first pending stage is ▶
 pipeline_map() {
     local out="" seen_pending=0 item label stage mark
@@ -164,7 +228,8 @@ run_stage() {
     fi
 
     log "START stage=$stage profile=$PROFILE${knobs:+ $knobs} ETA: not yet knowable"
-    echo "  purpose: $(stage_purpose "$stage")"
+    # One packed enrichment line (purpose + health) — Phase 1 sparsity discipline.
+    echo "  purpose: $(stage_purpose "$stage") · $(health_strip)" || true
 
     local t0=$SECONDS rc=0 elapsed
     "$@" || rc=$?

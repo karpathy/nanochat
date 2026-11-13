@@ -55,6 +55,11 @@ if [ -z "${WANDB_RUN:-}" ]; then
 fi
 
 log "$(pipeline_map tok:tok_train base:base_train eval:base_eval sft:chat_sft chat_eval:chat_eval)"
+# speedrun uses base_train default max_seq_len (DEFAULT_SEQ_LEN=2048); profile has no override.
+SHARDS_NEEDED=170
+SPEEDRUN_MAX_SEQ_LEN="${SPEEDRUN_MAX_SEQ_LEN:-2048}"
+print_knob_diff "$PROFILE" "$SPEEDRUN_DEPTH" "$SPEEDRUN_DEVICE_BATCH_SIZE" "$SPEEDRUN_MAX_SEQ_LEN"
+print_run_tip
 
 # -----------------------------------------------------------------------------
 # Tokenizer
@@ -99,6 +104,7 @@ run_stage chat_eval "" "chat with your model (python -m scripts.chat_cli)" -- \
     torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 
 log "ALL DONE cumulative=$(fmt_dur "$SECONDS")"
+write_last_run_json "$PROFILE" "$SPEEDRUN_DEPTH" "$SPEEDRUN_DEVICE_BATCH_SIZE" "$SPEEDRUN_MAX_SEQ_LEN"
 echo '  try: python -m scripts.chat_cli -p "Why is the sky blue?"'
 
 # chat with the model over CLI! Leave out the -p to chat interactively

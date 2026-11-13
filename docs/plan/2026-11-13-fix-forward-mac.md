@@ -95,7 +95,7 @@ Goal: the log should feel like a **friendly flight attendant**, not a firehose. 
 | Train progress (existing step line +) | **Heartbeat metaphor** (optional, rank0, every N steps) | `heartbeat: loss falling · 12% of steps · ETA ~40m` |
 | Script end success | **How to play** | `try: python -m scripts.chat_cli -p "Why is the sky blue?"` |
 
-**Strong candidates — Phase 1.5 / Phase 2 if cheap**
+**Strong candidates — Phase 1.5 / Phase 2 if cheap** → extracted to [2026-11-13-fix-forward-mac-phase15.md](2026-11-13-fix-forward-mac-phase15.md) (`fix-forward-mac-phase15`)
 
 - **Knob diff vs last run** — store `~/.cache/nanochat/last_run.json` (profile, depth, batch, git sha); on start echo `changed: device_batch_size 32→8; same: depth=6`
 - **Health strip** at stage boundaries: free/approx mem, checkpoint dir size, shard count `shards=171/170 needed`

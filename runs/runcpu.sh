@@ -33,6 +33,9 @@ if [ -z "${WANDB_RUN:-}" ]; then
 fi
 
 log "$(pipeline_map tok:tok_train base:base_train eval:base_eval sft:chat_sft)"
+SHARDS_NEEDED=8
+print_knob_diff "$PROFILE" "$RUNCPU_DEPTH" "$RUNCPU_DEVICE_BATCH_SIZE" "$RUNCPU_MAX_SEQ_LEN"
+print_run_tip
 
 # train tokenizer on ~2B characters (~34 seconds on my MacBook Pro M3 Max)
 python -m nanochat.dataset -n 8
@@ -70,6 +73,7 @@ run_stage chat_sft "" "chat with your model (python -m scripts.chat_cli)" -- \
     --run=$WANDB_RUN
 
 log "ALL DONE cumulative=$(fmt_dur "$SECONDS")"
+write_last_run_json "$PROFILE" "$RUNCPU_DEPTH" "$RUNCPU_DEVICE_BATCH_SIZE" "$RUNCPU_MAX_SEQ_LEN"
 echo '  try: python -m scripts.chat_cli -p "What is the capital of France?"'
 
 # Chat with the model over CLI

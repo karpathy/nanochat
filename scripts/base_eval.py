@@ -37,6 +37,7 @@ from nanochat.core_eval import evaluate_task
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
+from nanochat.metrics_trend import emit_metric_trend
 
 # -----------------------------------------------------------------------------
 # CORE evaluation
@@ -233,6 +234,14 @@ def main():
             bpb = evaluate_bpb(model, loader, steps, token_bytes)
             bpb_results[split_name] = bpb
             print0(f"{split_name} bpb: {bpb:.6f}")
+            if split_name == "val" and ddp_rank == 0:
+                emit_metric_trend(
+                    os.path.join(get_base_dir(), "last_metrics.json"),
+                    "val_bpb",
+                    float(bpb),
+                    lower_is_better=True,
+                    print_fn=print0,
+                )
 
     # --- CORE evaluation ---
     if 'core' in eval_modes:
@@ -255,6 +264,13 @@ def main():
                 f.write(f"{'CORE':<35}, {'':<10}, {core_results['core_metric']:<10.6f}\n")
             print0(f"\nResults written to: {output_csv_path}")
             print0(f"CORE metric: {core_results['core_metric']:.4f}")
+            emit_metric_trend(
+                os.path.join(base_dir, "last_metrics.json"),
+                "CORE",
+                float(core_results["core_metric"]),
+                lower_is_better=False,
+                print_fn=print0,
+            )
 
     compute_cleanup()
     if ddp_rank == 0: # marker: last action of a successful run
