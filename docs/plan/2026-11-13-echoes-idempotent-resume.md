@@ -1,9 +1,6 @@
----
-name: Fix cascade and resume
-overview: Triple goal — (1) stage echoes, (2) idempotent resume, (3) fix-forward blockers — plus progressive docs so a reader can smoothly wiz through setup → run → recover without this chat.
----
-
 # Echoes + idempotency + fix-forward loop
+
+> **Overview:** Triple goal — (1) stage echoes, (2) idempotent resume, (3) fix-forward blockers — plus progressive docs so a reader can smoothly wiz through setup → run → recover without this chat.
 
 ## In-repo plan home
 
@@ -53,7 +50,7 @@ flowchart TD
 
 **Scope for this PR:** implement the loop on **speedrun + runcpu** (miniseries/scaling_laws already have `log()`). Prefer `runcpu.sh` on Mac for the educational path; after this lands, workflow is: run → read echo of failed stage → fix → re-run (skips done stages) → repeat.
 
-## 1. Fix current blocker: `rms_norm` for torch &lt; 2.4
+## 1. Fix current blocker: `rms_norm` for torch < 2.4
 
 In [`nanochat/gpt.py`](nanochat/gpt.py), resolve the implementation once at import time (compile-friendly; avoid per-forward `hasattr`):
 
@@ -174,7 +171,7 @@ Link back to README for `uv sync` / install; don’t duplicate setup.
 - **Smooth path first:** each layer answers “what do I do next?” before “why / how deep.”
 - Progressive disclosure: L1 never copies L2; L2 never re-teaches `uv sync`.
 - Same-commit as behavior; no stale “always restarts from scratch” after skip lands.
-- Reader test (mental): cold open README → on Mac in &lt;2 minutes know which command to run and where to look if it fails.
+- Reader test (mental): cold open README → on Mac in <2 minutes know which command to run and where to look if it fails.
 
 ## 5. Verify
 
