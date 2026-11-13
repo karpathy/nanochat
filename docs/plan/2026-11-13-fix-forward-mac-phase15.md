@@ -3,10 +3,10 @@
 > **Overview:** Ship the four “cheap” enrichments deferred from [2026-11-13-fix-forward-mac.md](2026-11-13-fix-forward-mac.md) Phase 1.5 candidates — knob diff, health strip, trend crumb, one tip — without breaking the frozen echo contract.
 
 **Status:** PASSED  
-<!-- transitions: PROPOSED → IMPLEMENTED → VERIFIED → PASSED 2026-11-13; merge human-owned -->  
+<!-- transitions: PROPOSED → IMPLEMENTED → VERIFIED → PASSED 2026-11-13; merged PR #8 -->  
 **slice_id:** `fix-forward-mac-phase15`  
 **Depends on:** Phase 1 + Phase 2 (merged)  
-**Branch:** `feat/fix-forward-mac-phase15` · PR https://github.com/neomatrix369/nanochat/pull/8
+**Branch:** `feat/fix-forward-mac-phase15` · [PR #8](https://github.com/neomatrix369/nanochat/pull/8) merged `3054e4a`
 
 ## Todos
 
