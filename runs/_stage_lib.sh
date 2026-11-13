@@ -86,6 +86,44 @@ stage_purpose() {
     esac
 }
 
+# Human-readable disk size for a file or directory (best-effort; never fails the run).
+fmt_bytes() {
+    local path="$1" bytes
+    bytes="$(du -sk "$path" 2>/dev/null | awk '{print $1 * 1024}')" || bytes=""
+    if [ -z "$bytes" ] || [ "$bytes" -eq 0 ]; then
+        echo "unknown"
+        return
+    fi
+    if [ "$bytes" -lt 1024 ]; then
+        echo "${bytes}B"
+    elif [ "$bytes" -lt 1048576 ]; then
+        echo "$((bytes / 1024))KiB"
+    elif [ "$bytes" -lt 1073741824 ]; then
+        awk -v b="$bytes" 'BEGIN { printf "%.1fMiB", b/1048576 }'
+    else
+        awk -v b="$bytes" 'BEGIN { printf "%.1fGiB", b/1073741824 }'
+    fi
+}
+
+# One-line mem snapshot at stage boundaries (approx; Darwin vs Linux).
+mem_snapshot() {
+    local free_note="unknown"
+    if command -v vm_stat >/dev/null 2>&1; then
+        # macOS: free+inactive pages * page size
+        free_note="$(vm_stat 2>/dev/null | awk '
+            /page size of/ { ps=$8 }
+            /Pages free/ { gsub("\\.","",$3); free=$3 }
+            /Pages inactive/ { gsub("\\.","",$3); inactive=$3 }
+            END {
+                if (ps+0 > 0) printf "~%.1fGiB free-ish", (free+inactive)*ps/1073741824
+                else print "unknown"
+            }')"
+    elif [ -r /proc/meminfo ]; then
+        free_note="$(awk '/MemAvailable:/ { printf "~%.1fGiB available", $2/1048576 }' /proc/meminfo)"
+    fi
+    echo "mem: $free_note"
+}
+
 # pipeline_map "tok:tok_train base:base_train eval:base_eval ..." -> one line, first pending stage is ▶
 pipeline_map() {
     local out="" seen_pending=0 item label stage mark
@@ -147,5 +185,26 @@ run_stage() {
     echo "$elapsed" > "$STAGE_ELAPSED_DIR/$stage"
 
     log "DONE stage=$stage elapsed=$(fmt_dur "$elapsed") cumulative=$(fmt_dur "$SECONDS")"
-    echo "  next: $next"
+    # Single enrichment line (next + optional wrote: + mem snapshot).
+    case "$stage" in
+        tok_train|base_train|chat_sft)
+            local p size
+            case "$stage" in
+                tok_train) p="$NANOCHAT_BASE_DIR/tokenizer" ;;
+                base_train)
+                    p="$(find "$NANOCHAT_BASE_DIR/base_checkpoints" -name 'model_*.pt' -print 2>/dev/null | head -n 1)"
+                    if [ -n "${p:-}" ]; then p="$(dirname "$p")"; else p="$NANOCHAT_BASE_DIR/base_checkpoints"; fi
+                    ;;
+                chat_sft)
+                    p="$(find "$NANOCHAT_BASE_DIR/chatsft_checkpoints" -name 'model_*.pt' -print 2>/dev/null | head -n 1)"
+                    if [ -n "${p:-}" ]; then p="$(dirname "$p")"; else p="$NANOCHAT_BASE_DIR/chatsft_checkpoints"; fi
+                    ;;
+            esac
+            size="$(fmt_bytes "$p")"
+            echo "  next: $next · wrote: $p ($size) · $(mem_snapshot)"
+            ;;
+        *)
+            echo "  next: $next · $(mem_snapshot)"
+            ;;
+    esac
 }

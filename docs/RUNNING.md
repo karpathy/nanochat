@@ -100,11 +100,12 @@ One extra line at most per event. These are hints, not part of the strict contra
 |------|-------|-------------------|
 | `pipeline:` map | Script start | Journey at a glance: `✓` done, `▶` next to run, `○` later. Example: `pipeline: [tok✓] [base▶] [eval○] [sft○]` |
 | `purpose:` | After `START` | One plain sentence on why the stage exists. |
-| `next:` | After `DONE` | What the script runs next (or that it will skip it). |
+| `next:` | After `DONE` | What the script runs next (or that it will skip it). Packed on one line with `wrote:` / `mem:` when those apply. |
 | `skip-saved:` | After `SKIP` | Time saved, from the last recorded run of that stage; `unknown` if there is no timing yet. |
 | `root_stage=` | After `FAIL` | The stage that actually broke. `cascade_suppressed=yes` means later stages were not run. |
 | `device:` line | Python startup | Torch version, device and world size, plus the base dir, e.g. `torch 2.2.2 \| device: mps (…) \| world size: 1`. |
-| `wrote:` | After a checkpoint `DONE` | Planned: artifact path and size on disk. |
+| `wrote:` | After `tok_train` / `base_train` / `chat_sft` `DONE` | Artifact path and approximate disk size, e.g. `wrote: ~/.cache/nanochat/base_checkpoints/d6 (1.2GiB)`. |
+| `mem:` | After `DONE` | Best-effort free/available memory snapshot (macOS `vm_stat` or Linux `MemAvailable`). |
 | `heartbeat:` | During training | Planned: optional one-line progress summary. |
 
 ## 7. Mac / Intel torch
