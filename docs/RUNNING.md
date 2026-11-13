@@ -72,7 +72,7 @@ Never use `FORCE_STAGES=1`. The scripts reject it (exit 2) and list the valid na
 
 ## 5. Reading the logs (echo legend)
 
-Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the plan.
+Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the plan. Extra lines like `pipeline:`, `purpose:`, `health:`, or `tip:` are enrichments (see [section 6](#6-enrichment-glossary)), not contract shapes — do not treat them as START/DONE/SKIP/FAIL.
 
 | Kind | Shape | Meaning |
 |------|-------|---------|
@@ -104,7 +104,10 @@ One extra line at most per event. These are hints, not part of the strict contra
 | Term | Where | What it tells you |
 |------|-------|-------------------|
 | `pipeline:` map | Script start | Journey at a glance: `✓` done, `▶` next to run, `○` later. Example: `pipeline: [tok✓] [base▶] [eval○] [sft○]` |
+| `changed:` / `same:` | Script start (after `pipeline:`) | Knob diff vs `$NANOCHAT_BASE_DIR/last_run.json` from the last successful full run. Skipped silently on first run (no file yet). Example: `changed: device_batch_size 32→8; same: depth=6,profile=runcpu`. |
+| `tip:` | Script start (once per invocation) | Exactly one educational tip for the whole `runcpu.sh` / `speedrun.sh` run — not per stage. Mentions a real knob (e.g. `--device-batch-size` / grad accumulation). |
 | `purpose:` | After `START` | One plain sentence on why the stage exists. |
+| `health:` | After `purpose:` on stage `START` | Quick strip: free/available mem · checkpoint size (or `n/a`) · data shards present/needed (or `n/a`). Best-effort; never fails the run. Example: `health: 12.4GiB free · ckpt=1.2GiB · shards=8/8`. |
 | `next:` | After `DONE` | What the script runs next (or that it will skip it). Packed on one line with `wrote:` / `mem:` when those apply. |
 | `skip-saved:` | After `SKIP` | Time saved, from the last recorded run of that stage; `unknown` if there is no timing yet. |
 | `root_stage=` | After `FAIL` | The stage that actually broke. `cascade_suppressed=yes` means later stages were not run. |
@@ -112,6 +115,7 @@ One extra line at most per event. These are hints, not part of the strict contra
 | `wrote:` | After `tok_train` / `base_train` / `chat_sft` `DONE` | Artifact path and approximate disk size, e.g. `wrote: ~/.cache/nanochat/base_checkpoints/d6 (1.2GiB)`. |
 | `mem:` | After `DONE` | Best-effort free/available memory snapshot (macOS `vm_stat` or Linux `MemAvailable`). |
 | `memory:` | After auto-fit | Plain-language fit, e.g. `memory: aiming to use ≤60% of ~18GiB; batch 8→2 so logits fit`. Complements the `[auto-fit]` contract line; does not replace it. |
+| `trend:` | After a new `val_bpb` / CORE metric | Compares this run’s metric to the prior value in `$NANOCHAT_BASE_DIR/last_metrics.json`. Printed only when a prior exists. Example: `trend: val_bpb 7.47 → better than prior 8.1`. |
 | `heartbeat:` | During training | Planned: optional one-line progress summary. |
 
 ## 7. Mac / Intel torch
