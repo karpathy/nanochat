@@ -15,3 +15,8 @@ wandb/
 .omc/
 .gate-cache/
 .test-results/
+
+# Local parallel worktrees
+.worktrees/
+
+gate-evidence/
