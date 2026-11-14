@@ -7,6 +7,8 @@ docs/plan/2026-11-13-fix-forward-mac-phase15.md.
 Run: python -m pytest tests/test_phase15_enrichments.py -q
 """
 
+from pathlib import Path
+
 from nanochat.last_run import format_knob_diff, load_last_run, write_last_run
 from nanochat.metrics_trend import (
     emit_metric_trend,
@@ -387,3 +389,27 @@ def test_given_plaque_when_nanochat_plain_unset_then_returns_multiline():
     assert "base_train" in result
     assert "START" in result
     assert "+" in result and "|" in result  # ASCII-safe borders (plan decision)
+
+
+def test_given_shell_tip_when_printed_then_exactly_one_tip_token(tmp_path: Path) -> None:
+    """
+    Scenario: print_run_tip prints one tip line with a single 'tip:' token.
+    Slice: cli-learn-color-ux (plan goal 4: existing contract lines unchanged)
+    """
+    import subprocess
+
+    # ### Given
+    root = Path(__file__).resolve().parents[1]
+    script = f"""
+set -euo pipefail
+export NANOCHAT_BASE_DIR={tmp_path} PROFILE=cpu NANOCHAT_RUN_DIR= NO_COLOR=1
+source {root / "runs" / "_stage_lib.sh"}
+print_run_tip
+"""
+
+    # ### When
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
+
+    # ### Then
+    assert out.count("tip:") == 1, f"expected one 'tip:' token, got: {out!r}"
+    assert out.startswith("  tip: "), f"tip line must keep master's shape, got: {out!r}"
