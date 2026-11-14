@@ -56,7 +56,8 @@ Notes:
 
 - Markers are written **last**, after a clean finish. A crashed train/eval leaves no marker (or the shell clears it at the next `START`), so the stage re-runs. A stray `model_*.pt` from a probe or interrupt is **not** enough to SKIP.
 - Upgrading from older skip-on-`model_*.pt` behavior: if you already finished train and want to keep SKIP without redoing it, `touch "$NANOCHAT_BASE_DIR/base_checkpoints/.train_ok"` (and the chatsft equivalent if needed).
-- Mid-train resume is still manual (`--resume-from-step=N` on `scripts/base_train.py`); the shell pipeline resumes at the **stage** boundary only.
+- **Mid-stage resume (`base_train`):** if `base_train` is interrupted, a re-run continues from its last complete checkpoint. The script saves one every `NANOCHAT_SAVE_EVERY_SECS` seconds (default 300). A checkpoint counts only when its model, meta and optimizer files are all present. `FORCE_STAGES=base_train` starts from step 0 instead. The checkpoint check is unit-tested. The full resume has not yet been tested end to end on a real interruption.
+- **`chat_sft` does not resume mid-stage.** An interrupted SFT run restarts from step 0 on the next run.
 - `nanochat.dataset -n 8` runs every time; it only downloads missing shards.
 - Per-stage timings are saved in `$NANOCHAT_BASE_DIR/.stage_elapsed/` so a later `SKIP` can report time saved.
 
@@ -178,6 +179,7 @@ Root-causing NaN beyond warn/abort is out of scope for Phase 1.
 | `SKIP_SETUP` | When set to `1`, skip `uv install`/venv create/`uv sync`. Always `source .venv/bin/activate` (the venv must exist). | Used by Modal (image provides `.venv`); also useful for CI or reproducible runs. Unset = full bootstrap (default local behavior). |
 | `NANOCHAT_POST_STAGE_HOOK` | Bash script/command run after each successful stage. No-op when unset (local runs unchanged). | Used by Modal to coordinate Volume commits via wait-for-ack. Example: `NANOCHAT_POST_STAGE_HOOK="bash /path/to/hook.sh" bash runs/speedrun.sh`. The hook must be an executable path or a simple command (not a bare string with quotes). If the hook fails, the stage prints DONE first, then FAIL with two plaques (one per contract line). |
 | `NANOCHAT_MEMORY_FIT_MARGIN` | Fraction of available device memory the auto-fit estimate may use (default `0.6`). See [section 11](#11-memory--oom). | Example: `NANOCHAT_MEMORY_FIT_MARGIN=0.5 bash runs/runcpu.sh` |
+| `NANOCHAT_SAVE_EVERY_SECS` | Seconds between mid-train checkpoints for `base_train` (default `300`). Lower it to test resume quickly. | Used by `runs/runcpu.sh` and `runs/speedrun.sh`. See [section 4](#4-what-a-re-run-keeps-and-skips). Example: `NANOCHAT_SAVE_EVERY_SECS=60 bash runs/runcpu.sh` |
 | `WANDB_RUN` | Weights & Biases run name. Unset means `dummy` (no logging). | Example: `WANDB_RUN=mytest bash runs/runcpu.sh` |
 
 **Key invariants:**
