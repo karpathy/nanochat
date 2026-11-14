@@ -374,6 +374,11 @@ _RUNNING_MD = Path(__file__).resolve().parents[1] / "docs" / "RUNNING.md"
 _MAX_PLAIN_MEANING_WORDS = 12
 
 
+def _expected_table_target(glossary_url: str) -> str:
+    """In-file table links use '#6b-terms'; terminal learn lines keep the repo path."""
+    return glossary_url.replace("docs/RUNNING.md", "", 1) if glossary_url.startswith("docs/RUNNING.md") else glossary_url
+
+
 def _running_terms_table_rows() -> list[tuple[str, str, str]]:
     """Return (term, plain meaning, link URL) for each row of RUNNING §6b."""
     text = _RUNNING_MD.read_text(encoding="utf-8")
@@ -398,7 +403,7 @@ def test_given_running_terms_table_when_parsed_then_url_matches_glossary_for_eac
     mismatches = [
         (term, url, glossary.GLOSSARY[term][1])
         for term, _meaning, url in rows
-        if glossary.GLOSSARY[term][1] != url
+        if _expected_table_target(glossary.GLOSSARY[term][1]) != url
     ]
 
     # then

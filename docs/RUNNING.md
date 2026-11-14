@@ -95,7 +95,7 @@ Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the p
 | `ETA: ~Xm remaining (step i/N, avg dt=…)` | Planned for the train loop once timing exists. |
 | `ETA: n/a (skipped)` | On `SKIP` lines. |
 
-**Emission order** within a stage: shell `START` → `purpose:` · `health:` · `learn:` → Python startup (torch version, device, paths) → fallback/auto-fit lines if any → shell `DONE` / `SKIP` / `FAIL` / `FORCE`.
+**Emission order** within a stage: as described above in the emission-order note for the log legend.
 
 Rule of thumb: no knob is ever changed silently. Any change is printed as `original → adjusted` with a reason.
 
@@ -131,15 +131,15 @@ Each term used in the `learn:` lines is defined here. The URLs match the referen
 
 | Term | Plain meaning | Learn more |
 |------|---------------|-----------|
-| BPE | Byte Pair Encoding algorithm that learns frequent byte sequences for text compression. | [docs/RUNNING.md#6b-terms](docs/RUNNING.md#6b-terms) |
-| vocab | The complete set of unique tokens the tokenizer recognizes from training data. | [docs/RUNNING.md#6b-terms](docs/RUNNING.md#6b-terms) |
-| compression ratio | How much raw text shrinks when encoded into tokens; lower is better. | [docs/RUNNING.md#6b-terms](docs/RUNNING.md#6b-terms) |
-| BPB | Bits needed to encode one byte of data; measures model compression efficiency. | [docs/RUNNING.md#6b-terms](docs/RUNNING.md#6b-terms) |
+| BPE | Byte Pair Encoding algorithm that learns frequent byte sequences for text compression. | [docs/RUNNING.md#6b-terms](#6b-terms) |
+| vocab | The complete set of unique tokens the tokenizer recognizes from training data. | [docs/RUNNING.md#6b-terms](#6b-terms) |
+| compression ratio | How much raw text shrinks when encoded into tokens; lower is better. | [docs/RUNNING.md#6b-terms](#6b-terms) |
+| BPB | Bits needed to encode one byte of data; measures model compression efficiency. | [docs/RUNNING.md#6b-terms](#6b-terms) |
 | CORE | Benchmark metric that rates how well a model predicts text from web. | [https://github.com/mlfoundations/dclm](https://github.com/mlfoundations/dclm) |
-| ChatCORE | Variant of CORE adapted to measure performance on chat and instructions. | [docs/RUNNING.md#6b-terms](docs/RUNNING.md#6b-terms) |
+| ChatCORE | Variant of CORE adapted to measure performance on chat and instructions. | [docs/RUNNING.md#6b-terms](#6b-terms) |
 | MFU | Fraction of theoretical peak floating-point operations actually used during training. | [https://arxiv.org/abs/2204.02311](https://arxiv.org/abs/2204.02311) |
 | Muon | Optimizer that orthogonalizes momentum updates for model weight matrices. | [https://github.com/KellerJordan/Muon](https://github.com/KellerJordan/Muon) |
-| FLOPs | Count of arithmetic operations performed during training or inference. | [docs/RUNNING.md#6b-terms](docs/RUNNING.md#6b-terms) |
+| FLOPs | Count of arithmetic operations performed during training or inference. | [docs/RUNNING.md#6b-terms](#6b-terms) |
 
 ## 7. Mac / Intel torch
 

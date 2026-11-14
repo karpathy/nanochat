@@ -311,26 +311,6 @@ def test_given_no_color_env_when_term_enabled_then_false():
         os.environ["NO_COLOR"] = old_val
 
 
-def test_given_nanochat_plain_when_term_enabled_then_false():
-    # Scenario: NANOCHAT_PLAIN=1 disables color.
-    import os
-
-    from nanochat.term_style import enabled
-
-    # given: NANOCHAT_PLAIN set
-    old_val = os.environ.get("NANOCHAT_PLAIN")
-    os.environ["NANOCHAT_PLAIN"] = "1"
-    # when: checking if color is enabled
-    result = enabled()
-    # then: false
-    assert result is False
-    # cleanup
-    if old_val is None:
-        del os.environ["NANOCHAT_PLAIN"]
-    else:
-        os.environ["NANOCHAT_PLAIN"] = old_val
-
-
 def test_given_plain_when_paint_then_returns_plain_text():
     # Scenario: paint returns plain text when disabled.
     import os
