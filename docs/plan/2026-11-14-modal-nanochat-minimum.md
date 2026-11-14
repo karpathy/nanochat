@@ -27,6 +27,7 @@ This plan is the SSOT for the Modal thread **plus** critic fixes **plus** analys
 | [Document-specialist](5f95a40b-add2-49a8-859c-4112f22eb616) | **APPROVE** | Diataxis howto OK; polish: no-SMOKE + SKIP_SETUP in MODAL.md |
 | nWave specialized reviewers | Quota-blocked | Criteria covered via architect/PO/docs/critic stand-ins |
 | nWave product-owner-reviewer (2026-11-14) | **REQUEST_CHANGES** → applied | Hook-failure rule no longer deletes the tokenizer artifact; chat prerequisites + observable check; spend confirmation; docs and knob-leak verification; time/disk disclosure; MVP trimmed to speedrun.sh only |
+| nWave solution-architect-reviewer (2026-11-14) | **REQUEST_CHANGES** → applied | `eval` hook invocation + hook timeout (10 min); miniseries activate-iff-`.venv` noted; final commit runs regardless of exit code; `nanochat.dataset` must not import at module level |
 
 ### Fixes applied (all rounds)
 
@@ -233,7 +234,7 @@ CPU only for prefetch (I/O). FLOPs on GPU.
 
 ### 8.1 Shell changes
 
-Honor pre-set base dir (same default) in [`runs/speedrun.sh`](runs/speedrun.sh) only (MVP). `runcpu.sh` and `miniseries.sh` are untouched until those scripts move onto Modal (§0 "later"):
+Honor pre-set base dir (same default) in [`runs/speedrun.sh`](runs/speedrun.sh) only (MVP). `runcpu.sh` and `miniseries.sh` are untouched until those scripts move onto Modal (§0 "later"). When `miniseries.sh` moves, its `else` branch (`runs/miniseries.sh:25`, unconditional `source .venv/bin/activate`) must also become "activate iff `.venv` exists":
 
 ```bash
 export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
@@ -257,11 +258,16 @@ In [`runs/_stage_lib.sh`](runs/_stage_lib.sh) `run_stage`:
    - Daemon: on request file → `vol.commit()` → on success **remove** request file; on failure write `.modal_commit_failed` and leave request (or clear after marking failed).
 3. Hook returns non-zero if commit fails / times out → `_stage_lib` applies the §8.1 rule (delete pure markers; never delete `tokenizer.pkl`) and fails the stage.
 4. Next stage must not start until the prior hook returns success (wait-for-ack barrier).
-5. After speedrun subprocess exits: final `vol.commit()`; clear leftover request/failed files.
+5. After speedrun subprocess exits, **regardless of exit code**: final `vol.commit()`, so committed stages survive a failed run and resume on re-run. Then clear leftover request/failed files.
 6. Modal background volume commits are a **safety net only** — not a substitute for this barrier or §9.6.
 
-Export hook via env **dict** into subprocess (avoid fragile shell one-liner quoting), e.g.  
-`NANOCHAT_POST_STAGE_HOOK` = `bash -c 'touch "$NANOCHAT_BASE_DIR/.modal_commit_request"; … poll …'`.
+**Hook invocation (required):** `run_stage` must call the hook with `eval "$NANOCHAT_POST_STAGE_HOOK"`. A bare `$NANOCHAT_POST_STAGE_HOOK` word-splits the string, so `bash -c '…'` loses its quotes and the hook silently breaks. Prefer a path to an executable script as the hook value so no quoting is involved.
+
+Set the hook from Python as an env-dict entry on the `subprocess` call, not by building a shell string:
+- Correct: `env = {**os.environ, "NANOCHAT_POST_STAGE_HOOK": "bash /root/nanochat/runs/modal_hook.sh"}`
+- Wrong: `os.system(f"NANOCHAT_POST_STAGE_HOOK='bash -c \"…\"' bash runs/speedrun.sh")`
+
+**Hook timeout (required):** the hook polls with a per-stage ceiling of 10 minutes. The daemon must write `.modal_commit_failed` inside that window, so the hook always terminates.
 
 ### 8.2 `runs/runmodal.sh` + `runs/modal_run.py`
 
@@ -276,6 +282,8 @@ Export hook via env **dict** into subprocess (avoid fragile shell one-liner quot
 5. On missing SFT artifacts: non-zero exit; no fake success tip.
 
 Both Modal functions: identical Volume name/mount, `NANOCHAT_BASE_DIR`, `HF_HOME`, `cwd=/root/nanochat`. **Do not** call `runcpu.sh`, `miniseries.sh`, or `scaling_laws.sh` in MVP.
+
+**Import order (required):** `NANOCHAT_BASE_DIR` must be set in the Modal function's environment, not by runtime mutation. `nanochat/dataset.py:26-27` binds `DATA_DIR` at import, so `modal_run.py` must not import `nanochat.dataset` at module level. Otherwise `DATA_DIR` binds to the default cache, not `/data/nanochat-modal`.
 
 ### 8.3 Docs
 
