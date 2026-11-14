@@ -23,9 +23,23 @@ from nanochat.common import get_dist_info
 from nanochat.dataset import list_parquet_files
 
 def _start_position(resume_state_dict):
-    _, ddp_rank, _, _ = get_dist_info()
+    """Resume position for this rank. Only rank 0 writes the checkpoint, so the saved
+    rg_idx is rank 0's; re-derive this rank's row group in the same stride block.
+    doc_offset is an offset into rank 0's row group, so non-zero ranks start at 0."""
+    _, ddp_rank, _, ddp_world_size = get_dist_info()
     state = resume_state_dict or {}
-    return (state.get("pq_idx", 0), state.get("rg_idx", ddp_rank), state.get("doc_offset", 0), state.get("epoch", 1))
+    saved_rg = state.get("rg_idx", ddp_rank)
+    rg_idx = (saved_rg // ddp_world_size) * ddp_world_size + ddp_rank
+    doc_offset = state.get("doc_offset", 0) if ddp_rank == 0 else 0
+    return (state.get("pq_idx", 0), rg_idx, doc_offset, state.get("epoch", 1))
+
+
+def _resume_doc_buffer(resume_state_dict):
+    """Rank 0's saved buffer holds rank 0's documents; other ranks start with an empty buffer."""
+    _, ddp_rank, _, _ = get_dist_info()
+    if not resume_state_dict or ddp_rank != 0:
+        return []
+    return list(resume_state_dict.get("doc_buffer", []))
 
 
 def _document_batches(split, start_position, tokenizer_batch_size):
@@ -94,7 +108,7 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
     start_position = _start_position(resume_state_dict)
     batches = _document_batches(split, start_position, tokenizer_batch_size)
     bos_token = tokenizer.get_bos_token_id()
-    doc_buffer = list(resume_state_dict.get("doc_buffer", [])) if resume_state_dict else []
+    doc_buffer = _resume_doc_buffer(resume_state_dict)
     reader_position = start_position
 
     def refill_buffer():
