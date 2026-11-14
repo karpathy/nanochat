@@ -73,7 +73,7 @@ Never use `FORCE_STAGES=1`. The scripts reject it (exit 2) and list the valid na
 
 Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the plan. Extra lines like `pipeline:`, `purpose:`, `health:`, or `tip:` are enrichments (see [section 6](#6-enrichment-glossary)), not contract shapes — do not treat them as START/DONE/SKIP/FAIL.
 
-**Emission order** within a stage: plaque (if START/DONE/FAIL) → shell contract line (START/DONE/SKIP/FAIL) → Python startup (torch version, device, paths) → fallback/auto-fit lines if any → `purpose:` · `health:` enrichment (if START) → `learn:` line (if START) → train work.
+**Emission order** within a stage: plaque (if START/DONE/FAIL) → shell contract line (START/DONE/SKIP/FAIL) → `purpose:` · `health:` and `learn:` enrichments (if START) → Python startup (torch version, device, paths) → fallback/auto-fit lines if any → train work.
 
 | Kind | Shape | Meaning |
 |------|-------|---------|
@@ -95,7 +95,7 @@ Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the p
 | `ETA: ~Xm remaining (step i/N, avg dt=…)` | Planned for the train loop once timing exists. |
 | `ETA: n/a (skipped)` | On `SKIP` lines. |
 
-**Emission order** within a stage: shell `START` → Python startup (torch version, device, paths) → fallback/auto-fit lines if any → shell `DONE` / `SKIP` / `FAIL` / `FORCE`.
+**Emission order** within a stage: shell `START` → `purpose:` · `health:` · `learn:` → Python startup (torch version, device, paths) → fallback/auto-fit lines if any → shell `DONE` / `SKIP` / `FAIL` / `FORCE`.
 
 Rule of thumb: no knob is ever changed silently. Any change is printed as `original → adjusted` with a reason.
 
