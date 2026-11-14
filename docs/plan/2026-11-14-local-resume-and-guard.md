@@ -173,11 +173,17 @@ Scope (user choice after design review: daemon cleanup + guard test; the shared 
 Modal path is not covered.
 
 **Must**
+- **Fix resume data position (new, found by Step A).** After `--resume-from-step=11` the data loader reads
+  `rg: 3`, but the uninterrupted run reads `rg: 1` at the same step. The checkpoint's `dataloader_state_dict`
+  says `rg_idx: 1`, so resume does not restore the data position. Loss drifts up to 0.109 by step 199.
+  Blocks any claim that mid-train resume is equivalent. Do this first. Unclaimed.
+- **Correct the resume wording (after the fix above).** `docs/RUNNING.md` and `resume-all-stages.md` should say
+  the restart picks the right checkpoint and LR schedule, but data order is not yet restored. Do not write
+  "VERIFIED" until the Step A check passes.
 - **Step B: `chat_sft` resume.** Requested explicitly: idempotent and recoverable. The one real local gap.
   Needs the test interview (see Tests section) before any test is written.
 
 **Should**
-- **Step A: control-run comparison.** Same-seed control run, to settle the loss gap. Records evidence for PR #26.
 - **Step C: local run lock (`runs/_run_lock.sh`).** Requested to keep. Prevents two local runs sharing a base dir.
 - **Modal guard test.** Covers the launch-guard refusal branch in `runs/runmodal.sh` (see Modal refactor section).
 
@@ -196,7 +202,8 @@ Owners as of 2026-11-14, confirmed by peer sessions:
 |---|---|---|---|
 | Step B: `chat_sft` resume | Must | parity session (`e7db86`) | Test scope decided: round-trip first, then config refusal. Interview in progress. |
 | Modal guard tests (`runs/runmodal.sh:26-42`) | Should | `[plan] Modal concurrent runs guard` (`a5c799`) | Plan approved. Waiting for user go-ahead to switch to `fix/runmodal-concurrency-guard`. |
-| Step A: control-run comparison | Should | unclaimed | Free to claim. |
+| Fix resume data position (`rg_idx` on restore) | Must | unclaimed | Found by Step A. Fix before any resume claim. |
+| Step A: control-run comparison | Should | this session (`ff203b6` branch) | **Done 2026-11-14.** Resume finds step 11; data position is wrong (`rg` 3 vs 1). Evidence in `docs/evidence/resume-step-a-2026-11-14/`. |
 | Step C: local run lock (`runs/_run_lock.sh`) | Should | unclaimed | Free to claim. |
 | Modal daemon cleanup | Could | unclaimed | Free to claim. |
 
