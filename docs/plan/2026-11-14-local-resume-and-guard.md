@@ -166,18 +166,24 @@ Scope (user choice after design review: daemon cleanup + guard test; the shared 
   (`tests/test_find_safe_resume_step.py`, `tests/test_periodic_commit.py`).
 - Read-only checks so far: `git diff master...HEAD --stat`, and `git diff` on the shared files.
 
-## Next-iteration priority (ranked by impact, then effort)
+## Next-iteration priority (MoSCoW)
 
-1. **Reconcile the resume verification claim (cheap, do first).** PR #26's test plan has checked local
-   kill-and-resume results (step 551 → resumed from 500; SIGTERM at step 33 → resumed from 26). The repo's
-   `docs/RUNNING.md` and the tracker say "not yet tested end to end". Either attach the logs to the PR and
-   mark resume VERIFIED, or correct the wording. Do not leave the two sources disagreeing.
-2. **Step A: mid-train resume test with a control run (local CPU, no cost).** Only needed where step 1 cannot
-   show the control comparison (matching step-N loss and `epoch/pq/rg`). Gives the strongest evidence for PR #26.
-3. **Step B: `chat_sft` resume (local SFT crash-safety).** The one real gap that affects local users. Needs the
-   test interview (see Tests section) before any test is written.
-4. **Step C: local run lock (`runs/_run_lock.sh`).** Prevents two local runs sharing a base dir. Useful, but
-   only bites when two local jobs run at once.
-5. **Modal daemon cleanup and guard tests.** Refactor with no behaviour change. Lowest impact; do last.
+**Done:** reconcile the resume verification claim. Local kill and SIGTERM checks are recorded in
+`docs/RUNNING.md` and the trackers (commit `f14c355`). Loss is close but not bit-identical, and the
+Modal path is not covered.
 
-Not in this iteration: the live Modal run (about $40–60). It needs an explicit go-ahead from you.
+**Must**
+- **Step B: `chat_sft` resume.** Requested explicitly: idempotent and recoverable. The one real local gap.
+  Needs the test interview (see Tests section) before any test is written.
+
+**Should**
+- **Step A: control-run comparison.** Same-seed control run, to settle the loss gap. Records evidence for PR #26.
+- **Step C: local run lock (`runs/_run_lock.sh`).** Requested to keep. Prevents two local runs sharing a base dir.
+- **Modal guard test.** Covers the launch-guard refusal branch in `runs/runmodal.sh` (see Modal refactor section).
+
+**Could**
+- **Modal daemon cleanup.** Refactor with no behaviour change. Do it after the Should items, and only if time allows.
+
+**Won't (this iteration)**
+- **Live Modal run (about $40–60).** Needs an explicit go-ahead from you.
+- **`tok_train` atomicity.** Dropped as low impact.
