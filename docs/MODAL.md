@@ -17,6 +17,73 @@ You need these **once per account**:
 
 You do not need a local GPU to run training on Modal, but you do need enough local disk and RAM to download the trained model afterward (see [Chat locally](#chat-locally) below).
 
+## Runtime config and environment
+
+### Your machine (where you run `runmodal.sh`)
+
+- **Python 3.11 or newer** for the local `modal` CLI. The CLI warns that 3.10 is end-of-life.
+- **`bash`, `git`, and the `modal` CLI** on `PATH`. The script stops if `modal` is missing.
+- **Network access** during the run. The laptop stays attached to the job, so keep it awake and use `screen` or `tmux`.
+- **Disk:** room under `~/.cache/nanochat-modal` for the downloaded tokenizer and chat checkpoint.
+
+You do not need a local GPU or the training dependencies. Modal builds them into its own image. For the local install paths and the torch build per platform, see the README [Setup](../README.md#setup) section; for dtype per device, see [Precision / dtype](../README.md#precision--dtype).
+
+### Modal side
+
+| | CPU mode (`MODE=cpu`) | GPU mode (`MODE=gpu`) |
+|---|---|---|
+| Machine | 64 cores, 128 GiB RAM, no GPU | 8×H100 |
+| Entry script in container | `runs/runcpu.sh` | `runs/speedrun.sh` |
+| Python dependency group | `cpu` extra | `gpu` extra |
+| Account needs | Nothing extra | GPU entitlement on the account |
+| Train timeout | 12 h (billed by actual run time) | 4 h |
+| Prefetched data shards | 8 | 170 |
+
+The container sets `SKIP_SETUP=1`, so it uses the prebuilt `.venv` and does not reinstall. It also sets `NANOCHAT_BASE_DIR=/data/nanochat-modal` and `HF_HOME` on the shared Volume, and runs `runs/modal_hook.sh` after each stage.
+
+### Hyperparameters
+
+The values below are what the scripts actually use. Profile values live in [`nanochat/defaults.py`](../nanochat/defaults.py) (`PROFILE_RUNCPU`, `PROFILE_SPEEDRUN`), and `runs/profiles.sh` is generated from it. Do not hand-edit `profiles.sh`. Modal-only overrides live at the top of [`runs/modal_run.py`](../runs/modal_run.py).
+
+**Tokenizer (both modes):** vocabulary 32768 (2^15), trained on about 2 billion characters.
+
+**CPU mode (`runcpu.sh`, base model and SFT):**
+
+| Setting | Value | Source |
+|---|---|---|
+| Depth / head dim / window | 6 / 64 / `L` | `PROFILE_RUNCPU` |
+| Max sequence length | 512 | `PROFILE_RUNCPU` |
+| Total batch size (tokens) | 16384 | `PROFILE_RUNCPU` |
+| Device batch size, train | 32 on Modal; 8 locally | `modal_run.py`; `PROFILE_RUNCPU` |
+| Device batch size, eval | 16 on Modal; 1 locally | `modal_run.py`; `PROFILE_RUNCPU` |
+| Iterations, base | 5000 | `PROFILE_RUNCPU` (Modal sets the same value) |
+| Eval every / eval tokens | 100 steps / 524288 | `PROFILE_RUNCPU` |
+| SFT iterations / eval every | 1500 / 200 | hardcoded in `runcpu.sh` |
+
+**GPU mode (`speedrun.sh`):**
+
+| Setting | Value | Source |
+|---|---|---|
+| Depth | 24 | `PROFILE_SPEEDRUN` |
+| Device batch size, train / eval | 16 / 16 | `PROFILE_SPEEDRUN` |
+| Target param-to-data ratio | 8 | `PROFILE_SPEEDRUN` |
+| Max sequence length | 2048 | `speedrun.sh` default |
+| Processes | 8 (one per GPU), FP8 on | hardcoded in `speedrun.sh` |
+| Threads | `OMP_NUM_THREADS=1` | `speedrun.sh` |
+
+### Environment variables you can set
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MODE` | `cpu` | `cpu` or `gpu` |
+| `RUNMODAL_YES` | unset | Skip the spend prompt |
+| `RUNMODAL_ALLOW_CONCURRENT` | unset | Launch even when another nanochat run is live (see [One command](#one-command)) |
+| `NANOCHAT_MODAL_ARCHIVE` | `~/.cache/nanochat-modal/runs` | Where local run logs are kept |
+| `FORCE_STAGES` | unset | Redo named stages, e.g. `FORCE_STAGES=base_train,base_eval` |
+| `WANDB_RUN` | `dummy` | Weights & Biases run name; `dummy` disables logging |
+
+The runner sets the rest (`SKIP_SETUP`, `NANOCHAT_BASE_DIR`, `NANOCHAT_RUNCPU_*`, `NANOCHAT_POST_STAGE_HOOK`). You should not need to change them.
+
 ## Cost and time
 
 **CPU mode (`MODE=cpu`):** cost scales with cores. Check Modal's current CPU price with `modal billing rates` before the first run. Time and cost are not measured yet; the first run records both in its run record.
