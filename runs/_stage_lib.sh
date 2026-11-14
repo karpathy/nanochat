@@ -6,9 +6,9 @@
 # Requires the caller to have set NANOCHAT_BASE_DIR and PROFILE, and `set -euo pipefail`.
 # Color and plaque helpers (gated on TTY and NO_COLOR).
 
-# True if color should be applied (stdout is TTY and NO_COLOR unset).
+# True if color should be applied (stdout is TTY and NO_COLOR unset). NANOCHAT_PLAIN is art-only.
 _term_color_enabled() {
-    [ -z "${NO_COLOR:-}" ] && [ -z "${NANOCHAT_PLAIN:-}" ] && [ -t 1 ]
+    [ -z "${NO_COLOR:-}" ] && [ -t 1 ]
 }
 
 # Paint text with color for a role (START/DONE/SKIP/FAIL/FORCE).
@@ -27,7 +27,7 @@ _paint() {
 # Print ASCII plaque for a stage (suppressed if NANOCHAT_PLAIN=1).
 _print_plaque() {
     local stage="$1" kind="$2" subtitle="$3"
-    [ -z "${NANOCHAT_PLAIN:-}" ] || return 0
+    [ "${NANOCHAT_PLAIN:-}" = "1" ] && return 0
     python3 -m nanochat.stage_art plaque --stage "$stage" --kind "$kind" --subtitle "$subtitle" 2>/dev/null || true
 }
 
@@ -208,13 +208,14 @@ write_last_run_json() {
 # Exactly one tip: line per script invocation (call once at script start).
 # Text SSOT: nanochat/run_tip.py (unit-tested).
 print_run_tip() {
-    local tip prefix
+    local tip label rest
     tip="$(python3 -m nanochat.run_tip 2>/dev/null || true)"
-    if [ -n "$tip" ]; then
-        prefix="tip:"
-        _term_color_enabled && prefix="$(printf '\033[1;36m%s\033[0m' "$prefix")"
-        echo "  $prefix $tip"
-    fi
+    [ -n "$tip" ] || return 0
+    # run_tip already starts with its own "tip:" token; colour that token only.
+    label="${tip%%:*}:"
+    rest="${tip#*:}"
+    _term_color_enabled && label="$(_paint START "$label")"
+    echo "  $label$rest"
     return 0
 }
 
@@ -233,7 +234,7 @@ pipeline_map() {
         out="$out[$label$mark] "
     done
     prefix="pipeline:"
-    _term_color_enabled && prefix="$(printf '\033[1;36m%s\033[0m' "$prefix")"
+    _term_color_enabled && prefix="$(_paint START "$prefix")"
     echo "$prefix ${out% }"
 }
 
