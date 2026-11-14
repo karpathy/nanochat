@@ -146,3 +146,13 @@ Each step is one reviewable commit on `feat/cli-learn-color-ux`. Run `uv run pyt
 - Heartbeat / ETA train-loop work (still deferred)
 - Web UI (this repo is CLI and shell)
 - Full DIVIO restructure
+
+## Follow-ups (deferred from review, not in this slice)
+
+- **CORE in the pipeline.** `base_train` defines `CORE`, but the stage briefing suppresses define lines, so a normal run never shows it. `base_eval`'s `learn:` line covers `CORE`. Decide whether `base_train` should drop its `CORE` define call.
+- **Bare `python3` in shell helpers.** `_print_plaque` and the `learn:` line call `python3`, not the project venv. A broken interpreter hides the feature (warning only on stderr). Consider resolving the project interpreter once.
+- **Duplicated owners.** The `NANOCHAT_PLAIN` gate lives in `_print_plaque` and in `stage_art.py`. The colour map lives in `_paint` and `term_style.paint`. Consolidate if a third consumer appears.
+- **Historical ETA text.** `docs/plan/2026-11-13-fix-forward-mac.md` still shows `ETA: not yet knowable`. It is a dated snapshot; leave it unless the echo-contract SSOT moves here.
+- **Learn line width.** The `base_train` learn line is long and wraps on 80-column terminals. Shortening definitions changes glossary content, so it needs its own decision.
+- **Return annotation.** `_make_colored_print_fn` in `scripts/base_train.py` lacks a return type; adding it needs a `Callable` import in a file with existing lint findings.
+- **Could items.** `tok_train`, `tok_eval`, `chat_sft`, `chat_eval` colour and define lines, and the `chat_cli` welcome plaque (also listed in Scope › Could).
