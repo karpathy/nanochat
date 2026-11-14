@@ -23,7 +23,7 @@ Verified against the tree at `master` (edfb3d3, post PR #18 and #20).
 | Banner | `nanochat/common.py` `print_banner()`, called at import in `scripts/base_train.py:42` | **Stays the only banner.** No new shell banner (see decisions) |
 | Logging color | `nanochat/common.py` `ColoredFormatter` (line 34), `setup_default_logging()` (line 60) | Separate path. Not reused; see decisions |
 | Metric trend | `nanochat/metrics_trend.py` `format_trend()`, `emit_metric_trend(print_fn=...)` | Color applied at the call site through `print_fn`. Module unchanged |
-| Run tee | `runs/runmodal.sh:79` pipes to `tee run.log` | Stdout is not a TTY there, so color stays off and the archived log stays plain |
+| Run tee | `runs/runmodal.sh:79–80` pipes output to `tee "$ARCHIVE_DIR/run.log"` | Stdout is not a TTY there, so color stays off and the archived log stays plain |
 | Modal env | `runs/modal_run.py` `_modal_env()` (line 92) builds the container env | Set `NO_COLOR=1` there explicitly; do not rely on TTY detection in the container |
 | Run record spans | `run_stage()` calls `record_span` on success, failure, and hook failure; writes `$NANOCHAT_RUN_DIR/events.jsonl` via `nanochat/run_record.py` | Must keep every `record_span` call and its order. Plaques and `learn:` print text only and never touch the record |
 | Post-stage hook | `NANOCHAT_POST_STAGE_HOOK` runs after the DONE line (Modal volume commit); on failure `run_stage()` logs FAIL and exits in three branches (hook-failure `case`) | A hook failure after DONE is a legitimate DONE-then-FAIL pair: two plaques, one per contract line |
@@ -38,7 +38,7 @@ Verified against the tree at `master` (edfb3d3, post PR #18 and #20).
 - **Terms per stage.** `learn:` shows every term in that stage's `STAGE_TERMS` entry. The largest entry is `base_train` (BPB, Muon, MFU, FLOPs = 4 terms), so the cap is 4, not 3. No term is dropped.
 - **Banner prints once.** `base_train.py:42` already prints the banner. The shell adds no separate script-start banner. This avoids a double banner under `runcpu.sh` and `speedrun.sh`.
 - **Plaques only on START, DONE, FAIL.** SKIP gets color only. Re-running a finished pipeline would otherwise print one plaque per skipped stage.
-- **Plaque subtitle comes from `stage_purpose()`.** The shell passes it in: `python3 -m nanochat.stage_art plaque --stage X --kind start --subtitle "$(stage_purpose "$stage")"`. The Python plaque CLI does not keep its own copy of the purpose text.
+- **Plaque subtitle comes from `stage_purpose()` (Option A).** The shell passes it in: `python3 -m nanochat.stage_art plaque --stage X --kind start --subtitle "$(stage_purpose "$stage")"`. No purpose text exists in any Python module, so there is one owner: `_stage_lib.sh`.
 - **Color rules.** Color is on only when stdout is a TTY and `NO_COLOR` is unset. Non-TTY output (CI, `tee`, redirected logs) is plain text. Modal sets `NO_COLOR=1` explicitly.
 - **Color roles.** `START` / `FORCE` bold cyan, `DONE` bold green, `SKIP` dim yellow, `FAIL` bold red. Every role is applied to the contract line's existing text; no token changes.
 - **Art rules.** Art stays on when output is redirected, because the ASCII borders are greppable and help scrolling saved logs. `NANOCHAT_PLAIN=1` is the only opt-out, and it works in a TTY too.
@@ -106,7 +106,7 @@ Each step is one reviewable commit on `feat/cli-learn-color-ux`. Run `uv run pyt
    - Update §9: a hook failure turns DONE into FAIL.
    - README.md: one bullet under "Running on CPU / MPS" pointing to RUNNING §5–§6b.
    - Add a test in `tests/test_glossary.py` that parses the RUNNING §6b table and asserts each term key exists in `glossary.py` with the same URL.
-5. **Ledger and smoke (Must).** `docs/plan/GROWTH.md` (Added / Changed) and `docs/plan/PROGRESS.md` (one row). Smoke: `python -m nanochat.glossary learn --stage base_train`, `python -m nanochat.stage_art plaque --stage base_train --kind start --subtitle "x"`, `bash runs/runcpu.sh` with `NO_COLOR=1` and piped output (diff against baseline per Goal 4), same with `NANOCHAT_PLAIN=1`.
+5. **Ledger and smoke (Must).** `docs/plan/GROWTH.md` (Added / Changed) and `docs/plan/PROGRESS.md` (one row). Smoke: `python -m nanochat.glossary learn --stage base_train`, `python -m nanochat.stage_art plaque --stage base_train --kind start --subtitle "teach raw next-token prediction on web text"`, `bash runs/runcpu.sh` with `NO_COLOR=1` and piped output (diff against baseline per Goal 4), same with `NANOCHAT_PLAIN=1`.
 
 ## Docs audit (verified)
 
