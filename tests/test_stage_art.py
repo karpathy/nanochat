@@ -14,7 +14,7 @@ from nanochat import stage_art
 class TestRenderPlaque:
     """Test render_plaque function."""
 
-    def test_render_plaque_returns_empty_when_plain(self, monkeypatch):
+    def test_given_nanochat_plain_set_when_render_plaque_called_then_returns_empty_string(self, monkeypatch):
         """
         Scenario: render_plaque returns empty string when NANOCHAT_PLAIN=1.
         Slice: cli-learn-color-ux
@@ -33,7 +33,7 @@ class TestRenderPlaque:
         result = stage_art.render_plaque("base_train", "start", "some subtitle")
         assert result == ""
 
-    def test_render_plaque_returns_text_when_not_plain(self, monkeypatch):
+    def test_given_nanochat_plain_not_set_when_render_plaque_called_then_returns_non_empty_string(self, monkeypatch):
         """
         Scenario: render_plaque returns plaque text when NANOCHAT_PLAIN is not 1.
         Slice: cli-learn-color-ux
@@ -53,7 +53,7 @@ class TestRenderPlaque:
         assert result != ""
         assert len(result) > 0
 
-    def test_render_plaque_contains_stage_name(self, monkeypatch):
+    def test_given_base_train_stage_when_render_plaque_called_then_result_contains_stage_name(self, monkeypatch):
         """
         Scenario: Plaque contains the stage name.
         Slice: cli-learn-color-ux
@@ -72,7 +72,7 @@ class TestRenderPlaque:
         result = stage_art.render_plaque("base_train", "start", "subtitle")
         assert "base_train" in result
 
-    def test_render_plaque_contains_kind_start(self, monkeypatch):
+    def test_given_start_kind_when_render_plaque_called_then_result_contains_start(self, monkeypatch):
         """
         Scenario: Plaque for 'start' kind contains START.
         Slice: cli-learn-color-ux
@@ -91,7 +91,7 @@ class TestRenderPlaque:
         result = stage_art.render_plaque("base_train", "start", "subtitle")
         assert "START" in result
 
-    def test_render_plaque_contains_kind_done(self, monkeypatch):
+    def test_given_done_kind_when_render_plaque_called_then_result_contains_done(self, monkeypatch):
         """
         Scenario: Plaque for 'done' kind contains DONE.
         Slice: cli-learn-color-ux
@@ -110,7 +110,7 @@ class TestRenderPlaque:
         result = stage_art.render_plaque("base_train", "done", "subtitle")
         assert "DONE" in result
 
-    def test_render_plaque_contains_kind_fail(self, monkeypatch):
+    def test_given_fail_kind_when_render_plaque_called_then_result_contains_fail(self, monkeypatch):
         """
         Scenario: Plaque for 'fail' kind contains FAIL.
         Slice: cli-learn-color-ux
@@ -129,7 +129,7 @@ class TestRenderPlaque:
         result = stage_art.render_plaque("base_train", "fail", "subtitle")
         assert "FAIL" in result
 
-    def test_render_plaque_contains_subtitle(self, monkeypatch):
+    def test_given_subtitle_when_render_plaque_called_then_result_contains_subtitle_text(self, monkeypatch):
         """
         Scenario: Plaque contains the subtitle text.
         Slice: cli-learn-color-ux
@@ -148,7 +148,7 @@ class TestRenderPlaque:
         result = stage_art.render_plaque("base_train", "start", "test subtitle")
         assert "test subtitle" in result
 
-    def test_render_plaque_has_ascii_borders(self, monkeypatch):
+    def test_given_render_plaque_when_called_then_uses_only_ascii_characters_for_borders(self, monkeypatch):
         """
         Scenario: Plaque uses only ASCII characters for borders.
         Slice: cli-learn-color-ux
@@ -174,7 +174,7 @@ class TestRenderPlaque:
         for char in clean:
             assert ord(char) < 128, f"Non-ASCII character found: {repr(char)} (ord={ord(char)})"
 
-    def test_render_plaque_contains_borders(self, monkeypatch):
+    def test_given_render_plaque_when_called_then_contains_border_characters(self, monkeypatch):
         """
         Scenario: Plaque borders use +, -, and | characters.
         Slice: cli-learn-color-ux
@@ -201,7 +201,7 @@ class TestRenderPlaque:
         assert "-" in clean, "Plaque missing - horizontal border"
         assert "|" in clean, "Plaque missing | vertical border"
 
-    def test_render_plaque_is_multiline(self, monkeypatch):
+    def test_given_render_plaque_when_called_then_result_is_multiline(self, monkeypatch):
         """
         Scenario: Plaque is multi-line (contains newlines).
         Slice: cli-learn-color-ux
@@ -221,7 +221,7 @@ class TestRenderPlaque:
         newline_count = result.count("\n")
         assert newline_count >= 3, f"Plaque has {newline_count} newlines (expected >=3)"
 
-    def test_render_plaque_long_subtitle_truncates(self, monkeypatch):
+    def test_given_very_long_subtitle_when_render_plaque_called_then_renders_without_error(self, monkeypatch):
         """
         Scenario: Long subtitle is truncated with ellipsis.
         Slice: cli-learn-color-ux
@@ -243,7 +243,7 @@ class TestRenderPlaque:
         # Should either truncate or handle gracefully
         assert len(result) < len(long_subtitle) * 3  # Rough sanity check
 
-    def test_render_plaque_all_kinds_render(self, monkeypatch):
+    def test_given_all_kinds_when_render_plaque_called_then_each_returns_non_empty_string(self, monkeypatch):
         """
         Scenario: All three kinds (start, done, fail) render without error.
         Slice: cli-learn-color-ux
@@ -264,7 +264,7 @@ class TestRenderPlaque:
             assert result != "", f"Kind '{kind}' returned empty string"
             assert len(result) > 0
 
-    def test_render_plaque_with_empty_subtitle(self, monkeypatch):
+    def test_given_empty_subtitle_when_render_plaque_called_then_returns_valid_plaque(self, monkeypatch):
         """
         Scenario: Plaque handles empty subtitle.
         Slice: cli-learn-color-ux

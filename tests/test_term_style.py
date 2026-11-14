@@ -14,7 +14,7 @@ from nanochat import term_style
 class TestEnabled:
     """Test enabled() function."""
 
-    def test_enabled_returns_false_when_not_tty(self, monkeypatch):
+    def test_given_non_tty_stdout_when_enabled_called_then_returns_false(self, monkeypatch):
         """
         Scenario: enabled() returns False when stdout is not a TTY.
         Slice: cli-learn-color-ux
@@ -33,7 +33,7 @@ class TestEnabled:
 
         assert term_style.enabled() is False
 
-    def test_enabled_returns_false_when_no_color_set(self, monkeypatch):
+    def test_given_tty_and_no_color_set_when_enabled_called_then_returns_false(self, monkeypatch):
         """
         Scenario: enabled() returns False when NO_COLOR is set.
         Slice: cli-learn-color-ux
@@ -52,7 +52,7 @@ class TestEnabled:
 
         assert term_style.enabled() is False
 
-    def test_enabled_returns_false_when_no_color_empty(self, monkeypatch):
+    def test_given_tty_and_no_color_empty_when_enabled_called_then_returns_false(self, monkeypatch):
         """
         Scenario: enabled() returns False when NO_COLOR is empty string.
         Slice: cli-learn-color-ux
@@ -71,7 +71,7 @@ class TestEnabled:
 
         assert term_style.enabled() is False
 
-    def test_enabled_returns_true_when_tty_and_no_color_unset(self, monkeypatch):
+    def test_given_tty_and_no_color_unset_when_enabled_called_then_returns_true(self, monkeypatch):
         """
         Scenario: enabled() returns True when stdout is TTY and NO_COLOR is unset.
         Slice: cli-learn-color-ux
@@ -94,7 +94,7 @@ class TestEnabled:
 class TestPaint:
     """Test paint() function."""
 
-    def test_paint_returns_unchanged_when_disabled(self, monkeypatch):
+    def test_given_color_disabled_when_paint_called_then_returns_text_unchanged(self, monkeypatch):
         """
         Scenario: paint() returns text unchanged when color is disabled.
         Slice: cli-learn-color-ux
@@ -114,7 +114,7 @@ class TestPaint:
         result = term_style.paint("start", "text")
         assert result == "text"
 
-    def test_paint_start_role_when_enabled(self, monkeypatch):
+    def test_given_start_role_and_color_enabled_when_paint_called_then_wraps_in_bold_cyan(self, monkeypatch):
         """
         Scenario: paint() wraps text in bold cyan for 'start' role when enabled.
         Slice: cli-learn-color-ux
@@ -136,7 +136,7 @@ class TestPaint:
         assert "START" in result
         assert "\033[0m" in result  # reset
 
-    def test_paint_force_role_when_enabled(self, monkeypatch):
+    def test_given_force_role_and_color_enabled_when_paint_called_then_wraps_in_bold_cyan(self, monkeypatch):
         """
         Scenario: paint() wraps text in bold cyan for 'force' role when enabled.
         Slice: cli-learn-color-ux
@@ -158,7 +158,7 @@ class TestPaint:
         assert "FORCE" in result
         assert "\033[0m" in result
 
-    def test_paint_done_role_when_enabled(self, monkeypatch):
+    def test_given_done_role_and_color_enabled_when_paint_called_then_wraps_in_bold_green(self, monkeypatch):
         """
         Scenario: paint() wraps text in bold green for 'done' role when enabled.
         Slice: cli-learn-color-ux
@@ -180,7 +180,7 @@ class TestPaint:
         assert "DONE" in result
         assert "\033[0m" in result
 
-    def test_paint_skip_role_when_enabled(self, monkeypatch):
+    def test_given_skip_role_and_color_enabled_when_paint_called_then_wraps_in_dim_yellow(self, monkeypatch):
         """
         Scenario: paint() wraps text in dim yellow for 'skip' role when enabled.
         Slice: cli-learn-color-ux
@@ -202,7 +202,7 @@ class TestPaint:
         assert "SKIP" in result
         assert "\033[0m" in result
 
-    def test_paint_fail_role_when_enabled(self, monkeypatch):
+    def test_given_fail_role_and_color_enabled_when_paint_called_then_wraps_in_bold_red(self, monkeypatch):
         """
         Scenario: paint() wraps text in bold red for 'fail' role when enabled.
         Slice: cli-learn-color-ux
@@ -224,7 +224,7 @@ class TestPaint:
         assert "FAIL" in result
         assert "\033[0m" in result
 
-    def test_paint_unknown_role_returns_unchanged(self, monkeypatch):
+    def test_given_unknown_role_and_color_enabled_when_paint_called_then_returns_text_unchanged(self, monkeypatch):
         """
         Scenario: paint() returns text unchanged for unknown role.
         Slice: cli-learn-color-ux
@@ -244,7 +244,7 @@ class TestPaint:
         result = term_style.paint("unknown", "text")
         assert result == "text"
 
-    def test_paint_all_roles_have_reset_code(self, monkeypatch):
+    def test_given_all_known_roles_and_color_enabled_when_paint_called_then_all_results_end_with_reset_code(self, monkeypatch):
         """
         Scenario: All painted text includes the reset code.
         Slice: cli-learn-color-ux

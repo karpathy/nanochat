@@ -15,7 +15,7 @@ from nanochat import glossary
 class TestGlossaryTerms:
     """Test the glossary term catalog."""
 
-    def test_all_nine_terms_exist(self):
+    def test_given_glossary_when_checked_then_all_nine_terms_exist(self):
         """
         Scenario: Verify all 9 required terms are defined.
         Slice: cli-learn-color-ux
@@ -36,7 +36,7 @@ class TestGlossaryTerms:
             assert definition, f"Term '{term}' has empty definition"
             assert url, f"Term '{term}' has empty URL"
 
-    def test_each_term_has_one_sentence_definition(self):
+    def test_given_glossary_terms_when_checked_then_each_has_one_sentence_definition(self):
         """
         Scenario: Verify each definition is a single short sentence.
         Slice: cli-learn-color-ux
@@ -61,7 +61,7 @@ class TestGlossaryTerms:
 class TestStagTerms:
     """Test STAGE_TERMS mapping."""
 
-    def test_all_nine_terms_appear_in_stage_terms(self):
+    def test_given_stage_terms_when_checked_then_all_nine_glossary_terms_appear(self):
         """
         Scenario: Verify every term appears in at least one stage.
         Slice: cli-learn-color-ux
@@ -83,7 +83,7 @@ class TestStagTerms:
         for term in required_terms:
             assert term in all_stage_terms, f"Term '{term}' is not in any STAGE_TERMS entry"
 
-    def test_stage_terms_cap_is_four(self):
+    def test_given_stage_terms_when_checked_then_each_entry_has_at_most_four_terms(self):
         """
         Scenario: Verify no stage entry exceeds 4 terms.
         Slice: cli-learn-color-ux
@@ -100,7 +100,7 @@ class TestStagTerms:
         for stage, keys in glossary.STAGE_TERMS.items():
             assert len(keys) <= 4, f"Stage '{stage}' has {len(keys)} terms (max 4): {keys}"
 
-    def test_stage_terms_reference_only_known_terms(self):
+    def test_given_stage_terms_when_checked_then_all_reference_known_glossary_terms(self):
         """
         Scenario: Verify all terms in STAGE_TERMS are defined in GLOSSARY.
         Slice: cli-learn-color-ux
@@ -118,7 +118,7 @@ class TestStagTerms:
             for key in keys:
                 assert key in glossary.GLOSSARY, f"Stage '{stage}' references unknown term '{key}'"
 
-    def test_base_train_has_four_terms(self):
+    def test_given_stage_terms_when_checked_then_base_train_has_exactly_four_terms(self):
         """
         Scenario: Verify base_train has exactly 4 terms (the max).
         Slice: cli-learn-color-ux
@@ -137,7 +137,7 @@ class TestStagTerms:
         assert len(base_train_terms) == 4
         assert set(base_train_terms) == {"BPB", "Muon", "MFU", "FLOPs"}
 
-    def test_chat_eval_includes_chatcore(self):
+    def test_given_stage_terms_when_checked_then_chat_eval_includes_chatcore(self):
         """
         Scenario: Verify chat_eval includes ChatCORE.
         Slice: cli-learn-color-ux
@@ -159,7 +159,7 @@ class TestStagTerms:
 class TestFormatLearnLine:
     """Test format_learn_line function."""
 
-    def test_format_learn_line_for_base_train(self):
+    def test_given_base_train_stage_when_formatted_then_learn_line_contains_all_four_terms(self):
         """
         Scenario: Format learn line for base_train stage.
         Slice: cli-learn-color-ux
@@ -182,7 +182,7 @@ class TestFormatLearnLine:
         # Should be one line (no newlines)
         assert "\n" not in line
 
-    def test_format_learn_line_for_tok_train(self):
+    def test_given_tok_train_stage_when_formatted_then_learn_line_contains_three_terms(self):
         """
         Scenario: Format learn line for tok_train stage.
         Slice: cli-learn-color-ux
@@ -202,7 +202,7 @@ class TestFormatLearnLine:
         assert "vocab" in line
         assert "compression ratio" in line
 
-    def test_format_learn_line_for_empty_stage(self):
+    def test_given_chat_sft_stage_when_formatted_then_learn_line_returns_empty_string(self):
         """
         Scenario: Format learn line for stage with no terms.
         Slice: cli-learn-color-ux
@@ -219,7 +219,7 @@ class TestFormatLearnLine:
         line = glossary.format_learn_line("chat_sft")
         assert line == ""
 
-    def test_format_learn_line_unknown_stage(self):
+    def test_given_unknown_stage_when_formatted_then_learn_line_returns_empty_string(self):
         """
         Scenario: Format learn line for unknown stage.
         Slice: cli-learn-color-ux
@@ -236,7 +236,7 @@ class TestFormatLearnLine:
         line = glossary.format_learn_line("unknown_stage")
         assert line == ""
 
-    def test_format_learn_line_is_single_line(self):
+    def test_given_all_stages_when_formatted_then_all_non_empty_learn_lines_are_single_line(self):
         """
         Scenario: Verify all non-empty learn lines are single lines.
         Slice: cli-learn-color-ux
@@ -259,7 +259,7 @@ class TestFormatLearnLine:
 class TestEmitDefine:
     """Test emit_define function."""
 
-    def test_emit_define_prints_once_when_unbriefed(self, capsys, monkeypatch):
+    def test_given_unbriefed_stage_when_emit_define_called_twice_then_prints_once(self, capsys, monkeypatch):
         """
         Scenario: emit_define prints once per term when NANOCHAT_STAGE_BRIEFED is not set.
         Slice: cli-learn-color-ux
@@ -292,7 +292,7 @@ class TestEmitDefine:
         assert "BPB" in first_output
         assert second_output == ""
 
-    def test_emit_define_noop_when_briefed(self, capsys, monkeypatch):
+    def test_given_nanochat_stage_briefed_set_when_emit_define_called_then_prints_nothing(self, capsys, monkeypatch):
         """
         Scenario: emit_define is a no-op when NANOCHAT_STAGE_BRIEFED=1.
         Slice: cli-learn-color-ux
@@ -314,7 +314,7 @@ class TestEmitDefine:
 
         assert captured.out == ""
 
-    def test_emit_define_different_terms(self, capsys, monkeypatch):
+    def test_given_unbriefed_stage_when_emit_define_called_for_different_terms_then_each_prints_once(self, capsys, monkeypatch):
         """
         Scenario: emit_define prints different terms on first call each.
         Slice: cli-learn-color-ux
@@ -342,7 +342,7 @@ class TestEmitDefine:
         assert "define:" in captured1.out
         assert "define:" in captured2.out
 
-    def test_emit_define_unknown_term_noop(self, capsys, monkeypatch):
+    def test_given_unbriefed_stage_when_emit_define_called_with_unknown_term_then_prints_nothing(self, capsys, monkeypatch):
         """
         Scenario: emit_define does nothing for unknown term.
         Slice: cli-learn-color-ux
