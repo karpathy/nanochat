@@ -1,8 +1,9 @@
-"""Periodic Volume commit during training: due-time and failure retry.
+"""Periodic Volume commit during training: due-time, failure retry, and daemon shutdown.
 
 Run: python -m pytest tests/test_periodic_commit.py -v
 """
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -60,3 +61,27 @@ def test_given_short_interval_when_periodic_commit_then_commits_each_interval():
     for now in range(0, 1201, 60):
         last = modal_run._periodic_commit(vol, last_commit=last, now=float(now), every_secs=60)
     assert vol.commits == 20
+
+
+def test_daemon_stops_when_stop_event_set(tmp_path):
+    """
+    Scenario: _commit_daemon exits its loop when stop_event is set.
+    Slice: modal_run._commit_daemon shutdown path
+    ### Given: a daemon thread and a stop event
+    ### When: stop_event is set immediately after the thread starts
+    ### Then: the thread terminates within 5 seconds
+    """
+    # ### Given
+    vol = _FakeVolume()
+    stop_event = threading.Event()
+    t = threading.Thread(
+        target=modal_run._commit_daemon,
+        args=(vol, str(tmp_path), 60.0, stop_event),
+        daemon=True,
+    )
+    # ### When
+    t.start()
+    stop_event.set()
+    # ### Then
+    t.join(timeout=5)
+    assert not t.is_alive()

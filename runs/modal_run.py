@@ -148,7 +148,12 @@ def _periodic_commit(volume: modal.Volume, last_commit: float, now: float, every
     return now - every_secs + PERIODIC_COMMIT_RETRY_SECS
 
 
-def _commit_daemon(volume: modal.Volume, base_dir: str, every_secs: float) -> None:
+def _commit_daemon(
+    volume: modal.Volume,
+    base_dir: str,
+    every_secs: float,
+    stop_event: threading.Event,
+) -> None:
     """
     Daemon thread: watch for commit requests, run vol.commit(), update heartbeat.
 
@@ -157,6 +162,7 @@ def _commit_daemon(volume: modal.Volume, base_dir: str, every_secs: float) -> No
       update heartbeat every 10s while commit runs.
     - On success: remove request file.
     - On failure: write .modal_commit_failed and leave request file.
+    - Exits its loop when stop_event is set.
     """
     heartbeat_file = os.path.join(base_dir, ".modal_commit_heartbeat")
     request_file = os.path.join(base_dir, ".modal_commit_request")
@@ -181,7 +187,7 @@ def _commit_daemon(volume: modal.Volume, base_dir: str, every_secs: float) -> No
         return result
 
     last_commit = time.time()
-    while True:
+    while not stop_event.is_set():
         # Check for request
         if os.path.exists(request_file):
             # Write initial heartbeat and start commit in background
@@ -191,7 +197,7 @@ def _commit_daemon(volume: modal.Volume, base_dir: str, every_secs: float) -> No
             def _run_commit(out: list[bool]) -> None:
                 out.extend(_commit_worker())
 
-            commit_thread = threading.Thread(target=_run_commit, args=(result_box,), daemon=False)
+            commit_thread = threading.Thread(target=_run_commit, args=(result_box,), daemon=True)
             commit_thread.start()
 
             # Update heartbeat every 10s until commit finishes
@@ -281,9 +287,10 @@ def _run_training(script: str, extra_env: dict[str, str], commit_every_secs: flo
         os.environ[key] = value
 
     # Start commit daemon in background
+    stop_event = threading.Event()
     daemon_thread = threading.Thread(
         target=_commit_daemon,
-        args=(vol, BASE_DIR, commit_every_secs),
+        args=(vol, BASE_DIR, commit_every_secs, stop_event),
         daemon=True,
     )
     daemon_thread.start()
@@ -315,6 +322,7 @@ def _run_training(script: str, extra_env: dict[str, str], commit_every_secs: flo
     if stop_requested:
         _terminate_group(proc)
     returncode = proc.wait()
+    stop_event.set()  # signal daemon to stop before cleanup and final commit
 
     # Clean up hook files BEFORE final commit
     for marker in [".modal_commit_request", ".modal_commit_failed", ".modal_commit_heartbeat"]:
