@@ -52,11 +52,16 @@
 - `nanochat.common.inductor_supports_device` / `maybe_torch_compile` — skip Inductor on MPS (echo lives in the helper)
 - `tests/test_compile_device.py` — eager-on-mps + AdamW/Muon dispatch + foreach-copy path
 - `tests/test_stage_completion_markers.sh` — `.train_ok` required for train SKIP
+- `tests/test_rotary_cache.py` — initial `sequence_len*10` cache + grow-on-demand
 
 **Changed**
 - `scripts/{base_train,chat_sft}.py` — compile via helper; step-0-only forward announce; write `.train_ok`
 - `nanochat/optim.py` — AdamW/Muon MPS float-scalar paths; no empty-params IndexError; foreach bypass
 - `nanochat/loss_eval.py` — val-bpb progress on non-CUDA only (CUDA stays quiet)
+- `nanochat/gpt.py` — grow RoPE cos/sin when `T0+T` exceeds cache (`sequence_len*10`, 2× buffer)
 - `runs/speedrun.sh` — hard `exit 1` without CUDA
 - `runs/_stage_lib.sh` — train SKIP via `.train_ok` (not any `model_*.pt`)
 - `docs/RUNNING.md` — `[compile]` legend row; CUDA/speedrun + marker docs
+
+**Deferred (parked)**
+- Softcap / logits memory (upstreamable gather-at-needed-positions vs fork `PROFILE_RUNCPU` knobs) — discussed in playgroup softcap/eval chat; not scheduled until a design is picked
