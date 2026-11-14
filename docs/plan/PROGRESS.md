@@ -37,6 +37,7 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | fix-forward-mac-phase2 | PASSED (merged) | [PR #6](https://github.com/neomatrix369/nanochat/pull/6) merged 2026-11-13 (`f8d7174` on master); Gate 4 APPROVED (software-craft, acceptance, solution-architect); ddd N/A; pytest defaults+memory 58p / suite 109p/18s |
 | fix-forward-mac-phase15 | PASSED (merged) | [PR #8](https://github.com/neomatrix369/nanochat/pull/8) merged 2026-11-13 (`3054e4a` on master); Gate 4 APPROVED (code-reviewer, critic, architect); pre-push 126p/18s; phase15 unit 17p; ddd N/A |
 | fix-mps-skip-inductor | PASSED (merged) | [PR #10](https://github.com/neomatrix369/nanochat/pull/10) merged 2026-11-14 (`f6ef779` on master); skip Inductor on MPS + MPS AdamW/Muon; progress flush; `.train_ok` + speedrun CUDA hard-fail; RoPE grow-on-demand (`22d1282`); Gate 4 polish |
+| modal-nanochat-minimum | IN-PROGRESS | Branch `feat/modal-nanochat-minimum`; plan [2026-11-14-modal-nanochat-minimum.md](2026-11-14-modal-nanochat-minimum.md). Streams: triple-mode shell (speedrun/_stage_lib/miniseries), Modal wrapper (runmodal.sh, modal_run.py, modal_hook.sh), docs, verify. Modal cloud path cannot be run from this machine (no account / billable). |
 
 ## Recent merges (Mac fix-forward track)
 

@@ -8,7 +8,7 @@ Canonical copy: [`docs/plan/2026-11-14-modal-nanochat-minimum.md`](2026-11-14-mo
 
 ### Implementation todos
 
-1. Triple-mode-safe shell: honor `NANOCHAT_BASE_DIR`; `SKIP_SETUP` + activate-if-`.venv`; `NANOCHAT_POST_STAGE_HOOK` no-op when unset
+1. Triple-mode-safe shell: honor `NANOCHAT_BASE_DIR`; `SKIP_SETUP` + always `source .venv/bin/activate`; `NANOCHAT_POST_STAGE_HOOK` no-op when unset
 2. `runs/runmodal.sh` + `runs/modal_run.py`: Modal sets env; timeouts; wait-for-ack; H100:8; volume get; chat tip
 3. README / `docs/MODAL.md` / RUNNING.md: three modes, cost, no SMOKE, env opt-in
 4. Verify: runcpu + bare speedrun unchanged when Modal env unset; Modal path with env set
@@ -37,7 +37,7 @@ This plan is the SSOT for the Modal thread **plus** critic fixes **plus** analys
 | Blocker | Modal default timeout 300s | Prefetch ≥1h, GPU ≥4h |
 | Blocker | SMOKE + 1×H100 vs nproc=8 | Drop SMOKE from MVP; do not document |
 | Blocker | Hook “signals parent” / touch≠durable | **Wait-for-ack** trigger file + daemon `vol.commit()` before next stage |
-| Major | SKIP_SETUP vs activate | Same flag name; **activate iff `.venv` exists** (proposed for all scripts; `miniseries.sh:25` does not guard it yet, see §8.1; Modal image has no `.venv` → PATH) |
+| Major | SKIP_SETUP vs activate | Same flag name; **always `source .venv/bin/activate`** under `SKIP_SETUP` (user decision 2026-11-14); the Modal image builds `/root/nanochat/.venv` |
 | Major | Image under-specified / cu128 mismatch | **debian_slim** + gpu `uv_sync`; ignore `.venv`/`.git`; **required** `PYTHONPATH` |
 | Major | Commit only at end | Per-stage wait-for-ack + final commit |
 | Major | Cost only in deep §10 | Cost on README blurb + `runmodal.sh` header |
@@ -86,7 +86,7 @@ flowchart TB
 **Takeaways for implementation:**
 
 1. **MVP = wrap `speedrun.sh` only** — end-to-end “train then chat”; one-command UX.
-2. **`SKIP_SETUP` flag name from miniseries** — semantics per **§0.1** (activate iff `.venv` exists).
+2. **`SKIP_SETUP` flag name from miniseries** — semantics per **§0.1** (always activate `.venv`).
 3. **speedrun keeps `nproc_per_node=8`** — no 1-GPU smoke in MVP.
 4. **Prefetch + skip-if-exists** — in-script `dataset -n` near-no-op after CPU prefetch.
 5. **miniseries/scaling_laws later** — same base-dir honor; never call them from runmodal MVP.
@@ -107,7 +107,7 @@ Edits to **existing** scripts (`speedrun.sh`, `runcpu.sh`, `_stage_lib.sh`, `min
 | Variable | Unset (local default) | Set (Modal / advanced) |
 |----------|----------------------|-------------------------|
 | `NANOCHAT_BASE_DIR` | `$HOME/.cache/nanochat` | Caller path (Volume or download cache) |
-| `SKIP_SETUP` | Install/venv/sync as today | Skip install/sync; **if `.venv` exists → activate** (local / miniseries); **if not → PATH** (Modal image) |
+| `SKIP_SETUP` | Install/venv/sync as today | Skip install/sync; **always `source .venv/bin/activate`** (the Modal image must provide `.venv`; no PATH fallback) |
 | `NANOCHAT_POST_STAGE_HOOK` | No-op | After successful stage; fail → delete marker |
 | `FORCE_STAGES` | Unchanged | Unchanged |
 
@@ -137,7 +137,7 @@ Forbidden: detect Modal via hostname/`/data`; import `modal` from `_stage_lib`/s
 
 | Question | Answer |
 |----------|--------|
-| Download and chat locally? | Yes — tokenizer + SFT → `NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python -m scripts.chat_cli` |
+| Download and chat locally? | Yes — tokenizer + SFT → `NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python3 -m scripts.chat_cli` |
 | Separate from Mac runs? | Yes — three distinct roots above |
 | Where do data files land? | Volume `…/base_data_climbmix/` (~170 shards / ~17GB); CPU prefetch |
 | Idempotent? | Yes at stage boundaries — `dataset.py` + `_stage_lib.sh` markers; re-run SKIPs finished stages. A kill mid-stage redoes that stage (no mid-train resume, §2). |
@@ -157,7 +157,7 @@ bash runs/runmodal.sh
 # → CPU prefetch 170 shards on Volume (commit)
 # → GPU H100:8 with SKIP_SETUP=1 bash runs/speedrun.sh (commit per stage)
 # → modal volume get tokenizer + chatsft_checkpoints → ~/.cache/nanochat-modal
-# → tip: NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python -m scripts.chat_cli -p "Why is the sky blue?"
+# → tip: NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python3 -m scripts.chat_cli -p "Why is the sky blue?"
 ```
 
 Prerequisites once: Modal account, `modal setup`, **8×H100** entitlement, local `modal` CLI (`pip install modal` or uv tool).
@@ -203,7 +203,7 @@ Chat minimum: `tokenizer/` + `chatsft_checkpoints/`. If SFT never finished, **do
 - Shards: skip-if-exists in [`nanochat/dataset.py`](nanochat/dataset.py).
 - Stages: markers in [`runs/_stage_lib.sh`](runs/_stage_lib.sh); `FORCE_STAGES` unchanged.
 - Prefetch + in-script `dataset -n` both OK if same Volume + base dir (second call no-ops).
-- **Invariant:** set `NANOCHAT_BASE_DIR` / `HF_HOME` in the process environment **before** any `python -m` (dataset binds `DATA_DIR` at import).
+- **Invariant:** set `NANOCHAT_BASE_DIR` / `HF_HOME` in the process environment **before** any `python3 -m` (dataset binds `DATA_DIR` at import).
 - **Commits:** after prefetch; **after each successful stage** (not only end). Mid-stage kill still loses the current stage (same as missing `.train_ok` locally).
 
 ## 7. Hardware and image
@@ -218,14 +218,14 @@ Chat minimum: `tokenizer/` + `chatsft_checkpoints/`. If SFT never finished, **do
 - Base: **`debian_slim` + Python 3.11** + `uv_sync(extras=["gpu"], frozen=True)` against lockfile (pytorch-cu128 wheels; Modal supplies host GPU drivers). Do **not** use `nvidia/cuda:12.4.1-devel` unless CUDA match with cu128 is proven.
 - Remote repo root: **`/root/nanochat`**. Last layer: `add_local_dir(".", remote_path="/root/nanochat", ignore=[".venv", ".git", "**/.pytest_cache", "**/__pycache__"])` so a local Mac cpu `.venv` cannot clobber the image.
 - Function `cwd="/root/nanochat"`. **`PYTHONPATH=/root/nanochat` required** (`uv_sync` is `--no-install-project`).
-- Invariant: image PATH already exposes that env’s `python` / `torchrun` without `source .venv`.
+- Invariant: the image provides `/root/nanochat/.venv` (gpu deps installed into it); `SKIP_SETUP=1` runs `source .venv/bin/activate`, so the venv must exist in the container.
 
 Timeouts (required):
 
 - Prefetch: `timeout=2*60*60` (raised from 1h: ~17 GB over HF can run slow; retry is cheap because shards skip-if-exist)
 - GPU: `timeout=4*60*60`
 
-`SKIP_SETUP=1` on speedrun: skip uv install / venv create / `uv sync`; then **activate `.venv` only if it exists**, else use PATH (Modal image). Aligns miniseries (has `.venv`) and Modal (no project `.venv`). Keep CUDA refuse-check + pipeline. Unset `SKIP_SETUP` = today’s full bootstrap (local GPU).
+`SKIP_SETUP=1` on speedrun: skip uv install / venv create / `uv sync`; then **always `source .venv/bin/activate`** (fails loudly if missing). The Modal image builds `/root/nanochat/.venv` so this holds there too. Keep CUDA refuse-check + pipeline. Unset `SKIP_SETUP` = today’s full bootstrap (local GPU).
 
 Volume: `modal.Volume.from_name("nanochat-modal", create_if_missing=True)` mounted at `/data/nanochat-modal` (= `NANOCHAT_BASE_DIR`).
 
@@ -235,13 +235,13 @@ CPU only for prefetch (I/O). FLOPs on GPU.
 
 ### 8.1 Shell changes
 
-Honor pre-set base dir (same default) in [`runs/speedrun.sh`](runs/speedrun.sh) only (MVP). `runcpu.sh` and `miniseries.sh` are untouched until those scripts move onto Modal (§0 "later"). `miniseries.sh` needs the same guard now, not later: its `SKIP_SETUP` branch (`runs/miniseries.sh:25`) runs `source .venv/bin/activate` unconditionally. Replace it with `[ -d .venv ] && source .venv/bin/activate` so the semantics match speedrun.sh and a future Modal miniseries run does not fail on the missing `.venv`:
+Honor pre-set base dir (same default) in [`runs/speedrun.sh`](runs/speedrun.sh) only (MVP). `runcpu.sh` and `miniseries.sh` are untouched until those scripts move onto Modal (§0 "later"). `miniseries.sh` already runs `source .venv/bin/activate` unconditionally in its `SKIP_SETUP` branch (`runs/miniseries.sh:25`), which matches the always-activate rule; it only needs the `NANOCHAT_BASE_DIR` default change:
 
 ```bash
 export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
 ```
 
-In `speedrun.sh`: if `SKIP_SETUP=1`, skip uv/venv create/`uv sync`; if `.venv` exists then activate, else use PATH. Still run CUDA check + pipeline. Unset = full bootstrap (local GPU unchanged).
+In `speedrun.sh`: if `SKIP_SETUP=1`, skip uv/venv create/`uv sync`; always `source .venv/bin/activate`. Still run CUDA check + pipeline. Unset = full bootstrap (local GPU unchanged).
 
 In [`runs/_stage_lib.sh`](runs/_stage_lib.sh) `run_stage`:
 
@@ -297,12 +297,12 @@ Both Modal functions: identical Volume name/mount, `NANOCHAT_BASE_DIR`, `HF_HOME
 - **Three modes in docs:** local CPU (`runcpu`), local GPU (`speedrun`), Modal (`runmodal`) — existing script edits are env opt-in (§0.1).
 - **New users (MODAL.md):** prerequisites, cost + first-bake, one command, chat tip, idempotent re-runs, Modal ≠ runcpu.
 - **Existing Mac / bare-metal GPU users:** `runcpu` / `speedrun` unchanged when Modal env unset; caches do not collide.
-- **RUNNING.md §9:** pre-set `NANOCHAT_BASE_DIR`; `SKIP_SETUP` (activate iff `.venv`); `NANOCHAT_POST_STAGE_HOOK` no-op when unset; link MODAL.md.
+- **RUNNING.md §9:** pre-set `NANOCHAT_BASE_DIR`; `SKIP_SETUP` (always activate `.venv`); `NANOCHAT_POST_STAGE_HOOK` no-op when unset; link MODAL.md.
 
 ## 9. Verification
 
 1. Prefetch and GPU jobs run past Modal’s default 300s timeout: the job log shows prefetch elapsed > 300s and exit 0.
-2. **Chat (Goal 2):** after a successful run, on a Mac with only the `runcpu` venv, `NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python -m scripts.chat_cli -p "Why is the sky blue?"` returns a non-empty response.
+2. **Chat (Goal 2):** after a successful run, on a Mac with only the `runcpu` venv, `NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python3 -m scripts.chat_cli -p "Why is the sky blue?"` returns a non-empty response.
 3. Second `runmodal`: shard skips + stage SKIPs; download refreshes local chat dir.
 4. **Local CPU:** with Modal env unset, `bash runs/runcpu.sh` still uses default bootstrap + `~/.cache/nanochat` (smoke: script starts / SKIP logic; full train optional).
 5. **Local GPU:** with Modal env unset, `bash runs/speedrun.sh` still runs uv/venv/sync + activate (dry-check or short path); no accidental `SKIP_SETUP`/hook.

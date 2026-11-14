@@ -89,6 +89,16 @@ Get it to write stories or poems. Ask it to tell you who you are to see a halluc
 > Where every hue seems to sing a story.<br>
 > ...
 
+## Training methods
+
+| Method | Command | Hardware | Time | Cost |
+|--------|---------|----------|------|------|
+| **Local CPU/MPS** | `bash runs/runcpu.sh` | Mac or CPU machine | ~1 hour | Free |
+| **Local GPU** | `bash runs/speedrun.sh` | 8×H100 bare metal | ~1.5–2 hours | $40–60 (yours) |
+| **Cloud GPU (Modal)** | `bash runs/runmodal.sh` | Modal 8×H100 | ~1.5–2 hours | ~$40–60 (first run higher) |
+
+The **Cloud GPU** option trains on Modal's H100 cluster without requiring local hardware. Cost and time are similar to bare-metal training, but you pay Modal instead of running your own infrastructure. For details, prerequisites, and how to use the trained model locally afterward, see [docs/MODAL.md](docs/MODAL.md).
+
 A few more notes:
 
 - The code will run just fine on the Ampere 8XA100 GPU node as well, but a bit slower.
