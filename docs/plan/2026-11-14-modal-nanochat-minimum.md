@@ -26,6 +26,7 @@ This plan is the SSOT for the Modal thread **plus** critic fixes **plus** analys
 | [Planner/PO](89c54e49-98ac-4d22-8869-1854f51c57e3) | **REQUEST_CHANGES** → applied | Cost on README/`runmodal.sh` header; §9 SFT-fail check |
 | [Document-specialist](5f95a40b-add2-49a8-859c-4112f22eb616) | **APPROVE** | Diataxis howto OK; polish: no-SMOKE + SKIP_SETUP in MODAL.md |
 | nWave specialized reviewers | Quota-blocked | Criteria covered via architect/PO/docs/critic stand-ins |
+| nWave product-owner-reviewer (2026-11-14) | **REQUEST_CHANGES** → applied | Hook-failure rule no longer deletes the tokenizer artifact; chat prerequisites + observable check; spend confirmation; docs and knob-leak verification; time/disk disclosure; MVP trimmed to speedrun.sh only |
 
 ### Fixes applied (all rounds)
 
@@ -137,7 +138,7 @@ Forbidden: detect Modal via hostname/`/data`; import `modal` from `_stage_lib`/s
 | Download and chat locally? | Yes — tokenizer + SFT → `NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python -m scripts.chat_cli` |
 | Separate from Mac runs? | Yes — three distinct roots above |
 | Where do data files land? | Volume `…/base_data_climbmix/` (~170 shards / ~17GB); CPU prefetch |
-| Idempotent? | Yes — `dataset.py` + `_stage_lib.sh` markers; re-run SKIPs finished work |
+| Idempotent? | Yes at stage boundaries — `dataset.py` + `_stage_lib.sh` markers; re-run SKIPs finished stages. A kill mid-stage redoes that stage (no mid-train resume, §2). |
 | One command? | `bash runs/runmodal.sh` |
 | Avoid 3h CPU? | Yes — always 8×H100 speedrun; never runcpu on Modal |
 | Do script edits break local CPU/GPU? | **No** — §0.1: Modal opts are env-only; unset = today’s `runcpu` / bare `speedrun` |
@@ -158,6 +159,20 @@ bash runs/runmodal.sh
 ```
 
 Prerequisites once: Modal account, `modal setup`, **8×H100** entitlement, local `modal` CLI (`pip install modal` or uv tool).
+
+Prerequisites for **chatting locally** (the tip at the end needs these; Modal alone is not enough):
+- Local Python env with torch: `uv sync --extra cpu` (same as `runcpu.sh`).
+- Downloaded chat artifacts: `tokenizer/` + `chatsft_checkpoints/` (several GB; exact size measured on first run and recorded here).
+- Enough free RAM to load the checkpoint on CPU.
+
+Time, disk, and cost you should expect:
+- Wall-clock: ~1.5–2 h training, plus prefetch and image build. Keep the laptop awake; the run is attached (`screen`/`tmux` recommended, as in RUNNING.md).
+- Volume disk: ~17 GB for ClimbMix shards plus checkpoints.
+- Cost: ~$40–60 (first run higher because of image build and compile).
+
+Spend control and stopping:
+- `runmodal.sh` shows the cost estimate and asks `Proceed? [y/N]` before any billable step. `RUNMODAL_YES=1` skips the prompt for scripted use.
+- Stopping: `Ctrl-C` stops the local client. Confirm the remote job is stopped with `modal app list` and `modal app stop <app>` before assuming billing has ended. (Verify this on the first real run and update this line with what actually happened.)
 
 ```mermaid
 flowchart LR
@@ -205,7 +220,7 @@ Chat minimum: `tokenizer/` + `chatsft_checkpoints/`. If SFT never finished, **do
 
 Timeouts (required):
 
-- Prefetch: `timeout=60*60`
+- Prefetch: `timeout=2*60*60` (raised from 1h: ~17 GB over HF can run slow; retry is cheap because shards skip-if-exist)
 - GPU: `timeout=4*60*60`
 
 `SKIP_SETUP=1` on speedrun: skip uv install / venv create / `uv sync`; then **activate `.venv` only if it exists**, else use PATH (Modal image). Aligns miniseries (has `.venv`) and Modal (no project `.venv`). Keep CUDA refuse-check + pipeline. Unset `SKIP_SETUP` = today’s full bootstrap (local GPU).
@@ -218,7 +233,7 @@ CPU only for prefetch (I/O). FLOPs on GPU.
 
 ### 8.1 Shell changes
 
-Honor pre-set base dir (same default) in [`runs/speedrun.sh`](runs/speedrun.sh), [`runs/runcpu.sh`](runs/runcpu.sh), and [`runs/miniseries.sh`](runs/miniseries.sh):
+Honor pre-set base dir (same default) in [`runs/speedrun.sh`](runs/speedrun.sh) only (MVP). `runcpu.sh` and `miniseries.sh` are untouched until those scripts move onto Modal (§0 "later"):
 
 ```bash
 export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
@@ -229,7 +244,9 @@ In `speedrun.sh`: if `SKIP_SETUP=1`, skip uv/venv create/`uv sync`; if `.venv` e
 In [`runs/_stage_lib.sh`](runs/_stage_lib.sh) `run_stage`:
 
 - On **SKIP**: do not run hook.
-- On **success**: if `NANOCHAT_POST_STAGE_HOOK` is set, run it. If the hook fails: **delete that stage’s success marker**, then fail the stage (non-zero) so a re-run does not false-SKIP without a durable Volume commit.
+- On **success**: if `NANOCHAT_POST_STAGE_HOOK` is set, run it. If the hook fails:
+  - For **pure marker** stages (`tok_eval`, `base_train`, `base_eval`, `chat_sft`, `chat_eval`): delete that stage’s success marker, then fail the stage (non-zero) so a re-run does not false-SKIP without a durable Volume commit.
+  - For **`tok_train`**: do **not** delete anything. Its "marker" is `tokenizer/tokenizer.pkl` (`runs/_stage_lib.sh:58`), the real artifact. Fail the stage and tell the user to re-run with `FORCE_STAGES=tok_train`.
 - Hook unset: no-op (local unchanged).
 
 **Concrete Modal hook recipe (wait-for-ack — required):**
@@ -238,7 +255,7 @@ In [`runs/_stage_lib.sh`](runs/_stage_lib.sh) `run_stage`:
 2. Protocol:
    - Hook (via `bash -c`, after stage markers written): write `$NANOCHAT_BASE_DIR/.modal_commit_request`, then **poll until** that file is gone (or until `.modal_commit_failed` appears) with a timeout.
    - Daemon: on request file → `vol.commit()` → on success **remove** request file; on failure write `.modal_commit_failed` and leave request (or clear after marking failed).
-3. Hook returns non-zero if commit fails / times out → `_stage_lib` **deletes stage marker** and fails the stage.
+3. Hook returns non-zero if commit fails / times out → `_stage_lib` applies the §8.1 rule (delete pure markers; never delete `tokenizer.pkl`) and fails the stage.
 4. Next stage must not start until the prior hook returns success (wait-for-ack barrier).
 5. After speedrun subprocess exits: final `vol.commit()`; clear leftover request/failed files.
 6. Modal background volume commits are a **safety net only** — not a substitute for this barrier or §9.6.
@@ -271,8 +288,8 @@ Both Modal functions: identical Volume name/mount, `NANOCHAT_BASE_DIR`, `HF_HOME
 
 ## 9. Verification
 
-1. Prefetch + GPU jobs do not die with Modal’s default 300s timeout.
-2. Successful run leaves chat files under `~/.cache/nanochat-modal`; printed tip works for `chat_cli`.
+1. Prefetch and GPU jobs run past Modal’s default 300s timeout: the job log shows prefetch elapsed > 300s and exit 0.
+2. **Chat (Goal 2):** after a successful run, on a Mac with only the `runcpu` venv, `NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python -m scripts.chat_cli -p "Why is the sky blue?"` returns a non-empty response.
 3. Second `runmodal`: shard skips + stage SKIPs; download refreshes local chat dir.
 4. **Local CPU:** with Modal env unset, `bash runs/runcpu.sh` still uses default bootstrap + `~/.cache/nanochat` (smoke: script starts / SKIP logic; full train optional).
 5. **Local GPU:** with Modal env unset, `bash runs/speedrun.sh` still runs uv/venv/sync + activate (dry-check or short path); no accidental `SKIP_SETUP`/hook.
@@ -281,9 +298,14 @@ Both Modal functions: identical Volume name/mount, `NANOCHAT_BASE_DIR`, `HF_HOME
 8. Image does not full-rebuild torch layer on code-only edits.
 9. If `chatsft_checkpoints` missing after remote run: non-zero exit, **no** success tip.
 10. `_stage_lib` with `NANOCHAT_POST_STAGE_HOOK` unset: zero overhead / no-op (runcpu + local speedrun).
+11. **Hook failure keeps artifacts (§8.1):** inject a commit failure at `tok_train`; the run exits non-zero and `tokenizer/tokenizer.pkl` still exists. Re-run with `FORCE_STAGES=tok_train` recovers.
+12. **Entitlement fails early (§10):** with no 8×H100 entitlement, the run fails before the prefetch step starts any billable work.
+13. **Docs (Goal 5):** README shows the cost line at the Modal pointer; `runmodal.sh` prints cost and asks before launching anything billable; `docs/MODAL.md` has prerequisites, cost, one command, chat tip; no SMOKE path is documented.
+14. **Cache isolation (Goal 3):** after a Modal run, `~/.cache/nanochat` mtime is unchanged.
+15. **Knob isolation (Goal 9):** the GPU job log shows only `SPEEDRUN_*` profile knobs; no `RUNCPU_*` values reach the job.
 
 ## 10. Cost / ops (docs)
 
 - Full: ~$40–60 at ~$3/GPU/hr × 8 × ~1.5–2h; **first run higher** (image bake + compile).
 - Wandb optional via Modal Secret; default dummy/disabled.
-- H100 queue / entitlement failures: fail clearly at start.
+- H100 queue / entitlement failures: fail clearly at start (verified by §9.12).
