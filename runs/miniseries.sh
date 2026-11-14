@@ -15,6 +15,8 @@ if [ -z "$SKIP_SETUP" ]; then
     command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
     [ -d ".venv" ] || uv venv
     uv sync --extra gpu
+    # activate venv before running python3 commands
+    source .venv/bin/activate
 
     # Tokenizer, download 1000 shards for pretraining
     # (probably this can be reduced but it's tricky to determine the exact right number, TODO).
@@ -22,7 +24,7 @@ if [ -z "$SKIP_SETUP" ]; then
     python3 -m scripts.tok_train --max-chars=2000000000 --vocab-size=32768
 fi
 # activate venv (always happens; .venv must exist in SKIP_SETUP mode)
-set +u; source .venv/bin/activate; set -u
+source .venv/bin/activate
 
 # Series name: from arg, env var, or default to today's date (e.g., jan11)
 SERIES_NAME="${1:-${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}}"

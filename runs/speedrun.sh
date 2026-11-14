@@ -104,12 +104,12 @@ run_stage base_eval "device_batch_size=$SPEEDRUN_EVAL_DEVICE_BATCH_SIZE" "chat_s
 # run SFT and eval the model
 run_stage chat_sft "" "chat_eval (or SKIP if .eval_ok)" -- \
     torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
-run_stage chat_eval "" "chat with your model (python -m scripts.chat_cli)" -- \
+run_stage chat_eval "" "chat with your model (python3 -m scripts.chat_cli)" -- \
     torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 
 log "ALL DONE cumulative=$(fmt_dur "$SECONDS")"
 write_last_run_json "$PROFILE" "$SPEEDRUN_DEPTH" "$SPEEDRUN_DEVICE_BATCH_SIZE" "$SPEEDRUN_MAX_SEQ_LEN"
-echo '  try: python -m scripts.chat_cli -p "Why is the sky blue?"'
+echo '  try: python3 -m scripts.chat_cli -p "Why is the sky blue?"'
 
 # chat with the model over CLI! Leave out the -p to chat interactively
-# python -m scripts.chat_cli -p "Why is the sky blue?"
+# python3 -m scripts.chat_cli -p "Why is the sky blue?"

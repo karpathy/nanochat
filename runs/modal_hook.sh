@@ -19,16 +19,19 @@ POLL_INTERVAL=2  # seconds between checks
 # Delete any stale heartbeat (from prior stage)
 rm -f "$HEARTBEAT_FILE"
 
+# Delete any stale failed file (from prior stage)
+rm -f "$FAILED_FILE"
+
 # Write request to wake up the daemon
 mkdir -p "$BASE_DIR"
 touch "$REQUEST_FILE"
 
 # Poll loop
-start_time=$SECONDS
-last_heartbeat_time=$SECONDS
+start_time=$(date +%s)
 
 while true; do
-    elapsed=$((SECONDS - start_time))
+    now=$(date +%s)
+    elapsed=$((now - start_time))
 
     # Check if daemon succeeded (request file removed)
     if [ ! -f "$REQUEST_FILE" ]; then
@@ -50,13 +53,11 @@ while true; do
     # Check idle limit (no heartbeat update)
     if [ -f "$HEARTBEAT_FILE" ]; then
         heartbeat_mtime=$(stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null || stat -f %m "$HEARTBEAT_FILE" 2>/dev/null || echo "0")
-        now=$SECONDS
         idle=$((now - heartbeat_mtime))
         if [ "$idle" -gt "$IDLE_LIMIT" ]; then
             echo "ERROR: commit hook timeout (idle limit $IDLE_LIMIT s exceeded; no heartbeat update; elapsed=$elapsed)" >&2
             exit 1
         fi
-        last_heartbeat_time=$now
     fi
 
     sleep "$POLL_INTERVAL"

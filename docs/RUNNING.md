@@ -150,14 +150,21 @@ Root-causing NaN beyond warn/abort is out of scope for Phase 1.
 
 ## 9. Controls
 
-| Variable | Effect | Example |
-|----------|--------|---------|
-| `FORCE_STAGES` | Redo stages even if artifacts exist. `all` or a comma-list of stage names. Never `=1`. | `FORCE_STAGES=tok_train,base_train bash runs/runcpu.sh` |
-| `NANOCHAT_BASE_DIR` | Where artifacts live for the Python scripts and checkpoint lookups. Default `~/.cache/nanochat`. | `NANOCHAT_BASE_DIR=/tmp/nc python -m scripts.chat_cli -p "hi"` |
-| `NANOCHAT_MEMORY_FIT_MARGIN` | Fraction of available device memory the auto-fit estimate may use (default `0.6`). See [section 11](#11-memory--oom). | `NANOCHAT_MEMORY_FIT_MARGIN=0.5 bash runs/runcpu.sh` |
-| `WANDB_RUN` | Weights & Biases run name. Unset means `dummy` (no logging). | `WANDB_RUN=mytest bash runs/runcpu.sh` |
+| Variable | Effect | Notes |
+|----------|--------|-------|
+| `FORCE_STAGES` | Redo stages even if artifacts exist. `all` or a comma-list of stage names. Never `=1`. | Example: `FORCE_STAGES=tok_train,base_train bash runs/runcpu.sh` |
+| `NANOCHAT_BASE_DIR` | Where artifacts live for the Python scripts and checkpoint lookups. Default `~/.cache/nanochat`. | Can be pre-set before the script. Modal sets this to `/data/nanochat-modal` internally; see [docs/MODAL.md](MODAL.md) for cloud training. Example: `NANOCHAT_BASE_DIR=/tmp/nc python -m scripts.chat_cli -p "hi"` |
+| `SKIP_SETUP` | When set to `1`, skip `uv install`/venv create/`uv sync`. Always `source .venv/bin/activate` (the venv must exist). | Used by Modal (image provides `.venv`); also useful for CI or reproducible runs. Unset = full bootstrap (default local behavior). |
+| `NANOCHAT_POST_STAGE_HOOK` | Bash script/command run after each successful stage. No-op when unset (local runs unchanged). | Used by Modal to coordinate Volume commits via wait-for-ack. Example: `NANOCHAT_POST_STAGE_HOOK="bash /path/to/hook.sh" bash runs/speedrun.sh`. The hook must be an executable path or a simple command (not a bare string with quotes). |
+| `NANOCHAT_MEMORY_FIT_MARGIN` | Fraction of available device memory the auto-fit estimate may use (default `0.6`). See [section 11](#11-memory--oom). | Example: `NANOCHAT_MEMORY_FIT_MARGIN=0.5 bash runs/runcpu.sh` |
+| `WANDB_RUN` | Weights & Biases run name. Unset means `dummy` (no logging). | Example: `WANDB_RUN=mytest bash runs/runcpu.sh` |
 
-Caveat: `runcpu.sh` and `speedrun.sh` set `NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"` themselves, so setting it before them has no effect. It is for running individual Python scripts by hand. If you change the dir by hand, keep it the same across all stages.
+**Key invariants:**
+
+- `runcpu.sh` and `speedrun.sh` set `NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"` themselves when unset, so pre-setting has no effect on those scripts directly. Pre-set it for running individual Python scripts by hand. If you change the dir by hand, keep it the same across all stages.
+- `SKIP_SETUP=1` always activates `.venv` (fails loudly if missing). The Modal image provides `.venv` with GPU deps pre-installed; local GPU training with `SKIP_SETUP=1` requires you to build `.venv` first.
+- `NANOCHAT_POST_STAGE_HOOK` is a no-op when unset (existing local runs are unchanged). Modal uses this internally for Volume persistence.
+- **Modal training:** see [docs/MODAL.md](MODAL.md) for the full cloud training guide, including how these variables interact on remote jobs.
 
 ## 10. Common failure shapes
 

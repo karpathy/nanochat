@@ -12,12 +12,9 @@ Set NANOCHAT_BASE_DIR in environment before any python -m calls.
 
 import os
 import subprocess
-import sys
 import threading
 import time
-from pathlib import Path
 
-# Modal SDK: Load only when imported inside Modal functions, not at module level.
 import modal
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -28,29 +25,54 @@ app = modal.App(name="nanochat-speedrun")
 # Shared Volume: mounted at /data/nanochat-modal
 vol = modal.Volume.from_name("nanochat-modal", create_if_missing=True)
 
-# Base image: debian_slim + python 3.11 + deps + code + .venv
+# Base image: debian_slim + python 3.11 + uv + deps + code + .venv
 image = (
     modal.Image.debian_slim(python_version="3.11")
+    .pip_install("uv")
+    .add_local_file("pyproject.toml", remote_path="/root/nanochat/pyproject.toml", copy=True)
+    .add_local_file("uv.lock", remote_path="/root/nanochat/uv.lock", copy=True)
+    .run_commands("cd /root/nanochat && uv sync --no-install-project --extra gpu --frozen")
     .add_local_dir(
         ".",
         remote_path="/root/nanochat",
         ignore=[".venv", ".git", "**/.pytest_cache", "**/__pycache__"],
     )
-    .run_commands("cd /root/nanochat && uv sync --extra gpu --frozen")
+    .env(
+        {
+            "PATH": "/root/nanochat/.venv/bin:/usr/local/bin:/usr/bin:/bin",
+            "PYTHONPATH": "/root/nanochat",
+        }
+    )
 )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Environment helpers
+
+
+def _modal_env(base_dir: str) -> dict[str, str]:
+    """Build the Modal environment dict for subprocess calls."""
+    return {
+        "NANOCHAT_BASE_DIR": base_dir,
+        "HF_HOME": os.path.join(base_dir, "hf_home"),
+        "SKIP_SETUP": "1",
+        "NANOCHAT_POST_STAGE_HOOK": "bash /root/nanochat/runs/modal_hook.sh",
+        "PYTHONPATH": "/root/nanochat",
+    }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Wait-for-ack daemon (runs in background during GPU function)
 
 
-def _commit_daemon(volume: modal.Volume, base_dir: str, modal_hook_path: str) -> None:
+def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
     """
     Daemon thread: watch for commit requests, run vol.commit(), update heartbeat.
 
     Protocol:
     - On .modal_commit_request file: write heartbeat, run commit in worker thread,
-      update heartbeat every 10s while commit runs, remove request on success.
-    - On failure: write .modal_commit_failed.
+      update heartbeat every 10s while commit runs.
+    - On success: remove request file.
+    - On failure: write .modal_commit_failed and leave request file.
     """
     heartbeat_file = os.path.join(base_dir, ".modal_commit_heartbeat")
     request_file = os.path.join(base_dir, ".modal_commit_request")
@@ -58,46 +80,62 @@ def _commit_daemon(volume: modal.Volume, base_dir: str, modal_hook_path: str) ->
     heartbeat_interval = 10  # seconds between heartbeat updates
 
     def _write_heartbeat() -> None:
-        """Write current timestamp to heartbeat file."""
         try:
             with open(heartbeat_file, "w") as f:
                 f.write(str(int(time.time())))
         except Exception as e:
-            print(f"[daemon] WARNING: failed to write heartbeat: {e}")
+            print(f"[daemon] WARNING: heartbeat write failed: {e}")
 
-    def _commit_worker() -> bool:
-        """Run vol.commit() in a worker thread, return success."""
+    def _commit_worker() -> list[bool]:
+        result = [False]
         try:
             volume.commit()
-            return True
+            result[0] = True
         except Exception as e:
-            print(f"[daemon] ERROR: volume.commit() failed: {e}")
-            return False
+            print(f"[daemon] ERROR: commit failed: {e}")
+        return result
 
     while True:
         # Check for request
         if os.path.exists(request_file):
             # Write initial heartbeat and start commit in background
             _write_heartbeat()
-            commit_thread = threading.Thread(target=_commit_worker, daemon=False)
+            result_box: list[bool] = []
+
+            def _run_commit(out: list[bool]) -> None:
+                out.extend(_commit_worker())
+
+            commit_thread = threading.Thread(target=_run_commit, args=(result_box,), daemon=False)
             commit_thread.start()
 
             # Update heartbeat every 10s until commit finishes
+            last_heartbeat = time.time()
             while commit_thread.is_alive():
                 time.sleep(1)
-                # Don't spam heartbeat too often; update every 10s
-                if time.time() % heartbeat_interval < 1:
+                now = time.time()
+                if now - last_heartbeat >= heartbeat_interval:
                     _write_heartbeat()
+                    last_heartbeat = now
 
             # Commit finished; check success
             commit_thread.join()
+            success = result_box[0] if result_box else False
 
-            # Remove request on success (hook checks this to know we're done)
-            try:
-                os.remove(request_file)
-                print("[daemon] commit succeeded, request removed")
-            except FileNotFoundError:
-                pass
+            if success:
+                # Remove request on success (hook checks this to know we're done)
+                try:
+                    os.remove(request_file)
+                    print("[daemon] commit succeeded, request removed")
+                except FileNotFoundError:
+                    pass
+            else:
+                # Write failure marker and leave request file
+                try:
+                    with open(failed_file, "w") as f:
+                        f.write(str(int(time.time())))
+                    print("[daemon] commit failed, marker written")
+                except Exception as e:
+                    print(f"[daemon] WARNING: failed to write failure marker: {e}")
         else:
             # No request yet; sleep and retry
             time.sleep(0.5)
@@ -107,21 +145,18 @@ def _commit_daemon(volume: modal.Volume, base_dir: str, modal_hook_path: str) ->
 # Prefetch function (CPU only)
 
 
-@app.function(timeout=2 * 60 * 60, volumes={"/data/nanochat-modal": vol})
+@app.function(timeout=2 * 60 * 60, volumes={"/data/nanochat-modal": vol}, image=image)
 def prefetch() -> None:
     """CPU prefetch: download ClimbMix shards via dataset -n 170, commit."""
-    os.environ["NANOCHAT_BASE_DIR"] = "/data/nanochat-modal"
-    os.environ["HF_HOME"] = "/data/nanochat-modal/hf_home"
+    base_dir = "/data/nanochat-modal"
+    modal_env = _modal_env(base_dir)
 
     print("[prefetch] Starting dataset prefetch (170 shards)...")
     result = subprocess.run(
         ["python3", "-m", "nanochat.dataset", "-n", "170"],
         cwd="/root/nanochat",
-        env={
-            **os.environ,
-            "NANOCHAT_BASE_DIR": "/data/nanochat-modal",
-            "HF_HOME": "/data/nanochat-modal/hf_home",
-        },
+        env={**os.environ, **modal_env},
+        check=False,
     )
 
     if result.returncode != 0:
@@ -148,17 +183,14 @@ def train() -> None:
 
     # Set environment: Modal hooks and stage markers go in Volume
     base_dir = "/data/nanochat-modal"
-    os.environ["NANOCHAT_BASE_DIR"] = base_dir
-    os.environ["HF_HOME"] = os.path.join(base_dir, "hf_home")
-    os.environ["SKIP_SETUP"] = "1"
-    os.environ["NANOCHAT_POST_STAGE_HOOK"] = "bash /root/nanochat/runs/modal_hook.sh"
-    os.environ["PYTHONPATH"] = "/root/nanochat"
+    modal_env = _modal_env(base_dir)
+    for key, value in modal_env.items():
+        os.environ[key] = value
 
     # Start commit daemon in background
-    modal_hook_path = "/root/nanochat/runs/modal_hook.sh"
     daemon_thread = threading.Thread(
         target=_commit_daemon,
-        args=(vol, base_dir, modal_hook_path),
+        args=(vol, base_dir),
         daemon=True,
     )
     daemon_thread.start()
@@ -169,27 +201,20 @@ def train() -> None:
     result = subprocess.run(
         ["bash", "runs/speedrun.sh"],
         cwd="/root/nanochat",
-        env={
-            **os.environ,
-            "NANOCHAT_BASE_DIR": base_dir,
-            "HF_HOME": os.path.join(base_dir, "hf_home"),
-            "SKIP_SETUP": "1",
-            "NANOCHAT_POST_STAGE_HOOK": "bash /root/nanochat/runs/modal_hook.sh",
-            "PYTHONPATH": "/root/nanochat",
-        },
+        env={**os.environ, **modal_env},
+        check=False,
     )
 
-    # Always commit final state (even if speedrun failed)
-    print("[train] Speedrun complete (exit code {}); final volume commit...".format(result.returncode))
-    vol.commit()
-
-    # Clean up any leftover hook files
-    for marker_file in [".modal_commit_request", ".modal_commit_failed", ".modal_commit_heartbeat"]:
-        path = os.path.join(base_dir, marker_file)
+    # Clean up hook files BEFORE final commit
+    for marker in [".modal_commit_request", ".modal_commit_failed", ".modal_commit_heartbeat"]:
         try:
-            os.remove(path)
+            os.remove(os.path.join(base_dir, marker))
         except FileNotFoundError:
             pass
+
+    # Always commit final state (even if speedrun failed)
+    print(f"[train] Speedrun complete (exit code {result.returncode}); final volume commit...")
+    vol.commit()
 
     # Re-raise if speedrun failed
     if result.returncode != 0:
@@ -202,59 +227,31 @@ def train() -> None:
 
 @app.local_entrypoint()
 def main() -> None:
-    """Orchestrate prefetch, train, and local download."""
     print("═" * 80)
     print("nanochat on Modal: prefetch → train → download")
     print("═" * 80)
-
-    # Step 1: CPU prefetch
     print("\n[local] Step 1: CPU prefetch 170 shards...")
     prefetch.remote()
-
-    # Step 2: GPU train
     print("[local] Step 2: GPU train 8×H100...")
     train.remote()
-
-    # Step 3: Download artifacts to local cache
-    print("\n[local] Step 3: Downloading chat artifacts to ~/.cache/nanochat-modal...")
-
+    print("\n[local] Step 3: Downloading chat artifacts...")
     cache_dir = os.path.expanduser("~/.cache/nanochat-modal")
     os.makedirs(cache_dir, exist_ok=True)
-
-    # Define what to download from Volume
-    downloads = [
-        ("/tokenizer", os.path.join(cache_dir, "tokenizer")),
-        ("/chatsft_checkpoints", os.path.join(cache_dir, "chatsft_checkpoints")),
-    ]
-
-    # Modal volume get via subprocess (since we're in local entrypoint)
-    for remote_path, local_path in downloads:
-        print(f"  → {remote_path} → {local_path}")
-        cmd = ["modal", "volume", "get", "nanochat-modal", remote_path, local_path]
-        result = subprocess.run(cmd)
-        if result.returncode != 0:
-            print(f"ERROR: failed to download {remote_path}", file=sys.stderr)
-            raise RuntimeError(f"volume get failed for {remote_path}")
-
-    # Verify artifacts exist
-    tokenizer_path = os.path.join(cache_dir, "tokenizer")
-    checkpoints_path = os.path.join(cache_dir, "chatsft_checkpoints")
-
+    for remote, local in [("/tokenizer", f"{cache_dir}/tokenizer"), ("/chatsft_checkpoints", f"{cache_dir}/chatsft_checkpoints")]:
+        print(f"  → {remote} → {local}")
+        if subprocess.run(["modal", "volume", "get", "nanochat-modal", remote, local, "--force"], check=False).returncode:
+            raise RuntimeError(f"volume get failed for {remote}")
+    tokenizer_path, checkpoints_path = f"{cache_dir}/tokenizer", f"{cache_dir}/chatsft_checkpoints"
     if not os.path.exists(tokenizer_path) or not os.path.exists(checkpoints_path):
-        print(
-            "ERROR: SFT training did not complete; chat artifacts missing.",
-            file=sys.stderr,
-        )
-        raise RuntimeError("missing required chat artifacts (SFT training incomplete)")
-
-    # Step 4: Print local chat tip
-    print("\n" + "═" * 80)
+        raise RuntimeError("SFT incomplete: missing tokenizer or checkpoints")
+    model_files = [f for f in os.listdir(checkpoints_path) if f.startswith("model_") and f.endswith(".pt")]
+    if not model_files:
+        raise RuntimeError("SFT incomplete: no model checkpoints")
+    print(f"[local] Found {len(model_files)} checkpoint(s)\n" + "═" * 80)
     print("SUCCESS: training complete and artifacts downloaded.")
     print("═" * 80)
     print("\nTo chat locally, run:")
-    print(
-        f"  NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python3 -m scripts.chat_cli -p \"Why is the sky blue?\""
-    )
+    print("  NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python3 -m scripts.chat_cli -p \"Why is the sky blue?\"")
     print("\nSee docs/MODAL.md for details.")
 
 

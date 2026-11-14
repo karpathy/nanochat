@@ -268,6 +268,9 @@ run_stage() {
                     echo "  Hook failed; re-run with FORCE_STAGES=tok_train to retry" >&2
                     exit 1
                     ;;
+                *)
+                    exit 1
+                    ;;
             esac
         fi
     fi
