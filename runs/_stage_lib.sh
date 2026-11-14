@@ -156,7 +156,7 @@ health_strip() {
 # Knob diff vs $NANOCHAT_BASE_DIR/last_run.json (silent if missing). Args: profile depth batch seq.
 print_knob_diff() {
     local line
-    line="$(python -m nanochat.last_run diff \
+    line="$(python3 -m nanochat.last_run diff \
         --path "$NANOCHAT_BASE_DIR/last_run.json" \
         --profile "$1" --depth "$2" \
         --device-batch-size "$3" --max-seq-len "$4" 2>/dev/null || true)"
@@ -166,7 +166,7 @@ print_knob_diff() {
 
 # Persist knobs after successful ALL DONE. Args: profile depth batch seq.
 write_last_run_json() {
-    python -m nanochat.last_run write \
+    python3 -m nanochat.last_run write \
         --path "$NANOCHAT_BASE_DIR/last_run.json" \
         --profile "$1" --depth "$2" \
         --device-batch-size "$3" --max-seq-len "$4" 2>/dev/null || true
@@ -177,7 +177,7 @@ write_last_run_json() {
 # Text SSOT: nanochat/run_tip.py (unit-tested).
 print_run_tip() {
     local tip
-    tip="$(python -m nanochat.run_tip 2>/dev/null || true)"
+    tip="$(python3 -m nanochat.run_tip 2>/dev/null || true)"
     [ -n "$tip" ] && echo "  $tip"
     return 0
 }
@@ -252,6 +252,26 @@ run_stage() {
     echo "$elapsed" > "$STAGE_ELAPSED_DIR/$stage"
 
     log "DONE stage=$stage elapsed=$(fmt_dur "$elapsed") cumulative=$(fmt_dur "$SECONDS")"
+
+    # Run post-stage hook if set (e.g., Modal commit coordination)
+    if [ -n "${NANOCHAT_POST_STAGE_HOOK:-}" ]; then
+        if ! eval "$NANOCHAT_POST_STAGE_HOOK"; then
+            log "FAIL stage=$stage reason=NANOCHAT_POST_STAGE_HOOK failed"
+            # Delete marker for pure marker stages; for tok_train, don't delete the real artifact
+            case "$stage" in
+                tok_eval|base_train|base_eval|chat_sft|chat_eval)
+                    rm -f "$(stage_path "$stage")"
+                    echo "  Deleted marker $(stage_path "$stage") due to hook failure" >&2
+                    exit 1
+                    ;;
+                tok_train)
+                    echo "  Hook failed; re-run with FORCE_STAGES=tok_train to retry" >&2
+                    exit 1
+                    ;;
+            esac
+        fi
+    fi
+
     # Single enrichment line (next + optional wrote: + mem snapshot).
     case "$stage" in
         tok_train|base_train|chat_sft)

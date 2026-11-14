@@ -18,7 +18,7 @@ set -euo pipefail
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
-export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
+export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
 mkdir -p "$NANOCHAT_BASE_DIR"
 PROFILE=speedrun
 source "$(dirname "${BASH_SOURCE[0]}")/_stage_lib.sh"
@@ -28,17 +28,20 @@ source "$(dirname "${BASH_SOURCE[0]}")/profiles.sh"
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
 
-# install uv (if not already installed)
-command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-# create a .venv local virtual environment (if it doesn't exist)
-[ -d ".venv" ] || uv venv
-# install the repo dependencies
-uv sync --extra gpu
-# activate venv so that `python` uses the project's venv instead of system python
+# Python venv setup: if SKIP_SETUP is set, skip uv/venv/sync (expect .venv to exist)
+if [ -z "${SKIP_SETUP:-}" ]; then
+    # install uv (if not already installed)
+    command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+    # create a .venv local virtual environment (if it doesn't exist)
+    [ -d ".venv" ] || uv venv
+    # install the repo dependencies
+    uv sync --extra gpu
+fi
+# activate venv (always happens; .venv must exist)
 set +u; source .venv/bin/activate; set -u
 
 # Hard refuse on non-CUDA: speedrun launches 8-way depth-24 training that can wedged a laptop (OOM / kernel panic).
-if ! python -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+if ! python3 -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
     log "ERROR no CUDA device detected; speedrun expects 8xH100. Use: bash runs/runcpu.sh (Mac/CPU). See docs/RUNNING.md §1/§10"
     exit 1
 fi
@@ -70,18 +73,18 @@ print_run_tip
 # so we download 2e9 / 250e6 = 8 data shards at this point
 # each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
 # look at dev/repackage_data_reference.py for details on how this data was prepared
-python -m nanochat.dataset -n 8
+python3 -m nanochat.dataset -n 8
 # Immediately also kick off downloading more shards in the background while tokenizer trains
 # Approximately 150 shards are needed for GPT-2 capability pretraining, add 20 for padding.
 # The maximum total number of shards available in the entire dataset is 6542.
-python -m nanochat.dataset -n 170 &
+python3 -m nanochat.dataset -n 170 &
 DATASET_DOWNLOAD_PID=$!
 # train the tokenizer with vocab size 2**15 = 32768 on ~2B characters of data
 run_stage tok_train "" "tok_eval (or SKIP if .tok_eval_ok)" -- \
-    python -m scripts.tok_train
+    python3 -m scripts.tok_train
 # evaluate the tokenizer (report compression ratio etc.)
 run_stage tok_eval "" "base_train (or SKIP if checkpoints exist)" -- \
-    python -m scripts.tok_eval
+    python3 -m scripts.tok_eval
 
 # -----------------------------------------------------------------------------
 # Base model (pretraining)
