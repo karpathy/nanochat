@@ -63,8 +63,6 @@ Only two actions pass the filter:
    local runs hit, and the plan already marks it as a follow-up PR. Skip it if SFT restarts are
    acceptable, since SFT is about 10 minutes locally.
 
-Dropped as not worth doing now: a local concurrency guard (gap 4), and any refactor of the
-Modal wrapper.
 
 ## Step A: end-to-end mid-train resume test (base_train, local)
 

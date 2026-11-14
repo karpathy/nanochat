@@ -8,7 +8,7 @@ Starting question: can CPU and GPU Modal runs run at the same time? Answer: not 
 
 | Item | State | Where |
 |---|---|---|
-| Launch guard in `runmodal.sh` | Done, pushed, PR #24 open | branch `fix/runmodal-concurrency-guard`, commits `6f93b3d`, `c927d63` |
+| Launch guard in `runmodal.sh` | Done, merged (PRs #24, #25) | branch `fix/runmodal-concurrency-guard`, commits `6f93b3d`, `c927d63` |
 | `docs/MODAL.md` "Runtime config and environment" section | Written, **uncommitted** on the same branch's working tree | `docs/MODAL.md` (after Prerequisites) |
 | Hardware and software requirements | Trimmed: local install and torch and dtype now link to README instead of repeating it | `docs/MODAL.md` |
 | Accelerator capture in run record | Idea only | `nanochat/run_record.py`, `nanochat/memory.py` |

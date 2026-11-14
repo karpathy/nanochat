@@ -1,6 +1,6 @@
 # Plan: resume after interruption for every stage
 
-Status: proposed. Branch: `feat/checkpoint-mid-train-resume` (PR #26). Owner: Mani Sarkar.
+Status: implemented on PR #26 (open). `base_train` resume and time-based save are in code; not yet verified end to end. `chat_sft` resume is planned in `docs/plan/2026-11-14-local-resume-and-guard.md`. Branch: `feat/checkpoint-mid-train-resume`. Owner: Mani Sarkar.
 
 ## Goal
 
