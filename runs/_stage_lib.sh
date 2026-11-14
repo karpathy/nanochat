@@ -51,14 +51,15 @@ stage_forced() {
     return 1
 }
 
-# The artifact (file or directory) whose presence means the stage already ran.
+# The artifact whose presence means the stage finished cleanly (file markers for train/eval).
+# Train stages use .train_ok (not "any model_*.pt") so a partial/probe checkpoint cannot SKIP.
 stage_path() {
     case "$1" in
         tok_train)  echo "$NANOCHAT_BASE_DIR/tokenizer/tokenizer.pkl" ;;
         tok_eval)   echo "$NANOCHAT_BASE_DIR/tokenizer/.tok_eval_ok" ;;
-        base_train) echo "$NANOCHAT_BASE_DIR/base_checkpoints" ;;
+        base_train) echo "$NANOCHAT_BASE_DIR/base_checkpoints/.train_ok" ;;
         base_eval)  echo "$NANOCHAT_BASE_DIR/base_checkpoints/.eval_ok" ;;
-        chat_sft)   echo "$NANOCHAT_BASE_DIR/chatsft_checkpoints" ;;
+        chat_sft)   echo "$NANOCHAT_BASE_DIR/chatsft_checkpoints/.train_ok" ;;
         chat_eval)  echo "$NANOCHAT_BASE_DIR/chatsft_checkpoints/.eval_ok" ;;
     esac
 }
@@ -66,14 +67,7 @@ stage_path() {
 stage_done() {
     local p
     p="$(stage_path "$1")"
-    case "$1" in
-        base_train|chat_sft)
-            [ -n "$(find "$p" -name 'model_*.pt' -print 2>/dev/null | head -n 1)" ]
-            ;;
-        *)
-            [ -f "$p" ]
-            ;;
-    esac
+    [ -f "$p" ]
 }
 
 stage_purpose() {
@@ -230,6 +224,13 @@ run_stage() {
     log "START stage=$stage profile=$PROFILE${knobs:+ $knobs} ETA: not yet knowable"
     # One packed enrichment line (purpose + health) — Phase 1 sparsity discipline.
     echo "  purpose: $(stage_purpose "$stage") · $(health_strip)" || true
+
+    # Drop stale success markers before a real run so a crashed FORCE/redo cannot SKIP as "done".
+    case "$stage" in
+        tok_eval|base_train|base_eval|chat_sft|chat_eval)
+            rm -f "$(stage_path "$stage")"
+            ;;
+    esac
 
     local t0=$SECONDS rc=0 elapsed
     "$@" || rc=$?

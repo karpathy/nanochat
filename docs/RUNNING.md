@@ -16,7 +16,7 @@ How-to first (§1–4, §8–10), then reference (§5–6, §9). Kept in one L2 
 ## 1. Pick a script
 
 - **`bash runs/runcpu.sh`** — small demo (depth 6) for Mac / CPU / MPS; use this on a laptop.
-- **`bash runs/speedrun.sh`** — the GPT-2-grade run, built for a blank 8xH100 CUDA node; it warns (but continues) if no CUDA is found.
+- **`bash runs/speedrun.sh`** — the GPT-2-grade run, built for a blank 8xH100 CUDA node; **exits with ERROR** if no CUDA is found (use `runcpu.sh` on a laptop — a Mac speedrun can thrash memory hard enough to reboot).
 - **`runs/miniseries.sh` / `runs/scaling_laws.sh`** — multi-run sweeps for researchers; they are not part of the fix-forward flow described here.
 
 ## 2. First run expectations
@@ -49,15 +49,16 @@ A stage is skipped when its artifact already exists. Paths are relative to `$NAN
 |-------|--------------------------|------------|
 | `tok_train` | `tokenizer/tokenizer.pkl` | `scripts/tok_train.py` |
 | `tok_eval` | `tokenizer/.tok_eval_ok` | end of `scripts/tok_eval.py` (and touched by the shell on success) |
-| `base_train` | any `base_checkpoints/**/model_*.pt` | `scripts/base_train.py` checkpoint saves |
+| `base_train` | `base_checkpoints/.train_ok` | end of `scripts/base_train.py` (rank 0) |
 | `base_eval` | `base_checkpoints/.eval_ok` | end of `scripts/base_eval.py` |
-| `chat_sft` | any `chatsft_checkpoints/**/model_*.pt` | `scripts/chat_sft.py` checkpoint saves |
+| `chat_sft` | `chatsft_checkpoints/.train_ok` | end of `scripts/chat_sft.py` (rank 0) |
 | `chat_eval` (speedrun only) | `chatsft_checkpoints/.eval_ok` | end of `scripts/chat_eval.py` |
 
 Notes:
 
-- Markers are written **last**, after a clean finish. A crashed eval leaves no marker, so it re-runs.
-- `base_train` skips as soon as *any* `model_*.pt` exists, including a partial one from an interrupted run. To retrain, force it.
+- Markers are written **last**, after a clean finish. A crashed train/eval leaves no marker (or the shell clears it at the next `START`), so the stage re-runs. A stray `model_*.pt` from a probe or interrupt is **not** enough to SKIP.
+- Upgrading from older skip-on-`model_*.pt` behavior: if you already finished train and want to keep SKIP without redoing it, `touch "$NANOCHAT_BASE_DIR/base_checkpoints/.train_ok"` (and the chatsft equivalent if needed).
+- Mid-train resume is still manual (`--resume-from-step=N` on `scripts/base_train.py`); the shell pipeline resumes at the **stage** boundary only.
 - `nanochat.dataset -n 8` runs every time; it only downloads missing shards.
 - Per-stage timings are saved in `$NANOCHAT_BASE_DIR/.stage_elapsed/` so a later `SKIP` can report time saved.
 
@@ -167,7 +168,8 @@ Caveat: `runcpu.sh` and `speedrun.sh` set `NANOCHAT_BASE_DIR="$HOME/.cache/nanoc
 | `ERROR: 5 consecutive NaN losses` | Numerical blow-up | See [section 8](#8-nan-troubleshooting). |
 | Out-of-memory / MPS allocator failure during train | Batch too large for device RAM | Check for an `[auto-fit]` line; see [section 11](#11-memory--oom). Do not treat this as NaN. |
 | `Device mps not supported` / `BackendCompilerFailed` (Inductor) | `torch.compile` ran on MPS (old build) | Re-run on a build that skips compile on MPS ([section 7](#7-mac--intel-torch)); you should see `[compile] … adjusted=eager`. |
-| `WARN no CUDA device detected` (speedrun) | Wrong script for this machine | Use `runs/runcpu.sh`. |
+| `ERROR no CUDA device detected` (speedrun, exit 1) | Wrong script for this machine | Use `bash runs/runcpu.sh`. Do not override; speedrun is 8xH100-only. |
+| Train stage re-runs despite `model_*.pt` on disk | No `.train_ok` marker (partial/probe/interrupted run, or pre-marker upgrade) | Let it retrain, or `touch …/base_checkpoints/.train_ok` only if you know train finished cleanly. |
 
 The missing-checkpoint error is almost always a **symptom**: scroll up to the first `FAIL`, because the checkpoint was never produced.
 
