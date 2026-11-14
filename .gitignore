@@ -20,3 +20,6 @@ wandb/
 .worktrees/
 
 gate-evidence/
+
+.coverage
+.reports/
