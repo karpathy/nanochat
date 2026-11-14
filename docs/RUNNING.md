@@ -22,7 +22,7 @@ How-to first (§1–4, §8–10), then reference (§5–6, §6b, §9). Kept in o
 - Run from the repo root. The script creates `.venv` and runs `uv sync` if needed.
 - It prints a `pipeline:` map first, then one `START` … `DONE` block per stage.
 - `runcpu.sh` was tuned to take roughly an hour on a MacBook Pro M3 Max (tokenizer ~minutes, base training ~30 min, SFT ~10 min). Slower machines take longer. Results are a demo, not a useful chatbot.
-- ETA reads `not yet knowable` at `START`. That is deliberate: nothing is estimated before the first train step.
+- ETA reads `ETA: unknown until first train step` at `START`. That is deliberate: nothing is estimated before the first train step.
 - Everything is written under `~/.cache/nanochat` (override: [`NANOCHAT_BASE_DIR`](#9-controls)).
 
 ## 3. The fix-forward loop
@@ -77,7 +77,7 @@ Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the p
 
 | Kind | Shape | Meaning |
 |------|-------|---------|
-| START | `[HH:MM:SS] START stage=base_train profile=runcpu depth=6 device_batch_size=8 ETA: not yet knowable` | Stage begins. Profile and key knobs are shown. |
+| START | `[HH:MM:SS] START stage=base_train profile=runcpu depth=6 device_batch_size=8 ETA: unknown until first train step` | Stage begins. Profile and key knobs are shown. |
 | DONE | `[HH:MM:SS] DONE stage=base_train elapsed=71m cumulative=2h45m` | Stage finished; time for this stage and for the whole script run so far. |
 | SKIP | `[HH:MM:SS] SKIP stage=tok_train reason=artifact exists path=... (FORCE_STAGES=tok_train to redo)` | Artifact found; nothing ran. |
 | FORCE | `[HH:MM:SS] FORCE stage=tok_train reason=FORCE_STAGES=tok_train` | Artifact exists but you asked to redo it. |
@@ -91,7 +91,7 @@ Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the p
 
 | Form | When |
 |------|------|
-| `ETA: not yet knowable` | At `START`. Becomes knowable only after the first train step. |
+| `ETA: unknown until first train step` | At `START`. Becomes knowable only after the first train step. |
 | `ETA: ~Xm remaining (step i/N, avg dt=…)` | Planned for the train loop once timing exists. |
 | `ETA: n/a (skipped)` | On `SKIP` lines. |
 

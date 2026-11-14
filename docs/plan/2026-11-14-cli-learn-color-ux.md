@@ -45,6 +45,7 @@ Verified against the tree at `master` (edfb3d3, post PR #18 and #20).
 - **Two color helpers, not merged.** `ColoredFormatter` in `common.py` serves `logging` records. `nanochat/term_style.py` serves direct `print` / shell ANSI output. Different concerns, so no shared code.
 - **Trend color lives at the call site.** `emit_metric_trend` takes a `print_fn`. The `base_train` caller passes a color-aware wrapper. `metrics_trend.py` does not import `term_style`.
 - **Contract is frozen.** Do not change `START` / `DONE` / `SKIP` / `FAIL` / `FORCE` tokens, field order, or wording in `runs/_stage_lib.sh`. Color and plaques are added around them.
+- **Contract revision (ETA wording).** The `START` line's ETA text changed from `ETA: not yet knowable` to `ETA: unknown until first train step`. The `ETA:` token and field position are unchanged, so greps on `ETA:` still match. Reason: the old phrase read like a bug to new runners. Recorded here so the frozen-contract rule stays auditable.
 
 ## Goals and acceptance (measurable)
 
