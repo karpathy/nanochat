@@ -70,6 +70,7 @@ from nanochat.memory import (
     training_module_after_oom_rehalve,
 )
 from nanochat.metrics_trend import emit_metric_trend
+from nanochat.glossary import emit_define
 from nanochat.run_record import make_run_logger
 from nanochat.term_style import paint
 from nanochat.tokenizer import get_token_bytes, get_tokenizer
