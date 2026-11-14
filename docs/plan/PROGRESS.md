@@ -39,6 +39,9 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | 2026-11-14 | resume-all-stages | Work order: data-position fix, then wording, then `chat_sft` resume, then local lock, then daemon cleanup | Must items first; the wording claim depends on the fix; daemon cleanup is Could |
 | 2026-11-14 | resume-all-stages | Master warning `70ce9e2` stays open until the user picks revert or force-push | Changing `master` needs the user's choice; revert is the safer default |
 | 2026-11-14 | docs | Trackers track one backlog in `TRAIL.md`, ordered by rank with MoSCoW | Stale PR and Step A statuses had hidden open work; one ordered list shows what to do next |
+| 2026-11-14 | modal-nanochat-minimum | Modal CPU mode runs first; GPU phase waits for a payment method and a separate go-ahead | HANDOFF: GPU needs billing set up at Modal; the CPU run proves the pipeline for less money |
+| 2026-11-14 | modal-guard-hardware-capture | CPU and GPU Modal runs must not run at once; the launch guard blocks it | Both mount the shared Volume `nanochat-modal`, so stage markers, archives and commits collide |
+| 2026-11-14 | resume-all-stages | Checkpoint and resume logic has one owner shared by local and Modal runs | Verified in the session plan `can-we-check-if-shimmering-storm`; Modal adds only the commit daemon, so no second copy to keep in sync |
 ## Slice states
 
 | slice_id | state | evidence |
