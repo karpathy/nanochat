@@ -102,6 +102,20 @@ The script shows cost and time estimates before charging anything and asks for c
 
 ## One command
 
+**Pre-flight check — run this first:**
+
+```bash
+modal app list
+```
+
+Confirm all `nanochat-*` apps show a non-null `stopped_at`. The run guard refuses to launch if another nanochat run is live (to avoid accidental double-billing). If you see a `nanochat-*` app with `stopped_at` empty, stop it first:
+
+```bash
+modal app stop <app-id>
+```
+
+Then launch:
+
 ```bash
 bash runs/runmodal.sh                 # CPU mode (default)
 MODE=gpu bash runs/runmodal.sh        # GPU mode
@@ -122,6 +136,25 @@ RUNMODAL_YES=1 bash runs/runmodal.sh
 ```
 
 Each run gets an id (`<UTC time>-<mode>`). Its archive and run record are on the Volume under `runs/<run-id>/`. To check a run from the terminal without changing it, use `bash runs/modal_peek.sh` (commands are listed in the script's header: `status`, `apps`, `past`, `report`, `compare`, `pull`, `info`, `logs`, `container`, `cost`).
+
+## Watching the run
+
+Keep your terminal visible (or use `tmux attach`). Key signals to look for in the log:
+
+| Signal | What it means |
+|--------|--------------|
+| `NANOCHAT_BASE_DIR=/data/nanochat-modal` | Volume path is set correctly in the container |
+| `OMP_NUM_THREADS=<N>` | Actual core count the container received; confirms the CPU spec was accepted |
+| Per-step loss lines from `base_train` | Training is progressing; note the step/sec rate for PROGRESS.md |
+| `.train_ok` written | Base train finished and saved its marker; eval stage can start |
+| `SKIP` on a stage line | That stage's marker already exists; re-run is picking up where it left off |
+| `modal volume get …` progress bar | Download of tokenizer and SFT checkpoint to your laptop underway |
+
+**If the machine spec is rejected** (Modal returns a resource error for 64 cores / 128 GiB), lower `cpu=64` and `memory=131072` in `runs/modal_run.py` and re-run.
+
+**If the run exceeds the timeout** and is killed mid-stage, re-run as normal — finished stages SKIP and only the interrupted stage reruns from the start of that stage (no mid-training resume yet).
+
+After the run completes, record the actual core count, wall-clock time per stage, and total cost in `docs/MODAL.md` (the "Cost and time" section above) and in `docs/plan/PROGRESS.md`.
 
 ## What happens inside
 
