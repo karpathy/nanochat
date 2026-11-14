@@ -6,10 +6,8 @@ Created: 2026-11-14
 Scope: Unit tests for term catalog, STAGE_TERMS mapping, and learn line formatting.
 """
 
-import os
 import re
 from pathlib import Path
-import pytest
 
 from nanochat import glossary
 
@@ -252,10 +250,10 @@ class TestFormatLearnLine:
         ### Then
         Each non-empty line has no newlines.
         """
-        for stage in glossary.STAGE_TERMS.keys():
+        for stage in glossary.STAGE_TERMS:
             line = glossary.format_learn_line(stage)
             if line:
-                assert "\n" not in line, f"Stage '{stage}' returned multi-line: {repr(line)}"
+                assert "\n" not in line, f"Stage '{stage}' returned multi-line: {line!r}"
 
 
 class TestEmitDefine:

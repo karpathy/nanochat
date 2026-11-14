@@ -6,7 +6,6 @@ Created: 2026-11-14
 Scope: Unit tests for ASCII art plaque renderer and CLI.
 """
 
-import pytest
 
 from nanochat import stage_art
 
@@ -172,7 +171,7 @@ class TestRenderPlaque:
 
         # Check that all characters are ASCII (ord < 128)
         for char in clean:
-            assert ord(char) < 128, f"Non-ASCII character found: {repr(char)} (ord={ord(char)})"
+            assert ord(char) < 128, f"Non-ASCII character found: {char!r} (ord={ord(char)})"
 
     def test_given_render_plaque_when_called_then_contains_border_characters(self, monkeypatch):
         """

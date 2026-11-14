@@ -70,7 +70,7 @@ def render_plaque(
     line2_text = line2_text.ljust(content_width)
     line2 = f"| {line2_text} |"
 
-    return "\n".join([border, line1, line2, border])
+    return f"{border}\n{line1}\n{line2}\n{border}"
 
 
 def main() -> None:

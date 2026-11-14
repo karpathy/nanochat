@@ -10,7 +10,6 @@ Scope: ANSI color helper for direct print output (not logging records).
 
 import os
 import sys
-from typing import Literal
 
 # ANSI color codes
 _ANSI_CODES = {
@@ -36,10 +35,7 @@ def enabled() -> bool:
     if not sys.stdout.isatty():
         return False
 
-    if "NO_COLOR" in os.environ:
-        return False
-
-    return True
+    return "NO_COLOR" not in os.environ
 
 
 def paint(role: str, text: str) -> str:

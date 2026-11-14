@@ -13,10 +13,10 @@ Scope: Glossary catalog and stage-term mapping for CLI learning output.
 import argparse
 import os
 import sys
-from typing import Callable, Dict, Tuple
+from collections.abc import Callable
 
 # Term catalog: term_key -> (short_definition, url)
-GLOSSARY: Dict[str, Tuple[str, str]] = {
+GLOSSARY: dict[str, tuple[str, str]] = {
     "BPE": (
         "Byte Pair Encoding: a compression algorithm that learns the vocabulary of frequent byte sequences in text.",
         "docs/RUNNING.md#6b-terms"
@@ -57,7 +57,7 @@ GLOSSARY: Dict[str, Tuple[str, str]] = {
 
 # Stage to term keys mapping. Each stage maps to a tuple of term keys (max 4 per stage).
 # base_train has the max: BPB, Muon, MFU, FLOPs = 4 terms.
-STAGE_TERMS: Dict[str, Tuple[str, ...]] = {
+STAGE_TERMS: dict[str, tuple[str, ...]] = {
     "tok_train": ("BPE", "vocab", "compression ratio"),
     "tok_eval": ("compression ratio",),
     "base_train": ("BPB", "Muon", "MFU", "FLOPs"),

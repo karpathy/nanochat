@@ -6,7 +6,6 @@ Created: 2026-11-14
 Scope: Unit tests for ANSI color helpers enabled() and paint().
 """
 
-import pytest
 
 from nanochat import term_style
 
