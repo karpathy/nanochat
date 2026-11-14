@@ -64,13 +64,13 @@ When someone reads a console or log, each stage boundary is visible without scro
 
 **Could** (listed in the plan, not promised for this slice)
 - `scripts/tok_train.py`, `scripts/tok_eval.py`, `scripts/chat_sft.py`: color key lines and define lines.
-- `scripts/base_eval.py`: replace the three `print0("="*80)` headers (lines 190, 224, 250) with stage-art section frames.
 - `scripts/chat_cli.py`: welcome plaque, `User:` / `Assistant:` label colors.
 - RUNNING "Example stage block" diagram (§6b neighbour).
 
 **Won't** (this slice)
 - A separate script-start banner in shell (`base_train` already prints one).
 - Routing `print_banner()` through `stage_art` (no second owner for the banner).
+- Rewriting `scripts/base_eval.py` bare `print0("="*80)` headers (lines 190, 224, 250) into stage-art section frames. Output is already readable, and the rewrite changes existing script output.
 - Changing contract wording or field order, per-train-step output, tip rotation, giant figlet, heartbeat or ETA work, Web UI.
 - Full DIVIO restructure into `docs/tutorials|howto|…` (single L2 RUNNING stays).
 
@@ -112,7 +112,7 @@ Each step is one reviewable commit on `feat/cli-learn-color-ux`. Run `uv run pyt
 
 - **Modal path shares `_stage_lib.sh`.** `runs/runmodal.sh` runs through `tee`, so color stays off and the archived `run.log` is plain. The plaques will appear in `run.log` too. Confirm the Modal tests (`tests/test_runmodal_mode.py`) still pass in step 2.
 - **Define gating depends on the env var.** If a future script runs a stage without `run_stage`, it will print `define:` lines. That is intended: it is the standalone case.
-- **`base_eval` headers are Could.** They are three bare `====` lines today. Leaving them as-is is acceptable for this slice.
+- **`base_eval` headers are Won't this slice.** They stay as three bare `====` lines. Changing them would alter existing script output.
 
 ## Out of scope
 
