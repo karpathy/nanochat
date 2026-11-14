@@ -97,6 +97,7 @@ def _modal_env(base_dir: str) -> dict[str, str]:
         "SKIP_SETUP": "1",
         "NANOCHAT_POST_STAGE_HOOK": "bash /root/nanochat/runs/modal_hook.sh",
         "PYTHONPATH": "/root/nanochat",
+        "NO_COLOR": "1",
     }
 
 

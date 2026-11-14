@@ -93,3 +93,20 @@ def test_gpu_mode_passes_gpu_and_shows_gpu_cost(fake_modal: tuple[Path, Path]) -
     assert argv[:4] == ["run", "runs/modal_run.py", "--mode", "gpu"]
     assert "GPU mode" in result.stdout
     assert "8×H100" in result.stdout
+
+
+def test_given_modal_env_when_modal_run_then_no_color_set() -> None:
+    """
+    Scenario: _modal_env() includes NO_COLOR=1 to disable color in container.
+    Slice: NO_COLOR ensures plain text in archived logs.
+    """
+    # ### Given
+    from runs.modal_run import _modal_env
+
+    # ### When
+    env = _modal_env("/base/dir")
+
+    # ### Then
+    assert env["NO_COLOR"] == "1"
+    assert env["NANOCHAT_BASE_DIR"] == "/base/dir"
+    assert env["PYTHONPATH"] == "/root/nanochat"

@@ -4,6 +4,32 @@
 #           health_strip, print_knob_diff, write_last_run_json, print_run_tip.
 # Echo contract: docs/plan/2026-11-13-fix-forward-mac.md ("Echo contract"); legend: docs/RUNNING.md.
 # Requires the caller to have set NANOCHAT_BASE_DIR and PROFILE, and `set -euo pipefail`.
+# Color and plaque helpers (gated on TTY and NO_COLOR).
+
+# True if color should be applied (stdout is TTY and NO_COLOR unset).
+_term_color_enabled() {
+    [ -z "${NO_COLOR:-}" ] && [ -z "${NANOCHAT_PLAIN:-}" ] && [ -t 1 ]
+}
+
+# Paint text with color for a role (START/DONE/SKIP/FAIL/FORCE).
+_paint() {
+    local role="$1" text="$2"
+    _term_color_enabled || { echo "$text"; return; }
+    case "$role" in
+        START|FORCE) printf "\033[1;36m%s\033[0m\n" "$text" ;;
+        DONE) printf "\033[1;32m%s\033[0m\n" "$text" ;;
+        SKIP) printf "\033[2;33m%s\033[0m\n" "$text" ;;
+        FAIL) printf "\033[1;31m%s\033[0m\n" "$text" ;;
+        *) echo "$text" ;;
+    esac
+}
+
+# Print ASCII plaque for a stage (suppressed if NANOCHAT_PLAIN=1).
+_print_plaque() {
+    local stage="$1" kind="$2" subtitle="$3"
+    [ -z "${NANOCHAT_PLAIN:-}" ] || return 0
+    python3 -m nanochat.stage_art plaque --stage "$stage" --kind "$kind" --subtitle "$subtitle" 2>/dev/null || true
+}
 
 STAGE_KNOWN="tok_train tok_eval base_train base_eval chat_sft chat_eval"
 STAGE_ELAPSED_DIR="$NANOCHAT_BASE_DIR/.stage_elapsed"
@@ -182,15 +208,19 @@ write_last_run_json() {
 # Exactly one tip: line per script invocation (call once at script start).
 # Text SSOT: nanochat/run_tip.py (unit-tested).
 print_run_tip() {
-    local tip
+    local tip prefix
     tip="$(python3 -m nanochat.run_tip 2>/dev/null || true)"
-    [ -n "$tip" ] && echo "  $tip"
+    if [ -n "$tip" ]; then
+        prefix="tip:"
+        _term_color_enabled && prefix="$(printf '\033[1;36m%s\033[0m' "$prefix")"
+        echo "  $prefix $tip"
+    fi
     return 0
 }
 
 # pipeline_map "tok:tok_train base:base_train eval:base_eval ..." -> one line, first pending stage is ▶
 pipeline_map() {
-    local out="" seen_pending=0 item label stage mark
+    local out="" seen_pending=0 item label stage mark prefix
     for item in "$@"; do
         label="${item%%:*}"; stage="${item#*:}"
         if stage_done "$stage" && ! stage_forced "$stage"; then
@@ -202,7 +232,9 @@ pipeline_map() {
         fi
         out="$out[$label$mark] "
     done
-    echo "pipeline: ${out% }"
+    prefix="pipeline:"
+    _term_color_enabled && prefix="$(printf '\033[1;36m%s\033[0m' "$prefix")"
+    echo "$prefix ${out% }"
 }
 
 # run_stage STAGE "KNOBS" "NEXT" -- command...
@@ -222,14 +254,20 @@ run_stage() {
                 saved_note="skip-saved: ~$(fmt_dur "$prev") (last run) · cumulative_saved=~$(fmt_dur "$SAVED_TOTAL")"
             fi
             log "SKIP stage=$stage reason=artifact exists path=$(stage_path "$stage") (FORCE_STAGES=$stage to redo)"
-            echo "  $saved_note · ETA: n/a (skipped)"
+            local skip_line="  $saved_note · ETA: n/a (skipped)"
+            _paint "SKIP" "$skip_line"
             return 0
         fi
     fi
 
-    log "START stage=$stage profile=$PROFILE${knobs:+ $knobs} ETA: not yet knowable"
+    _print_plaque "$stage" start "$(stage_purpose "$stage")"
+    _paint "START" "$(log "START stage=$stage profile=$PROFILE${knobs:+ $knobs} ETA: not yet knowable")"
     # One packed enrichment line (purpose + health) — Phase 1 sparsity discipline.
     echo "  purpose: $(stage_purpose "$stage") · $(health_strip)" || true
+    # Learn line after purpose (empty string suppresses the output).
+    local learn_line
+    learn_line="$(python3 -m nanochat.glossary learn --stage "$stage" 2>/dev/null || true)"
+    [ -n "$learn_line" ] && echo "  $learn_line"
 
     # Drop stale success markers before a real run so a crashed FORCE/redo cannot SKIP as "done".
     case "$stage" in
@@ -240,12 +278,13 @@ run_stage() {
 
     local t0=$SECONDS rc=0 elapsed t0_epoch
     t0_epoch=$(date +%s)
-    "$@" || rc=$?
+    NANOCHAT_STAGE_BRIEFED=1 "$@" || rc=$?
     elapsed=$((SECONDS - t0))
 
     if [ "$rc" -ne 0 ]; then
         record_span "$stage" fail "$elapsed" 0 "$t0_epoch"
-        log "FAIL stage=$stage elapsed=$(fmt_dur "$elapsed") hint=exit code $rc; fix and re-run the same command (finished stages skip)"
+        _print_plaque "$stage" fail "$(stage_purpose "$stage")"
+        _paint "FAIL" "$(log "FAIL stage=$stage elapsed=$(fmt_dur "$elapsed") hint=exit code $rc; fix and re-run the same command (finished stages skip)")"
         echo "  root_stage=$stage · cascade_suppressed=yes (later stages not run) · try: see docs/RUNNING.md"
         exit "$rc"
     fi
@@ -259,7 +298,8 @@ run_stage() {
     mkdir -p "$STAGE_ELAPSED_DIR"
     echo "$elapsed" > "$STAGE_ELAPSED_DIR/$stage"
 
-    log "DONE stage=$stage elapsed=$(fmt_dur "$elapsed") cumulative=$(fmt_dur "$SECONDS")"
+    _print_plaque "$stage" done "$(stage_purpose "$stage")"
+    _paint "DONE" "$(log "DONE stage=$stage elapsed=$(fmt_dur "$elapsed") cumulative=$(fmt_dur "$SECONDS")")"
 
     # Run post-stage hook if set (e.g., Modal commit coordination). Its time goes on the stage span.
     local hook_s=0
@@ -270,7 +310,8 @@ run_stage() {
         else
             hook_s=$((SECONDS - hook_t0))
             record_span "$stage" hook_fail "$elapsed" "$hook_s" "$t0_epoch"
-            log "FAIL stage=$stage reason=NANOCHAT_POST_STAGE_HOOK failed"
+            _print_plaque "$stage" fail "$(stage_purpose "$stage")"
+            _paint "FAIL" "$(log "FAIL stage=$stage reason=NANOCHAT_POST_STAGE_HOOK failed")"
             # Delete marker for pure marker stages; for tok_train, don't delete the real artifact
             case "$stage" in
                 tok_eval|base_train|base_eval|chat_sft|chat_eval)

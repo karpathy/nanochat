@@ -217,3 +217,168 @@ def test_run_tip_is_one_line_mentioning_device_batch_size():
     assert tip.startswith("tip:")
     assert "--device-batch-size" in tip
     assert tip.count("\n") == 0
+
+
+# ----------------------------------------------------------------------------- glossary (learn/term)
+
+def test_given_glossary_learn_stage_when_format_learn_line_then_includes_all_terms():
+    # Scenario: Stage has 4 terms (base_train max); format_learn_line returns one line.
+    from nanochat.glossary import format_learn_line, STAGE_TERMS
+
+    # given: base_train stage with 4 terms
+    stage = "base_train"
+    # when: formatting the learn line
+    line = format_learn_line(stage)
+    # then: one line with all terms and URLs
+    assert line.startswith("learn:")
+    for term in STAGE_TERMS[stage]:
+        assert term in line
+    assert "http" in line  # has URLs
+
+
+def test_given_unknown_stage_when_format_learn_line_then_returns_empty():
+    # Scenario: Unknown stage returns empty string.
+    from nanochat.glossary import format_learn_line
+
+    # given: unknown stage
+    stage = "nonexistent_stage"
+    # when: formatting the learn line
+    line = format_learn_line(stage)
+    # then: empty string (no crash)
+    assert line == ""
+
+
+def test_given_nanochat_stage_briefed_when_emit_define_then_no_output():
+    # Scenario: emit_define is a no-op when NANOCHAT_STAGE_BRIEFED=1.
+    import os
+    from nanochat.glossary import emit_define
+
+    # given: env var set to suppress output
+    old_val = os.environ.get("NANOCHAT_STAGE_BRIEFED")
+    os.environ["NANOCHAT_STAGE_BRIEFED"] = "1"
+    captured: list[str] = []
+    # when: emit_define is called
+    emit_define("BPB", print_fn=captured.append)
+    # then: no output
+    assert captured == []
+    # cleanup
+    if old_val is None:
+        del os.environ["NANOCHAT_STAGE_BRIEFED"]
+    else:
+        os.environ["NANOCHAT_STAGE_BRIEFED"] = old_val
+
+
+def test_given_briefed_env_unset_when_emit_define_then_prints_term():
+    # Scenario: emit_define prints when NANOCHAT_STAGE_BRIEFED is unset.
+    import os
+    from nanochat.glossary import emit_define
+
+    # given: env var unset (normal case)
+    old_val = os.environ.pop("NANOCHAT_STAGE_BRIEFED", None)
+    captured: list[str] = []
+    # when: emit_define is called
+    emit_define("BPB", print_fn=captured.append)
+    # then: one definition line
+    assert len(captured) == 1
+    assert "define:" in captured[0]
+    assert "BPB" in captured[0]
+    # cleanup
+    if old_val is not None:
+        os.environ["NANOCHAT_STAGE_BRIEFED"] = old_val
+
+
+# ----------------------------------------------------------------------------- term_style
+
+def test_given_no_color_env_when_term_enabled_then_false():
+    # Scenario: NO_COLOR=1 disables color.
+    import os
+    from nanochat.term_style import enabled
+
+    # given: NO_COLOR set
+    old_val = os.environ.get("NO_COLOR")
+    os.environ["NO_COLOR"] = "1"
+    # when: checking if color is enabled
+    result = enabled()
+    # then: false
+    assert result is False
+    # cleanup
+    if old_val is None:
+        del os.environ["NO_COLOR"]
+    else:
+        os.environ["NO_COLOR"] = old_val
+
+
+def test_given_nanochat_plain_when_term_enabled_then_false():
+    # Scenario: NANOCHAT_PLAIN=1 disables color.
+    import os
+    from nanochat.term_style import enabled
+
+    # given: NANOCHAT_PLAIN set
+    old_val = os.environ.get("NANOCHAT_PLAIN")
+    os.environ["NANOCHAT_PLAIN"] = "1"
+    # when: checking if color is enabled
+    result = enabled()
+    # then: false
+    assert result is False
+    # cleanup
+    if old_val is None:
+        del os.environ["NANOCHAT_PLAIN"]
+    else:
+        os.environ["NANOCHAT_PLAIN"] = old_val
+
+
+def test_given_plain_when_paint_then_returns_plain_text():
+    # Scenario: paint returns plain text when disabled.
+    import os
+    from nanochat.term_style import paint
+
+    # given: NANOCHAT_PLAIN set
+    old_val = os.environ.get("NANOCHAT_PLAIN")
+    os.environ["NANOCHAT_PLAIN"] = "1"
+    # when: painting text
+    result = paint("START", "test message")
+    # then: plain text (no ANSI codes)
+    assert result == "test message"
+    assert "\033" not in result
+    # cleanup
+    if old_val is None:
+        del os.environ["NANOCHAT_PLAIN"]
+    else:
+        os.environ["NANOCHAT_PLAIN"] = old_val
+
+
+# ----------------------------------------------------------------------------- stage_art
+
+def test_given_nanochat_plain_when_plaque_then_returns_empty():
+    # Scenario: plaque returns empty string when NANOCHAT_PLAIN=1.
+    import os
+    from nanochat.stage_art import render_plaque as plaque
+
+    # given: NANOCHAT_PLAIN set
+    old_val = os.environ.get("NANOCHAT_PLAIN")
+    os.environ["NANOCHAT_PLAIN"] = "1"
+    # when: generating a plaque
+    result = plaque("base_train", "start", "teach raw next-token prediction")
+    # then: empty string
+    assert result == ""
+    # cleanup
+    if old_val is None:
+        del os.environ["NANOCHAT_PLAIN"]
+    else:
+        os.environ["NANOCHAT_PLAIN"] = old_val
+
+
+def test_given_plaque_when_nanochat_plain_unset_then_returns_multiline():
+    # Scenario: plaque returns ASCII art when not suppressed.
+    import os
+    from nanochat.stage_art import render_plaque as plaque
+
+    # given: NANOCHAT_PLAIN unset
+    os.environ.pop("NANOCHAT_PLAIN", None)
+    # when: generating a plaque
+    result = plaque("base_train", "start", "teach raw next-token prediction")
+    # then: multi-line with box-drawing characters
+    assert result != ""
+    assert "base_train" in result
+    assert "START" in result
+    assert "+" in result and "|" in result  # ASCII-safe borders (plan decision)
