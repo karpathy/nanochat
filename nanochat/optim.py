@@ -65,6 +65,45 @@ def _adamw_step_impl(
 _adamw_step_compiled = torch.compile(_adamw_step_impl, dynamic=False, fullgraph=True)
 
 
+def _adamw_step_mps(
+    p: Tensor,
+    grad: Tensor,
+    exp_avg: Tensor,
+    exp_avg_sq: Tensor,
+    step_t: Tensor,
+    lr_t: Tensor,
+    beta1_t: Tensor,
+    beta2_t: Tensor,
+    eps_t: Tensor,
+    wd_t: Tensor,
+) -> None:
+    """
+    Eager AdamW for MPS. Same math as _adamw_step_impl, but hyperparameters are Python
+    floats: MPS rejects 0-D CPU tensors mixed into lerp_/mul_ (CUDA promotes them).
+    """
+    p32 = p.float()
+    exp_avg32 = exp_avg.float()
+    exp_avg_sq32 = exp_avg_sq.float()
+    grad32 = grad.float()
+    step = float(step_t)
+    lr = float(lr_t)
+    beta1 = float(beta1_t)
+    beta2 = float(beta2_t)
+    eps = float(eps_t)
+    wd = float(wd_t)
+    p32.mul_(1 - lr * wd)
+    exp_avg32.lerp_(grad32, 1 - beta1)
+    exp_avg_sq32.lerp_(grad32.square(), 1 - beta2)
+    bias1 = 1 - beta1 ** step
+    bias2 = 1 - beta2 ** step
+    denom = (exp_avg_sq32 / bias2).sqrt() + eps
+    step_size = lr / bias1
+    p32.add_(exp_avg32 / denom, alpha=-step_size)
+    p.copy_(p32)
+    exp_avg.copy_(exp_avg32)
+    exp_avg_sq.copy_(exp_avg_sq32)
+
+
 def adamw_step_fused(
     p: Tensor,
     grad: Tensor,
@@ -77,8 +116,8 @@ def adamw_step_fused(
     eps_t: Tensor,
     wd_t: Tensor,
 ) -> None:
-    # Inductor has no MPS backend; keep the fused math but run it eagerly on Apple Silicon.
-    step = _adamw_step_impl if p.device.type == "mps" else _adamw_step_compiled
+    # Inductor has no MPS backend; use the eager float-scalar path on Apple Silicon.
+    step = _adamw_step_mps if p.device.type == "mps" else _adamw_step_compiled
     step(p, grad, exp_avg, exp_avg_sq, step_t, lr_t, beta1_t, beta2_t, eps_t, wd_t)
 
 
@@ -202,6 +241,67 @@ def _muon_step_impl(
 _muon_step_compiled = torch.compile(_muon_step_impl, dynamic=False, fullgraph=True)
 
 
+def _muon_step_mps(
+    stacked_grads: Tensor,
+    stacked_params: Tensor,
+    momentum_buffer: Tensor,
+    second_momentum_buffer: Tensor,
+    momentum_t: Tensor,
+    lr_t: Tensor,
+    wd_t: Tensor,
+    beta2_t: Tensor,
+    ns_steps: int,
+    red_dim: int,
+) -> None:
+    """
+    Eager Muon for MPS. Same math as _muon_step_impl, but hyperparameters are Python
+    floats so lerp_/mul_ do not mix 0-D CPU tensors with MPS activations.
+    """
+    momentum = float(momentum_t)
+    momentum_buffer.lerp_(stacked_grads, 1 - momentum)
+    g = stacked_grads.lerp_(momentum_buffer, momentum)
+
+    X = g.bfloat16() if COMPUTE_DTYPE == torch.bfloat16 else g
+
+    target = X.float().norm(dim=(-2, -1), keepdim=True) / (X.size(-2) ** 0.5)
+    row_norm = X.float().norm(dim=-1, keepdim=True).clamp_min(1e-6)
+    X = X * (target / row_norm).to(X.dtype)
+
+    X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.01 + 1e-6)
+    if g.size(-2) > g.size(-1):
+        for a, b, c in polar_express_coeffs[:ns_steps]:
+            A = X.mT @ X
+            B = b * A + c * (A @ A)
+            X = a * X + X @ B
+    else:
+        for a, b, c in polar_express_coeffs[:ns_steps]:
+            A = X @ X.mT
+            B = b * A + c * (A @ A)
+            X = a * X + B @ X
+    g = X.to(stacked_params.dtype)
+
+    target_norm = min(g.size(-2), g.size(-1)) ** 0.5
+    current_norm = g.float().norm(dim=(-2, -1), keepdim=True).clamp_min(1e-6)
+    g = g * (target_norm / current_norm).to(g.dtype)
+
+    beta2 = float(beta2_t)
+    v_mean = g.float().square().mean(dim=red_dim, keepdim=True)
+    red_dim_size = g.size(red_dim)
+    v_norm_sq = v_mean.sum(dim=(-2, -1), keepdim=True) * red_dim_size
+    v_norm = v_norm_sq.sqrt()
+    second_momentum_buffer.lerp_(v_mean.to(dtype=second_momentum_buffer.dtype), 1 - beta2)
+    step_size = second_momentum_buffer.clamp_min(1e-10).rsqrt()
+    scaled_sq_sum = (v_mean * red_dim_size) * step_size.float().square()
+    v_norm_new = scaled_sq_sum.sum(dim=(-2, -1), keepdim=True).sqrt()
+    final_scale = step_size * (v_norm / v_norm_new.clamp_min(1e-10))
+    g = g * final_scale.to(g.dtype)
+
+    lr = float(lr_t)
+    wd = float(wd_t)
+    mask = (g * stacked_params) >= 0
+    stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
+
+
 def muon_step_fused(
     stacked_grads: Tensor,
     stacked_params: Tensor,
@@ -214,8 +314,8 @@ def muon_step_fused(
     ns_steps: int,
     red_dim: int,
 ) -> None:
-    # Inductor has no MPS backend; keep the fused math but run it eagerly on Apple Silicon.
-    step = _muon_step_impl if stacked_params.device.type == "mps" else _muon_step_compiled
+    # Inductor has no MPS backend; use the eager float-scalar path on Apple Silicon.
+    step = _muon_step_mps if stacked_params.device.type == "mps" else _muon_step_compiled
     step(
         stacked_grads, stacked_params, momentum_buffer, second_momentum_buffer,
         momentum_t, lr_t, wd_t, beta2_t, ns_steps, red_dim,
@@ -465,7 +565,14 @@ class MuonAdamW(torch.optim.Optimizer):
                 info["future"].wait()
             if info["params"] is not None:
                 # Muon: copy from stacked buffer back to individual params
-                torch._foreach_copy_(info["params"], list(info["stacked_params"][:len(info["params"])].unbind(0)))
+                params = info["params"]
+                sources = list(info["stacked_params"][:len(params)].unbind(0))
+                # aten::_foreach_copy_ is not implemented on MPS (torch≤2.2); copy one-by-one.
+                if params[0].device.type == "mps":
+                    for dst, src in zip(params, sources):
+                        dst.copy_(src)
+                else:
+                    torch._foreach_copy_(params, sources)
 
     @torch.no_grad()
     def step(self):
