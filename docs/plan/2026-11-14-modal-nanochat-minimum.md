@@ -256,7 +256,7 @@ In [`runs/_stage_lib.sh`](runs/_stage_lib.sh) `run_stage`:
 1. GPU Modal function starts a **daemon thread** before `subprocess` of `speedrun.sh`.
 2. Protocol:
    - Hook (via `bash -c`, after stage markers written): write `$NANOCHAT_BASE_DIR/.modal_commit_request`, then **poll until** that file is gone (or until `.modal_commit_failed` appears) with a timeout.
-   - Daemon: on request file → `vol.commit()` → on success **remove** request file; on failure write `.modal_commit_failed` and leave request (or clear after marking failed).
+   - Daemon: on request file → run `vol.commit()` in a worker thread while the daemon thread rewrites `$NANOCHAT_BASE_DIR/.modal_commit_heartbeat` (current timestamp) every 10 s → on success **remove** request file; on failure write `.modal_commit_failed` and leave request (or clear after marking failed).
 3. Hook returns non-zero if commit fails / times out → `_stage_lib` applies the §8.1 rule (delete pure markers; never delete `tokenizer.pkl`) and fails the stage.
 4. Next stage must not start until the prior hook returns success (wait-for-ack barrier).
 5. After speedrun subprocess exits, **regardless of exit code**: final `vol.commit()`, so committed stages survive a failed run and resume on re-run. Then clear leftover request/failed files.
@@ -269,7 +269,7 @@ Set the hook from Python as an env-dict entry on the `subprocess` call, not by b
 - Wrong: `os.system(f"NANOCHAT_POST_STAGE_HOOK='bash -c \"…\"' bash runs/speedrun.sh")`
 
 **Hook timeout (required):** the hook polls every 2 s with two limits:
-- **Idle limit: 120 s** with no change in the commit state (no `.modal_commit_request` removal, no `.modal_commit_failed`). A dead daemon fails fast.
+- **Idle limit: 120 s** since the last `.modal_commit_heartbeat` update (written every 10 s while the commit runs). A dead daemon stops heartbeating and fails fast; a slow but live commit keeps heartbeating.
 - **Overall ceiling: 10 min per stage**, so a large 17 GB commit that is still making progress can finish.
 
 On either limit, exit non-zero. On seeing `.modal_commit_failed`, exit non-zero immediately without further polling.
