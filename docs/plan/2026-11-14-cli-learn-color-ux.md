@@ -54,7 +54,7 @@ When someone reads a console or log, each stage boundary is visible without scro
 1. Every stage START, DONE, and FAIL line is preceded by exactly one plaque. SKIP prints only its contract line. A post-stage hook failure after DONE prints DONE then FAIL, which is two plaques for two contract lines.
 2. The `learn:` line is one line, includes URLs, and has at most 4 terms (the `base_train` maximum).
 3. Zero enrichment lines are printed inside the train-step loop.
-4. With `NO_COLOR=1`, `NANOCHAT_PLAIN` unset, and output piped: the diff against a captured baseline contains only added plaque lines and one added `learn:` line per START. Every existing contract line is unchanged, except the ETA wording on `START`, which is the recorded contract revision in Decisions.
+4. With `NO_COLOR=1`, `NANOCHAT_PLAIN` unset, and output piped: the diff against a captured baseline contains only added plaque lines and one added `learn:` line per START for stages that define terms (`chat_sft` has none, so it prints no `learn:` line). Every existing contract line is unchanged, except the ETA wording on `START`, which is the recorded contract revision in Decisions.
 5. With `NANOCHAT_PLAIN=1`: no plaques, no banner change; contract and `learn:` lines still print.
 
 ## Scope (MoSCoW)
