@@ -199,6 +199,21 @@ def should_save_checkpoint(step: int, resume_from_step: int, elapsed_secs: float
     return time_due or step_due
 
 
+def assert_resume_config_matches(saved_meta: dict, current: dict, keys) -> None:
+    """Raise ValueError if a training dimension changed since the checkpoint was saved.
+
+    Keys missing from either side are not compared (older checkpoints lack some keys).
+    """
+    for key in keys:
+        saved_val = saved_meta.get(key)
+        current_val = current.get(key)
+        if saved_val is not None and current_val is not None and saved_val != current_val:
+            raise ValueError(
+                f"Cannot resume SFT: '{key}' changed from {saved_val} (saved) to {current_val} (current). "
+                "Use FORCE_STAGES=chat_sft to restart from scratch."
+            )
+
+
 def find_safe_resume_step(checkpoint_dir: str, world_size: int = 1) -> int:
     """Return the highest step whose model, meta, and all optim shards are present.
 

@@ -12,8 +12,7 @@ import sys
 import pytest
 
 from nanochat.checkpoint_manager import (
-    find_safe_resume_step,
-    load_checkpoint,
+    assert_resume_config_matches,
     should_save_checkpoint,
 )
 from nanochat.sft_loader import SftLoaderState
@@ -180,79 +179,54 @@ class TestSftLoaderStateRoundTrip:
 # § Config-mismatch guard
 # ---------------------------------------------------------------------------
 
+_GUARD_KEYS = ("device_batch_size", "max_seq_len", "total_batch_size", "num_iterations")
+_SAVED = {"device_batch_size": 8, "max_seq_len": 512, "total_batch_size": 16384, "num_iterations": 1500}
+
+
 class TestConfigMismatchGuard:
     """
     Scenario: Resuming with changed training dimensions must raise ValueError.
-    Slice: scripts.chat_sft — startup config-mismatch check.
+    Slice: nanochat.checkpoint_manager.assert_resume_config_matches (called by scripts.chat_sft).
     """
 
-    @pytest.mark.parametrize("changed_key,saved,current", [
-        ("device_batch_size", 8, 16),
-        ("max_seq_len", 512, 1024),
-        ("total_batch_size", 16384, 32768),
-        ("num_iterations", 1500, 500),
+    @pytest.mark.parametrize("changed_key,current", [
+        ("device_batch_size", 16),
+        ("max_seq_len", 1024),
+        ("total_batch_size", 32768),
+        ("num_iterations", 500),
     ])
-    def test_mismatch_raises(self, tmp_path, changed_key, saved, current, monkeypatch):
+    def test_mismatch_raises_naming_the_key(self, changed_key, current):
         """
-        Scenario: A checkpoint was saved with one value; the CLI says another.
-        Slice: config-mismatch guard
-        ### Given
-        A checkpoint directory containing a step-5 checkpoint whose meta stores the saved value.
-        ### When
-        The guard code runs with the current (mismatched) value.
-        ### Then
-        A ValueError is raised mentioning the key name.
+        Scenario: The saved checkpoint and the CLI disagree on one key.
+        Slice: assert_resume_config_matches
+        ### Given: saved meta with the original values
+        ### When: the current config changes one key
+        ### Then: ValueError names that key
         """
-        ckpt_dir = tmp_path / "chatsft_checkpoints" / "d6"
-        base_meta = {
-            "device_batch_size": 8, "max_seq_len": 512,
-            "total_batch_size": 16384, "num_iterations": 1500,
-        }
-        base_meta[changed_key] = saved
-        _write_fake_checkpoint(str(ckpt_dir), step=5, extra_meta=base_meta)
-
-        import torch
-
-        # Simulate the guard check inline (extracted from chat_sft startup):
-        step = find_safe_resume_step(str(ckpt_dir), world_size=1)
-        assert step == 5
-
-        _, _, saved_meta = load_checkpoint(str(ckpt_dir), step, torch.device("cpu"),
-                                           load_optimizer=False)
-
-        guard_keys = ["device_batch_size", "max_seq_len", "total_batch_size", "num_iterations"]
-        current_values = {**base_meta, changed_key: current}
-
+        current_cfg = {**_SAVED, changed_key: current}
         with pytest.raises(ValueError, match=changed_key):
-            for k in guard_keys:
-                sv = saved_meta.get(k)
-                cv = current_values.get(k)
-                if sv is not None and cv is not None and sv != cv:
-                    raise ValueError(
-                        f"Cannot resume SFT: '{k}' changed from {sv} (saved) to {cv} (current)."
-                    )
+            assert_resume_config_matches(_SAVED, current_cfg, _GUARD_KEYS)
 
-    def test_no_mismatch_does_not_raise(self, tmp_path):
+    def test_matching_config_does_not_raise(self):
         """
-        Scenario: Config matches; no error should be raised.
-        Slice: config-mismatch guard
-        ### Given / ### When / ### Then
+        Scenario: Config matches the checkpoint.
+        Slice: assert_resume_config_matches
+        ### Given: identical saved and current values
+        ### When: the guard runs
+        ### Then: no exception
         """
-        ckpt_dir = tmp_path / "chatsft_checkpoints" / "d6"
-        meta = {"device_batch_size": 8, "max_seq_len": 512,
-                "total_batch_size": 16384, "num_iterations": 1500}
-        _write_fake_checkpoint(str(ckpt_dir), step=5, extra_meta=meta)
+        assert_resume_config_matches(_SAVED, dict(_SAVED), _GUARD_KEYS)
 
-        import torch
-        step = find_safe_resume_step(str(ckpt_dir))
-        _, _, saved_meta = load_checkpoint(str(ckpt_dir), step, torch.device("cpu"),
-                                           load_optimizer=False)
-
-        # Same values → no exception
-        for k, v in meta.items():
-            sv = saved_meta.get(k)
-            if sv is not None and sv != v:
-                raise AssertionError(f"unexpected mismatch on {k}")
+    def test_key_missing_from_old_checkpoint_is_not_compared(self):
+        """
+        Scenario: An older checkpoint lacks a guard key.
+        Slice: assert_resume_config_matches
+        ### Given: saved meta without num_iterations
+        ### When: the current num_iterations differs
+        ### Then: no exception (the key cannot be compared)
+        """
+        saved = {k: v for k, v in _SAVED.items() if k != "num_iterations"}
+        assert_resume_config_matches(saved, {**_SAVED, "num_iterations": 500}, _GUARD_KEYS)
 
 
 # ---------------------------------------------------------------------------
