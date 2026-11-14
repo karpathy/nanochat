@@ -122,12 +122,12 @@ The important thing to note is that nanochat is written and configured around on
 
 The script [runs/runcpu.sh](runs/runcpu.sh) shows a very simple example of running on CPU or Apple Silicon. It dramatically shrinks the LLM that is being trained to make things fit into a reasonable time interval of a few ten minutes of training. You will not get strong results in this way.
 
-On a Mac (or any CPU/MPS machine) use `bash runs/runcpu.sh`, not `runs/speedrun.sh` (that one is for an 8XH100 node).
+On a Mac (or any CPU/MPS machine) use `bash runs/runcpu.sh`. Do not run `runs/speedrun.sh` here — it is for an 8XH100 CUDA node and **exits with ERROR** if no CUDA is found.
 
-- Re-runs are safe: finished stages print `SKIP` and cost nothing.
+- Re-runs are safe: finished stages print `SKIP` and cost nothing (train needs a `.train_ok` marker, not only `model_*.pt`).
 - The script stops at the first failing stage. Fix the cause, then re-run the same command.
-- On MPS, auto-fit may shrink `device_batch_size` so the run fits in memory. Run knobs live in `nanochat/defaults.py` + `runs/profiles.sh`.
-- Stage markers, `FORCE_STAGES`, log legend, memory/OOM, NaN, and torch 2.2.2 notes: [docs/RUNNING.md](docs/RUNNING.md).
+- On MPS, training stays **eager** (`torch.compile` / Inductor is skipped); auto-fit may shrink `device_batch_size`. Knobs live in `nanochat/defaults.py` + `runs/profiles.sh`.
+- Stage markers, `FORCE_STAGES`, log legend, memory/OOM, NaN, RoPE, and torch 2.2.2 notes: [docs/RUNNING.md](docs/RUNNING.md).
 
 ## Precision / dtype
 

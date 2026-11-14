@@ -172,12 +172,13 @@ Caveat: `runcpu.sh` and `speedrun.sh` set `NANOCHAT_BASE_DIR="$HOME/.cache/nanoc
 | `Device mps not supported` / `BackendCompilerFailed` (Inductor) | `torch.compile` ran on MPS (old build) | Re-run on a build that skips compile on MPS ([section 7](#7-mac--intel-torch)); you should see `[compile] … adjusted=eager`. |
 | `ERROR no CUDA device detected` (speedrun, exit 1) | Wrong script for this machine | Use `bash runs/runcpu.sh`. Do not override; speedrun is 8xH100-only. |
 | Train stage re-runs despite `model_*.pt` on disk | No `.train_ok` marker (partial/probe/interrupted run, or pre-marker upgrade) | Let it retrain, or `touch …/base_checkpoints/.train_ok` only if you know train finished cleanly. |
+| `AssertionError` / crash mentioning rotary length (e.g. `2596 > 2560`) | Few-shot CORE prompts exceeded the old static RoPE cache | Current builds grow the RoPE cache on demand (2× buffer). Re-run; no knob change needed. |
 
 The missing-checkpoint error is almost always a **symptom**: scroll up to the first `FAIL`, because the checkpoint was never produced.
 
 ## 11. Memory / OOM
 
-Think of training memory like packing a suitcase: most of the bulk is the **logits** tensor — shape roughly `B × T × V` (batch × sequence length × vocab). Weights and optimizer state matter too, but when you OOM on a laptop it is usually because `B` was too big for that product.
+Think of training memory like packing a suitcase: most of the bulk is the **logits** tensor — shape roughly `B × T × V` (batch × sequence length × vocab). Weights and optimizer state matter too, but when you OOM on a laptop it is usually because `B` was too big for that product. Auto-fit (below) is the current Mac mitigator; a deeper softcap/logits redesign is parked backlog, not in this slice.
 
 **What auto-fit does**
 
