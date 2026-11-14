@@ -165,3 +165,19 @@ Scope (user choice after design review: daemon cleanup + guard test; the shared 
 - Step B: local kill-and-resume on the SFT stage, plus the existing shared-helper tests
   (`tests/test_find_safe_resume_step.py`, `tests/test_periodic_commit.py`).
 - Read-only checks so far: `git diff master...HEAD --stat`, and `git diff` on the shared files.
+
+## Next-iteration priority (ranked by impact, then effort)
+
+1. **Reconcile the resume verification claim (cheap, do first).** PR #26's test plan has checked local
+   kill-and-resume results (step 551 → resumed from 500; SIGTERM at step 33 → resumed from 26). The repo's
+   `docs/RUNNING.md` and the tracker say "not yet tested end to end". Either attach the logs to the PR and
+   mark resume VERIFIED, or correct the wording. Do not leave the two sources disagreeing.
+2. **Step A: mid-train resume test with a control run (local CPU, no cost).** Only needed where step 1 cannot
+   show the control comparison (matching step-N loss and `epoch/pq/rg`). Gives the strongest evidence for PR #26.
+3. **Step B: `chat_sft` resume (local SFT crash-safety).** The one real gap that affects local users. Needs the
+   test interview (see Tests section) before any test is written.
+4. **Step C: local run lock (`runs/_run_lock.sh`).** Prevents two local runs sharing a base dir. Useful, but
+   only bites when two local jobs run at once.
+5. **Modal daemon cleanup and guard tests.** Refactor with no behaviour change. Lowest impact; do last.
+
+Not in this iteration: the live Modal run (about $40–60). It needs an explicit go-ahead from you.
