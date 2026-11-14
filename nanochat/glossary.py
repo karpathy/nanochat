@@ -13,7 +13,7 @@ Scope: Glossary catalog and stage-term mapping for CLI learning output.
 import argparse
 import os
 import sys
-from typing import Dict, Tuple
+from typing import Callable, Dict, Tuple
 
 # Term catalog: term_key -> (short_definition, url)
 GLOSSARY: Dict[str, Tuple[str, str]] = {
@@ -101,7 +101,7 @@ def format_learn_line(stage: str) -> str:
     return "learn: " + " · ".join(parts)
 
 
-def emit_define(term: str) -> None:
+def emit_define(term: str, print_fn: Callable[[str], None] = print) -> None:
     """
     Print a define line for a term, once per process, when NANOCHAT_STAGE_BRIEFED is not set.
 
@@ -127,7 +127,7 @@ def emit_define(term: str) -> None:
     # Mark it as defined and print.
     _defined_terms.add(term)
     definition, url = GLOSSARY[term]
-    print(f"define: {term} = {definition} ({url})")
+    print_fn(f"define: {term} = {definition} ({url})")
 
 
 def main() -> None:
