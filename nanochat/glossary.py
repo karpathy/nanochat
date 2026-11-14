@@ -46,7 +46,7 @@ GLOSSARY: Dict[str, Tuple[str, str]] = {
         "https://arxiv.org/abs/2204.02311"
     ),
     "Muon": (
-        "An optimizer that adapts learning rates using a simplified second-order approximation of the loss surface.",
+        "An optimizer that orthogonalizes momentum updates for the weight matrices of the model.",
         "https://github.com/KellerJordan/Muon"
     ),
     "FLOPs": (
