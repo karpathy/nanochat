@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 """Modal app: nanochat on 8×H100.
 
 CPU prefetch: dataset -n 170, commit.
@@ -83,7 +81,7 @@ def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
         try:
             with open(heartbeat_file, "w") as f:
                 f.write(str(int(time.time())))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a heartbeat failure must not kill the daemon
             print(f"[daemon] WARNING: heartbeat write failed: {e}")
 
     def _commit_worker() -> list[bool]:
@@ -91,7 +89,7 @@ def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
         try:
             volume.commit()
             result[0] = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any commit error must become a failed ack
             print(f"[daemon] ERROR: commit failed: {e}")
         return result
 
@@ -134,8 +132,10 @@ def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
                     with open(failed_file, "w") as f:
                         f.write(str(int(time.time())))
                     print("[daemon] commit failed, marker written")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - keep the daemon loop alive
                     print(f"[daemon] WARNING: failed to write failure marker: {e}")
+                # Rate-limit retries while the hook sees the failed marker, instead of spinning.
+                time.sleep(2)
         else:
             # No request yet; sleep and retry
             time.sleep(0.5)

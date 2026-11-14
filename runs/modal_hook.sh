@@ -50,14 +50,17 @@ while true; do
         exit 1
     fi
 
-    # Check idle limit (no heartbeat update)
+    # Check idle limit (no heartbeat update). Before the first heartbeat exists,
+    # idle counts from hook start, so a daemon that dies immediately still fails fast.
     if [ -f "$HEARTBEAT_FILE" ]; then
-        heartbeat_mtime=$(stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null || stat -f %m "$HEARTBEAT_FILE" 2>/dev/null || echo "0")
-        idle=$((now - heartbeat_mtime))
-        if [ "$idle" -gt "$IDLE_LIMIT" ]; then
-            echo "ERROR: commit hook timeout (idle limit $IDLE_LIMIT s exceeded; no heartbeat update; elapsed=$elapsed)" >&2
-            exit 1
-        fi
+        last_seen=$(stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null || stat -f %m "$HEARTBEAT_FILE" 2>/dev/null || echo "$start_time")
+    else
+        last_seen=$start_time
+    fi
+    idle=$((now - last_seen))
+    if [ "$idle" -gt "$IDLE_LIMIT" ]; then
+        echo "ERROR: commit hook timeout (idle limit $IDLE_LIMIT s exceeded; no heartbeat update; elapsed=$elapsed)" >&2
+        exit 1
     fi
 
     sleep "$POLL_INTERVAL"
