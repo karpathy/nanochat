@@ -2,7 +2,9 @@
 Run: python -m pytest tests/test_find_safe_resume_step.py -v
 """
 import os
+
 import torch
+
 from nanochat.checkpoint_manager import find_safe_resume_step, save_checkpoint
 
 # Minimal data blobs reused across all tests
@@ -123,3 +125,21 @@ def test_interrupted_tmp_write_is_ignored(tmp_path):
     with open(_meta_path, "w", encoding="utf-8") as f:
         f.write("{}")
     assert find_safe_resume_step(d) == -1
+
+
+def test_remove_stale_tmp_deletes_only_tmp_files(tmp_path):
+    """A save killed mid-write leaves *.tmp; the sweep removes it and keeps complete checkpoints."""
+    from nanochat.checkpoint_manager import remove_stale_tmp
+
+    d = str(tmp_path)
+    _full_checkpoint(d, 500)
+    open(os.path.join(d, "model_000600.pt.tmp"), "wb").close()
+    assert remove_stale_tmp(d) == 1
+    assert not [f for f in os.listdir(d) if f.endswith(".tmp")]
+    assert find_safe_resume_step(d) == 500
+
+
+def test_remove_stale_tmp_missing_dir_returns_zero(tmp_path):
+    from nanochat.checkpoint_manager import remove_stale_tmp
+
+    assert remove_stale_tmp(str(tmp_path / "absent")) == 0

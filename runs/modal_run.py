@@ -264,6 +264,13 @@ def _run_record_env(run_id: str, mode: str, code_rev: str) -> dict[str, str]:
     }
 
 
+def _terminate_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+
 def _run_training(script: str, extra_env: dict[str, str], commit_every_secs: float = PERIODIC_COMMIT_SECS) -> None:
     """Run one stage script with the commit daemon, marker cleanup and final commit."""
     os.chdir("/root/nanochat")
@@ -285,15 +292,17 @@ def _run_training(script: str, extra_env: dict[str, str], commit_every_secs: flo
     # On preemption, stop the child and let the normal teardown below run the final commit.
     # Committing inside the handler raced the commit daemon on the same Volume.
     _proc: list[subprocess.Popen] = []
+    stop_requested: list[bool] = []
 
     def _sigterm_stop_child(signum, frame):
         print("[train] SIGTERM received — stopping training, then committing volume", flush=True)
+        stop_requested.append(True)
         if _proc:
-            try:
-                os.killpg(_proc[0].pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-    signal.signal(signal.SIGTERM, _sigterm_stop_child)
+            _terminate_group(_proc[0])
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _sigterm_stop_child)
+    else:
+        print("[train] WARNING: not on the main thread; SIGTERM handler not installed", flush=True)
 
     print(f"[train] Running {script}...")
     proc = subprocess.Popen(
@@ -303,6 +312,8 @@ def _run_training(script: str, extra_env: dict[str, str], commit_every_secs: flo
         start_new_session=True,
     )
     _proc.append(proc)
+    if stop_requested:
+        _terminate_group(proc)
     returncode = proc.wait()
 
     # Clean up hook files BEFORE final commit
