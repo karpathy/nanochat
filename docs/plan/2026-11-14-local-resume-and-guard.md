@@ -187,3 +187,19 @@ Modal path is not covered.
 **Won't (this iteration)**
 - **Live Modal run (about $40–60).** Needs an explicit go-ahead from you.
 - **`tok_train` atomicity.** Dropped as low impact.
+
+## Coordination (read before starting work)
+
+Owners as of 2026-11-14, confirmed by peer sessions:
+
+| Item | MoSCoW | Owner | Status |
+|---|---|---|---|
+| Step B: `chat_sft` resume | Must | parity session (`e7db86`) | Test scope decided: round-trip first, then config refusal. Interview in progress. |
+| Modal guard tests (`runs/runmodal.sh:26-42`) | Should | `[plan] Modal concurrent runs guard` (`a5c799`) | Plan approved. Waiting for user go-ahead to switch to `fix/runmodal-concurrency-guard`. |
+| Step A: control-run comparison | Should | unclaimed | Free to claim. |
+| Step C: local run lock (`runs/_run_lock.sh`) | Should | unclaimed | Free to claim. |
+| Modal daemon cleanup | Could | unclaimed | Free to claim. |
+
+**Master warning:** commit `70ce9e2` (MoSCoW plan) was pushed to `master` and `origin/master` by mistake. It is also on this branch. Do not touch `master` until the user chooses between a revert commit (safer) and a force-push. Peer `nanochat-ef` merged PR #26 as `c9cf80e` and has not touched `master` since.
+
+**Before starting an item:** check the table, claim it here by changing its owner, and commit.
