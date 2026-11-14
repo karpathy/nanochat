@@ -418,6 +418,7 @@ def train_cpu(
     code_rev: str,
     num_iterations: int = CPU_NUM_ITERATIONS,
     commit_every_secs: float = PERIODIC_COMMIT_SECS,
+    save_every_secs: float = 300,
 ) -> None:
     """CPU train: runcpu.sh using every core in this container, same commit protocol."""
     cores = _available_cores()
@@ -432,6 +433,7 @@ def train_cpu(
                 "NANOCHAT_RUNCPU_DEVICE_BATCH_SIZE": str(CPU_DEVICE_BATCH_SIZE),
                 "NANOCHAT_RUNCPU_EVAL_DEVICE_BATCH_SIZE": str(CPU_EVAL_DEVICE_BATCH_SIZE),
                 "NANOCHAT_RUNCPU_NUM_ITERATIONS": str(num_iterations),
+                "NANOCHAT_SAVE_EVERY_SECS": str(save_every_secs),
                 **_run_record_env(run_id, "modal-cpu", code_rev),
             },
             commit_every_secs,
