@@ -11,7 +11,7 @@ Canonical copy: [`docs/plan/2026-11-14-cli-learn-color-ux.md`](2026-11-14-cli-le
 
 ## Current code this plan builds on
 
-Verified against the tree at `master` (43c349c).
+Verified against the tree at `master` (edfb3d3, post PR #18 and #20).
 
 | Concern | Where it lives today | How this plan uses it |
 |---------|----------------------|-----------------------|
@@ -24,6 +24,10 @@ Verified against the tree at `master` (43c349c).
 | Logging color | `nanochat/common.py` `ColoredFormatter` (line 34), `setup_default_logging()` (line 60) | Separate path. Not reused; see decisions |
 | Metric trend | `nanochat/metrics_trend.py` `format_trend()`, `emit_metric_trend(print_fn=...)` | Color applied at the call site through `print_fn`. Module unchanged |
 | Run tee | `runs/runmodal.sh:79` pipes to `tee run.log` | Stdout is not a TTY there, so color stays off and the archived log stays plain |
+| Run record spans | `run_stage()` calls `record_span` on success, failure, and hook failure; writes `$NANOCHAT_RUN_DIR/events.jsonl` via `nanochat/run_record.py` | Must keep every `record_span` call and its order. Plaques and `learn:` print text only and never touch the record |
+| Post-stage hook | `NANOCHAT_POST_STAGE_HOOK` runs after DONE (Modal volume commit) and can turn DONE into FAIL | DONE plaque prints with the DONE line. If the hook fails, print a FAIL plaque, same as the existing FAIL line |
+| Modal docs | `docs/MODAL.md` stage table and marker text; links to RUNNING for stage detail | No edit needed. Plaques show in `run.log`, which MODAL.md does not describe |
+| Chat stages | `runs/speedrun.sh` runs `chat_eval` via `scripts/chat_eval.py`; `chat_cli.py` is the interactive chat, not a stage | `chat_eval` has a STAGE_TERMS entry (ChatCORE), so `scripts/chat_eval.py` joins the Could list |
 | Tests to extend | `tests/test_phase15_enrichments.py`, `tests/test_stage_completion_markers.sh`, `tests/test_run_record.py` | Extend existing files for shell and enrichment checks. New test file only for `glossary` / `stage_art` / `term_style` |
 | Ledger | `docs/plan/GROWTH.md` (Added / Changed / Deferred sections), `docs/plan/PROGRESS.md` (table: date, PR, summary) | One entry each |
 
@@ -63,14 +67,14 @@ When someone reads a console or log, each stage boundary is visible without scro
 - `scripts/base_train.py`: color `Validation bpb` and `CORE metric` lines and the `mfu` field; `emit_define` for bpb, CORE, mfu, Muon when unbriefed; color trend via call-site `print_fn`.
 
 **Could** (listed in the plan, not promised for this slice)
-- `scripts/tok_train.py`, `scripts/tok_eval.py`, `scripts/chat_sft.py`: color key lines and define lines.
-- `scripts/base_eval.py`: replace the three `print0("="*80)` headers (lines 190, 224, 250) with stage-art section frames.
+- `scripts/tok_train.py`, `scripts/tok_eval.py`, `scripts/chat_sft.py`, `scripts/chat_eval.py`: color key lines and define lines.
 - `scripts/chat_cli.py`: welcome plaque, `User:` / `Assistant:` label colors.
 - RUNNING "Example stage block" diagram (§6b neighbour).
 
 **Won't** (this slice)
 - A separate script-start banner in shell (`base_train` already prints one).
 - Routing `print_banner()` through `stage_art` (no second owner for the banner).
+- Rewriting `scripts/base_eval.py` bare `print0("="*80)` headers (lines 190, 224, 250) into stage-art section frames. Output is already readable, and the rewrite changes existing script output.
 - Changing contract wording or field order, per-train-step output, tip rotation, giant figlet, heartbeat or ETA work, Web UI.
 - Full DIVIO restructure into `docs/tutorials|howto|…` (single L2 RUNNING stays).
 
@@ -112,7 +116,7 @@ Each step is one reviewable commit on `feat/cli-learn-color-ux`. Run `uv run pyt
 
 - **Modal path shares `_stage_lib.sh`.** `runs/runmodal.sh` runs through `tee`, so color stays off and the archived `run.log` is plain. The plaques will appear in `run.log` too. Confirm the Modal tests (`tests/test_runmodal_mode.py`) still pass in step 2.
 - **Define gating depends on the env var.** If a future script runs a stage without `run_stage`, it will print `define:` lines. That is intended: it is the standalone case.
-- **`base_eval` headers are Could.** They are three bare `====` lines today. Leaving them as-is is acceptable for this slice.
+- **`base_eval` headers are Won't this slice.** They stay as three bare `====` lines. Changing them would alter existing script output.
 
 ## Out of scope
 
