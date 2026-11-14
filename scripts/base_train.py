@@ -507,10 +507,10 @@ def rehalve_after_oom():
 
 # Go!
 # Define the terms that will appear in this stage (once per process when unbriefed).
-emit_define("MFU")
-emit_define("Muon")
-emit_define("BPB")
-emit_define("CORE")
+emit_define("MFU", print_fn=print0)
+emit_define("Muon", print_fn=print0)
+emit_define("BPB", print_fn=print0)
+emit_define("CORE", print_fn=print0)
 
 while True:
     last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
@@ -552,7 +552,6 @@ while True:
         model.eval()
         with disable_fp8(orig_model):
             results = evaluate_core(orig_model, tokenizer, device, max_per_task=args.core_metric_max_per_task)
-        emit_define("CORE")
         core_line = f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}"
         print0(paint("done", core_line))
         if master_process:
