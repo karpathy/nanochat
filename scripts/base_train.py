@@ -13,34 +13,67 @@ python -m scripts.base_train --depth=4 --max-seq-len=512 --device-batch-size=1 -
 
 import os
 import sys
+
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+import argparse
 import gc
 import json
-import time
 import math
-import argparse
-from dataclasses import asdict
+import time
 from contextlib import contextmanager
+from dataclasses import asdict
 
-import wandb
 import torch
 import torch.distributed as dist
+import wandb
 
+from nanochat.checkpoint_manager import (
+    load_checkpoint,
+    remove_stale_tmp,
+    save_checkpoint,
+)
+from nanochat.common import (
+    COMPUTE_DTYPE,
+    COMPUTE_DTYPE_REASON,
+    DummyWandb,
+    autodetect_device_type,
+    compute_cleanup,
+    compute_init,
+    format_duration,
+    get_base_dir,
+    get_peak_flops,
+    is_ddp_initialized,
+    maybe_torch_compile,
+    print0,
+    print_banner,
+)
+from nanochat.dataloader import (
+    tokenizing_distributed_data_loader_bos_bestfit,
+    tokenizing_distributed_data_loader_with_state_bos_bestfit,
+)
 from nanochat.defaults import DEFAULT_DEPTH, DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_SEQ_LEN
-from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size, format_oom_retry_line, is_out_of_memory_error, oom_after_rehalve_error, oom_rehalve_once, training_module_after_oom_rehalve
-from nanochat.gpt import GPT, GPTConfig, Linear
-from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
-from nanochat.run_record import make_run_logger
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, maybe_torch_compile, format_duration
-from nanochat.tokenizer import get_tokenizer, get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
-from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from nanochat.flash_attention import HAS_FA3
-from nanochat.metrics_trend import emit_metric_trend
 from nanochat.glossary import emit_define
+from nanochat.gpt import GPT, GPTConfig, Linear
+from nanochat.loss_eval import evaluate_bpb
+from nanochat.memory import (
+    auto_fit_echo_lines,
+    auto_fit_enabled,
+    empty_device_cache,
+    fit_device_batch_size,
+    format_oom_retry_line,
+    is_out_of_memory_error,
+    oom_after_rehalve_error,
+    oom_rehalve_once,
+    training_module_after_oom_rehalve,
+)
+from nanochat.metrics_trend import emit_metric_trend
+from nanochat.run_record import make_run_logger
 from nanochat.term_style import paint
+from nanochat.tokenizer import get_token_bytes, get_tokenizer
 from scripts.base_eval import evaluate_core
+
 print_banner()
 
 
@@ -92,6 +125,7 @@ parser.add_argument("--core-metric-every", type=int, default=2000, help="evaluat
 parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
+parser.add_argument("--save-every-secs", type=float, default=-1, help="save checkpoints every N seconds, decided by rank 0 (-1 = disabled)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
@@ -138,6 +172,7 @@ wandb_run = make_run_logger(DummyWandb() if use_dummy_wandb else wandb.init(proj
 
 # Flash Attention status
 from nanochat.flash_attention import USE_FA3
+
 using_fa3 = USE_FA3
 if using_fa3:
     print0("✓ Using Flash Attention 3: efficient, new and awesome.")
@@ -192,6 +227,8 @@ base_dir = get_base_dir()
 output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
 checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
 resuming = args.resume_from_step != -1
+if master_process:
+    remove_stale_tmp(checkpoint_dir)
 if resuming:
     print0(f"Resuming optimization from step {args.resume_from_step}")
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)
@@ -207,9 +244,10 @@ if args.fp8:
         print0("Warning: FP8 training requires CUDA, ignoring --fp8 flag")
     else:
         # our custom fp8 is simpler than torchao, written for exact API compatibility
-        from nanochat.fp8 import Float8LinearConfig, convert_to_float8_training
         # from torchao.float8 import Float8LinearConfig, convert_to_float8_training
-        import torch.nn as nn
+        from torch import nn
+
+        from nanochat.fp8 import Float8LinearConfig, convert_to_float8_training
 
         # Filter: dims must be divisible by 16 (FP8 hardware requirement) large enough
         def fp8_module_filter(mod: nn.Module, fqn: str) -> bool:
@@ -217,9 +255,7 @@ if args.fp8:
                 return False
             if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
                 return False
-            if min(mod.in_features, mod.out_features) < 128:
-                return False
-            return True
+            return not min(mod.in_features, mod.out_features) < 128
 
         fp8_config = Float8LinearConfig.from_recipe_name(args.fp8_recipe)
         num_linear = sum(1 for m in model.modules() if isinstance(m, nn.Linear))
@@ -236,7 +272,6 @@ def disable_fp8(model):
     CastConfig is a frozen dataclass, so we can't mutate scaling_type. Instead,
     we swap out Float8Linear modules entirely and restore them after.
     """
-    import torch.nn as nn
 
     # Find all Float8Linear modules and their locations
     fp8_locations = []  # list of (parent_module, attr_name, fp8_module)
@@ -289,7 +324,7 @@ model = maybe_torch_compile(model, device_type, dynamic=False)
 
 # Get the parameter counts of our model
 param_counts = model.num_scaling_params()
-print0(f"Parameter counts:")
+print0("Parameter counts:")
 for key, value in param_counts.items():
     print0(f"{key:24s}: {value:,}")
 num_params = param_counts['total']
@@ -512,6 +547,7 @@ emit_define("Muon", print_fn=print0)
 emit_define("BPB", print_fn=print0)
 emit_define("CORE", print_fn=print0)
 
+last_save_time = time.monotonic()
 while True:
     last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
     flops_so_far = num_flops_per_token * total_batch_size * step
@@ -534,8 +570,7 @@ while True:
                 lower_is_better=True,
                 print_fn=_make_colored_print_fn("done"),
             )
-        if val_bpb < min_val_bpb:
-            min_val_bpb = val_bpb
+        min_val_bpb = min(min_val_bpb, val_bpb)
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -591,8 +626,15 @@ while True:
             print0(tokenizer.decode(sample[0]))
         model.train()
 
-    # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step
-    if last_step or (step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0):
+    # save checkpoint: at the end of the run, every save_every steps, or every save_every_secs (rank 0 decides, all ranks follow), except at the first step or the resume step
+    time_due = False
+    if args.save_every_secs > 0:
+        time_due = time.monotonic() - last_save_time >= args.save_every_secs
+        if ddp:
+            due_flag = torch.tensor([int(master_process and time_due)], device=device)
+            dist.broadcast(due_flag, src=0)
+            time_due = bool(due_flag.item())
+    if last_step or (step > 0 and step != args.resume_from_step and (time_due or (args.save_every > 0 and step % args.save_every == 0))):
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -615,6 +657,7 @@ while True:
             },
             rank=ddp_rank,
         )
+        last_save_time = time.monotonic()
 
     # termination conditions (TODO: possibly also add loss explosions etc.)
     if last_step:

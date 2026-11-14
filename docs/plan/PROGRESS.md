@@ -33,6 +33,8 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | 2026-11-14 | fix-mps-skip-inductor | Require `.train_ok` for train SKIP; hard-fail `speedrun.sh` without CUDA | Partial `model_*.pt` must not skip train; Mac educational path is `runcpu` only |
 | 2026-11-14 | backlog | Softcap / logits memory parked (gather-at-needed-pos vs `PROFILE_RUNCPU` knobs) | Playgroup softcap/eval discussion; no design pick yet — auto-fit remains the Mac OOM mitigator |
 | 2026-11-14 | cli-learn-color-ux | Colour and plaques are added around the frozen echo contract; define lines are no-ops when the shell has already briefed the stage | Learners see stage boundaries at a glance without changing the tokens scripts and logs grep for |
+| 2026-11-14 | local-resume-and-guard | Local run lock uses an atomic `mkdir` with a PID file, not `flock` | `flock` is not installed on stock macOS |
+| 2026-11-14 | local-resume-and-guard | Modal guard stays in `runs/runmodal.sh`; not shared with the local lock | The Modal guard calls the `modal` CLI; sharing it would make `modal` a requirement for local runs |
 ## Slice states
 
 | slice_id | state | evidence |
@@ -42,6 +44,10 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | fix-forward-mac-phase15 | PASSED (merged) | [PR #8](https://github.com/neomatrix369/nanochat/pull/8) merged 2026-11-13 (`3054e4a` on master); Gate 4 APPROVED (code-reviewer, critic, architect); pre-push 126p/18s; phase15 unit 17p; ddd N/A |
 | fix-mps-skip-inductor | PASSED (merged) | [PR #10](https://github.com/neomatrix369/nanochat/pull/10) merged 2026-11-14 (`f6ef779` on master); skip Inductor on MPS + MPS AdamW/Muon; progress flush; `.train_ok` + speedrun CUDA hard-fail; RoPE grow-on-demand (`22d1282`); Gate 4 polish |
 | modal-nanochat-minimum | MERGED — live run pending | [PR #14](https://github.com/neomatrix369/nanochat/pull/14) merged 2026-11-14 (merge `5225a3d` on master; branch commits `4d60902`…`03d0c4d`). Local verification done: 142 passed / 16 skipped; bash -n and py_compile clean; nWave code, platform and architecture/docs reviewers APPROVED (last commit `03d0c4d` applied their follow-ups after approval, not re-reviewed). **Not verified:** Modal image build, prefetch, 8×H100 train, volume get, `modal app stop` billing stop. Next: see [HANDOFF.md](../../HANDOFF.md). |
+| resume-all-stages | IMPLEMENTED (PR open) | [PR #26](https://github.com/neomatrix369/nanochat/pull/26) open. `base_train` resume and time-based save in code and PR body. Verified locally on CPU/MPS (kill and SIGTERM); loss close but not bit-identical; Modal path not covered; Step A open. |
+| local-resume-and-guard | DECIDED (not started) | Plan approved 2026-11-14; saved as `docs/plan/2026-11-14-local-resume-and-guard.md`. |
+| modal-guard-hardware-capture | MERGED (guard) | PRs #24 and #25 merged (`282c84c`, `ffea067`). Docs and accelerator recording open. |
+| cli-learn-color-ux | MERGED | PRs #20 to #23 merged to master. |
 
 ## Recent merges (Mac fix-forward track)
 

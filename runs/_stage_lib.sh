@@ -84,6 +84,22 @@ stage_forced() {
     return 1
 }
 
+# Prints --resume-from-step=N when a fully-committed checkpoint exists, else nothing.
+# A forced stage always starts from step 0. A probe failure is reported, then starts from 0.
+resume_flag() {  # stage checkpoint_dir [world_size]
+    stage_forced "$1" && return 0
+    local step
+    # Import-time logs share stdout with the step, so keep only the last line.
+    step="$(python -m nanochat.checkpoint_manager find-resume-step "$2" "${3:-1}" | tail -n 1)" \
+        || { echo "WARN: resume probe failed for $2; starting $1 from step 0" >&2; return 0; }
+    case "$step" in
+        -1) return 0 ;;
+        ''|*[!0-9]*) echo "WARN: resume probe returned non-step output for $2; starting $1 from step 0" >&2; return 0 ;;
+    esac
+    [ "$step" -gt 0 ] && echo "--resume-from-step=$step"
+    return 0
+}
+
 # The artifact whose presence means the stage finished cleanly (file markers for train/eval).
 # Train stages use .train_ok (not "any model_*.pt") so a partial/probe checkpoint cannot SKIP.
 stage_path() {

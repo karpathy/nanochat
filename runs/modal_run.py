@@ -15,6 +15,7 @@ import json
 import os
 import resource
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -119,7 +120,35 @@ def _available_cores() -> int:
 # Wait-for-ack daemon (runs in background during a training function)
 
 
-def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
+_VOLUME_COMMIT_LOCK = threading.Lock()
+PERIODIC_COMMIT_SECS = 300
+PERIODIC_COMMIT_RETRY_SECS = 30
+
+
+def _commit_volume_locked(volume: modal.Volume) -> bool:
+    try:
+        with _VOLUME_COMMIT_LOCK:
+            volume.commit()
+        return True
+    except Exception as e:  # noqa: BLE001 - a failed periodic commit must not kill the daemon
+        print(f"[daemon] ERROR: commit failed: {e}")
+        return False
+
+
+def _periodic_commit(volume: modal.Volume, last_commit: float, now: float, every_secs: float) -> float:
+    """Commit the Volume if the interval has passed; return the new last-commit time.
+
+    A failed commit is retried after PERIODIC_COMMIT_RETRY_SECS, not on every loop.
+    """
+    if now - last_commit < every_secs:
+        return last_commit
+    if _commit_volume_locked(volume):
+        print("[daemon] periodic commit ok")
+        return now
+    return now - every_secs + PERIODIC_COMMIT_RETRY_SECS
+
+
+def _commit_daemon(volume: modal.Volume, base_dir: str, every_secs: float) -> None:
     """
     Daemon thread: watch for commit requests, run vol.commit(), update heartbeat.
 
@@ -144,12 +173,14 @@ def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
     def _commit_worker() -> list[bool]:
         result = [False]
         try:
-            volume.commit()
+            with _VOLUME_COMMIT_LOCK:
+                volume.commit()
             result[0] = True
         except Exception as e:  # noqa: BLE001 - any commit error must become a failed ack
             print(f"[daemon] ERROR: commit failed: {e}")
         return result
 
+    last_commit = time.time()
     while True:
         # Check for request
         if os.path.exists(request_file):
@@ -177,6 +208,7 @@ def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
             success = result_box[0] if result_box else False
 
             if success:
+                last_commit = time.time()
                 # Remove request on success (hook checks this to know we're done)
                 try:
                     os.remove(request_file)
@@ -194,7 +226,7 @@ def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
                 # Rate-limit retries while the hook sees the failed marker, instead of spinning.
                 time.sleep(2)
         else:
-            # No request yet; sleep and retry
+            last_commit = _periodic_commit(volume, last_commit, time.time(), every_secs)
             time.sleep(0.5)
 
 
@@ -232,7 +264,14 @@ def _run_record_env(run_id: str, mode: str, code_rev: str) -> dict[str, str]:
     }
 
 
-def _run_training(script: str, extra_env: dict[str, str]) -> None:
+def _terminate_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+
+def _run_training(script: str, extra_env: dict[str, str], commit_every_secs: float = PERIODIC_COMMIT_SECS) -> None:
     """Run one stage script with the commit daemon, marker cleanup and final commit."""
     os.chdir("/root/nanochat")
 
@@ -244,19 +283,38 @@ def _run_training(script: str, extra_env: dict[str, str]) -> None:
     # Start commit daemon in background
     daemon_thread = threading.Thread(
         target=_commit_daemon,
-        args=(vol, BASE_DIR),
+        args=(vol, BASE_DIR, commit_every_secs),
         daemon=True,
     )
     daemon_thread.start()
     print("[train] Commit daemon started")
 
+    # On preemption, stop the child and let the normal teardown below run the final commit.
+    # Committing inside the handler raced the commit daemon on the same Volume.
+    _proc: list[subprocess.Popen] = []
+    stop_requested: list[bool] = []
+
+    def _sigterm_stop_child(signum, frame):
+        print("[train] SIGTERM received — stopping training, then committing volume", flush=True)
+        stop_requested.append(True)
+        if _proc:
+            _terminate_group(_proc[0])
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _sigterm_stop_child)
+    else:
+        print("[train] WARNING: not on the main thread; SIGTERM handler not installed", flush=True)
+
     print(f"[train] Running {script}...")
-    result = subprocess.run(
+    proc = subprocess.Popen(
         ["bash", script],
         cwd="/root/nanochat",
         env={**os.environ, **modal_env},
-        check=False,
+        start_new_session=True,
     )
+    _proc.append(proc)
+    if stop_requested:
+        _terminate_group(proc)
+    returncode = proc.wait()
 
     # Clean up hook files BEFORE final commit
     for marker in [".modal_commit_request", ".modal_commit_failed", ".modal_commit_heartbeat"]:
@@ -266,11 +324,12 @@ def _run_training(script: str, extra_env: dict[str, str]) -> None:
             pass
 
     # Always commit final state (even if the script failed)
-    print(f"[train] {script} finished (exit code {result.returncode}); final volume commit...")
-    vol.commit()
+    print(f"[train] {script} finished (exit code {returncode}); final volume commit...")
+    with _VOLUME_COMMIT_LOCK:
+        vol.commit()
 
-    if result.returncode != 0:
-        raise RuntimeError(f"{script} failed with exit code {result.returncode}")
+    if returncode != 0:
+        raise RuntimeError(f"{script} failed with exit code {returncode}")
 
 
 def _read_memory_limit() -> int | None:
@@ -365,7 +424,13 @@ def prefetch_cpu() -> None:
     timeout=CPU_TRAIN_TIMEOUT,
     volumes={BASE_DIR: vol},
 )
-def train_cpu(run_id: str, code_rev: str) -> None:
+def train_cpu(
+    run_id: str,
+    code_rev: str,
+    num_iterations: int = CPU_NUM_ITERATIONS,
+    commit_every_secs: float = PERIODIC_COMMIT_SECS,
+    save_every_secs: float = 300,
+) -> None:
     """CPU train: runcpu.sh using every core in this container, same commit protocol."""
     cores = _available_cores()
     _record(run_id, config={"cores": cores, "memory_gib": CPU_MEMORY_MIB / 1024, "timeout_s": CPU_TRAIN_TIMEOUT})
@@ -378,9 +443,11 @@ def train_cpu(run_id: str, code_rev: str) -> None:
                 "MKL_NUM_THREADS": str(cores),
                 "NANOCHAT_RUNCPU_DEVICE_BATCH_SIZE": str(CPU_DEVICE_BATCH_SIZE),
                 "NANOCHAT_RUNCPU_EVAL_DEVICE_BATCH_SIZE": str(CPU_EVAL_DEVICE_BATCH_SIZE),
-                "NANOCHAT_RUNCPU_NUM_ITERATIONS": str(CPU_NUM_ITERATIONS),
+                "NANOCHAT_RUNCPU_NUM_ITERATIONS": str(num_iterations),
+                "NANOCHAT_SAVE_EVERY_SECS": str(save_every_secs),
                 **_run_record_env(run_id, "modal-cpu", code_rev),
             },
+            commit_every_secs,
         )
     finally:
         _archive_artifacts(run_id)

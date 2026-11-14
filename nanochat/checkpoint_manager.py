@@ -1,22 +1,22 @@
 """
 Utilities for saving and loading model/optim/state checkpoints.
 """
-import os
-import re
 import json
 import logging
+import os
+import re
+
 import torch
 
-from nanochat.common import get_base_dir
+from nanochat.common import get_base_dir, setup_default_logging
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.tokenizer import get_tokenizer
-from nanochat.common import setup_default_logging
 
 # Set up logging
 setup_default_logging()
 logger = logging.getLogger(__name__)
 def log0(message):
-    if int(os.environ.get('RANK', 0)) == 0:
+    if int(os.environ.get('RANK', '0')) == 0:
         logger.info(message)
 
 _SOURCE_DIRS = {
@@ -45,7 +45,7 @@ def _patch_missing_config_keys(model_config_kwargs):
     # Old models were trained with full context (no sliding window)
     if "window_pattern" not in model_config_kwargs:
         model_config_kwargs["window_pattern"] = "L"
-        log0(f"Patching missing window_pattern in model config to 'L'")
+        log0("Patching missing window_pattern in model config to 'L'")
 
 def _patch_missing_keys(model_data, model_config):
     """Add default values for new parameters that may be missing in old checkpoints."""
@@ -53,29 +53,37 @@ def _patch_missing_keys(model_data, model_config):
     # resid_lambdas defaults to 1.0 (identity scaling)
     if "resid_lambdas" not in model_data:
         model_data["resid_lambdas"] = torch.ones(n_layer)
-        log0(f"Patching missing resid_lambdas in model data to 1.0")
+        log0("Patching missing resid_lambdas in model data to 1.0")
     # x0_lambdas defaults to 0.0 (disabled)
     if "x0_lambdas" not in model_data:
         model_data["x0_lambdas"] = torch.zeros(n_layer)
-        log0(f"Patching missing x0_lambdas in model data to 0.0")
+        log0("Patching missing x0_lambdas in model data to 0.0")
+
+def _atomic_write(path, write_fn):
+    # A killed write leaves only *.tmp, which find_safe_resume_step never matches.
+    tmp_path = path + ".tmp"
+    write_fn(tmp_path)
+    os.replace(tmp_path, path)
 
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
     if rank == 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
         # Save the model state parameters
         model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
-        torch.save(model_data, model_path)
+        _atomic_write(model_path, lambda p: torch.save(model_data, p))
         logger.info(f"Saved model parameters to: {model_path}")
         # Save the metadata dict as json
         meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta_data, f, indent=2)
+        def _write_meta(p):
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(meta_data, f, indent=2)
+        _atomic_write(meta_path, _write_meta)
         logger.info(f"Saved metadata to: {meta_path}")
     # Note that optimizer state is sharded across ranks, so each rank must save its own.
     if optimizer_data is not None:
         os.makedirs(checkpoint_dir, exist_ok=True)
         optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
-        torch.save(optimizer_data, optimizer_path)
+        _atomic_write(optimizer_path, lambda p: torch.save(optimizer_data, p))
         logger.info(f"Saved optimizer state to: {optimizer_path}")
 
 def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
@@ -103,7 +111,7 @@ def build_model(checkpoint_dir, step, device, phase):
     - meta data saved during base model training
     """
     assert phase in ["train", "eval"], f"Invalid phase: {phase}"
-    model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, step, device, load_optimizer=False)
+    model_data, _, meta_data = load_checkpoint(checkpoint_dir, step, device, load_optimizer=False)
     if device.type in {"cpu", "mps"}:
         # Convert bfloat16 tensors to float for CPU inference
         model_data = {
@@ -165,6 +173,44 @@ def find_last_step(checkpoint_dir):
     last_step = max(int(f.split("_")[-1].split(".")[0]) for f in checkpoint_files)
     return last_step
 
+
+def remove_stale_tmp(checkpoint_dir: str) -> int:
+    """Delete *.tmp files left by a save that was killed mid-write. Returns the count removed."""
+    if not os.path.isdir(checkpoint_dir):
+        return 0
+    stale = [f for f in os.listdir(checkpoint_dir) if f.endswith(".tmp")]
+    for f in stale:
+        os.remove(os.path.join(checkpoint_dir, f))
+    return len(stale)
+
+
+def find_safe_resume_step(checkpoint_dir: str, world_size: int = 1) -> int:
+    """Return the highest step whose model, meta, and all optim shards are present.
+
+    Returns -1 if no fully-committed step exists (fresh start, empty dir, or missing artifacts).
+    Validates all three artifact types so a crash mid-save never produces a permanent crash-loop.
+    """
+    if world_size < 1:
+        raise ValueError(f"world_size must be >= 1, got {world_size}")
+    if not os.path.isdir(checkpoint_dir):
+        return -1
+    files = os.listdir(checkpoint_dir)
+    model_steps = sorted(
+        [int(m.group(1)) for f in files if (m := re.search(r"model_(\d+)\.pt$", f))],
+        reverse=True,
+    )
+    for step in model_steps:
+        meta = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
+        if not os.path.exists(meta):
+            continue
+        optim_ok = all(
+            os.path.exists(os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{r}.pt"))
+            for r in range(world_size)
+        )
+        if optim_ok:
+            return step
+    return -1
+
 # -----------------------------------------------------------------------------
 # convenience functions that take into account nanochat's directory structure
 
@@ -210,3 +256,11 @@ def load_optimizer_state(source, device, rank, model_tag=None, step=None):
     log0(f"Loading optimizer state from {optimizer_path}")
     optimizer_data = torch.load(optimizer_path, map_location=device)
     return optimizer_data
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    if len(_sys.argv) >= 3 and _sys.argv[1] == "find-resume-step":
+        _ws = int(_sys.argv[3]) if len(_sys.argv) > 3 else 1
+        print(find_safe_resume_step(_sys.argv[2], _ws))
+        raise SystemExit(0)
