@@ -20,6 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from nanochat.common import get_dist_info, print0, COMPUTE_DTYPE
+from nanochat.defaults import DEFAULT_SEQ_LEN, LOGIT_SOFTCAP, VOCAB_SIZE
 from nanochat.optim import MuonAdamW
 
 # Our custom Flash Attention module that automatically uses FA3 when compatible and SDPA fallback otherwise
@@ -27,8 +28,8 @@ from nanochat.flash_attention import flash_attn
 
 @dataclass
 class GPTConfig:
-    sequence_len: int = 2048
-    vocab_size: int = 32768
+    sequence_len: int = DEFAULT_SEQ_LEN
+    vocab_size: int = VOCAB_SIZE
     n_layer: int = 12
     n_head: int = 6 # number of query heads
     n_kv_head: int = 6 # number of key/value heads (GQA)
@@ -39,8 +40,20 @@ class GPTConfig:
     window_pattern: str = "SSSL"
 
 
-def norm(x):
+def _norm_manual(x):
+    # Fallback for torch<2.4 where F.rms_norm is missing
+    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-6)
+
+def _norm_native(x):
     return F.rms_norm(x, (x.size(-1),)) # note that this will run in bf16, seems ok
+
+# Bind once at import (no per-forward hasattr, keeps torch.compile happy)
+if hasattr(F, "rms_norm"):
+    norm = _norm_native
+    print0("[norm] using native F.rms_norm")
+else:
+    norm = _norm_manual
+    print0(f"[norm] original=F.rms_norm → adjusted=manual_rsqrt (reason: missing on torch {torch.__version__.split('+')[0]})")
 
 class Linear(nn.Linear):
     """nn.Linear that casts weights to match input dtype in forward.
@@ -192,8 +205,9 @@ class GPT(nn.Module):
         self.value_embeds = nn.ModuleDict({str(i): nn.Embedding(padded_vocab_size, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
         # To support meta device initialization, we init the rotary embeddings here, but it's just "fake" meta tensors only.
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
-        # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
-        # In the future we can dynamically grow the cache, for now it's fine.
+        # so let's just over-compute them by 10X up front.
+        # The cache grows dynamically in forward() with a 2x buffer if eval prompts exceed this
+        # (few-shot CORE tasks can exceed sequence_len * 10 when max_seq_len is small).
         self.rotary_seq_len = config.sequence_len * 10 # 10X over-compute should be enough, TODO make nicer?
         head_dim = config.n_embd // config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
@@ -451,6 +465,7 @@ class GPT(nn.Module):
                 momentum=0.95, ns_steps=5, beta2=0.9, weight_decay=weight_decay,
             ))
 
+        print0(f"Constructing MuonAdamW with {len(param_groups)} param groups...")
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
@@ -459,12 +474,16 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
         B, T = idx.size()
 
-        # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
-        assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
-        assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
-        assert self.cos.dtype == COMPUTE_DTYPE, f"Rotary embeddings must be in {COMPUTE_DTYPE}, got {self.cos.dtype}"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
+        # Dynamically grow rotary cache if needed (e.g. few-shot eval prompts exceed training seq_len * 10)
+        if T0 + T > self.cos.size(1):
+            self.rotary_seq_len = max(T0 + T, self.cos.size(1) * 2)  # 2x buffer to avoid regrowing every call
+            head_dim = self.config.n_embd // self.config.n_head
+            self.cos, self.sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
+        assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
+        assert self.cos.dtype == COMPUTE_DTYPE, f"Rotary embeddings must be in {COMPUTE_DTYPE}, got {self.cos.dtype}"
+        # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
 
         # Embed the tokens
@@ -508,7 +527,7 @@ class GPT(nn.Module):
         x = norm(x)
 
         # Forward the lm_head (compute logits)
-        softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
+        softcap = LOGIT_SOFTCAP # smoothly cap the logits to the range [-softcap, softcap]
         logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
         logits = logits[..., :self.config.vocab_size] # slice to remove padding
         logits = logits.float() # switch to fp32 for logit softcap and loss computation

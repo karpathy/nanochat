@@ -11,3 +11,12 @@ eval_bundle/
 # Local setup
 CLAUDE.md
 wandb/
+
+.omc/
+.gate-cache/
+.test-results/
+
+# Local parallel worktrees
+.worktrees/
+
+gate-evidence/

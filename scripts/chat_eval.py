@@ -8,12 +8,13 @@ python -m scripts.chat_eval -i sft -a ARC-Easy
 torchrun --nproc_per_node=8 -m scripts.chat_eval -- -i sft -a ARC-Easy
 """
 
+import os
 import argparse
 from functools import partial
 import torch
 import torch.distributed as dist
 
-from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0, autodetect_device_type
+from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0, autodetect_device_type, get_base_dir
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
 
@@ -238,3 +239,7 @@ if __name__ == "__main__":
         print0(f"ChatCORE metric: {chatcore_metric:.4f}")
 
     compute_cleanup()
+    if ddp_rank == 0: # marker: last action of a successful run
+        marker_dir = os.path.join(get_base_dir(), "chatsft_checkpoints")
+        os.makedirs(marker_dir, exist_ok=True)
+        open(os.path.join(marker_dir, ".eval_ok"), "w").close()

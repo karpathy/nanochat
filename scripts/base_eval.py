@@ -29,12 +29,15 @@ import argparse
 import torch
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
+from nanochat.defaults import DEFAULT_DEVICE_BATCH_SIZE
+from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
+from nanochat.metrics_trend import emit_metric_trend
 
 # -----------------------------------------------------------------------------
 # CORE evaluation
@@ -131,7 +134,8 @@ def main():
     parser.add_argument('--model-tag', type=str, default=None, help='nanochat model tag to identify the checkpoint directory')
     parser.add_argument('--step', type=int, default=None, help='Model step to load (default = last)')
     parser.add_argument('--max-per-task', type=int, default=-1, help='Max examples per CORE task (-1 = all)')
-    parser.add_argument('--device-batch-size', type=int, default=32, help='Per-device batch size for BPB evaluation')
+    parser.add_argument('--device-batch-size', type=int, default=DEFAULT_DEVICE_BATCH_SIZE, help='Per-device batch size for BPB evaluation')
+    parser.add_argument('--auto-fit-batch', action=argparse.BooleanOptionalAction, default=None, help='shrink --device-batch-size until the estimated peak fits device memory (default: on for mps, off for cuda/cpu)')
     parser.add_argument('--split-tokens', type=int, default=40*524288, help='Number of tokens to evaluate per split for BPB')
     parser.add_argument('--device-type', type=str, default='', help='cuda|cpu|mps (empty = autodetect)')
     args = parser.parse_args()
@@ -146,15 +150,32 @@ def main():
     # Distributed / precision setup
     device_type = autodetect_device_type() if args.device_type == '' else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+    empty_device_cache(device) # hand the weights a clean allocator; MPS OOMs on the load itself otherwise
     # Load model and tokenizer
     model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=args.model_tag, step=args.step)
-    sequence_len = meta["model_config"]["sequence_len"]
+    model_config = meta["model_config"]
+    sequence_len = model_config["sequence_len"]
     token_bytes = get_token_bytes(device=device)
     model_name = f"base_model (step {meta['step']})"
     model_slug = f"base_model_{meta['step']:06d}"
 
     print0(f"Evaluating model: {model_name}")
     print0(f"Eval modes: {', '.join(sorted(eval_modes))}")
+
+    # Memory preflight: the checkpoint knows the real geometry, and the (B, T, vocab) logits
+    # of the BPB loop below are still unallocated, so this is the moment to settle the batch.
+    if auto_fit_enabled(args.auto_fit_batch, device_type):
+        fitted_batch_size, fit_report = fit_device_batch_size(
+            args.device_batch_size, depth=model_config["n_layer"], seq_len=sequence_len,
+            device_type=device_type, vocab_size=model_config["vocab_size"],
+        )
+        for line in auto_fit_echo_lines(fit_report, [
+            ("CLI_default", DEFAULT_DEVICE_BATCH_SIZE),
+            ("profile", args.device_batch_size),
+            ("fitted", fitted_batch_size),
+        ]):
+            print0(line)
+        args.device_batch_size = fitted_batch_size
 
     # Results to log
     core_results = None
@@ -213,6 +234,14 @@ def main():
             bpb = evaluate_bpb(model, loader, steps, token_bytes)
             bpb_results[split_name] = bpb
             print0(f"{split_name} bpb: {bpb:.6f}")
+            if split_name == "val" and ddp_rank == 0:
+                emit_metric_trend(
+                    os.path.join(get_base_dir(), "last_metrics.json"),
+                    "val_bpb",
+                    float(bpb),
+                    lower_is_better=True,
+                    print_fn=print0,
+                )
 
     # --- CORE evaluation ---
     if 'core' in eval_modes:
@@ -235,8 +264,19 @@ def main():
                 f.write(f"{'CORE':<35}, {'':<10}, {core_results['core_metric']:<10.6f}\n")
             print0(f"\nResults written to: {output_csv_path}")
             print0(f"CORE metric: {core_results['core_metric']:.4f}")
+            emit_metric_trend(
+                os.path.join(base_dir, "last_metrics.json"),
+                "CORE",
+                float(core_results["core_metric"]),
+                lower_is_better=False,
+                print_fn=print0,
+            )
 
     compute_cleanup()
+    if ddp_rank == 0: # marker: last action of a successful run
+        marker_dir = os.path.join(get_base_dir(), "base_checkpoints")
+        os.makedirs(marker_dir, exist_ok=True)
+        open(os.path.join(marker_dir, ".eval_ok"), "w").close()
 
 
 if __name__ == "__main__":

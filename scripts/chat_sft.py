@@ -16,7 +16,9 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
 import torch
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, maybe_torch_compile
+from nanochat.defaults import DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_SEQ_LEN
+from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state
 from nanochat.loss_eval import evaluate_bpb
@@ -46,6 +48,7 @@ parser.add_argument("--num-iterations", type=int, default=-1, help="number of op
 # Batch sizes (default: inherit from pretrained checkpoint)
 parser.add_argument("--max-seq-len", type=int, default=None, help="max context length (default: inherit from pretrain)")
 parser.add_argument("--device-batch-size", type=int, default=None, help="per-device batch size (default: inherit from pretrain)")
+parser.add_argument("--auto-fit-batch", action=argparse.BooleanOptionalAction, default=None, help="shrink the device batch size until the estimated peak fits device memory (default: on for mps, off for cuda/cpu)")
 parser.add_argument("--total-batch-size", type=int, default=None, help="total batch size in tokens (default: inherit from pretrain)")
 # Optimization (default: inherit from pretrained checkpoint)
 parser.add_argument("--embedding-lr", type=float, default=None, help="learning rate for embedding parameters (Adam) (default: inherit from pretrain)")
@@ -91,13 +94,14 @@ if not HAS_FA3:
     print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback. Training will be less efficient.")
 
 # Load the model and tokenizer
+empty_device_cache(device) # hand the weights a clean allocator; MPS OOMs on the load itself otherwise
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=args.model_tag, step=args.model_step)
 
 # Inherit training hyperparameters from pretrained checkpoint (None = inherit, explicit value = override)
 pretrain_user_config = meta.get("user_config", {})
 for name, fallback, source in [
-    ("max_seq_len",       2048,  meta),
-    ("device_batch_size", 32,    meta),
+    ("max_seq_len",       DEFAULT_SEQ_LEN,          meta),
+    ("device_batch_size", DEFAULT_DEVICE_BATCH_SIZE, meta),
     ("total_batch_size",  524288, meta),
     ("embedding_lr",      0.3,   pretrain_user_config),
     ("unembedding_lr",    0.004, pretrain_user_config),
@@ -114,8 +118,24 @@ for name, fallback, source in [
     else:
         print0(f"Using {name}={arg_val}")
 
+# Memory preflight: run before the optimizer state and the SFT dataloader size themselves
+# off the batch. There is no profile layer here - the batch came from the CLI or the checkpoint.
+if auto_fit_enabled(args.auto_fit_batch, device_type):
+    fitted_batch_size, fit_report = fit_device_batch_size(
+        args.device_batch_size, depth=model.config.n_layer, seq_len=args.max_seq_len,
+        device_type=device_type, vocab_size=tokenizer.get_vocab_size(),
+    )
+    batch_size_source = "CLI" if user_config["device_batch_size"] is not None else "checkpoint"
+    for line in auto_fit_echo_lines(fit_report, [
+        (batch_size_source, args.device_batch_size),
+        ("fitted", fitted_batch_size),
+    ]):
+        print0(line)
+    args.device_batch_size = fitted_batch_size
+
 orig_model = model
-model = torch.compile(model, dynamic=False)
+# MPS: Inductor has no backend — maybe_torch_compile leaves the model eager (and echoes once).
+model = maybe_torch_compile(model, device_type, dynamic=False)
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
@@ -422,6 +442,8 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+    if step == 0:
+        print0(f"Step {step:05d} | training forward/backward ({grad_accum_steps} micro-steps)...")
     for micro_step in range(grad_accum_steps):
         loss = model(x, y)
         train_loss = loss.detach() # for logging
@@ -497,3 +519,8 @@ print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 # cleanup
 wandb_run.finish() # wandb run finish
 compute_cleanup()
+if master_process:  # marker: last action of a successful run (shell SKIP gate; see runs/_stage_lib.sh)
+    marker_dir = os.path.join(get_base_dir(), "chatsft_checkpoints")
+    os.makedirs(marker_dir, exist_ok=True)
+    open(os.path.join(marker_dir, ".train_ok"), "w").close()
+    print0(f"Wrote completion marker: {os.path.join(marker_dir, '.train_ok')}")

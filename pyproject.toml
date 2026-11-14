@@ -12,7 +12,11 @@ dependencies = [
     "pyarrow>=21.0.0",
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
-    "torch==2.9.1",
+    # Original: torch==2.9.1. Intel macOS (darwin/x86_64) has no 2.9.x wheels —
+    # last supported is 2.2.2. Markers keep upstream default everywhere else
+    # (Linux, Windows, Apple Silicon).
+    "torch==2.9.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "torch==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "wandb>=0.21.3",
 ]
 
@@ -33,11 +37,12 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-# target torch to cuda 12.8 or CPU
+# Original (non-macOS): torch from pytorch-cpu (cpu) / pytorch-cu128 (gpu).
+# Detect OS: macOS uses PyPI (MPS / Intel wheels); CUDA index is Linux-only.
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cpu", extra = "cpu" },
-    { index = "pytorch-cu128", extra = "gpu" },
+    { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform != 'darwin'" },
+    { index = "pytorch-cu128", extra = "gpu", marker = "sys_platform == 'linux'" },
 ]
 
 [[tool.uv.index]]
@@ -53,10 +58,12 @@ explicit = true
 [project.optional-dependencies]
 cpu = [
     "setuptools>=65.0.0",
-    "torch==2.9.1",
+    "torch==2.9.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "torch==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 gpu = [
-    "torch==2.9.1",
+    "torch==2.9.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "torch==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
 [tool.uv]

@@ -118,6 +118,7 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
 def print0(s="",**kwargs):
     ddp_rank = int(os.environ.get('RANK', 0))
     if ddp_rank == 0:
+        kwargs.setdefault("flush", True)  # long silent stretches (val eval, first batch) must appear immediately
         print(s, **kwargs)
 
 def print_banner():
@@ -170,6 +171,23 @@ def autodetect_device_type():
         device_type = "cpu"
     print0(f"Autodetected device type: {device_type}")
     return device_type
+
+def inductor_supports_device(device_type):
+    """
+    TorchInductor (default torch.compile backend) codegens for cuda/cpu only.
+    On mps, compile raises: AssertionError: Device mps not supported.
+    """
+    return device_type != "mps"
+
+
+def maybe_torch_compile(module, device_type, **compile_kwargs):
+    """Compile when Inductor can target this device; otherwise return the module unchanged (eager)."""
+    if not inductor_supports_device(device_type):
+        # One contract-shaped line (same original→adjusted form as [norm] / [auto-fit]).
+        print0("[compile] original=torch.compile → adjusted=eager (reason: Inductor has no MPS backend)")
+        return module
+    return torch.compile(module, **compile_kwargs)
+
 
 def compute_init(device_type="cuda"): # cuda|cpu|mps
     """Basic initialization that we keep doing over and over, so make common."""
