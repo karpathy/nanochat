@@ -55,7 +55,9 @@ Exit: a table of observed results. Gaps found here go into Phase 2 or 3.
 
 Exit: no stage can leave a partial artifact that its `stage_done` check accepts.
 
-### Phase 3: resume `chat_sft`
+### Phase 3: resume `chat_sft` (follow-up PR, decided 2026-11-14)
+
+Not in PR #26. PR #26 merges once `base_train` is verified.
 
 - Save a complete checkpoint every N steps (same `save_checkpoint` contract as `base_train`:
   model + meta + optim shards, atomic writes).
@@ -89,16 +91,14 @@ Exit: each stage's interruption behavior is recorded from a real run.
 - `FORCE_STAGES=<stage>` restarts that stage from zero.
 - The stage marker is absent while the stage is incomplete.
 
-## Out of scope
+## Decisions (2026-11-14)
 
-- Resuming on a different number of GPUs than the run started with. Requires shard re-mapping; document as unsupported and fail loudly if detected.
-- Time-based save interval. Reviewers suggested it; decision pending (see open questions).
-- Automatic retry on preemption. Not added by this plan.
+- Save interval is time-based (default 300 s), decided by rank 0 and broadcast to all ranks, so every rank saves the same step. Implemented in PR #26.
+- `chat_sft` resume is a follow-up PR (Phase 3).
+- Resuming on a different GPU count: out of scope.
+- Corrupt-but-present checkpoint files: out of scope for now.
+- Modal preemption: Modal docs say a preempted function is restarted on the same input automatically (https://modal.com/docs/guide/preemption). The grace period is not documented, so it is measured in Phase 4.
 
 ## Open questions
 
-1. Save interval: keep steps (`--save-every=500`), or switch to time (every 5 minutes)?
-   Reviewers recommended time, because CPU steps are much slower than GPU steps.
-2. Should Phase 3 (`chat_sft`) ship in this PR, or as a follow-up PR? Recommendation: follow-up,
-   so PR #26 can merge once `base_train` is verified.
-3. Is `tokenizer.save` atomic in practice? Phase 1 answers this before we change code.
+1. Is `tokenizer.save` atomic in practice? Phase 1 answers this before we change code.
