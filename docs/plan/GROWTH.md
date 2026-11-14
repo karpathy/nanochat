@@ -65,3 +65,22 @@
 
 **Deferred (parked)**
 - Softcap / logits memory (upstreamable gather-at-needed-positions vs fork `PROFILE_RUNCPU` knobs) — discussed in playgroup softcap/eval chat; not scheduled until a design is picked
+
+## cli-learn-color-ux
+
+**Added**
+- `nanochat/glossary.py` — term catalog (9 terms), `STAGE_TERMS`, `format_learn_line`, `emit_define`; CLI `learn --stage`
+- `nanochat/term_style.py` — `enabled()` (TTY and `NO_COLOR`), `paint(role, text)` for direct print/shell output
+- `nanochat/stage_art.py` — ASCII plaque renderer and CLI; `NANOCHAT_PLAIN=1` suppresses art
+- `tests/test_glossary.py`, `tests/test_term_style.py`, `tests/test_stage_art.py` — GWT-named unit tests; §6b parse test keeps RUNNING in sync with the glossary
+
+**Changed**
+- `runs/_stage_lib.sh` — colour on START/DONE/SKIP/FAIL; plaques on START/DONE/FAIL; `learn:` line after `purpose:`; per-command `NANOCHAT_STAGE_BRIEFED`
+- `runs/modal_run.py` — `NO_COLOR=1` in `_modal_env()`
+- `scripts/base_train.py` — `emit_define` for BPB/CORE/MFU/Muon; done-colour on metric lines and trend
+- `docs/RUNNING.md` — §6b Terms table; §5 emission order; §6 two START enrichment lines; §9 hook failure DONE→FAIL; duplicate top blurb removed
+- `README.md` — one bullet under CPU/MPS pointing to RUNNING §5–§6b
+
+**Deferred**
+- `scripts/tok_train.py`, `tok_eval.py`, `chat_sft.py`, `chat_eval.py` colour and define lines (Could)
+- `scripts/chat_cli.py` welcome plaque (Could)
