@@ -7,6 +7,8 @@ Scope: Unit tests for term catalog, STAGE_TERMS mapping, and learn line formatti
 """
 
 import os
+import re
+from pathlib import Path
 import pytest
 
 from nanochat import glossary
@@ -363,3 +365,69 @@ class TestEmitDefine:
         captured = capsys.readouterr()
 
         assert captured.out == ""
+
+
+# ---------------------------------------------------------------------------
+# RUNNING.md §6b Terms table: must stay in sync with the glossary catalog.
+# Slice: cli-learn-color-ux (DX checks: URLs match glossary, cells <= 12 words)
+# ---------------------------------------------------------------------------
+
+_RUNNING_MD = Path(__file__).resolve().parents[1] / "docs" / "RUNNING.md"
+_MAX_PLAIN_MEANING_WORDS = 12
+
+
+def _running_terms_table_rows() -> list[tuple[str, str, str]]:
+    """Return (term, plain meaning, link URL) for each row of RUNNING §6b."""
+    text = _RUNNING_MD.read_text(encoding="utf-8")
+    section = text.split("## 6b. Terms", 1)[1].split("\n## ", 1)[0]
+    rows = []
+    for line in section.splitlines():
+        if not line.startswith("| ") or "](" not in line:
+            continue
+        term, meaning, link = [c.strip() for c in line.strip("|").split("|")]
+        if term in ("Term",):
+            continue
+        url = re.search(r"\]\(([^)]+)\)", link).group(1)
+        rows.append((term, meaning, url))
+    return rows
+
+
+def test_given_running_terms_table_when_parsed_then_url_matches_glossary_for_each_term():
+    # given
+    rows = _running_terms_table_rows()
+
+    # when
+    mismatches = [
+        (term, url, glossary.GLOSSARY[term][1])
+        for term, _meaning, url in rows
+        if glossary.GLOSSARY[term][1] != url
+    ]
+
+    # then
+    assert mismatches == [], f"RUNNING §6b URLs drift from glossary.py: {mismatches}"
+
+
+def test_given_running_terms_table_when_parsed_then_every_plain_meaning_is_within_word_limit():
+    # given
+    rows = _running_terms_table_rows()
+
+    # when
+    too_long = [
+        (term, len(meaning.split()))
+        for term, meaning, _url in rows
+        if len(meaning.split()) > _MAX_PLAIN_MEANING_WORDS
+    ]
+
+    # then
+    assert too_long == [], f"§6b plain meanings over {_MAX_PLAIN_MEANING_WORDS} words: {too_long}"
+
+
+def test_given_running_terms_table_when_parsed_then_it_lists_every_glossary_term():
+    # given
+    rows = _running_terms_table_rows()
+
+    # when
+    listed = {term for term, _meaning, _url in rows}
+
+    # then
+    assert listed == set(glossary.GLOSSARY), "RUNNING §6b must list exactly the glossary terms"
