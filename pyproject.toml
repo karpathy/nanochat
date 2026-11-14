@@ -23,8 +23,10 @@ dependencies = [
 dev = [
     "ipykernel>=7.1.0",
     "matplotlib>=3.10.8",
+    "modal>=1.6.4",
     "pytest>=8.0.0",
     "python-dotenv>=1.2.1",
+    "ruff>=0.17.5",
 ]
 
 [tool.pytest.ini_options]
