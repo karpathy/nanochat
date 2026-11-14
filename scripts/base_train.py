@@ -509,6 +509,8 @@ def rehalve_after_oom():
 # Define the terms that will appear in this stage (once per process when unbriefed).
 emit_define("MFU")
 emit_define("Muon")
+emit_define("BPB")
+emit_define("CORE")
 
 while True:
     last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
@@ -522,8 +524,7 @@ while True:
         print0(f"Step {step:05d} | starting validation bpb ({eval_steps} steps, ~{args.eval_tokens:,} tokens)...")
         with disable_fp8(model):
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        emit_define("BPB")
-        validation_line = f"Step {step:05d} | Validation bpb: {val_bpb:.6f}"
+        validation_line =f"Step {step:05d} | Validation bpb: {val_bpb:.6f}"
         print0(paint("done", validation_line))
         if master_process:
             emit_metric_trend(
