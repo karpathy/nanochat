@@ -252,19 +252,30 @@ def _run_training(script: str, extra_env: dict[str, str]) -> None:
     print("[train] Commit daemon started")
 
     # Commit the Volume on SIGTERM (preemption) so mid-train checkpoints survive restart.
+    # Use Popen so the handler can stop the subprocess before committing — this prevents
+    # vol.commit() from racing an in-progress torch.save() that would leave truncated files.
+    _proc: list[subprocess.Popen] = []  # list so closure can rebind after Popen creation
+
     def _sigterm_commit(signum, frame):
         print("[train] SIGTERM received — committing volume before exit", flush=True)
+        if _proc:
+            _proc[0].terminate()
+            try:
+                _proc[0].wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _proc[0].kill()
         vol.commit()
         raise SystemExit(1)
     signal.signal(signal.SIGTERM, _sigterm_commit)
 
     print(f"[train] Running {script}...")
-    result = subprocess.run(
+    proc = subprocess.Popen(
         ["bash", script],
         cwd="/root/nanochat",
         env={**os.environ, **modal_env},
-        check=False,
     )
+    _proc.append(proc)
+    returncode = proc.wait()
 
     # Clean up hook files BEFORE final commit
     for marker in [".modal_commit_request", ".modal_commit_failed", ".modal_commit_heartbeat"]:
@@ -274,11 +285,11 @@ def _run_training(script: str, extra_env: dict[str, str]) -> None:
             pass
 
     # Always commit final state (even if the script failed)
-    print(f"[train] {script} finished (exit code {result.returncode}); final volume commit...")
+    print(f"[train] {script} finished (exit code {returncode}); final volume commit...")
     vol.commit()
 
-    if result.returncode != 0:
-        raise RuntimeError(f"{script} failed with exit code {result.returncode}")
+    if returncode != 0:
+        raise RuntimeError(f"{script} failed with exit code {returncode}")
 
 
 def _read_memory_limit() -> int | None:

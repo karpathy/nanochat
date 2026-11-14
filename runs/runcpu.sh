@@ -86,6 +86,8 @@ run_stage base_train "depth=$RUNCPU_DEPTH device_batch_size=$RUNCPU_DEVICE_BATCH
 run_stage base_eval "device_batch_size=$RUNCPU_EVAL_DEVICE_BATCH_SIZE" "chat_sft (or SKIP if checkpoints exist)" -- \
     python -m scripts.base_eval --device-batch-size="$RUNCPU_EVAL_DEVICE_BATCH_SIZE" --split-tokens=16384 --max-per-task=16
 
+# chat_sft has no resume wiring intentionally: it runs ≤1500 steps so preemption risk is low.
+# If SFT is ever extended to longer runs, apply the same _SAVE_EVERY/_RESUME_FLAG pattern used above.
 # SFT (~10 minutes on my MacBook Pro M3 Max)
 run_stage chat_sft "" "chat with your model (python -m scripts.chat_cli)" -- \
     python -m scripts.chat_sft \

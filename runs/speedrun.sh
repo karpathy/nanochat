@@ -113,7 +113,8 @@ run_stage base_eval "device_batch_size=$SPEEDRUN_EVAL_DEVICE_BATCH_SIZE" "chat_s
 # -----------------------------------------------------------------------------
 # SFT (teach the model conversation special tokens, tool use, multiple choice)
 
-# run SFT and eval the model
+# chat_sft has no resume wiring intentionally: it runs ≤1500 steps so preemption risk is low.
+# If SFT is ever extended to longer runs, apply the same _SAVE_EVERY/_RESUME_FLAG pattern used above.
 run_stage chat_sft "" "chat_eval (or SKIP if .eval_ok)" -- \
     torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
 run_stage chat_eval "" "chat with your model (python3 -m scripts.chat_cli)" -- \

@@ -217,14 +217,6 @@ def load_model(source, *args, **kwargs):
     checkpoints_dir = os.path.join(base_dir, model_dir)
     return load_model_from_dir(checkpoints_dir, *args, source=source, **kwargs)
 
-if __name__ == "__main__":
-    import sys as _sys
-    if len(_sys.argv) >= 3 and _sys.argv[1] == "find-resume-step":
-        _ws = int(_sys.argv[3]) if len(_sys.argv) > 3 else 1
-        print(find_safe_resume_step(_sys.argv[2], _ws))
-        raise SystemExit(0)
-
-
 def load_optimizer_state(source, device, rank, model_tag=None, step=None):
     """Load just the optimizer shard for a given rank, without re-loading the model."""
     model_dir = _SOURCE_DIRS[source]
@@ -244,3 +236,11 @@ def load_optimizer_state(source, device, rank, model_tag=None, step=None):
     log0(f"Loading optimizer state from {optimizer_path}")
     optimizer_data = torch.load(optimizer_path, map_location=device)
     return optimizer_data
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    if len(_sys.argv) >= 3 and _sys.argv[1] == "find-resume-step":
+        _ws = int(_sys.argv[3]) if len(_sys.argv) > 3 else 1
+        print(find_safe_resume_step(_sys.argv[2], _ws))
+        raise SystemExit(0)
