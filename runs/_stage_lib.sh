@@ -28,7 +28,8 @@ _paint() {
 _print_plaque() {
     local stage="$1" kind="$2" subtitle="$3"
     [ "${NANOCHAT_PLAIN:-}" = "1" ] && return 0
-    python3 -m nanochat.stage_art plaque --stage "$stage" --kind "$kind" --subtitle "$subtitle" 2>/dev/null || true
+    python3 -m nanochat.stage_art plaque --stage "$stage" --kind "$kind" --subtitle "$subtitle" 2>/dev/null \
+        || echo "WARN: plaque not rendered for stage=$stage kind=$kind" >&2
 }
 
 STAGE_KNOWN="tok_train tok_eval base_train base_eval chat_sft chat_eval"
@@ -267,7 +268,8 @@ run_stage() {
     echo "  purpose: $(stage_purpose "$stage") · $(health_strip)" || true
     # Learn line after purpose (empty string suppresses the output).
     local learn_line
-    learn_line="$(python3 -m nanochat.glossary learn --stage "$stage" 2>/dev/null || true)"
+    learn_line="$(python3 -m nanochat.glossary learn --stage "$stage" 2>/dev/null)" \
+        || { echo "WARN: learn line not rendered for stage=$stage" >&2; learn_line=""; }
     [ -n "$learn_line" ] && echo "  $learn_line"
 
     # Drop stale success markers before a real run so a crashed FORCE/redo cannot SKIP as "done".
