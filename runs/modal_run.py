@@ -262,7 +262,10 @@ def _run_training(script: str, extra_env: dict[str, str]) -> None:
     def _sigterm_stop_child(signum, frame):
         print("[train] SIGTERM received — stopping training, then committing volume", flush=True)
         if _proc:
-            _proc[0].terminate()
+            try:
+                os.killpg(_proc[0].pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
     signal.signal(signal.SIGTERM, _sigterm_stop_child)
 
     print(f"[train] Running {script}...")
@@ -270,6 +273,7 @@ def _run_training(script: str, extra_env: dict[str, str]) -> None:
         ["bash", script],
         cwd="/root/nanochat",
         env={**os.environ, **modal_env},
+        start_new_session=True,
     )
     _proc.append(proc)
     returncode = proc.wait()

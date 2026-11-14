@@ -92,6 +92,10 @@ resume_flag() {  # stage checkpoint_dir [world_size]
     # Import-time logs share stdout with the step, so keep only the last line.
     step="$(python -m nanochat.checkpoint_manager find-resume-step "$2" "${3:-1}" | tail -n 1)" \
         || { echo "WARN: resume probe failed for $2; starting $1 from step 0" >&2; return 0; }
+    case "$step" in
+        -1) return 0 ;;
+        ''|*[!0-9]*) echo "WARN: resume probe returned non-step output for $2; starting $1 from step 0" >&2; return 0 ;;
+    esac
     [ "$step" -gt 0 ] && echo "--resume-from-step=$step"
     return 0
 }
