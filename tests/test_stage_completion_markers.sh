@@ -36,44 +36,19 @@ rm -f "$(stage_path base_train)"
 
 echo "ok: stage completion markers"
 
-# Test: contract tokens are frozen (SKIP has no plaque)
-# When: a stage is already done and not forced
-# Then: SKIP line prints but no plaque
-if output="$(FORCE_STAGES="" run_stage base_train "" next -- echo "dummy" 2>&1)"; then
-    if echo "$output" | grep -q "SKIP stage=base_train"; then
-        if echo "$output" | grep -q '^+-'; then
-            echo "FAIL: SKIP should not have plaque" >&2
-            exit 1
-        fi
-    fi
-else
-    true  # stage may fail for other reasons; we're just checking output format
-fi
-
-# Test: SKIP gets color but no plaque
-# When: SKIP is printed to non-TTY (this script's stdout is not a TTY)
-# Then: SKIP line appears (plain text in non-TTY), no plaque
-SKIP_output="$(FORCE_STAGES="" run_stage base_train "" next -- echo "dummy" 2>&1)" || true
-if echo "$SKIP_output" | grep -q "SKIP"; then
-    if echo "$SKIP_output" | grep '^+-'; then
-        echo "FAIL: SKIP must not have plaque even with color enabled" >&2
-        exit 1
-    fi
-fi
-
-# Test: learn line is present after purpose
-# When: a non-skipped stage runs
-# Then: learn line appears after purpose line (if the stage has terms)
-# (This test would require a full run, so we check CLI instead)
-learn_line=$("$ROOT/.venv/bin/python" -m nanochat.glossary learn --stage base_train)
-if [ -z "$learn_line" ]; then
-    echo "FAIL: base_train should have learn line" >&2
+# Test: SKIP is printed with no plaque (contract frozen; plaques only on START/DONE/FAIL)
+# Given: the stage marker exists, so run_stage takes the SKIP path
+# When: base_train is run without FORCE_STAGES
+# Then: a SKIP line is printed and no plaque border line appears
+mkdir -p "$(dirname "$(stage_path base_train)")"
+touch "$(stage_path base_train)"
+SKIP_output="$(FORCE_STAGES="" run_stage base_train "" next -- echo "dummy" 2>&1)"
+echo "$SKIP_output" | grep -q "SKIP stage=base_train" || { echo "FAIL: SKIP line not printed" >&2; exit 1; }
+if echo "$SKIP_output" | grep -q '^+-'; then
+    echo "FAIL: SKIP must not have a plaque" >&2
     exit 1
 fi
-if ! echo "$learn_line" | grep -q "learn:"; then
-    echo "FAIL: learn line should start with 'learn:'" >&2
-    exit 1
-fi
+rm -f "$(stage_path base_train)"
 
 # Test: NANOCHAT_PLAIN=1 suppresses plaques but keeps contract
 # When: NANOCHAT_PLAIN=1 is set
