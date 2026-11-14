@@ -28,7 +28,7 @@ This plan is the SSOT for the Modal thread **plus** critic fixes **plus** analys
 | nWave specialized reviewers | Quota-blocked | Criteria covered via architect/PO/docs/critic stand-ins |
 | nWave product-owner-reviewer (2026-11-14) | **REQUEST_CHANGES** → applied | Hook-failure rule no longer deletes the tokenizer artifact; chat prerequisites + observable check; spend confirmation; docs and knob-leak verification; time/disk disclosure; MVP trimmed to speedrun.sh only |
 | nWave solution-architect-reviewer (2026-11-14) | **REQUEST_CHANGES** → applied | `eval` hook invocation + hook timeout (10 min); miniseries activate-iff-`.venv` noted; final commit runs regardless of exit code; `nanochat.dataset` must not import at module level |
-| nWave platform-architect-reviewer (2026-11-14) | **REQUEST_CHANGES** → applied | §0.1 no longer claims miniseries already guards `.venv`; miniseries guard added now; 2 s poll interval; §9.16 Volume-path check for `speedrun.sh:21` |
+| nWave platform-architect-reviewer (2026-11-14) | **REQUEST_CHANGES** → applied | §0.1 no longer claims miniseries already guards `.venv`; miniseries guard added now; 2 s poll with 120 s idle limit and 10 min overall ceiling; §9.16 Volume-path check for `speedrun.sh:21` |
 
 ### Fixes applied (all rounds)
 
@@ -268,7 +268,11 @@ Set the hook from Python as an env-dict entry on the `subprocess` call, not by b
 - Correct: `env = {**os.environ, "NANOCHAT_POST_STAGE_HOOK": "bash /root/nanochat/runs/modal_hook.sh"}`
 - Wrong: `os.system(f"NANOCHAT_POST_STAGE_HOOK='bash -c \"…\"' bash runs/speedrun.sh")`
 
-**Hook timeout (required):** the hook polls every 2 s with a hard ceiling of 10 min per stage (a 17 GB commit can take minutes). On timeout, exit non-zero. On seeing `.modal_commit_failed`, exit non-zero immediately without further polling. The daemon must write one of these two signals inside that window, so the hook always terminates.
+**Hook timeout (required):** the hook polls every 2 s with two limits:
+- **Idle limit: 120 s** with no change in the commit state (no `.modal_commit_request` removal, no `.modal_commit_failed`). A dead daemon fails fast.
+- **Overall ceiling: 10 min per stage**, so a large 17 GB commit that is still making progress can finish.
+
+On either limit, exit non-zero. On seeing `.modal_commit_failed`, exit non-zero immediately without further polling.
 
 ### 8.2 `runs/runmodal.sh` + `runs/modal_run.py`
 
