@@ -524,7 +524,7 @@ while True:
         print0(f"Step {step:05d} | starting validation bpb ({eval_steps} steps, ~{args.eval_tokens:,} tokens)...")
         with disable_fp8(model):
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        validation_line =f"Step {step:05d} | Validation bpb: {val_bpb:.6f}"
+        validation_line = f"Step {step:05d} | Validation bpb: {val_bpb:.6f}"
         print0(paint("done", validation_line))
         if master_process:
             emit_metric_trend(
