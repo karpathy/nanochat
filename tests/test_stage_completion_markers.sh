@@ -41,7 +41,7 @@ echo "ok: stage completion markers"
 # Then: SKIP line prints but no plaque
 if output="$(FORCE_STAGES="" run_stage base_train "" next -- echo "dummy" 2>&1)"; then
     if echo "$output" | grep -q "SKIP stage=base_train"; then
-        if echo "$output" | grep -q "┌"; then
+        if echo "$output" | grep -q '^+-'; then
             echo "FAIL: SKIP should not have plaque" >&2
             exit 1
         fi
@@ -55,7 +55,7 @@ fi
 # Then: SKIP line appears (plain text in non-TTY), no plaque
 SKIP_output="$(FORCE_STAGES="" run_stage base_train "" next -- echo "dummy" 2>&1)" || true
 if echo "$SKIP_output" | grep -q "SKIP"; then
-    if echo "$SKIP_output" | grep "┌"; then
+    if echo "$SKIP_output" | grep '^+-'; then
         echo "FAIL: SKIP must not have plaque even with color enabled" >&2
         exit 1
     fi
@@ -78,7 +78,7 @@ fi
 # Test: NANOCHAT_PLAIN=1 suppresses plaques but keeps contract
 # When: NANOCHAT_PLAIN=1 is set
 # Then: plaque CLI returns empty string
-NANOCHAT_PLAIN=1 plaque_output=$("$ROOT/.venv/bin/python" -m nanochat.stage_art plaque --stage base_train --kind start --subtitle "test")
+plaque_output="$(NANOCHAT_PLAIN=1 "$ROOT/.venv/bin/python" -m nanochat.stage_art plaque --stage base_train --kind start --subtitle "test")"
 if [ -n "$plaque_output" ]; then
     echo "FAIL: plaque should be suppressed with NANOCHAT_PLAIN=1" >&2
     exit 1
