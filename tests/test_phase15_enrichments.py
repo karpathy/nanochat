@@ -6,7 +6,6 @@ docs/plan/2026-11-13-fix-forward-mac-phase15.md.
 
 Run: python -m pytest tests/test_phase15_enrichments.py -q
 """
-from pathlib import Path
 
 from nanochat.last_run import format_knob_diff, load_last_run, write_last_run
 from nanochat.metrics_trend import (
@@ -16,7 +15,6 @@ from nanochat.metrics_trend import (
     record_metric,
 )
 from nanochat.run_tip import run_tip
-
 
 # ----------------------------------------------------------------------------- last_run / knob diff
 
@@ -223,7 +221,7 @@ def test_run_tip_is_one_line_mentioning_device_batch_size():
 
 def test_given_glossary_learn_stage_when_format_learn_line_then_includes_all_terms():
     # Scenario: Stage has 4 terms (base_train max); format_learn_line returns one line.
-    from nanochat.glossary import format_learn_line, STAGE_TERMS
+    from nanochat.glossary import STAGE_TERMS, format_learn_line
 
     # given: base_train stage with 4 terms
     stage = "base_train"
@@ -251,6 +249,7 @@ def test_given_unknown_stage_when_format_learn_line_then_returns_empty():
 def test_given_nanochat_stage_briefed_when_emit_define_then_no_output():
     # Scenario: emit_define is a no-op when NANOCHAT_STAGE_BRIEFED=1.
     import os
+
     from nanochat.glossary import emit_define
 
     # given: env var set to suppress output
@@ -271,6 +270,7 @@ def test_given_nanochat_stage_briefed_when_emit_define_then_no_output():
 def test_given_briefed_env_unset_when_emit_define_then_prints_term():
     # Scenario: emit_define prints when NANOCHAT_STAGE_BRIEFED is unset.
     import os
+
     from nanochat.glossary import emit_define
 
     # given: env var unset (normal case)
@@ -292,6 +292,7 @@ def test_given_briefed_env_unset_when_emit_define_then_prints_term():
 def test_given_no_color_env_when_term_enabled_then_false():
     # Scenario: NO_COLOR=1 disables color.
     import os
+
     from nanochat.term_style import enabled
 
     # given: NO_COLOR set
@@ -311,6 +312,7 @@ def test_given_no_color_env_when_term_enabled_then_false():
 def test_given_nanochat_plain_when_term_enabled_then_false():
     # Scenario: NANOCHAT_PLAIN=1 disables color.
     import os
+
     from nanochat.term_style import enabled
 
     # given: NANOCHAT_PLAIN set
@@ -330,6 +332,7 @@ def test_given_nanochat_plain_when_term_enabled_then_false():
 def test_given_plain_when_paint_then_returns_plain_text():
     # Scenario: paint returns plain text when disabled.
     import os
+
     from nanochat.term_style import paint
 
     # given: NANOCHAT_PLAIN set
@@ -352,6 +355,7 @@ def test_given_plain_when_paint_then_returns_plain_text():
 def test_given_nanochat_plain_when_plaque_then_returns_empty():
     # Scenario: plaque returns empty string when NANOCHAT_PLAIN=1.
     import os
+
     from nanochat.stage_art import render_plaque as plaque
 
     # given: NANOCHAT_PLAIN set
@@ -371,6 +375,7 @@ def test_given_nanochat_plain_when_plaque_then_returns_empty():
 def test_given_plaque_when_nanochat_plain_unset_then_returns_multiline():
     # Scenario: plaque returns ASCII art when not suppressed.
     import os
+
     from nanochat.stage_art import render_plaque as plaque
 
     # given: NANOCHAT_PLAIN unset
