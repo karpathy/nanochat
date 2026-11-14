@@ -110,3 +110,75 @@ class TestRunLock:
         r = _run(_run_lock_script(str(tmp_path)))
         assert r.returncode == 0, r.stderr
         assert "ACQUIRED" in r.stdout
+
+
+class TestRunLockReclaimAndSafety:
+    """
+    Scenario: Reclaim is gated by a second mkdir; an empty base dir is refused.
+    Slice: runs/_run_lock.sh (review blockers S2, B5)
+    """
+
+    def test_empty_base_dir_is_refused(self, tmp_path):
+        """
+        Scenario: NANOCHAT_BASE_DIR is set but empty; the lock must not resolve to /.run.lock.
+        Slice: S2 guard
+        ### Given: NANOCHAT_BASE_DIR=""
+        ### When: _run_lock.sh is sourced
+        ### Then: exits non-zero with 'must be set' and nothing is created under /
+        """
+        r = _run(_run_lock_script(""))
+        assert r.returncode != 0
+        assert "must be set" in r.stderr
+        assert "ACQUIRED" not in r.stdout
+
+    def test_reclaim_gate_held_by_another_run_blocks_reclaim(self, tmp_path):
+        """
+        Scenario: Stale lock, but another process holds the reclaim gate.
+        Slice: B5 single-claimant gate
+        ### Given: .run.lock/pid is dead and .run.lock.reclaim exists
+        ### When: _run_lock.sh is sourced
+        ### Then: exits 1 with 'reclaiming' and the stale lock dir is left in place
+        """
+        lock_dir = tmp_path / ".run.lock"
+        lock_dir.mkdir()
+        (lock_dir / "pid").write_text("99999")
+        (tmp_path / ".run.lock.reclaim").mkdir()
+
+        r = _run(_run_lock_script(str(tmp_path)))
+        assert r.returncode == 1
+        assert "reclaiming" in r.stderr
+        assert (lock_dir / "pid").exists()
+
+    def test_reclaim_gate_is_released_after_successful_reclaim(self, tmp_path):
+        """
+        Scenario: Stale lock is reclaimed successfully.
+        Slice: B5 gate cleanup
+        ### Given: .run.lock/pid is dead, no gate present
+        ### When: _run_lock.sh is sourced and exits
+        ### Then: exits 0 and neither .run.lock nor .run.lock.reclaim remains
+        """
+        lock_dir = tmp_path / ".run.lock"
+        lock_dir.mkdir()
+        (lock_dir / "pid").write_text("99999")
+
+        r = _run(_run_lock_script(str(tmp_path)))
+        assert r.returncode == 0, r.stderr
+        assert not (tmp_path / ".run.lock").exists()
+        assert not (tmp_path / ".run.lock.reclaim").exists()
+
+    def test_live_holder_is_never_reclaimed_and_leaves_no_gate(self, tmp_path):
+        """
+        Scenario: Lock is held by a live process; no reclaim is attempted.
+        Slice: B5 — live holder must never be taken over
+        ### Given: .run.lock/pid holds a live PID (this test process)
+        ### When: _run_lock.sh is sourced
+        ### Then: exits 1, the live lock is untouched, and no .reclaim dir is created
+        """
+        lock_dir = tmp_path / ".run.lock"
+        lock_dir.mkdir()
+        (lock_dir / "pid").write_text(str(os.getpid()))
+
+        r = _run(_run_lock_script(str(tmp_path)))
+        assert r.returncode == 1
+        assert (lock_dir / "pid").read_text() == str(os.getpid())
+        assert not (tmp_path / ".run.lock.reclaim").exists()
