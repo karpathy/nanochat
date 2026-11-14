@@ -28,6 +28,7 @@ This plan is the SSOT for the Modal thread **plus** critic fixes **plus** analys
 | nWave specialized reviewers | Quota-blocked | Criteria covered via architect/PO/docs/critic stand-ins |
 | nWave product-owner-reviewer (2026-11-14) | **REQUEST_CHANGES** → applied | Hook-failure rule no longer deletes the tokenizer artifact; chat prerequisites + observable check; spend confirmation; docs and knob-leak verification; time/disk disclosure; MVP trimmed to speedrun.sh only |
 | nWave solution-architect-reviewer (2026-11-14) | **REQUEST_CHANGES** → applied | `eval` hook invocation + hook timeout (10 min); miniseries activate-iff-`.venv` noted; final commit runs regardless of exit code; `nanochat.dataset` must not import at module level |
+| nWave platform-architect-reviewer (2026-11-14) | **REQUEST_CHANGES** → applied | §0.1 no longer claims miniseries already guards `.venv`; miniseries guard added now; 2 s poll interval; §9.16 Volume-path check for `speedrun.sh:21` |
 
 ### Fixes applied (all rounds)
 
@@ -36,7 +37,7 @@ This plan is the SSOT for the Modal thread **plus** critic fixes **plus** analys
 | Blocker | Modal default timeout 300s | Prefetch ≥1h, GPU ≥4h |
 | Blocker | SMOKE + 1×H100 vs nproc=8 | Drop SMOKE from MVP; do not document |
 | Blocker | Hook “signals parent” / touch≠durable | **Wait-for-ack** trigger file + daemon `vol.commit()` before next stage |
-| Major | SKIP_SETUP vs activate | Same flag name; **activate iff `.venv` exists** (local/miniseries yes; Modal image no `.venv` → PATH) |
+| Major | SKIP_SETUP vs activate | Same flag name; **activate iff `.venv` exists** (proposed for all scripts; `miniseries.sh:25` does not guard it yet, see §8.1; Modal image has no `.venv` → PATH) |
 | Major | Image under-specified / cu128 mismatch | **debian_slim** + gpu `uv_sync`; ignore `.venv`/`.git`; **required** `PYTHONPATH` |
 | Major | Commit only at end | Per-stage wait-for-ack + final commit |
 | Major | Cost only in deep §10 | Cost on README blurb + `runmodal.sh` header |
@@ -234,7 +235,7 @@ CPU only for prefetch (I/O). FLOPs on GPU.
 
 ### 8.1 Shell changes
 
-Honor pre-set base dir (same default) in [`runs/speedrun.sh`](runs/speedrun.sh) only (MVP). `runcpu.sh` and `miniseries.sh` are untouched until those scripts move onto Modal (§0 "later"). When `miniseries.sh` moves, its `else` branch (`runs/miniseries.sh:25`, unconditional `source .venv/bin/activate`) must also become "activate iff `.venv` exists":
+Honor pre-set base dir (same default) in [`runs/speedrun.sh`](runs/speedrun.sh) only (MVP). `runcpu.sh` and `miniseries.sh` are untouched until those scripts move onto Modal (§0 "later"). `miniseries.sh` needs the same guard now, not later: its `SKIP_SETUP` branch (`runs/miniseries.sh:25`) runs `source .venv/bin/activate` unconditionally. Replace it with `[ -d .venv ] && source .venv/bin/activate` so the semantics match speedrun.sh and a future Modal miniseries run does not fail on the missing `.venv`:
 
 ```bash
 export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
@@ -267,7 +268,7 @@ Set the hook from Python as an env-dict entry on the `subprocess` call, not by b
 - Correct: `env = {**os.environ, "NANOCHAT_POST_STAGE_HOOK": "bash /root/nanochat/runs/modal_hook.sh"}`
 - Wrong: `os.system(f"NANOCHAT_POST_STAGE_HOOK='bash -c \"…\"' bash runs/speedrun.sh")`
 
-**Hook timeout (required):** the hook polls with a per-stage ceiling of 10 minutes. The daemon must write `.modal_commit_failed` inside that window, so the hook always terminates.
+**Hook timeout (required):** the hook polls every 2 s with a hard ceiling of 10 min per stage (a 17 GB commit can take minutes). On timeout, exit non-zero. On seeing `.modal_commit_failed`, exit non-zero immediately without further polling. The daemon must write one of these two signals inside that window, so the hook always terminates.
 
 ### 8.2 `runs/runmodal.sh` + `runs/modal_run.py`
 
@@ -311,6 +312,7 @@ Both Modal functions: identical Volume name/mount, `NANOCHAT_BASE_DIR`, `HF_HOME
 13. **Docs (Goal 5):** README shows the cost line at the Modal pointer; `runmodal.sh` prints cost and asks before launching anything billable; `docs/MODAL.md` has prerequisites, cost, one command, chat tip; no SMOKE path is documented.
 14. **Cache isolation (Goal 3):** after a Modal run, `~/.cache/nanochat` mtime is unchanged.
 15. **Knob isolation (Goal 9):** the GPU job log shows only `SPEEDRUN_*` profile knobs; no `RUNCPU_*` values reach the job.
+16. **Volume path (highest-risk change, `speedrun.sh:21`):** the GPU job log prints `NANOCHAT_BASE_DIR=/data/nanochat-modal` at start. After `base_train`, `/data/nanochat-modal/base_checkpoints/.train_ok` exists in the Volume. A missed fix would show `$HOME/.cache/nanochat` here and produce a silent false-success on re-run.
 
 ## 10. Cost / ops (docs)
 
