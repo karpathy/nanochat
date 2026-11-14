@@ -91,6 +91,42 @@ Exit: each stage's interruption behavior is recorded from a real run.
 - `FORCE_STAGES=<stage>` restarts that stage from zero.
 - The stage marker is absent while the stage is incomplete.
 
+## Prioritized work order (2026-11-14)
+
+Work through these in sequence. Items 1 and 2 are the top-priority resume fix.
+
+### Do first
+
+**1. Fix resume data position (Must).** New branch from `master`. The loader must restore
+`rg_idx`/`pq_idx` on resume so the resumed run's epoch/pq/rg matches the uninterrupted run at
+each step. Then run the **Step A control**: the check passes only if those fields match and losses
+stay within a stated tolerance. This is a shared path — get a review before merging.
+
+### Do after item 1 passes
+
+**2. Correct resume wording** in `docs/RUNNING.md` and this file (`resume-all-stages.md`). Do not
+write "verified" in either doc until the Step A check passes.
+
+### Then the rest of the Must/Should list
+
+**3. Step B — `chat_sft` resume (Phase 3 above).** Requires a test interview (one question at a
+time) before any test code is written.
+
+**4. Step C — local run lock (Phase 4 / `docs/plan/2026-11-14-local-resume-and-guard.md`).** Same
+interview requirement before tests.
+
+**5. Modal daemon cleanup (Could).** Last, and only if time allows.
+
+### Housekeeping (any time)
+
+- Push `3f1b67f` and open a PR for the plan branch — currently local only.
+- Delete stray branch `docs/resume-priority-plan` if agreed.
+- Decision pending: revert or force-push `70ce9e2` on `master` (do not touch `master` until
+  decided).
+- Graphiti: once it comes back online, save the Step A outcome there.
+
+---
+
 ## Decisions (2026-11-14)
 
 - Save interval is time-based (default 300 s), decided by rank 0 and broadcast to all ranks, so every rank saves the same step. Implemented in PR #26.
