@@ -38,8 +38,19 @@ from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from nanochat.flash_attention import HAS_FA3
 from nanochat.metrics_trend import emit_metric_trend
+from nanochat.glossary import emit_define
+from nanochat.term_style import paint
 from scripts.base_eval import evaluate_core
 print_banner()
+
+
+def _make_colored_print_fn(role: str):
+    """Return a print function that colorizes the output using paint(role, ...)."""
+    def colored_print(text: str) -> None:
+        colored_text = paint(role, text)
+        print0(colored_text)
+    return colored_print
+
 
 # -----------------------------------------------------------------------------
 # CLI arguments
@@ -495,6 +506,12 @@ def rehalve_after_oom():
     return next(train_loader)
 
 # Go!
+# Define the terms that will appear in this stage (once per process when unbriefed).
+emit_define("MFU", print_fn=print0)
+emit_define("Muon", print_fn=print0)
+emit_define("BPB", print_fn=print0)
+emit_define("CORE", print_fn=print0)
+
 while True:
     last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
     flops_so_far = num_flops_per_token * total_batch_size * step
@@ -507,14 +524,15 @@ while True:
         print0(f"Step {step:05d} | starting validation bpb ({eval_steps} steps, ~{args.eval_tokens:,} tokens)...")
         with disable_fp8(model):
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
+        validation_line = f"Step {step:05d} | Validation bpb: {val_bpb:.6f}"
+        print0(paint("done", validation_line))
         if master_process:
             emit_metric_trend(
                 os.path.join(get_base_dir(), "last_metrics.json"),
                 "val_bpb",
                 float(val_bpb),
                 lower_is_better=True,
-                print_fn=print0,
+                print_fn=_make_colored_print_fn("done"),
             )
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
@@ -534,14 +552,15 @@ while True:
         model.eval()
         with disable_fp8(orig_model):
             results = evaluate_core(orig_model, tokenizer, device, max_per_task=args.core_metric_max_per_task)
-        print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
+        core_line = f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}"
+        print0(paint("done", core_line))
         if master_process:
             emit_metric_trend(
                 os.path.join(get_base_dir(), "last_metrics.json"),
                 "CORE",
                 float(results["core_metric"]),
                 lower_is_better=False,
-                print_fn=print0,
+                print_fn=_make_colored_print_fn("done"),
             )
         wandb_run.log({
             "step": step,
@@ -679,7 +698,8 @@ while True:
     else:
         eta_str = ""
     epoch = f"{dataloader_state_dict['epoch']} pq: {dataloader_state_dict['pq_idx']} rg: {dataloader_state_dict['rg_idx']}"
-    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {format_duration(total_training_time)}{eta_str}")
+    mfu_field = paint("done", f"bf16_mfu: {mfu:.2f}")
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | {mfu_field} | epoch: {epoch} | total time: {format_duration(total_training_time)}{eta_str}")
     if step % 100 == 0:
         log_data = {
             "step": step,

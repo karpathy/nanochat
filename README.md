@@ -141,6 +141,7 @@ On a Mac (or any CPU/MPS machine) use `bash runs/runcpu.sh`. Do not run `runs/sp
 - The script stops at the first failing stage. Fix the cause, then re-run the same command.
 - On MPS, training stays **eager** (`torch.compile` / Inductor is skipped); auto-fit may shrink `device_batch_size`. Knobs live in `nanochat/defaults.py` + `runs/profiles.sh`.
 - Stage markers, `FORCE_STAGES`, log legend, memory/OOM, NaN, RoPE, and torch 2.2.2 notes: [docs/RUNNING.md](docs/RUNNING.md).
+- Console legends and stage terms: [docs/RUNNING.md §5–§6b](docs/RUNNING.md#5-reading-the-logs-echo-legend).
 
 ## Precision / dtype
 

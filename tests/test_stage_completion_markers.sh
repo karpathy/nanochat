@@ -35,3 +35,28 @@ rm -f "$(stage_path base_train)"
 [ ! -f "$(stage_path base_train)" ] || { echo "FAIL: expected marker cleared" >&2; exit 1; }
 
 echo "ok: stage completion markers"
+
+# Test: SKIP is printed with no plaque (contract frozen; plaques only on START/DONE/FAIL)
+# Given: the stage marker exists, so run_stage takes the SKIP path
+# When: base_train is run without FORCE_STAGES
+# Then: a SKIP line is printed and no plaque border line appears
+mkdir -p "$(dirname "$(stage_path base_train)")"
+touch "$(stage_path base_train)"
+SKIP_output="$(FORCE_STAGES="" run_stage base_train "" next -- echo "dummy" 2>&1)"
+echo "$SKIP_output" | grep -q "SKIP stage=base_train" || { echo "FAIL: SKIP line not printed" >&2; exit 1; }
+if echo "$SKIP_output" | grep -q '^+-'; then
+    echo "FAIL: SKIP must not have a plaque" >&2
+    exit 1
+fi
+rm -f "$(stage_path base_train)"
+
+# Test: NANOCHAT_PLAIN=1 suppresses plaques but keeps contract
+# When: NANOCHAT_PLAIN=1 is set
+# Then: plaque CLI returns empty string
+plaque_output="$(NANOCHAT_PLAIN=1 "$ROOT/.venv/bin/python" -m nanochat.stage_art plaque --stage base_train --kind start --subtitle "test")"
+if [ -n "$plaque_output" ]; then
+    echo "FAIL: plaque should be suppressed with NANOCHAT_PLAIN=1" >&2
+    exit 1
+fi
+
+echo "ok: color, plaque, and learn line tests"

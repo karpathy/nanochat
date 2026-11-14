@@ -6,7 +6,7 @@
 
 Canonical copy: [`docs/plan/2026-11-14-cli-learn-color-ux.md`](2026-11-14-cli-learn-color-ux.md) (this file, git-tracked SSOT).
 
-**Status:** PROPOSED. Branch `feat/cli-learn-color-ux` and worktree `.worktrees/cli-learn-color-ux` exist. Plan doc commits are on the branch; no implementation yet. Nothing is implemented until this plan is approved.
+**Status:** IMPLEMENTED on branch `feat/cli-learn-color-impl` (from master). Reviewed by nw software-crafter, acceptance-designer, and solution-architect reviewers; blockers fixed. PR pending.
 **slice_id:** `cli-learn-color-ux`
 
 ## Current code this plan builds on
@@ -45,6 +45,7 @@ Verified against the tree at `master` (edfb3d3, post PR #18 and #20).
 - **Two color helpers, not merged.** `ColoredFormatter` in `common.py` serves `logging` records. `nanochat/term_style.py` serves direct `print` / shell ANSI output. Different concerns, so no shared code.
 - **Trend color lives at the call site.** `emit_metric_trend` takes a `print_fn`. The `base_train` caller passes a color-aware wrapper. `metrics_trend.py` does not import `term_style`.
 - **Contract is frozen.** Do not change `START` / `DONE` / `SKIP` / `FAIL` / `FORCE` tokens, field order, or wording in `runs/_stage_lib.sh`. Color and plaques are added around them.
+- **Contract revision (ETA wording).** The `START` line's ETA text changed from `ETA: not yet knowable` to `ETA: unknown until first train step`. The `ETA:` token and field position are unchanged, so greps on `ETA:` still match. Reason: the old phrase read like a bug to new runners. Recorded here so the frozen-contract rule stays auditable.
 
 ## Goals and acceptance (measurable)
 
@@ -53,7 +54,7 @@ When someone reads a console or log, each stage boundary is visible without scro
 1. Every stage START, DONE, and FAIL line is preceded by exactly one plaque. SKIP prints only its contract line. A post-stage hook failure after DONE prints DONE then FAIL, which is two plaques for two contract lines.
 2. The `learn:` line is one line, includes URLs, and has at most 4 terms (the `base_train` maximum).
 3. Zero enrichment lines are printed inside the train-step loop.
-4. With `NO_COLOR=1`, `NANOCHAT_PLAIN` unset, and output piped: the diff against a captured baseline contains only added plaque lines and one added `learn:` line per START. Every existing contract line is unchanged.
+4. With `NO_COLOR=1`, `NANOCHAT_PLAIN` unset, and output piped: the diff against a captured baseline contains only added plaque lines and one added `learn:` line per START for stages that define terms (`chat_sft` has none, so it prints no `learn:` line). Every existing contract line is unchanged, except the ETA wording on `START`, which is the recorded contract revision in Decisions.
 5. With `NANOCHAT_PLAIN=1`: no plaques, no banner change; contract and `learn:` lines still print.
 
 ## Scope (MoSCoW)
@@ -145,3 +146,13 @@ Each step is one reviewable commit on `feat/cli-learn-color-ux`. Run `uv run pyt
 - Heartbeat / ETA train-loop work (still deferred)
 - Web UI (this repo is CLI and shell)
 - Full DIVIO restructure
+
+## Follow-ups (deferred from review, not in this slice)
+
+- **CORE in the pipeline.** `base_train` defines `CORE`, but the stage briefing suppresses define lines, so a normal run never shows it. `base_eval`'s `learn:` line covers `CORE`. Decide whether `base_train` should drop its `CORE` define call.
+- **Bare `python3` in shell helpers.** `_print_plaque` and the `learn:` line call `python3`, not the project venv. A broken interpreter hides the feature (warning only on stderr). Consider resolving the project interpreter once.
+- **Duplicated owners.** The `NANOCHAT_PLAIN` gate lives in `_print_plaque` and in `stage_art.py`. The colour map lives in `_paint` and `term_style.paint`. Consolidate if a third consumer appears.
+- **Historical ETA text.** `docs/plan/2026-11-13-fix-forward-mac.md` still shows `ETA: not yet knowable`. It is a dated snapshot; leave it unless the echo-contract SSOT moves here.
+- **Learn line width.** The `base_train` learn line is long and wraps on 80-column terminals. Shortening definitions changes glossary content, so it needs its own decision.
+- **Return annotation.** `_make_colored_print_fn` in `scripts/base_train.py` lacks a return type; adding it needs a `Callable` import in a file with existing lint findings.
+- **Could items.** `tok_train`, `tok_eval`, `chat_sft`, `chat_eval` colour and define lines, and the `chat_cli` welcome plaque (also listed in Scope › Could).

@@ -32,7 +32,7 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | 2026-11-14 | fix-mps-skip-inductor | Grow RoPE cos/sin on demand (2× buffer) when eval prompts exceed `sequence_len * 10` | CORE few-shot assert `2596 > 2560` at short `max_seq_len=256`; static 10× cache is not enough |
 | 2026-11-14 | fix-mps-skip-inductor | Require `.train_ok` for train SKIP; hard-fail `speedrun.sh` without CUDA | Partial `model_*.pt` must not skip train; Mac educational path is `runcpu` only |
 | 2026-11-14 | backlog | Softcap / logits memory parked (gather-at-needed-pos vs `PROFILE_RUNCPU` knobs) | Playgroup softcap/eval discussion; no design pick yet — auto-fit remains the Mac OOM mitigator |
-
+| 2026-11-14 | cli-learn-color-ux | Colour and plaques are added around the frozen echo contract; define lines are no-ops when the shell has already briefed the stage | Learners see stage boundaries at a glance without changing the tokens scripts and logs grep for |
 ## Slice states
 
 | slice_id | state | evidence |

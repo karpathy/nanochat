@@ -5,11 +5,9 @@ Level 2 guide. The short version lives in the [README](../README.md#running-on-c
 Design source: [docs/plan/2026-11-13-fix-forward-mac.md](plan/2026-11-13-fix-forward-mac.md).
 
 **Contents**
-[1 Pick a script](#1-pick-a-script) · [2 First run](#2-first-run-expectations) · [3 Fix-forward loop](#3-the-fix-forward-loop) · [4 Re-run map](#4-what-a-re-run-keeps-and-skips) · [5 Echo legend](#5-reading-the-logs-echo-legend) · [6 Glossary](#6-enrichment-glossary) · [7 Mac / Intel torch](#7-mac--intel-torch) · [8 NaN](#8-nan-troubleshooting) · [9 Controls](#9-controls) · [10 Failure shapes](#10-common-failure-shapes) · [11 Memory / OOM](#11-memory--oom) · [12 Defaults and profiles](#12-defaults-and-profiles)
+[1 Pick a script](#1-pick-a-script) · [2 First run](#2-first-run-expectations) · [3 Fix-forward loop](#3-the-fix-forward-loop) · [4 Re-run map](#4-what-a-re-run-keeps-and-skips) · [5 Echo legend](#5-reading-the-logs-echo-legend) · [6 Glossary](#6-enrichment-glossary) · [6b Terms](#6b-terms) · [7 Mac / Intel torch](#7-mac--intel-torch) · [8 NaN](#8-nan-troubleshooting) · [9 Controls](#9-controls) · [10 Failure shapes](#10-common-failure-shapes) · [11 Memory / OOM](#11-memory--oom) · [12 Defaults and profiles](#12-defaults-and-profiles)
 
-How-to first (§1–4, §8–10), then reference (§5–6, §9). Kept in one L2 file on purpose so a stuck runner can stay on one page (plan doc mapping); use the TOC to jump.
-
-How-to first (§1–4, §8–10), then reference (§5–6, §9). Kept in one L2 file on purpose so a stuck runner can stay on one page (plan doc mapping); use the TOC to jump.
+How-to first (§1–4, §8–10), then reference (§5–6, §6b, §9). Kept in one L2 file on purpose so a stuck runner can stay on one page (plan doc mapping); use the TOC to jump.
 
 ---
 
@@ -24,7 +22,7 @@ How-to first (§1–4, §8–10), then reference (§5–6, §9). Kept in one L2 
 - Run from the repo root. The script creates `.venv` and runs `uv sync` if needed.
 - It prints a `pipeline:` map first, then one `START` … `DONE` block per stage.
 - `runcpu.sh` was tuned to take roughly an hour on a MacBook Pro M3 Max (tokenizer ~minutes, base training ~30 min, SFT ~10 min). Slower machines take longer. Results are a demo, not a useful chatbot.
-- ETA reads `not yet knowable` at `START`. That is deliberate: nothing is estimated before the first train step.
+- ETA reads `ETA: unknown until first train step` at `START`. That is deliberate: nothing is estimated before the first train step.
 - Everything is written under `~/.cache/nanochat` (override: [`NANOCHAT_BASE_DIR`](#9-controls)).
 
 ## 3. The fix-forward loop
@@ -75,9 +73,11 @@ Never use `FORCE_STAGES=1`. The scripts reject it (exit 2) and list the valid na
 
 Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the plan. Extra lines like `pipeline:`, `purpose:`, `health:`, or `tip:` are enrichments (see [section 6](#6-enrichment-glossary)), not contract shapes — do not treat them as START/DONE/SKIP/FAIL.
 
+**Emission order** within a stage: plaque (if START/DONE/FAIL) → shell contract line (START/DONE/SKIP/FAIL) → `purpose:` · `health:` and `learn:` enrichments (if START) → Python startup (torch version, device, paths) → fallback/auto-fit lines if any → train work.
+
 | Kind | Shape | Meaning |
 |------|-------|---------|
-| START | `[HH:MM:SS] START stage=base_train profile=runcpu depth=6 device_batch_size=8 ETA: not yet knowable` | Stage begins. Profile and key knobs are shown. |
+| START | `[HH:MM:SS] START stage=base_train profile=runcpu depth=6 device_batch_size=8 ETA: unknown until first train step` | Stage begins. Profile and key knobs are shown. |
 | DONE | `[HH:MM:SS] DONE stage=base_train elapsed=71m cumulative=2h45m` | Stage finished; time for this stage and for the whole script run so far. |
 | SKIP | `[HH:MM:SS] SKIP stage=tok_train reason=artifact exists path=... (FORCE_STAGES=tok_train to redo)` | Artifact found; nothing ran. |
 | FORCE | `[HH:MM:SS] FORCE stage=tok_train reason=FORCE_STAGES=tok_train` | Artifact exists but you asked to redo it. |
@@ -91,11 +91,11 @@ Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the p
 
 | Form | When |
 |------|------|
-| `ETA: not yet knowable` | At `START`. Becomes knowable only after the first train step. |
+| `ETA: unknown until first train step` | At `START`. Becomes knowable only after the first train step. |
 | `ETA: ~Xm remaining (step i/N, avg dt=…)` | Planned for the train loop once timing exists. |
 | `ETA: n/a (skipped)` | On `SKIP` lines. |
 
-**Emission order** within a stage: shell `START` → Python startup (torch version, device, paths) → fallback/auto-fit lines if any → shell `DONE` / `SKIP` / `FAIL` / `FORCE`.
+**Emission order** within a stage: as described above in the emission-order note for the log legend.
 
 Rule of thumb: no knob is ever changed silently. Any change is printed as `original → adjusted` with a reason.
 
@@ -108,7 +108,8 @@ One extra line at most per event. These are hints, not part of the strict contra
 | `pipeline:` map | Script start | Journey at a glance: `✓` done, `▶` next to run, `○` later. Example: `pipeline: [tok✓] [base▶] [eval○] [sft○]` |
 | `changed:` / `same:` | Script start (after `pipeline:`) | Knob diff vs `$NANOCHAT_BASE_DIR/last_run.json` from the last successful full run. Skipped silently on first run (no file yet). Example: `changed: device_batch_size 32→8; same: depth=6,profile=runcpu`. |
 | `tip:` | Script start (once per invocation) | Exactly one educational tip for the whole `runcpu.sh` / `speedrun.sh` run — not per stage. Mentions a real knob (e.g. `--device-batch-size` / grad accumulation). |
-| `purpose:` · `health:` | After `START` (one packed line) | Why the stage exists, then health (mem · ckpt · shards). Packed together so START still has only one enrichment line. Example: `purpose: teach raw next-token prediction · health: ~12.4GiB free-ish · ckpt=1.2GiB · shards=8/8`. Best-effort; never fails the run. |
+| `purpose:` · `health:` | After `START` (one packed line) | Why the stage exists, then health (mem · ckpt · shards). Packed together on one line. Example: `purpose: teach raw next-token prediction · health: ~12.4GiB free-ish · ckpt=1.2GiB · shards=8/8`. Best-effort; never fails the run. |
+| `learn:` | After `START` (second enrichment line) | One-line briefing of terms for this stage, each with definition and URL. Example: `learn: BPB = Bits needed to encode one byte of data (docs/RUNNING.md#6b-terms) · MFU = Fraction of theoretical peak FLOPs in use (https://arxiv.org/abs/2204.02311)`. Printed only if the stage has terms defined. |
 | `next:` | After `DONE` | What the script runs next (or that it will skip it). Packed on one line with `wrote:` / `mem:` when those apply. |
 | `skip-saved:` | After `SKIP` | Time saved, from the last recorded run of that stage; `unknown` if there is no timing yet. |
 | `root_stage=` | After `FAIL` | The stage that actually broke. `cascade_suppressed=yes` means later stages were not run. |
@@ -119,6 +120,26 @@ One extra line at most per event. These are hints, not part of the strict contra
 | `trend:` | After a new `val_bpb` / CORE metric | Compares this run’s metric to the prior value in `$NANOCHAT_BASE_DIR/last_metrics.json` (global last-seen keys — mid-train eval can update before `base_eval`). Printed only when a prior exists. Fail-soft: never aborts train/eval. Example: `trend: val_bpb 7.47 → better than prior 8.1`. |
 | `val bpb:` progress | During val eval on non-CUDA | Sparse cadence (~10 lines) so Mac/CPU do not look hung; off by default on CUDA. |
 | `heartbeat:` | During training | Planned: optional one-line progress summary (not every-step pre-announce). |
+
+**Legend:** Color is disabled when output is piped or when `NO_COLOR` is set. Plaques are hidden when `NANOCHAT_PLAIN=1` is set, but contract and `learn:` lines still print.
+
+Rule of thumb: no knob is ever changed silently. Any change is printed as `original → adjusted` with a reason.
+
+## 6b. Terms
+
+Each term used in the `learn:` lines is defined here. The URLs match the references in `scripts/base_train.py` and `nanochat/glossary.py`.
+
+| Term | Plain meaning | Learn more |
+|------|---------------|-----------|
+| BPE | Byte Pair Encoding algorithm that learns frequent byte sequences for text compression. | [docs/RUNNING.md#6b-terms](#6b-terms) |
+| vocab | The complete set of unique tokens the tokenizer recognizes from training data. | [docs/RUNNING.md#6b-terms](#6b-terms) |
+| compression ratio | How much raw text shrinks when encoded into tokens; lower is better. | [docs/RUNNING.md#6b-terms](#6b-terms) |
+| BPB | Bits needed to encode one byte of data; measures model compression efficiency. | [docs/RUNNING.md#6b-terms](#6b-terms) |
+| CORE | Benchmark metric that rates how well a model predicts text from web. | [https://github.com/mlfoundations/dclm](https://github.com/mlfoundations/dclm) |
+| ChatCORE | Variant of CORE adapted to measure performance on chat and instructions. | [docs/RUNNING.md#6b-terms](#6b-terms) |
+| MFU | Fraction of theoretical peak floating-point operations actually used during training. | [https://arxiv.org/abs/2204.02311](https://arxiv.org/abs/2204.02311) |
+| Muon | Optimizer that orthogonalizes momentum updates for model weight matrices. | [https://github.com/KellerJordan/Muon](https://github.com/KellerJordan/Muon) |
+| FLOPs | Count of arithmetic operations performed during training or inference. | [docs/RUNNING.md#6b-terms](#6b-terms) |
 
 ## 7. Mac / Intel torch
 
@@ -155,7 +176,7 @@ Root-causing NaN beyond warn/abort is out of scope for Phase 1.
 | `FORCE_STAGES` | Redo stages even if artifacts exist. `all` or a comma-list of stage names. Never `=1`. | Example: `FORCE_STAGES=tok_train,base_train bash runs/runcpu.sh` |
 | `NANOCHAT_BASE_DIR` | Where artifacts live for the Python scripts and checkpoint lookups. Default `~/.cache/nanochat`. | Can be pre-set before the script. Modal sets this to `/data/nanochat-modal` internally; see [docs/MODAL.md](MODAL.md) for cloud training. Example: `NANOCHAT_BASE_DIR=/tmp/nc python -m scripts.chat_cli -p "hi"` |
 | `SKIP_SETUP` | When set to `1`, skip `uv install`/venv create/`uv sync`. Always `source .venv/bin/activate` (the venv must exist). | Used by Modal (image provides `.venv`); also useful for CI or reproducible runs. Unset = full bootstrap (default local behavior). |
-| `NANOCHAT_POST_STAGE_HOOK` | Bash script/command run after each successful stage. No-op when unset (local runs unchanged). | Used by Modal to coordinate Volume commits via wait-for-ack. Example: `NANOCHAT_POST_STAGE_HOOK="bash /path/to/hook.sh" bash runs/speedrun.sh`. The hook must be an executable path or a simple command (not a bare string with quotes). |
+| `NANOCHAT_POST_STAGE_HOOK` | Bash script/command run after each successful stage. No-op when unset (local runs unchanged). | Used by Modal to coordinate Volume commits via wait-for-ack. Example: `NANOCHAT_POST_STAGE_HOOK="bash /path/to/hook.sh" bash runs/speedrun.sh`. The hook must be an executable path or a simple command (not a bare string with quotes). If the hook fails, the stage prints DONE first, then FAIL with two plaques (one per contract line). |
 | `NANOCHAT_MEMORY_FIT_MARGIN` | Fraction of available device memory the auto-fit estimate may use (default `0.6`). See [section 11](#11-memory--oom). | Example: `NANOCHAT_MEMORY_FIT_MARGIN=0.5 bash runs/runcpu.sh` |
 | `WANDB_RUN` | Weights & Biases run name. Unset means `dummy` (no logging). | Example: `WANDB_RUN=mytest bash runs/runcpu.sh` |
 
