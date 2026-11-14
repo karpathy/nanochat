@@ -8,18 +8,15 @@ import json
 import os
 import subprocess
 import sys
-import time
 
 import pytest
 
 from nanochat.checkpoint_manager import (
     find_safe_resume_step,
     load_checkpoint,
-    save_checkpoint,
     should_save_checkpoint,
 )
 from nanochat.sft_loader import SftLoaderState
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -270,7 +267,7 @@ class TestShellHelpers:
 
     def _run(self, *args, cwd=None, env=None):
         result = subprocess.run(
-            args, capture_output=True, text=True, cwd=cwd, env=env
+            args, check=False, capture_output=True, text=True, cwd=cwd, env=env
         )
         return result
 

@@ -6,10 +6,6 @@ Scope: runs/_run_lock.sh — atomic mkdir-based run lock.
 """
 import os
 import subprocess
-import sys
-import time
-
-import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUN_LOCK = os.path.join(REPO_ROOT, "runs", "_run_lock.sh")
@@ -30,7 +26,7 @@ echo "ACQUIRED"
 def _run(script: str, timeout: int = 5) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, timeout=timeout,
+        check=False, capture_output=True, text=True, timeout=timeout,
     )
 
 
