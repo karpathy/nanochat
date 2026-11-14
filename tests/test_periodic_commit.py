@@ -24,42 +24,39 @@ class _FakeVolume:
 
 
 @pytest.fixture
-def interval(monkeypatch):
-    monkeypatch.setattr(modal_run, "PERIODIC_COMMIT_SECS", 300)
+def retry_secs(monkeypatch) -> int:
     monkeypatch.setattr(modal_run, "PERIODIC_COMMIT_RETRY_SECS", 30)
-    return 300
+    return 30
 
 
-def test_given_interval_not_elapsed_when_periodic_commit_then_no_commit(interval):
+def test_given_interval_not_elapsed_when_periodic_commit_then_no_commit():
     vol = _FakeVolume()
-    last = modal_run._periodic_commit(vol, last_commit=1000.0, now=1299.0)
+    last = modal_run._periodic_commit(vol, last_commit=1000.0, now=1299.0, every_secs=300)
     assert vol.commits == 0
     assert last == 1000.0
 
 
-def test_given_interval_elapsed_when_periodic_commit_then_commits_and_resets_clock(interval):
+def test_given_interval_elapsed_when_periodic_commit_then_commits_and_resets_clock():
     vol = _FakeVolume()
-    last = modal_run._periodic_commit(vol, last_commit=1000.0, now=1300.0)
+    last = modal_run._periodic_commit(vol, last_commit=1000.0, now=1300.0, every_secs=300)
     assert vol.commits == 1
     assert last == 1300.0
 
 
-def test_given_failing_commit_when_periodic_commit_then_retries_after_retry_window(interval):
+def test_given_failing_commit_when_periodic_commit_then_retries_after_retry_window(retry_secs):
     vol = _FakeVolume(fail=True)
-    last = modal_run._periodic_commit(vol, last_commit=1000.0, now=1300.0)
+    last = modal_run._periodic_commit(vol, last_commit=1000.0, now=1300.0, every_secs=300)
     assert vol.commits == 0
-    # Next attempt is due at now + (RETRY - 0) = 1330, i.e. 30 s later, not 300 s.
-    assert modal_run._periodic_commit(vol, last_commit=last, now=1329.0) == last
+    assert modal_run._periodic_commit(vol, last_commit=last, now=1329.0, every_secs=300) == last
     vol.fail = False
-    retried = modal_run._periodic_commit(vol, last_commit=last, now=1330.0)
+    retried = modal_run._periodic_commit(vol, last_commit=last, now=1330.0, every_secs=300)
     assert vol.commits == 1
     assert retried == 1330.0
 
 
-def test_given_many_intervals_when_periodic_commit_then_commits_once_per_interval(interval):
+def test_given_short_interval_when_periodic_commit_then_commits_each_interval():
     vol = _FakeVolume()
     last = 0.0
     for now in range(0, 1201, 60):
-        last = modal_run._periodic_commit(vol, last_commit=last, now=float(now))
-    # Due at 300, 600, 900, 1200 — four commits in twenty minutes.
-    assert vol.commits == 4
+        last = modal_run._periodic_commit(vol, last_commit=last, now=float(now), every_secs=60)
+    assert vol.commits == 20
