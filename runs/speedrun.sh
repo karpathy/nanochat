@@ -22,6 +22,7 @@ export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
 mkdir -p "$NANOCHAT_BASE_DIR"
 PROFILE=speedrun
 source "$(dirname "${BASH_SOURCE[0]}")/_stage_lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/_run_lock.sh"
 # Run knobs come from nanochat/defaults.py (PROFILE_SPEEDRUN); profiles.sh is its emitted shell form.
 source "$(dirname "${BASH_SOURCE[0]}")/profiles.sh"
 

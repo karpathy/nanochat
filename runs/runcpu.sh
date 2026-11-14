@@ -21,6 +21,7 @@ export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
 mkdir -p "$NANOCHAT_BASE_DIR"
 PROFILE=runcpu
 source "$(dirname "${BASH_SOURCE[0]}")/_stage_lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/_run_lock.sh"
 # Run knobs come from nanochat/defaults.py (PROFILE_RUNCPU); profiles.sh is its emitted shell form.
 source "$(dirname "${BASH_SOURCE[0]}")/profiles.sh"
 # Modal-only overrides: Modal sets NANOCHAT_RUNCPU_* on its CPU machine. Unset (local Mac/CPU)
