@@ -21,7 +21,11 @@ from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, g
 from nanochat.defaults import DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_SEQ_LEN
 from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size
 from nanochat.tokenizer import get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint, load_model, load_optimizer_state
+from nanochat.checkpoint_manager import (
+    save_checkpoint, load_checkpoint, load_model, load_optimizer_state,
+    find_safe_resume_step, should_save_checkpoint,
+)
+from nanochat.sft_loader import SftLoaderState
 from nanochat.loss_eval import evaluate_bpb
 import torch.distributed as dist
 from nanochat.flash_attention import HAS_FA3
@@ -68,6 +72,10 @@ parser.add_argument("--chatcore-max-sample", type=int, default=24, help="max pro
 # Data mixture
 parser.add_argument("--mmlu-epochs", type=int, default=3, help="number of epochs of MMLU in training mixture (teaches Multiple Choice)")
 parser.add_argument("--gsm8k-epochs", type=int, default=4, help="number of epochs of GSM8K in training mixture (teaches Math and Tool Use)")
+# Resume / mid-training save
+parser.add_argument("--save-every-secs", type=float, default=300.0, help="save checkpoint every N seconds during training (0 = disable)")
+parser.add_argument("--save-every", type=int, default=0, help="save checkpoint every N steps (0 = disable)")
+parser.add_argument("--resume-from-step", type=int, default=-1, help="resume from this step (-1 = auto-detect from checkpoint dir)")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
@@ -179,6 +187,37 @@ for group in optimizer.param_groups:
     group["lr"] = group["lr"] * args.init_lr_frac
     group["initial_lr"] = group["lr"]
 
+# Checkpoint directory for mid-training saves (and auto-resume)
+_sft_output_dirname = args.model_tag if args.model_tag else f"d{depth}"
+checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", _sft_output_dirname)
+
+# Auto-detect resume step
+if args.resume_from_step == -1:
+    args.resume_from_step = find_safe_resume_step(checkpoint_dir, ddp_world_size)
+    if args.resume_from_step >= 0:
+        print0(f"Resuming SFT from step {args.resume_from_step} (auto-detected)")
+
+# Config-mismatch guard: refuse to resume if key training dimensions changed
+if args.resume_from_step > 0:
+    _, _, _saved_meta = load_checkpoint(checkpoint_dir, args.resume_from_step, device, load_optimizer=False)
+    _guard_keys = ["device_batch_size", "max_seq_len", "total_batch_size", "num_iterations"]
+    for _k in _guard_keys:
+        _saved_val = _saved_meta.get(_k)
+        _cur_val = getattr(args, _k.replace("-", "_"), None)
+        if _saved_val is not None and _cur_val is not None and _saved_val != _cur_val:
+            raise ValueError(
+                f"Cannot resume SFT: '{_k}' changed from {_saved_val} (saved) to {_cur_val} (current). "
+                "Use FORCE_STAGES=chat_sft to restart from scratch."
+            )
+    _sft_resume_loader_state = SftLoaderState.from_dict(
+        _saved_meta.get("dataloader_state_dict") or {}, ddp_rank
+    )
+    _sft_resume_loop_state = _saved_meta.get("loop_state") or {}
+    del _saved, _saved_meta
+else:
+    _sft_resume_loader_state = None
+    _sft_resume_loop_state = {}
+
 # SFT data mixture and DataLoader
 train_tasks = [
     SmolTalk(split="train"), # 460K rows of general conversations
@@ -198,7 +237,7 @@ val_dataset = TaskMixture([
 last_step = False # we will toggle this to True when we reach the end of the training dataset
 approx_progress = 0.0 # will go from 0 to 1 over the course of the epoch
 current_epoch = 1 # track epoch for logging
-def sft_data_generator_bos_bestfit(split, buffer_size=100):
+def sft_data_generator_bos_bestfit(split, buffer_size=100, resume_state=None):
     """
     BOS-aligned dataloader for SFT with bestfit-pad packing.
 
@@ -206,6 +245,10 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
     Conversations are packed using best-fit algorithm. When no conversation fits,
     the row is padded (instead of cropping) to ensure no tokens are ever discarded.
     Padding positions have targets masked with -1 (ignore_index for cross-entropy).
+
+    For the train split, yields (inputs, targets, loader_state) triples where
+    loader_state is an SftLoaderState snapshot taken BEFORE the batch is built, so
+    resuming from that state replays the same batch.  Val yields (inputs, targets).
     """
     global last_step, approx_progress, current_epoch
     assert split in {"train", "val"}, "split must be 'train' or 'val'"
@@ -215,12 +258,21 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
     row_capacity = args.max_seq_len + 1  # +1 for target at last position
     bos_token = tokenizer.get_bos_token_id()
 
-    # Conversation buffer: list of (token_ids, loss_mask) tuples
-    conv_buffer = []
-    cursor = ddp_rank  # Each rank processes different conversations (for fetching)
-    consumed = ddp_rank  # Track actual consumption separately from buffering
-    epoch = 1
-    it = 0  # iteration counter
+    # Initialise position from resume_state or from scratch
+    if resume_state is not None and split == "train":
+        s = resume_state
+        cursor = s.cursor
+        consumed = s.consumed
+        epoch = s.epoch
+        it = s.it
+        # conv_buffer items are stored as [ids, mask] lists in JSON; keep as lists
+        conv_buffer = [tuple(pair) for pair in s.conv_buffer]
+    else:
+        conv_buffer = []
+        cursor = ddp_rank
+        consumed = ddp_rank
+        epoch = 1
+        it = 0
 
     def refill_buffer():
         nonlocal cursor, epoch
@@ -232,9 +284,15 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
             if cursor >= dataset_size:
                 cursor = cursor % dataset_size
                 epoch += 1
-                # Note: last_step is now triggered based on consumption, not fetching
 
     while True:
+        # Snapshot BEFORE the batch so a resume replays the same batch.
+        if split == "train":
+            loader_state = SftLoaderState(
+                cursor=cursor, consumed=consumed, epoch=epoch, it=it,
+                conv_buffer=[[list(ids), list(mask)] for ids, mask in conv_buffer],
+            )
+
         rows = []
         mask_rows = []
         row_lengths = []  # Track actual content length (excluding padding) for each row
@@ -316,9 +374,12 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100):
             if content_len < row_capacity:
                 targets[i, content_len-1:] = -1
 
-        yield inputs, targets
+        if split == "train":
+            yield inputs, targets, loader_state
+        else:
+            yield inputs, targets
 
-train_loader = sft_data_generator_bos_bestfit("train")
+train_loader = sft_data_generator_bos_bestfit("train", resume_state=_sft_resume_loader_state)
 build_val_loader = lambda: sft_data_generator_bos_bestfit("val")
 progress = 0 # will go from 0 to 1 over the course of the epoch
 
@@ -342,12 +403,23 @@ def get_muon_momentum(it):
 
 # -----------------------------------------------------------------------------
 # Training loop
-x, y = next(train_loader) # prefetch the very first batch of data
+x, y, sft_loader_state = next(train_loader) # prefetch the very first batch of data
+val_bpb = float("inf") # updated after each eval; inf until first eval runs
 min_val_bpb = float("inf")
 smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
-step = 0
+step = max(0, args.resume_from_step)
+last_save_time = time.monotonic()
+
+# Restore loop state when resuming
+if _sft_resume_loop_state:
+    min_val_bpb = _sft_resume_loop_state.get("min_val_bpb", float("inf"))
+    smooth_train_loss = _sft_resume_loop_state.get("smooth_train_loss", 0)
+    total_training_time = _sft_resume_loop_state.get("total_training_time", 0)
+    progress = _sft_resume_loop_state.get("progress", 0)
+    if args.resume_from_step > 0:
+        print0(f"Resuming SFT optimization from step {args.resume_from_step}")
 while True:
     flops_so_far = num_flops_per_token * args.total_batch_size * step
 
@@ -409,10 +481,17 @@ while True:
         })
         model.train()
 
-    # save checkpoint at the end of the run (all ranks participate so each saves its optimizer shard)
-    if last_step:
-        output_dirname = args.model_tag if args.model_tag else f"d{depth}" # e.g. d12
-        checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", output_dirname)
+    # mid-training time-based save + final save at last_step
+    elapsed = time.monotonic() - last_save_time
+    raw_time_due = should_save_checkpoint(step, args.resume_from_step, elapsed,
+                                          args.save_every_secs, 0, False)
+    if ddp and args.save_every_secs > 0:
+        due_flag = torch.tensor([int(master_process and raw_time_due)], device=device)
+        dist.broadcast(due_flag, src=0)
+        raw_time_due = bool(due_flag.item())
+    agreed_elapsed = float("inf") if raw_time_due else 0.0
+    if should_save_checkpoint(step, args.resume_from_step, agreed_elapsed,
+                              args.save_every_secs, args.save_every, last_step):
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -420,7 +499,7 @@ while True:
             optimizer.state_dict(),
             {
                 "step": step,
-                "val_bpb": val_bpb, # loss at last step
+                "val_bpb": val_bpb,
                 "model_config": {
                     "sequence_len": args.max_seq_len,
                     "vocab_size": tokenizer.get_vocab_size(),
@@ -430,10 +509,22 @@ while True:
                     "n_embd": model.config.n_embd,
                     "window_pattern": model.config.window_pattern,
                 },
-                "user_config": user_config, # inputs to the training script
+                "user_config": user_config,
+                "device_batch_size": args.device_batch_size,
+                "max_seq_len": args.max_seq_len,
+                "total_batch_size": args.total_batch_size,
+                "num_iterations": args.num_iterations,
+                "dataloader_state_dict": sft_loader_state.to_dict(),
+                "loop_state": {
+                    "min_val_bpb": min_val_bpb,
+                    "smooth_train_loss": smooth_train_loss,
+                    "total_training_time": total_training_time,
+                    "progress": progress,
+                },
             },
             rank=ddp_rank,
         )
+        last_save_time = time.monotonic()
 
     if last_step:
         break
@@ -453,7 +544,7 @@ while True:
             scaler.scale(loss).backward()
         else:
             loss.backward()
-        x, y = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+        x, y, sft_loader_state = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
         progress = max(progress, approx_progress) # only increase progress monotonically
     # step the optimizer
     lrm = get_lr_multiplier(progress)

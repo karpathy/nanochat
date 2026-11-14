@@ -90,7 +90,7 @@ resume_flag() {  # stage checkpoint_dir [world_size]
     stage_forced "$1" && return 0
     local step
     # Import-time logs share stdout with the step, so keep only the last line.
-    step="$(python -m nanochat.checkpoint_manager find-resume-step "$2" "${3:-1}" | tail -n 1)" \
+    step="$("${PYTHON:-python}" -m nanochat.checkpoint_manager find-resume-step "$2" "${3:-1}" | tail -n 1)" \
         || { echo "WARN: resume probe failed for $2; starting $1 from step 0" >&2; return 0; }
     case "$step" in
         -1) return 0 ;;

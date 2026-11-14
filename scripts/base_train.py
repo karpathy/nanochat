@@ -31,6 +31,7 @@ from nanochat.checkpoint_manager import (
     load_checkpoint,
     remove_stale_tmp,
     save_checkpoint,
+    should_save_checkpoint,
 )
 from nanochat.common import (
     COMPUTE_DTYPE,
@@ -627,14 +628,18 @@ while True:
         model.train()
 
     # save checkpoint: at the end of the run, every save_every steps, or every save_every_secs (rank 0 decides, all ranks follow), except at the first step or the resume step
-    time_due = False
-    if args.save_every_secs > 0:
-        time_due = time.monotonic() - last_save_time >= args.save_every_secs
-        if ddp:
-            due_flag = torch.tensor([int(master_process and time_due)], device=device)
-            dist.broadcast(due_flag, src=0)
-            time_due = bool(due_flag.item())
-    if last_step or (step > 0 and step != args.resume_from_step and (time_due or (args.save_every > 0 and step % args.save_every == 0))):
+    elapsed = time.monotonic() - last_save_time
+    # Rank 0 decides if time is due; broadcast so all ranks agree before saving.
+    raw_time_due = should_save_checkpoint(step, args.resume_from_step, elapsed,
+                                          args.save_every_secs, 0, False)
+    if ddp and args.save_every_secs > 0:
+        due_flag = torch.tensor([int(master_process and raw_time_due)], device=device)
+        dist.broadcast(due_flag, src=0)
+        raw_time_due = bool(due_flag.item())
+    # Pass inf/0 so the agreed time_due survives the check on every rank's clock.
+    agreed_elapsed = float("inf") if raw_time_due else 0.0
+    if should_save_checkpoint(step, args.resume_from_step, agreed_elapsed,
+                              args.save_every_secs, args.save_every, last_step):
         save_checkpoint(
             checkpoint_dir,
             step,

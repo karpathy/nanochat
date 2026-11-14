@@ -21,6 +21,7 @@ export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
 mkdir -p "$NANOCHAT_BASE_DIR"
 PROFILE=runcpu
 source "$(dirname "${BASH_SOURCE[0]}")/_stage_lib.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/_run_lock.sh"
 # Run knobs come from nanochat/defaults.py (PROFILE_RUNCPU); profiles.sh is its emitted shell form.
 source "$(dirname "${BASH_SOURCE[0]}")/profiles.sh"
 # Modal-only overrides: Modal sets NANOCHAT_RUNCPU_* on its CPU machine. Unset (local Mac/CPU)
@@ -81,14 +82,15 @@ run_stage base_train "depth=$RUNCPU_DEPTH device_batch_size=$RUNCPU_DEVICE_BATCH
 run_stage base_eval "device_batch_size=$RUNCPU_EVAL_DEVICE_BATCH_SIZE" "chat_sft (or SKIP if checkpoints exist)" -- \
     python -m scripts.base_eval --device-batch-size="$RUNCPU_EVAL_DEVICE_BATCH_SIZE" --split-tokens=16384 --max-per-task=16
 
-# chat_sft has no resume wiring intentionally: it runs ≤1500 steps so preemption risk is low.
-# If SFT is ever extended to longer runs, apply the same _SAVE_EVERY_SECS/_RESUME_FLAG pattern used above.
+_SFT_RESUME_FLAG="$(resume_flag chat_sft "${NANOCHAT_BASE_DIR}/chatsft_checkpoints/d${RUNCPU_DEPTH}")"
 # SFT (~10 minutes on my MacBook Pro M3 Max)
 run_stage chat_sft "" "chat with your model (python -m scripts.chat_cli)" -- \
     python -m scripts.chat_sft \
     --eval-every=200 \
     --eval-tokens=524288 \
     --num-iterations=1500 \
+    --save-every-secs="$_SAVE_EVERY_SECS" \
+    $_SFT_RESUME_FLAG \
     --run=$WANDB_RUN
 
 log "ALL DONE cumulative=$(fmt_dur "$SECONDS")"
