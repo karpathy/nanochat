@@ -118,6 +118,7 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
 def print0(s="",**kwargs):
     ddp_rank = int(os.environ.get('RANK', 0))
     if ddp_rank == 0:
+        kwargs.setdefault("flush", True)  # long silent stretches (val eval, first batch) must appear immediately
         print(s, **kwargs)
 
 def print_banner():

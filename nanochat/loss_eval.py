@@ -2,11 +2,24 @@
 A number of functions that help with evaluating a base model.
 """
 import math
+import time
+
 import torch
 import torch.distributed as dist
 
+from nanochat.common import print0
+
+
+def _bpb_progress_every(steps: int) -> int:
+    """How often to print during val bpb so slow devices don't look hung."""
+    if steps <= 0:
+        return 1
+    # ~10 updates for long runs; every step when tiny.
+    return max(1, min(steps, steps // 10 or 1))
+
+
 @torch.no_grad()
-def evaluate_bpb(model, batches, steps, token_bytes):
+def evaluate_bpb(model, batches, steps, token_bytes, progress_every=None):
     """
     Instead of the naive 'mean loss', this function returns the bits per byte (bpb),
     which is a tokenization vocab size-independent metric, meaning you are still comparing
@@ -28,7 +41,11 @@ def evaluate_bpb(model, batches, steps, token_bytes):
     total_nats = torch.tensor(0.0, dtype=torch.float32, device=model.get_device())
     total_bytes = torch.tensor(0, dtype=torch.int64, device=model.get_device())
     batch_iter = iter(batches)
-    for _ in range(steps):
+    log_every = _bpb_progress_every(steps) if progress_every is None else max(1, progress_every)
+    t0 = time.time()
+    if steps > 0:
+        print0(f"val bpb: starting {steps} eval steps (progress every {log_every})")
+    for step_i in range(steps):
         x, y = next(batch_iter)
         loss2d = model(x, y, loss_reduction='none') # (B, T)
         loss2d = loss2d.view(-1) # flatten
@@ -51,6 +68,15 @@ def evaluate_bpb(model, batches, steps, token_bytes):
             num_bytes2d = token_bytes[y]
             total_nats += (loss2d * (num_bytes2d > 0)).sum()
             total_bytes += num_bytes2d.sum()
+        done = step_i + 1
+        if done == 1 or done % log_every == 0 or done == steps:
+            elapsed = time.time() - t0
+            rate = done / elapsed if elapsed > 0 else 0.0
+            eta = (steps - done) / rate if rate > 0 else 0.0
+            print0(
+                f"val bpb: {done}/{steps} steps ({100.0 * done / steps:.0f}%) | "
+                f"elapsed {elapsed:.1f}s | eta {eta:.1f}s"
+            )
     # sum reduce across all ranks
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     if world_size > 1:

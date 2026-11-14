@@ -334,6 +334,7 @@ if weight_decay_scaled != args.weight_decay:
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
+print0("Building optimizer (MuonAdamW)...")
 optimizer = model.setup_optimizer(
     # AdamW hyperparameters
     unembedding_lr=args.unembedding_lr * batch_lr_scale,
@@ -343,10 +344,13 @@ optimizer = model.setup_optimizer(
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,
 )
+print0("Optimizer ready")
 
 if resuming:
+    print0("Loading optimizer state from checkpoint...")
     optimizer.load_state_dict(optimizer_data)
     del optimizer_data
+    print0("Optimizer state loaded")
 
 # -----------------------------------------------------------------------------
 # GradScaler for fp16 training (bf16/fp32 don't need it — bf16 has the same exponent range as fp32)
@@ -358,10 +362,13 @@ if scaler is not None:
 # Initialize the DataLoaders for train/val
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
 # Built through a function because an OOM re-halve has to rebuild it at the smaller batch size
+print0("Building train dataloader...")
 build_train_loader = lambda resume_state_dict: tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=resume_state_dict)
 train_loader = build_train_loader(dataloader_resume_state_dict)
 build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
+print0("Fetching first train batch (tokenization / disk I/O can take a while)...")
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
+print0(f"First train batch ready: x.shape={tuple(x.shape)}")
 
 # -----------------------------------------------------------------------------
 # Calculate the number of iterations we will train for and set up the various schedulers
@@ -498,6 +505,7 @@ while True:
         model.eval()
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
+        print0(f"Step {step:05d} | starting validation bpb ({eval_steps} steps, ~{args.eval_tokens:,} tokens)...")
         with disable_fp8(model):
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
@@ -599,6 +607,9 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+    # Announce before long silent work: always on step 0, and on non-CUDA where a step can take minutes.
+    if step == 0 or device_type != "cuda":
+        print0(f"Step {step:05d} | training forward/backward ({grad_accum_steps} micro-steps)...")
     try:
         train_loss, x, y, dataloader_state_dict = accumulate_gradients(x, y)
     except (RuntimeError, MemoryError) as step_error:

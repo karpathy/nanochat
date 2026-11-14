@@ -464,6 +464,7 @@ class GPT(nn.Module):
                 momentum=0.95, ns_steps=5, beta2=0.9, weight_decay=weight_decay,
             ))
 
+        print0(f"Constructing MuonAdamW with {len(param_groups)} param groups...")
         optimizer = MuonAdamW(param_groups)
         for group in optimizer.param_groups:
             group["initial_lr"] = group["lr"]
