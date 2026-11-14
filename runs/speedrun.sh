@@ -97,8 +97,15 @@ log "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 8)
+_SAVE_EVERY="${NANOCHAT_SAVE_EVERY:-500}"
+_RESUME_FLAG=""
+if ! force_stage base_train; then
+    _RESUME_STEP="$(python3 -m nanochat.checkpoint_manager find-resume-step \
+        "${NANOCHAT_BASE_DIR}/base_checkpoints/d${SPEEDRUN_DEPTH}" 8 2>/dev/null || echo "-1")"
+    [ "${_RESUME_STEP:-0}" -gt 0 ] && _RESUME_FLAG="--resume-from-step=${_RESUME_STEP}"
+fi
 run_stage base_train "depth=$SPEEDRUN_DEPTH device_batch_size=$SPEEDRUN_DEVICE_BATCH_SIZE" "base_eval (or SKIP if .eval_ok)" -- \
-    torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth="$SPEEDRUN_DEPTH" --target-param-data-ratio="$SPEEDRUN_TARGET_PARAM_DATA_RATIO" --device-batch-size="$SPEEDRUN_DEVICE_BATCH_SIZE" --fp8 --run=$WANDB_RUN
+    torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- --depth="$SPEEDRUN_DEPTH" --target-param-data-ratio="$SPEEDRUN_TARGET_PARAM_DATA_RATIO" --device-batch-size="$SPEEDRUN_DEVICE_BATCH_SIZE" --fp8 --save-every="$_SAVE_EVERY" $_RESUME_FLAG --run=$WANDB_RUN
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
 run_stage base_eval "device_batch_size=$SPEEDRUN_EVAL_DEVICE_BATCH_SIZE" "chat_sft (or SKIP if checkpoints exist)" -- \
     torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size="$SPEEDRUN_EVAL_DEVICE_BATCH_SIZE"

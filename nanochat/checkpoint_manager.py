@@ -165,6 +165,32 @@ def find_last_step(checkpoint_dir):
     last_step = max(int(f.split("_")[-1].split(".")[0]) for f in checkpoint_files)
     return last_step
 
+
+def find_safe_resume_step(checkpoint_dir: str, world_size: int = 1) -> int:
+    """Return the highest step whose model, meta, and all optim shards are present.
+
+    Returns -1 if no fully-committed step exists (fresh start, empty dir, or missing artifacts).
+    Validates all three artifact types so a crash mid-save never produces a permanent crash-loop.
+    """
+    if not os.path.isdir(checkpoint_dir):
+        return -1
+    files = os.listdir(checkpoint_dir)
+    model_steps = sorted(
+        [int(m.group(1)) for f in files if (m := re.search(r"model_(\d+)\.pt$", f))],
+        reverse=True,
+    )
+    for step in model_steps:
+        meta = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
+        if not os.path.exists(meta):
+            continue
+        optim_ok = all(
+            os.path.exists(os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{r}.pt"))
+            for r in range(world_size)
+        )
+        if optim_ok:
+            return step
+    return -1
+
 # -----------------------------------------------------------------------------
 # convenience functions that take into account nanochat's directory structure
 
@@ -190,6 +216,14 @@ def load_model(source, *args, **kwargs):
     base_dir = get_base_dir()
     checkpoints_dir = os.path.join(base_dir, model_dir)
     return load_model_from_dir(checkpoints_dir, *args, source=source, **kwargs)
+
+if __name__ == "__main__":
+    import sys as _sys
+    if len(_sys.argv) >= 3 and _sys.argv[1] == "find-resume-step":
+        _ws = int(_sys.argv[3]) if len(_sys.argv) > 3 else 1
+        print(find_safe_resume_step(_sys.argv[2], _ws))
+        raise SystemExit(0)
+
 
 def load_optimizer_state(source, device, rank, model_tag=None, step=None):
     """Load just the optimizer shard for a given rank, without re-loading the model."""

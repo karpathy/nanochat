@@ -15,6 +15,7 @@ import json
 import os
 import resource
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -249,6 +250,13 @@ def _run_training(script: str, extra_env: dict[str, str]) -> None:
     )
     daemon_thread.start()
     print("[train] Commit daemon started")
+
+    # Commit the Volume on SIGTERM (preemption) so mid-train checkpoints survive restart.
+    def _sigterm_commit(signum, frame):
+        print("[train] SIGTERM received — committing volume before exit", flush=True)
+        vol.commit()
+        raise SystemExit(1)
+    signal.signal(signal.SIGTERM, _sigterm_commit)
 
     print(f"[train] Running {script}...")
     result = subprocess.run(

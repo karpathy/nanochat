@@ -60,6 +60,13 @@ run_stage tok_eval "" "base_train (or SKIP if checkpoints exist)" -- \
 # train a small 6 layer model
 # I tuned this run to complete in about 30 minutes on my MacBook Pro M3 Max.
 # To get better results, try increasing num_iterations, or get other ideas from your favorite LLM.
+_SAVE_EVERY="${NANOCHAT_SAVE_EVERY:-500}"
+_RESUME_FLAG=""
+if ! force_stage base_train; then
+    _RESUME_STEP="$(python3 -m nanochat.checkpoint_manager find-resume-step \
+        "${NANOCHAT_BASE_DIR}/base_checkpoints/d${RUNCPU_DEPTH}" 2>/dev/null || echo "-1")"
+    [ "${_RESUME_STEP:-0}" -gt 0 ] && _RESUME_FLAG="--resume-from-step=${_RESUME_STEP}"
+fi
 run_stage base_train "depth=$RUNCPU_DEPTH device_batch_size=$RUNCPU_DEVICE_BATCH_SIZE" "base_eval (or SKIP if .eval_ok)" -- \
     python -m scripts.base_train \
     --depth="$RUNCPU_DEPTH" \
@@ -73,6 +80,8 @@ run_stage base_train "depth=$RUNCPU_DEPTH device_batch_size=$RUNCPU_DEVICE_BATCH
     --core-metric-every="$RUNCPU_CORE_METRIC_EVERY" \
     --sample-every="$RUNCPU_SAMPLE_EVERY" \
     --num-iterations="$RUNCPU_NUM_ITERATIONS" \
+    --save-every="$_SAVE_EVERY" \
+    $_RESUME_FLAG \
     --run=$WANDB_RUN
 run_stage base_eval "device_batch_size=$RUNCPU_EVAL_DEVICE_BATCH_SIZE" "chat_sft (or SKIP if checkpoints exist)" -- \
     python -m scripts.base_eval --device-batch-size="$RUNCPU_EVAL_DEVICE_BATCH_SIZE" --split-tokens=16384 --max-per-task=16
