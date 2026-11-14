@@ -282,3 +282,20 @@ class TestRenderPlaque:
 
         result = stage_art.render_plaque("base_train", "start", "")
         assert result != ""
+
+
+def test_given_any_stage_and_kind_when_plaque_rendered_then_every_line_has_equal_width(monkeypatch) -> None:
+    """
+    Scenario: every plaque line lines up so the right-hand border is straight.
+    Slice: cli-learn-color-ux
+    """
+    # given
+    monkeypatch.delenv("NANOCHAT_PLAIN", raising=False)
+    monkeypatch.setenv("NO_COLOR", "1")
+
+    # when
+    rendered = stage_art.render_plaque("base_train", "start", "teach raw next-token prediction on web text")
+
+    # then
+    widths = {len(line) for line in rendered.splitlines()}
+    assert len(widths) == 1, f"plaque lines have mixed widths {sorted(widths)}"

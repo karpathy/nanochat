@@ -51,7 +51,7 @@ def render_plaque(
     content_width = min(content_width, 76)
 
     # Build the plaque with borders
-    border = "+" + "-" * content_width + "+"
+    border = "+" + "-" * (content_width + 2) + "+"
 
     # Line 1: "stage_name KIND"
     line1_text = f"{stage} {kind_upper}"
