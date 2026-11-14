@@ -121,6 +121,31 @@ def _available_cores() -> int:
 
 
 _VOLUME_COMMIT_LOCK = threading.Lock()
+PERIODIC_COMMIT_SECS = 300
+PERIODIC_COMMIT_RETRY_SECS = 30
+
+
+def _commit_volume_locked(volume: modal.Volume) -> bool:
+    try:
+        with _VOLUME_COMMIT_LOCK:
+            volume.commit()
+        return True
+    except Exception as e:  # noqa: BLE001 - a failed periodic commit must not kill the daemon
+        print(f"[daemon] ERROR: commit failed: {e}")
+        return False
+
+
+def _periodic_commit(volume: modal.Volume, last_commit: float, now: float) -> float:
+    """Commit the Volume if the interval has passed; return the new last-commit time.
+
+    A failed commit is retried after PERIODIC_COMMIT_RETRY_SECS, not on every loop.
+    """
+    if now - last_commit < PERIODIC_COMMIT_SECS:
+        return last_commit
+    if _commit_volume_locked(volume):
+        print("[daemon] periodic commit ok")
+        return now
+    return now - PERIODIC_COMMIT_SECS + PERIODIC_COMMIT_RETRY_SECS
 
 
 def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
@@ -155,6 +180,7 @@ def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
             print(f"[daemon] ERROR: commit failed: {e}")
         return result
 
+    last_commit = time.time()
     while True:
         # Check for request
         if os.path.exists(request_file):
@@ -182,6 +208,7 @@ def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
             success = result_box[0] if result_box else False
 
             if success:
+                last_commit = time.time()
                 # Remove request on success (hook checks this to know we're done)
                 try:
                     os.remove(request_file)
@@ -199,7 +226,7 @@ def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
                 # Rate-limit retries while the hook sees the failed marker, instead of spinning.
                 time.sleep(2)
         else:
-            # No request yet; sleep and retry
+            last_commit = _periodic_commit(volume, last_commit, time.time())
             time.sleep(0.5)
 
 
