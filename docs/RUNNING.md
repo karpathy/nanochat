@@ -83,6 +83,7 @@ Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the p
 | FORCE | `[HH:MM:SS] FORCE stage=tok_train reason=FORCE_STAGES=tok_train` | Artifact exists but you asked to redo it. |
 | FAIL | `[HH:MM:SS] FAIL stage=base_train elapsed=… hint=…` | Stage exited non-zero; the script stops here. |
 | rms_norm | `[norm] original=F.rms_norm → adjusted=manual_rsqrt (reason: missing on torch 2.2.2)` | Fallback in use. See [section 7](#7-mac--intel-torch). |
+| compile | `[compile] original=torch.compile → adjusted=eager (reason: Inductor has no MPS backend)` | Model stays eager on MPS (Inductor unsupported). CUDA/CPU still compile. See [section 7](#7-mac--intel-torch). |
 | auto-fit | `[auto-fit] device_batch_size: original/default=8 → adjusted=2 (reason: est_peak=12.4GiB > margin*avail=0.6*18.0GiB)` | Batch shrunk so the estimate fits under the memory margin. See [section 11](#11-memory--oom). |
 | unchanged | `[auto-fit] device_batch_size=8 (unchanged; estimate fits)` | Auto-fit ran; requested batch already fits. |
 
@@ -116,7 +117,8 @@ One extra line at most per event. These are hints, not part of the strict contra
 | `mem:` | After `DONE` | Best-effort free/available memory snapshot (macOS `vm_stat` or Linux `MemAvailable`). |
 | `memory:` | After auto-fit | Plain-language fit, e.g. `memory: aiming to use ≤60% of ~18GiB; batch 8→2 so logits fit`. Complements the `[auto-fit]` contract line; does not replace it. |
 | `trend:` | After a new `val_bpb` / CORE metric | Compares this run’s metric to the prior value in `$NANOCHAT_BASE_DIR/last_metrics.json` (global last-seen keys — mid-train eval can update before `base_eval`). Printed only when a prior exists. Fail-soft: never aborts train/eval. Example: `trend: val_bpb 7.47 → better than prior 8.1`. |
-| `heartbeat:` | During training | Planned: optional one-line progress summary. |
+| `val bpb:` progress | During val eval on non-CUDA | Sparse cadence (~10 lines) so Mac/CPU do not look hung; off by default on CUDA. |
+| `heartbeat:` | During training | Planned: optional one-line progress summary (not every-step pre-announce). |
 
 ## 7. Mac / Intel torch
 

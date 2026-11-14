@@ -134,10 +134,8 @@ if auto_fit_enabled(args.auto_fit_batch, device_type):
     args.device_batch_size = fitted_batch_size
 
 orig_model = model
-# MPS: Inductor has no backend — maybe_torch_compile leaves the model eager.
+# MPS: Inductor has no backend — maybe_torch_compile leaves the model eager (and echoes once).
 model = maybe_torch_compile(model, device_type, dynamic=False)
-if model is orig_model and device_type == "mps":
-    print0("[compile] original=torch.compile → adjusted=eager (reason: Inductor has no MPS backend)")
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
@@ -444,6 +442,8 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+    if step == 0:
+        print0(f"Step {step:05d} | training forward/backward ({grad_accum_steps} micro-steps)...")
     for micro_step in range(grad_accum_steps):
         loss = model(x, y)
         train_loss = loss.detach() # for logging

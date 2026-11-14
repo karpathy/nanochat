@@ -24,6 +24,7 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | 2026-11-13 | fix-forward-mac-phase15 | Tip text SSOT in `nanochat/run_tip.py`; shell prints via `python -m` | Enables AC7 unit test without brittle bash asserts |
 | 2026-11-13 | fix-forward-mac-phase15 | Parallel worktrees `p15-{shell,trend,tests,docs}` then merge to feat branch | Same Phase 2 pattern; independent writers without clobbering tip |
 | 2026-11-13 | fix-mps-skip-inductor | Skip `torch.compile` / Inductor on MPS (model + fused optim steps); stay eager | Inductor has no MPS backend; was crashing val eval at step 0 |
+| 2026-11-14 | fix-mps-skip-inductor | Gate 4 review: step-0-only announce; compile echo in helper; muon/foreach tests; val-bpb progress non-CUDA only | Reviewers: code-reviewer APPROVE notes; critic+architect CHANGES_REQUESTED (echo firehose, under-tested Muon) |
 
 ## Slice states
 

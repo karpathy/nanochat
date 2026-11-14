@@ -183,6 +183,8 @@ def inductor_supports_device(device_type):
 def maybe_torch_compile(module, device_type, **compile_kwargs):
     """Compile when Inductor can target this device; otherwise return the module unchanged (eager)."""
     if not inductor_supports_device(device_type):
+        # One contract-shaped line (same original→adjusted form as [norm] / [auto-fit]).
+        print0("[compile] original=torch.compile → adjusted=eager (reason: Inductor has no MPS backend)")
         return module
     return torch.compile(module, **compile_kwargs)
 

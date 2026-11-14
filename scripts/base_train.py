@@ -269,10 +269,8 @@ def disable_fp8(model):
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
 # dynamic=False is safe while batch shape is fixed; an OOM rehalve falls back to orig_model.
-# MPS: Inductor has no backend — maybe_torch_compile leaves the model eager.
+# MPS: Inductor has no backend — maybe_torch_compile leaves the model eager (and echoes once).
 model = maybe_torch_compile(model, device_type, dynamic=False)
-if model is orig_model and device_type == "mps":
-    print0("[compile] original=torch.compile → adjusted=eager (reason: Inductor has no MPS backend)")
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
@@ -607,8 +605,8 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
-    # Announce before long silent work: always on step 0, and on non-CUDA where a step can take minutes.
-    if step == 0 or device_type != "cuda":
+    # Announce once before the first (often longest) step — not every non-CUDA step (echo firehose).
+    if step == 0:
         print0(f"Step {step:05d} | training forward/backward ({grad_accum_steps} micro-steps)...")
     try:
         train_loss, x, y, dataloader_state_dict = accumulate_gradients(x, y)

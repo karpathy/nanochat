@@ -15,7 +15,7 @@ def _bpb_progress_every(steps: int) -> int:
     if steps <= 0:
         return 1
     # ~10 updates for long runs; every step when tiny.
-    return max(1, min(steps, steps // 10 or 1))
+    return max(1, steps // 10)
 
 
 @torch.no_grad()
@@ -36,14 +36,21 @@ def evaluate_bpb(model, batches, steps, token_bytes, progress_every=None):
     In addition to evaluate_loss, we need the token_bytes tensor:
     It is a 1D tensor of shape (vocab_size,), indicating the number of bytes for
     each token id, or 0 if the token is to not be counted (e.g. special tokens).
+
+    Progress lines default on for non-CUDA (Mac/CPU can sit silent for minutes); off on CUDA
+    unless progress_every is set explicitly.
     """
     # record the losses
     total_nats = torch.tensor(0.0, dtype=torch.float32, device=model.get_device())
     total_bytes = torch.tensor(0, dtype=torch.int64, device=model.get_device())
     batch_iter = iter(batches)
-    log_every = _bpb_progress_every(steps) if progress_every is None else max(1, progress_every)
+    device_type = model.get_device().type
+    if progress_every is None:
+        log_every = _bpb_progress_every(steps) if device_type != "cuda" else None
+    else:
+        log_every = max(1, progress_every)
     t0 = time.time()
-    if steps > 0:
+    if steps > 0 and log_every is not None:
         print0(f"val bpb: starting {steps} eval steps (progress every {log_every})")
     for step_i in range(steps):
         x, y = next(batch_iter)
@@ -69,7 +76,7 @@ def evaluate_bpb(model, batches, steps, token_bytes, progress_every=None):
             total_nats += (loss2d * (num_bytes2d > 0)).sum()
             total_bytes += num_bytes2d.sum()
         done = step_i + 1
-        if done == 1 or done % log_every == 0 or done == steps:
+        if log_every is not None and (done == 1 or done % log_every == 0 or done == steps):
             elapsed = time.time() - t0
             rate = done / elapsed if elapsed > 0 else 0.0
             eta = (steps - done) / rate if rate > 0 else 0.0

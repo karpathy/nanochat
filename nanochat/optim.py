@@ -566,6 +566,8 @@ class MuonAdamW(torch.optim.Optimizer):
             if info["params"] is not None:
                 # Muon: copy from stacked buffer back to individual params
                 params = info["params"]
+                if not params:
+                    continue
                 sources = list(info["stacked_params"][:len(params)].unbind(0))
                 # aten::_foreach_copy_ is not implemented on MPS (torch≤2.2); copy one-by-one.
                 if params[0].device.type == "mps":
