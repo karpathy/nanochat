@@ -1,0 +1,206 @@
+[19:40:59] pipeline: [tok✓] [base▶] [eval○] [sft○]
+  tip: smaller --device-batch-size uses grad accumulation to keep the same total batch
+Downloading 9 shards using 4 workers...
+Target directory: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_data_climbmix
+
+Skipping /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_data_climbmix/shard_00000.parquet (already exists)
+Skipping /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_data_climbmix/shard_00001.parquet (already exists)
+Skipping /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_data_climbmix/shard_00002.parquet (already exists)
+Skipping /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_data_climbmix/shard_00003.parquet (already exists)
+Skipping /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_data_climbmix/shard_00004.parquet (already exists)
+Skipping /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_data_climbmix/shard_00005.parquet (already exists)
+Skipping /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_data_climbmix/shard_00006.parquet (already exists)
+Skipping /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_data_climbmix/shard_00007.parquet (already exists)
+Skipping /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_data_climbmix/shard_06542.parquet (already exists)
+Done! Downloaded: 9/9 shards to /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_data_climbmix
+[19:41:03] SKIP stage=tok_train reason=artifact exists path=/private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/tokenizer/tokenizer.pkl (FORCE_STAGES=tok_train to redo)
+  skip-saved: unknown (no prior timing) · ETA: n/a (skipped)
+[19:41:03] SKIP stage=tok_eval reason=artifact exists path=/private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/tokenizer/.tok_eval_ok (FORCE_STAGES=tok_eval to redo)
+  skip-saved: unknown (no prior timing) · ETA: n/a (skipped)
++-----------------------------------------------+
+| base_train START                              |
+| teach raw next-token prediction on web text   |
++-----------------------------------------------+
+[19:41:06] START stage=base_train profile=runcpu depth=6 device_batch_size=8 ETA: unknown until first train step
+  purpose: teach raw next-token prediction on web text · health: ~12.8GiB free-ish · ckpt=3.2GiB · shards=9/8
+  learn: BPB = Bits Per Byte: the number of bits needed to encode one byte of data; measures model compression efficiency. (docs/RUNNING.md#6b-terms) · Muon = An optimizer that orthogonalizes momentum updates for the weight matrices of the model. (https://github.com/KellerJordan/Muon) · MFU = Model Flops Utilization: the fraction of theoretical peak floating-point operations actually used during training. (https://arxiv.org/abs/2204.02311) · FLOPs = Floating Point Operations: the raw count of arithmetic operations performed during training or inference. (docs/RUNNING.md#6b-terms)
+[norm] original=F.rms_norm → adjusted=manual_rsqrt (reason: missing on torch 2.2.2)
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: mps
+2026-11-14 19:41:10,061 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+COMPUTE_DTYPE: torch.float32 (auto-detected: no CUDA (CPU/MPS))
+torch 2.2.2 | device: mps (Apple Silicon GPU (MPS)) | world size: 1
+NANOCHAT_BASE_DIR: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3 | base_dir: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3
+load/save roots: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints | tokenizer: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/tokenizer
+[auto-fit] device_batch_size=8 (unchanged; estimate fits)
+[auto-fit] device_batch_size precedence: CLI_default=32 → profile=8 → fitted=8
+memory: aiming to use ≤60% of ~45GiB; batch 8 fits as-is
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback
+WARNING: Training will be less efficient without FA3
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Vocab size: 32,768
+Model config:
+{
+  "sequence_len": 512,
+  "vocab_size": 32768,
+  "n_layer": 6,
+  "n_head": 6,
+  "n_kv_head": 6,
+  "n_embd": 384,
+  "window_pattern": "L"
+}
+Resuming optimization from step 26
+[compile] original=torch.compile → adjusted=eager (reason: Inductor has no MPS backend)
+Parameter counts:
+wte                     : 12,582,912
+value_embeds            : 37,748,736
+lm_head                 : 12,582,912
+transformer_matrices    : 10,617,048
+scalars                 : 38
+total                   : 73,531,646
+Estimated FLOPs per token: 1.533557e+08
+Scaling LRs by 0.1768 for batch size 16,384 (reference: 524,288)
+Scaling weight decay from 0.280000 to 0.234903 for depth 6
+Building optimizer (MuonAdamW)...
+Scaling the LR for the AdamW parameters ∝1/√(384/768) = 1.414214
+Constructing MuonAdamW with 10 param groups...
+Optimizer ready
+Loading optimizer state from checkpoint...
+Optimizer state loaded
+Building train dataloader...
+Fetching first train batch (tokenization / disk I/O can take a while)...
+First train batch ready: x.shape=(8, 512)
+Using user-provided number of iterations: 300
+Total number of training tokens: 4,915,200
+Tokens : Scaling params ratio: 0.21
+Total training FLOPs estimate: 7.537738e+14
+Tokens / micro-batch / rank: 8 x 512 = 4,096
+Tokens / micro-batch: 4,096
+Total batch size 16,384 => gradient accumulation steps: 4
+step 00026/00300 (8.67%) | loss: 8.662456 | lrm: 0.68 | dt: 4103.78ms | tok/sec: 3,992 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 23s | eta: 0h 6m 37s
+step 00027/00300 (9.00%) | loss: 8.559142 | lrm: 0.70 | dt: 1417.53ms | tok/sec: 11,558 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 25s | eta: 0h 6m 35s
+step 00028/00300 (9.33%) | loss: 8.469976 | lrm: 0.72 | dt: 1149.56ms | tok/sec: 14,252 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 26s | eta: 0h 6m 29s
+step 00029/00300 (9.67%) | loss: 8.372571 | lrm: 0.75 | dt: 1824.79ms | tok/sec: 8,978 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 28s | eta: 0h 6m 33s
+step 00030/00300 (10.00%) | loss: 8.280330 | lrm: 0.78 | dt: 1218.22ms | tok/sec: 13,449 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 29s | eta: 0h 6m 29s
+step 00031/00300 (10.33%) | loss: 8.206298 | lrm: 0.80 | dt: 1131.53ms | tok/sec: 14,479 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 30s | eta: 0h 6m 23s
+2026-11-14 19:41:23,328 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/model_000032.pt
+2026-11-14 19:41:23,329 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/meta_000032.json
+2026-11-14 19:41:24,370 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/optim_000032_rank0.pt
+step 00032/00300 (10.67%) | loss: 8.116499 | lrm: 0.82 | dt: 1308.22ms | tok/sec: 12,523 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 31s | eta: 0h 6m 21s
+step 00033/00300 (11.00%) | loss: 8.020286 | lrm: 0.85 | dt: 1194.13ms | tok/sec: 13,720 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 32s | eta: 0h 6m 17s
+step 00034/00300 (11.33%) | loss: 7.955633 | lrm: 0.88 | dt: 1637.72ms | tok/sec: 10,004 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 34s | eta: 0h 6m 18s
+step 00035/00300 (11.67%) | loss: 7.886993 | lrm: 0.90 | dt: 1156.96ms | tok/sec: 14,161 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 35s | eta: 0h 6m 13s
+step 00036/00300 (12.00%) | loss: 7.824968 | lrm: 0.93 | dt: 1151.39ms | tok/sec: 14,229 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 36s | eta: 0h 6m 9s
+step 00037/00300 (12.33%) | loss: 7.770245 | lrm: 0.95 | dt: 1310.74ms | tok/sec: 12,499 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 38s | eta: 0h 6m 7s
+step 00038/00300 (12.67%) | loss: 7.706534 | lrm: 0.97 | dt: 1090.40ms | tok/sec: 15,025 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 39s | eta: 0h 6m 3s
+step 00039/00300 (13.00%) | loss: 7.625069 | lrm: 1.00 | dt: 1233.06ms | tok/sec: 13,287 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 40s | eta: 0h 6m 0s
+2026-11-14 19:41:35,148 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/model_000040.pt
+2026-11-14 19:41:35,149 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/meta_000040.json
+2026-11-14 19:41:36,235 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/optim_000040_rank0.pt
+step 00040/00300 (13.33%) | loss: 7.575352 | lrm: 1.00 | dt: 1271.62ms | tok/sec: 12,884 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 4 | total time: 0h 0m 41s | eta: 0h 5m 58s
+step 00041/00300 (13.67%) | loss: 7.517123 | lrm: 1.00 | dt: 1751.78ms | tok/sec: 9,352 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 43s | eta: 0h 6m 0s
+step 00042/00300 (14.00%) | loss: 7.464961 | lrm: 1.00 | dt: 1278.87ms | tok/sec: 12,811 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 44s | eta: 0h 5m 57s
+step 00043/00300 (14.33%) | loss: 7.431709 | lrm: 1.00 | dt: 1334.86ms | tok/sec: 12,273 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 46s | eta: 0h 5m 56s
+step 00044/00300 (14.67%) | loss: 7.368724 | lrm: 1.00 | dt: 1664.41ms | tok/sec: 9,843 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 47s | eta: 0h 5m 56s
+step 00045/00300 (15.00%) | loss: 7.333746 | lrm: 1.00 | dt: 1235.77ms | tok/sec: 13,258 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 49s | eta: 0h 5m 54s
+step 00046/00300 (15.33%) | loss: 7.282701 | lrm: 1.00 | dt: 1324.94ms | tok/sec: 12,365 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 50s | eta: 0h 5m 52s
+step 00047/00300 (15.67%) | loss: 7.244242 | lrm: 1.00 | dt: 1361.24ms | tok/sec: 12,036 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 51s | eta: 0h 5m 50s
+2026-11-14 19:41:48,071 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/model_000048.pt
+2026-11-14 19:41:48,072 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/meta_000048.json
+2026-11-14 19:41:49,273 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/optim_000048_rank0.pt
+step 00048/00300 (16.00%) | loss: 7.207909 | lrm: 1.00 | dt: 1235.91ms | tok/sec: 13,256 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 52s | eta: 0h 5m 48s
+step 00049/00300 (16.33%) | loss: 7.165977 | lrm: 1.00 | dt: 1189.41ms | tok/sec: 13,774 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 54s | eta: 0h 5m 45s
+step 00050/00300 (16.67%) | loss: 7.121907 | lrm: 1.00 | dt: 1128.41ms | tok/sec: 14,519 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 55s | eta: 0h 5m 42s
+step 00051/00300 (17.00%) | loss: 7.094591 | lrm: 1.00 | dt: 1079.68ms | tok/sec: 15,174 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 56s | eta: 0h 5m 39s
+step 00052/00300 (17.33%) | loss: 7.069417 | lrm: 1.00 | dt: 1081.79ms | tok/sec: 15,145 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 57s | eta: 0h 5m 36s
+step 00053/00300 (17.67%) | loss: 7.051865 | lrm: 1.00 | dt: 1157.85ms | tok/sec: 14,150 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 58s | eta: 0h 5m 34s
+step 00054/00300 (18.00%) | loss: 7.021474 | lrm: 1.00 | dt: 1152.76ms | tok/sec: 14,212 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 0m 59s | eta: 0h 5m 31s
+step 00055/00300 (18.33%) | loss: 6.968749 | lrm: 1.00 | dt: 1263.29ms | tok/sec: 12,969 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 1m 1s | eta: 0h 5m 30s
+step 00056/00300 (18.67%) | loss: 6.926603 | lrm: 1.00 | dt: 1323.76ms | tok/sec: 12,376 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 1m 2s | eta: 0h 5m 28s
+2026-11-14 19:42:00,869 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/model_000057.pt
+2026-11-14 19:42:00,872 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/meta_000057.json
+2026-11-14 19:42:02,275 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/optim_000057_rank0.pt
+step 00057/00300 (19.00%) | loss: 6.900713 | lrm: 1.00 | dt: 1161.82ms | tok/sec: 14,101 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 1m 3s | eta: 0h 5m 26s
+step 00058/00300 (19.33%) | loss: 6.908330 | lrm: 1.00 | dt: 1108.81ms | tok/sec: 14,776 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 1m 4s | eta: 0h 5m 23s
+step 00059/00300 (19.67%) | loss: 6.895063 | lrm: 1.00 | dt: 1101.90ms | tok/sec: 14,868 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 1m 5s | eta: 0h 5m 21s
+step 00060/00300 (20.00%) | loss: 6.845565 | lrm: 1.00 | dt: 1080.14ms | tok/sec: 15,168 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 1m 6s | eta: 0h 5m 18s
+step 00061/00300 (20.33%) | loss: 6.826805 | lrm: 1.00 | dt: 1142.01ms | tok/sec: 14,346 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 1m 7s | eta: 0h 5m 16s
+step 00062/00300 (20.67%) | loss: 6.807710 | lrm: 1.00 | dt: 1291.68ms | tok/sec: 12,684 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 1m 9s | eta: 0h 5m 15s
+step 00063/00300 (21.00%) | loss: 6.761667 | lrm: 1.00 | dt: 1075.68ms | tok/sec: 15,231 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 5 | total time: 0h 1m 10s | eta: 0h 5m 12s
+step 00064/00300 (21.33%) | loss: 6.731730 | lrm: 1.00 | dt: 1214.20ms | tok/sec: 13,493 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 11s | eta: 0h 5m 10s
+step 00065/00300 (21.67%) | loss: 6.726675 | lrm: 1.00 | dt: 1273.34ms | tok/sec: 12,866 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 12s | eta: 0h 5m 9s
+2026-11-14 19:42:13,502 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/model_000066.pt
+2026-11-14 19:42:13,505 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/meta_000066.json
+2026-11-14 19:42:14,692 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/optim_000066_rank0.pt
+step 00066/00300 (22.00%) | loss: 6.718518 | lrm: 1.00 | dt: 1199.37ms | tok/sec: 13,660 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 14s | eta: 0h 5m 7s
+step 00067/00300 (22.33%) | loss: 6.691395 | lrm: 1.00 | dt: 1092.24ms | tok/sec: 15,000 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 15s | eta: 0h 5m 5s
+step 00068/00300 (22.67%) | loss: 6.679363 | lrm: 1.00 | dt: 1088.90ms | tok/sec: 15,046 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 16s | eta: 0h 5m 3s
+step 00069/00300 (23.00%) | loss: 6.671402 | lrm: 1.00 | dt: 1170.28ms | tok/sec: 14,000 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 17s | eta: 0h 5m 1s
+step 00070/00300 (23.33%) | loss: 6.635163 | lrm: 1.00 | dt: 1169.34ms | tok/sec: 14,011 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 18s | eta: 0h 4m 59s
+step 00071/00300 (23.67%) | loss: 6.609909 | lrm: 1.00 | dt: 1134.48ms | tok/sec: 14,441 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 19s | eta: 0h 4m 57s
+step 00072/00300 (24.00%) | loss: 6.602255 | lrm: 1.00 | dt: 1185.85ms | tok/sec: 13,816 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 20s | eta: 0h 4m 55s
+step 00073/00300 (24.33%) | loss: 6.584200 | lrm: 1.00 | dt: 1211.21ms | tok/sec: 13,527 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 22s | eta: 0h 4m 54s
+step 00074/00300 (24.67%) | loss: 6.569594 | lrm: 1.00 | dt: 1204.05ms | tok/sec: 13,607 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 23s | eta: 0h 4m 52s
+2026-11-14 19:42:25,789 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/model_000075.pt
+2026-11-14 19:42:25,790 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/meta_000075.json
+2026-11-14 19:42:26,930 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/optim_000075_rank0.pt
+step 00075/00300 (25.00%) | loss: 6.569590 | lrm: 1.00 | dt: 1305.94ms | tok/sec: 12,545 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 24s | eta: 0h 4m 51s
+step 00076/00300 (25.33%) | loss: 6.576561 | lrm: 1.00 | dt: 1176.92ms | tok/sec: 13,921 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 25s | eta: 0h 4m 49s
+step 00077/00300 (25.67%) | loss: 6.578873 | lrm: 1.00 | dt: 1124.89ms | tok/sec: 14,564 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 26s | eta: 0h 4m 47s
+step 00078/00300 (26.00%) | loss: 6.567989 | lrm: 1.00 | dt: 1216.23ms | tok/sec: 13,471 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 28s | eta: 0h 4m 46s
+step 00079/00300 (26.33%) | loss: 6.566999 | lrm: 1.00 | dt: 1228.89ms | tok/sec: 13,332 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 29s | eta: 0h 4m 44s
+step 00080/00300 (26.67%) | loss: 6.536662 | lrm: 1.00 | dt: 1190.55ms | tok/sec: 13,761 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 30s | eta: 0h 4m 43s
+step 00081/00300 (27.00%) | loss: 6.508837 | lrm: 1.00 | dt: 1134.11ms | tok/sec: 14,446 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 31s | eta: 0h 4m 41s
+step 00082/00300 (27.33%) | loss: 6.500401 | lrm: 1.00 | dt: 1218.94ms | tok/sec: 13,441 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 32s | eta: 0h 4m 40s
+step 00083/00300 (27.67%) | loss: 6.481256 | lrm: 1.00 | dt: 1069.71ms | tok/sec: 15,316 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 33s | eta: 0h 4m 38s
+2026-11-14 19:42:38,211 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/model_000084.pt
+2026-11-14 19:42:38,212 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/meta_000084.json
+2026-11-14 19:42:39,387 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/optim_000084_rank0.pt
+step 00084/00300 (28.00%) | loss: 6.487440 | lrm: 1.00 | dt: 1309.63ms | tok/sec: 12,510 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 35s | eta: 0h 4m 37s
+step 00085/00300 (28.33%) | loss: 6.496021 | lrm: 1.00 | dt: 1086.72ms | tok/sec: 15,076 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 36s | eta: 0h 4m 35s
+step 00086/00300 (28.67%) | loss: 6.458739 | lrm: 1.00 | dt: 1097.09ms | tok/sec: 14,934 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 1m 37s | eta: 0h 4m 33s
+step 00087/00300 (29.00%) | loss: 6.469503 | lrm: 1.00 | dt: 1078.70ms | tok/sec: 15,188 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 38s | eta: 0h 4m 31s
+step 00088/00300 (29.33%) | loss: 6.493360 | lrm: 1.00 | dt: 1135.72ms | tok/sec: 14,426 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 39s | eta: 0h 4m 29s
+step 00089/00300 (29.67%) | loss: 6.490287 | lrm: 1.00 | dt: 1143.62ms | tok/sec: 14,326 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 40s | eta: 0h 4m 28s
+step 00090/00300 (30.00%) | loss: 6.461254 | lrm: 1.00 | dt: 1163.90ms | tok/sec: 14,076 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 41s | eta: 0h 4m 26s
+step 00091/00300 (30.33%) | loss: 6.449349 | lrm: 1.00 | dt: 1178.99ms | tok/sec: 13,896 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 43s | eta: 0h 4m 25s
+step 00092/00300 (30.67%) | loss: 6.437337 | lrm: 1.00 | dt: 1170.04ms | tok/sec: 14,002 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 44s | eta: 0h 4m 23s
+2026-11-14 19:42:50,335 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/model_000093.pt
+2026-11-14 19:42:50,337 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/meta_000093.json
+2026-11-14 19:42:51,489 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /private/tmp/claude-501/-Users-swami-git-repos-ai-ml-dl-stuff-playgroups-nanochat/e1aba90c-dacc-4dfb-bb9f-733cd9bee0b1/scratchpad/t3/base_checkpoints/d6/optim_000093_rank0.pt
+step 00093/00300 (31.00%) | loss: 6.421388 | lrm: 1.00 | dt: 1175.25ms | tok/sec: 13,940 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 45s | eta: 0h 4m 22s
+step 00094/00300 (31.33%) | loss: 6.427674 | lrm: 1.00 | dt: 1116.24ms | tok/sec: 14,677 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 46s | eta: 0h 4m 20s
+step 00095/00300 (31.67%) | loss: 6.422506 | lrm: 1.00 | dt: 1186.23ms | tok/sec: 13,811 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 47s | eta: 0h 4m 19s
+step 00096/00300 (32.00%) | loss: 6.419437 | lrm: 1.00 | dt: 1176.37ms | tok/sec: 13,927 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 48s | eta: 0h 4m 17s
+step 00097/00300 (32.33%) | loss: 6.376836 | lrm: 1.00 | dt: 1152.77ms | tok/sec: 14,212 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 50s | eta: 0h 4m 16s
+step 00098/00300 (32.67%) | loss: 6.373244 | lrm: 1.00 | dt: 1231.23ms | tok/sec: 13,307 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 51s | eta: 0h 4m 14s
+step 00099/00300 (33.00%) | loss: 6.384287 | lrm: 1.00 | dt: 1183.78ms | tok/sec: 13,840 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 7 | total time: 0h 1m 52s | eta: 0h 4m 13s
+Step 00100 | starting validation bpb (128 steps, ~524,288 tokens)...
+val bpb: starting 128 eval steps (progress every 12)
+val bpb: 1/128 steps (1%) | elapsed 0.6s | eta 71.1s
+val bpb: 12/128 steps (9%) | elapsed 1.7s | eta 16.9s
+val bpb: 24/128 steps (19%) | elapsed 2.8s | eta 12.0s
+val bpb: 36/128 steps (28%) | elapsed 3.8s | eta 9.8s
+val bpb: 48/128 steps (38%) | elapsed 5.0s | eta 8.3s
+val bpb: 60/128 steps (47%) | elapsed 6.1s | eta 6.9s
+val bpb: 72/128 steps (56%) | elapsed 7.2s | eta 5.6s
+val bpb: 84/128 steps (66%) | elapsed 8.4s | eta 4.4s
+val bpb: 96/128 steps (75%) | elapsed 9.5s | eta 3.2s
+val bpb: 108/128 steps (84%) | elapsed 10.6s | eta 2.0s
+val bpb: 120/128 steps (94%) | elapsed 11.9s | eta 0.8s
+val bpb: 128/128 steps (100%) | elapsed 12.6s | eta 0.0s
+Step 00100 | Validation bpb: 1.941600
+trend: val_bpb 1.941600 → better than prior 3.195799
+<|bos|>The capital of France is the most of the same as the same as the same as the most of the
+<|bos|>The chemical symbol of gold is the of the of the of the of the of the of the of the of
+<|bos|>If yesterday was Friday, then tomorrow will be a great way to the most of the same as a great way to the same

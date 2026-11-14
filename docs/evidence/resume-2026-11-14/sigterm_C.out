@@ -1,0 +1,135 @@
+✓ Initialized. View run at 
+https://modal.com/apps/neomatrix369/main/ap-Ha7Yz8zJSNVxVIDbtnKEcB
+✓ Created objects.
+├── ✓ Uploaded 
+│   /Users/swami/git-repos/ai-ml-dl-stuff/playgroups/nanochat/runs/modal_run.py
+├── ✓ Uploaded /Users/swami/git-repos/ai-ml-dl-stuff/playgroups/nanochat
+├── ✓ Uploaded pyproject.toml
+├── ✓ Uploaded uv.lock
+├── ✓ Created Function prefetch_cpu.
+└── ✓ Created Function train_cpu.
+[train] Commit daemon started
+[train] Running runs/runcpu.sh...
+[20:25:55] pipeline: [tok✓] [base▶] [eval○] [sft○]
+  tip: smaller --device-batch-size uses grad accumulation to keep the same total batch
+Downloading 9 shards using 4 workers...
+Target directory: /data/nanochat-modal/base_data_climbmix
+
+Skipping /data/nanochat-modal/base_data_climbmix/shard_00001.parquet (already exists)
+Skipping /data/nanochat-modal/base_data_climbmix/shard_00002.parquet (already exists)
+Skipping /data/nanochat-modal/base_data_climbmix/shard_00003.parquet (already exists)
+Done! Downloaded: 9/9 shards to /data/nanochat-modal/base_data_climbmix
+[20:25:58] SKIP stage=tok_train reason=artifact exists path=/data/nanochat-modal/tokenizer/tokenizer.pkl (FORCE_STAGES=tok_train to redo)
+  skip-saved: ~1m (last run) · cumulative_saved=~1m · ETA: n/a (skipped)
+[20:25:58] SKIP stage=tok_eval reason=artifact exists path=/data/nanochat-modal/tokenizer/.tok_eval_ok (FORCE_STAGES=tok_eval to redo)
+  skip-saved: ~6s (last run) · cumulative_saved=~1m · ETA: n/a (skipped)
++-----------------------------------------------+
+| base_train START                              |
+| teach raw next-token prediction on web text   |
++-----------------------------------------------+
+[20:26:02] START stage=base_train profile=runcpu depth=6 device_batch_size=32 ETA: unknown until first train step
+runs/_stage_lib.sh: line 137: [: 6.72043e+09: integer expression expected
+runs/_stage_lib.sh: line 141: [: 6.72043e+09: integer expression expected
+runs/_stage_lib.sh: line 143: [: 6.72043e+09: integer expression expected
+runs/_stage_lib.sh: line 145: [: 6.72043e+09: integer expression expected
+  purpose: teach raw next-token prediction on web text · health: ~396.4GiB available · ckpt=6.3GiB · shards=9/8
+  learn: BPB = Bits Per Byte: the number of bits needed to encode one byte of data; measures model compression efficiency. (docs/RUNNING.md#6b-terms) · Muon = An optimizer that orthogonalizes momentum updates for the weight matrices of the model. (https://github.com/KellerJordan/Muon) · MFU = Model Flops Utilization: the fraction of theoretical peak floating-point operations actually used during training. (https://arxiv.org/abs/2204.02311) · FLOPs = Floating Point Operations: the raw count of arithmetic operations performed during training or inference. (docs/RUNNING.md#6b-terms)
+[norm] using native F.rms_norm
+
+                                                       █████                █████
+                                                      ░░███                ░░███
+     ████████    ██████   ████████    ██████   ██████  ░███████    ██████  ███████
+    ░░███░░███  ░░░░░███ ░░███░░███  ███░░███ ███░░███ ░███░░███  ░░░░░███░░░███░
+     ░███ ░███   ███████  ░███ ░███ ░███ ░███░███ ░░░  ░███ ░███   ███████  ░███
+     ░███ ░███  ███░░███  ░███ ░███ ░███ ░███░███  ███ ░███ ░███  ███░░███  ░███ ███
+     ████ █████░░████████ ████ █████░░██████ ░░██████  ████ █████░░███████  ░░█████
+    ░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░░   ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░   ░░░░░
+    
+Autodetected device type: cpu
+2026-11-14 20:26:07,445 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+COMPUTE_DTYPE: torch.float32 (auto-detected: no CUDA (CPU/MPS))
+torch 2.9.1+cpu | device: cpu (CPU) | world size: 1
+NANOCHAT_BASE_DIR: /data/nanochat-modal | base_dir: /data/nanochat-modal
+load/save roots: /data/nanochat-modal/base_checkpoints | tokenizer: /data/nanochat-modal/tokenizer
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback
+WARNING: Training will be less efficient without FA3
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Vocab size: 32,768
+Model config:
+{
+  "sequence_len": 512,
+  "vocab_size": 32768,
+  "n_layer": 6,
+  "n_head": 6,
+  "n_kv_head": 6,
+  "n_embd": 384,
+  "window_pattern": "L"
+}
+Resuming optimization from step 25
+Parameter counts:
+wte                     : 12,582,912
+value_embeds            : 37,748,736
+lm_head                 : 12,582,912
+transformer_matrices    : 10,617,048
+scalars                 : 38
+total                   : 73,531,646
+Estimated FLOPs per token: 1.533557e+08
+Scaling LRs by 0.1768 for batch size 16,384 (reference: 524,288)
+Scaling weight decay from 0.280000 to 0.234903 for depth 6
+Building optimizer (MuonAdamW)...
+Scaling the LR for the AdamW parameters ∝1/√(384/768) = 1.414214
+Constructing MuonAdamW with 10 param groups...
+Optimizer ready
+Loading optimizer state from checkpoint...
+Optimizer state loaded
+Building train dataloader...
+Fetching first train batch (tokenization / disk I/O can take a while)...
+First train batch ready: x.shape=(32, 512)
+Using user-provided number of iterations: 300
+Total number of training tokens: 4,915,200
+Tokens : Scaling params ratio: 0.21
+Total training FLOPs estimate: 7.537738e+14
+Tokens / micro-batch / rank: 32 x 512 = 16,384
+Tokens / micro-batch: 16,384
+Total batch size 16,384 => gradient accumulation steps: 1
+[daemon] periodic commit ok
+step 00025/00300 (8.33%) | loss: 8.843628 | lrm: 0.65 | dt: 70458.54ms | tok/sec: 232 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 3m 49s | eta: 1h 9m 59s
+2026-11-14 20:27:26,113 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /data/nanochat-modal/base_checkpoints/d6/model_000026.pt
+2026-11-14 20:27:26,115 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /data/nanochat-modal/base_checkpoints/d6/meta_000026.json
+2026-11-14 20:27:29,241 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /data/nanochat-modal/base_checkpoints/d6/optim_000026_rank0.pt
+step 00026/00300 (8.67%) | loss: 8.718805 | lrm: 0.68 | dt: 5096.73ms | tok/sec: 3,214 | bf16_mfu: 0.00 | epoch: 1 pq: 0 rg: 6 | total time: 0h 3m 54s | eta: 1h 6m 50s
+[train] SIGTERM received — stopping training, then committing volume
+[train] runs/runcpu.sh finished (exit code -15); final volume commit...
+[archive] 33 files archived under runs/sigterm-C-202320/artifacts
+[report] {
+  "wall_s": 121.5,
+  "timeout_s": 43200,
+  "timeout_share": 0.003,
+  "cores_requested": 80,
+  "avg_cores_busy": 0.2,
+  "peak_rss_gib": 0.75,
+  "memory_limit_gib": null,
+  "verdicts": [
+    "over-provisioned cores: only 0.2 of 80 busy; try fewer",
+    "memory peak 0.7 GiB (no cgroup limit visible)"
+  ],
+  "cores_configured": 64,
+  "memory_configured_gib": 128.0
+}
+[daemon] periodic commit ok
+Traceback (most recent call last):
+  File "/pkg/modal/_runtime/container_io_manager.py", line 987, in handle_input_exception
+    yield
+  File "/pkg/modal/_container_entrypoint.py", line 189, in run_input_sync
+    values = io_context.call_function_sync()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/pkg/modal/_runtime/container_io_manager.py", line 266, in call_function_sync
+    expected_value_or_values = self.finalized_function.callable(*args, **kwargs)
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/modal_run.py", line 439, in train_cpu
+    _run_training(
+  File "/root/modal_run.py", line 332, in _run_training
+    raise RuntimeError(f"{script} failed with exit code {returncode}")
+RuntimeError: runs/runcpu.sh failed with exit code -15
+Error: runs/runcpu.sh failed with exit code -15

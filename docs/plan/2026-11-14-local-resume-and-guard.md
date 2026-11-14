@@ -64,7 +64,7 @@ Only two actions pass the filter:
    acceptable, since SFT is about 10 minutes locally.
 
 
-## Step A: end-to-end mid-train resume test (base_train, local)
+## Step A: end-to-end mid-train resume test (base_train, local) — **Should**
 
 Mid-train resume has never been tested end to end. Do this before any SFT work.
 
@@ -83,7 +83,7 @@ Mid-train resume has never been tested end to end. Do this before any SFT work.
 
 Exit: a recorded log excerpt of the kill, the resume line, the matching control line, and the final marker.
 
-## Step B: chat SFT resume (only if you approve, see question below)
+## Step B: chat SFT resume — **Must**
 
 Design, mirroring `base_train` and reusing the shared helpers:
 
@@ -120,7 +120,7 @@ an interview, one question at a time, before any test is written. The test list 
 **Shell tests:** `resume_flag` and the `find-resume-step` CLI have no tests today. Add a fixture-dir test for
 `--resume-from-step=N`, and for `FORCE_STAGES` returning nothing. `tests/test_stage_completion_markers.sh` is not run by pytest, so decide whether to run it in CI or by hand.
 
-## Step C: local concurrency guard (keep, per user)
+## Step C: local concurrency guard — **Should**
 
 Two local runs on the same `NANOCHAT_BASE_DIR` can collide. Add a lock so a second run refuses to start.
 
@@ -137,7 +137,7 @@ Two local runs on the same `NANOCHAT_BASE_DIR` can collide. Add a lock so a seco
   succeed, and a stale PID-file lock must be reclaimed.
 - Decision changed: this guard was dropped earlier and is now kept, per user.
 
-## Modal refactor (keep, per user)
+## Modal refactor — guard test **Should**, daemon cleanup **Could**
 
 Scope (user choice after design review: daemon cleanup + guard test; the shared lock is dropped):
 
@@ -145,19 +145,19 @@ Scope (user choice after design review: daemon cleanup + guard test; the shared 
   checks cloud apps with `modal app list --json` (`runs/runmodal.sh:27-42`). The local lock is a file lock
   (Step C). Moving the Modal check into a shared helper would make the `modal` CLI a requirement for every local
   run. So the Modal guard stays in `runs/runmodal.sh`, and the two do not share one implementation.
-- Test the guard in `runs/runmodal.sh` (`:26-42`). `tests/test_runmodal_mode.py` never sends `app list --json`,
+- **Should:** test the guard in `runs/runmodal.sh` (`:26-42`). `tests/test_runmodal_mode.py` never sends `app list --json`,
   so the guard's refusal branch is never run. Add a fake `modal` that prints JSON such as
   `[{"app_id":"ap-1","description":"nanochat-speedrun","stopped_at":null}]`. Assert a non-zero exit and that no `run`
   call happens. Add cases for `RUNMODAL_ALLOW_CONCURRENT=1` and for invalid JSON.
 - Before the daemon cleanup, add a characterization test for the SIGTERM handler (`runs/modal_run.py:290-296`),
   since `tests/test_periodic_commit.py` does not touch signals. The cleanup must keep it green.
 - The "shared lock" part of the original scope was based on the wrong premise and is removed. Scope is settled.
-- **Daemon cleanup:** tidy `runs/modal_run.py` commit daemon and SIGTERM handling. No behaviour change.
+- **Could:** daemon cleanup. Tidy `runs/modal_run.py` commit daemon and SIGTERM handling. No behaviour change.
   Verify with the existing `tests/test_periodic_commit.py` and `tests/test_runmodal_mode.py`.
 
 ## Dropped
 
-- `tok_train` atomicity: low impact, left alone (user decision).
+- **Won't:** `tok_train` atomicity: low impact, left alone (user decision).
 
 ## Verification
 
@@ -187,3 +187,19 @@ Modal path is not covered.
 **Won't (this iteration)**
 - **Live Modal run (about $40–60).** Needs an explicit go-ahead from you.
 - **`tok_train` atomicity.** Dropped as low impact.
+
+## Coordination (read before starting work)
+
+Owners as of 2026-11-14, confirmed by peer sessions:
+
+| Item | MoSCoW | Owner | Status |
+|---|---|---|---|
+| Step B: `chat_sft` resume | Must | parity session (`e7db86`) | Test scope decided: round-trip first, then config refusal. Interview in progress. |
+| Modal guard tests (`runs/runmodal.sh:26-42`) | Should | `[plan] Modal concurrent runs guard` (`a5c799`) | Plan approved. Waiting for user go-ahead to switch to `fix/runmodal-concurrency-guard`. |
+| Step A: control-run comparison | Should | unclaimed | Free to claim. |
+| Step C: local run lock (`runs/_run_lock.sh`) | Should | unclaimed | Free to claim. |
+| Modal daemon cleanup | Could | unclaimed | Free to claim. |
+
+**Master warning:** commit `70ce9e2` (MoSCoW plan) was pushed to `master` and `origin/master` by mistake. It is also on this branch. Do not touch `master` until the user chooses between a revert commit (safer) and a force-push. Peer `nanochat-ef` merged PR #26 as `c9cf80e` and has not touched `master` since.
+
+**Before starting an item:** check the table, claim it here by changing its owner, and commit.
