@@ -6,7 +6,7 @@
 
 Canonical copy: [`docs/plan/2026-11-14-cli-learn-color-ux.md`](2026-11-14-cli-learn-color-ux.md) (this file, git-tracked SSOT).
 
-**Status:** PROPOSED. Branch `feat/cli-learn-color-ux` and worktree `.worktrees/cli-learn-color-ux` exist. Plan doc commits are on the branch; no implementation yet. Nothing is implemented until this plan is approved.
+**Status:** IMPLEMENTED on branch `feat/cli-learn-color-impl` (from master). Reviewed by nw software-crafter, acceptance-designer, and solution-architect reviewers; blockers fixed. PR pending.
 **slice_id:** `cli-learn-color-ux`
 
 ## Current code this plan builds on
