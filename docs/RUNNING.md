@@ -16,7 +16,7 @@ How-to first (§1–4, §8–10), then reference (§5–6, §9). Kept in one L2 
 ## 1. Pick a script
 
 - **`bash runs/runcpu.sh`** — small demo (depth 6) for Mac / CPU / MPS; use this on a laptop.
-- **`bash runs/speedrun.sh`** — the GPT-2-grade run, built for a blank 8xH100 CUDA node; it warns (but continues) if no CUDA is found.
+- **`bash runs/speedrun.sh`** — the GPT-2-grade run, built for a blank 8xH100 CUDA node; **exits with ERROR** if no CUDA is found (use `runcpu.sh` on a laptop — a Mac speedrun can thrash memory hard enough to reboot).
 - **`runs/miniseries.sh` / `runs/scaling_laws.sh`** — multi-run sweeps for researchers; they are not part of the fix-forward flow described here.
 
 ## 2. First run expectations
@@ -49,15 +49,16 @@ A stage is skipped when its artifact already exists. Paths are relative to `$NAN
 |-------|--------------------------|------------|
 | `tok_train` | `tokenizer/tokenizer.pkl` | `scripts/tok_train.py` |
 | `tok_eval` | `tokenizer/.tok_eval_ok` | end of `scripts/tok_eval.py` (and touched by the shell on success) |
-| `base_train` | any `base_checkpoints/**/model_*.pt` | `scripts/base_train.py` checkpoint saves |
+| `base_train` | `base_checkpoints/.train_ok` | end of `scripts/base_train.py` (rank 0) |
 | `base_eval` | `base_checkpoints/.eval_ok` | end of `scripts/base_eval.py` |
-| `chat_sft` | any `chatsft_checkpoints/**/model_*.pt` | `scripts/chat_sft.py` checkpoint saves |
+| `chat_sft` | `chatsft_checkpoints/.train_ok` | end of `scripts/chat_sft.py` (rank 0) |
 | `chat_eval` (speedrun only) | `chatsft_checkpoints/.eval_ok` | end of `scripts/chat_eval.py` |
 
 Notes:
 
-- Markers are written **last**, after a clean finish. A crashed eval leaves no marker, so it re-runs.
-- `base_train` skips as soon as *any* `model_*.pt` exists, including a partial one from an interrupted run. To retrain, force it.
+- Markers are written **last**, after a clean finish. A crashed train/eval leaves no marker (or the shell clears it at the next `START`), so the stage re-runs. A stray `model_*.pt` from a probe or interrupt is **not** enough to SKIP.
+- Upgrading from older skip-on-`model_*.pt` behavior: if you already finished train and want to keep SKIP without redoing it, `touch "$NANOCHAT_BASE_DIR/base_checkpoints/.train_ok"` (and the chatsft equivalent if needed).
+- Mid-train resume is still manual (`--resume-from-step=N` on `scripts/base_train.py`); the shell pipeline resumes at the **stage** boundary only.
 - `nanochat.dataset -n 8` runs every time; it only downloads missing shards.
 - Per-stage timings are saved in `$NANOCHAT_BASE_DIR/.stage_elapsed/` so a later `SKIP` can report time saved.
 
@@ -82,6 +83,7 @@ Shell lines start with `[HH:MM:SS]`. This is the frozen echo contract from the p
 | FORCE | `[HH:MM:SS] FORCE stage=tok_train reason=FORCE_STAGES=tok_train` | Artifact exists but you asked to redo it. |
 | FAIL | `[HH:MM:SS] FAIL stage=base_train elapsed=… hint=…` | Stage exited non-zero; the script stops here. |
 | rms_norm | `[norm] original=F.rms_norm → adjusted=manual_rsqrt (reason: missing on torch 2.2.2)` | Fallback in use. See [section 7](#7-mac--intel-torch). |
+| compile | `[compile] original=torch.compile → adjusted=eager (reason: Inductor has no MPS backend)` | Model stays eager on MPS (Inductor unsupported). CUDA/CPU still compile. See [section 7](#7-mac--intel-torch). |
 | auto-fit | `[auto-fit] device_batch_size: original/default=8 → adjusted=2 (reason: est_peak=12.4GiB > margin*avail=0.6*18.0GiB)` | Batch shrunk so the estimate fits under the memory margin. See [section 11](#11-memory--oom). |
 | unchanged | `[auto-fit] device_batch_size=8 (unchanged; estimate fits)` | Auto-fit ran; requested batch already fits. |
 
@@ -115,7 +117,8 @@ One extra line at most per event. These are hints, not part of the strict contra
 | `mem:` | After `DONE` | Best-effort free/available memory snapshot (macOS `vm_stat` or Linux `MemAvailable`). |
 | `memory:` | After auto-fit | Plain-language fit, e.g. `memory: aiming to use ≤60% of ~18GiB; batch 8→2 so logits fit`. Complements the `[auto-fit]` contract line; does not replace it. |
 | `trend:` | After a new `val_bpb` / CORE metric | Compares this run’s metric to the prior value in `$NANOCHAT_BASE_DIR/last_metrics.json` (global last-seen keys — mid-train eval can update before `base_eval`). Printed only when a prior exists. Fail-soft: never aborts train/eval. Example: `trend: val_bpb 7.47 → better than prior 8.1`. |
-| `heartbeat:` | During training | Planned: optional one-line progress summary. |
+| `val bpb:` progress | During val eval on non-CUDA | Sparse cadence (~10 lines) so Mac/CPU do not look hung; off by default on CUDA. |
+| `heartbeat:` | During training | Planned: optional one-line progress summary (not every-step pre-announce). |
 
 ## 7. Mac / Intel torch
 
@@ -126,6 +129,7 @@ One extra line at most per event. These are hints, not part of the strict contra
   - `[norm] using native F.rms_norm`
   - `[norm] original=F.rms_norm → adjusted=manual_rsqrt (reason: missing on torch 2.2.2)`
 - The fallback is covered by `tests/test_norm.py` (eager mode and `torch.compile`). Check it yourself with `pytest tests/test_norm.py`.
+- **`torch.compile` / Inductor on MPS:** TorchInductor has no MPS backend (`AssertionError: Device mps not supported`). On `device_type=mps`, training keeps the model and optimizer steps in **eager** mode and prints `[compile] original=torch.compile → adjusted=eager …`. CUDA/CPU still compile. Covered by `tests/test_compile_device.py`.
 - **Why a laptop + `speedrun.sh` looked like many failures:** `speedrun.sh` targets 8xH100. On a laptop, base training could not run because of the missing `rms_norm` (and the GPU-only setup), and the old script had no `set -e`, so it kept going into eval and SFT, each of which failed again on the missing checkpoint. One root cause produced a wall of errors. Now the script stops at the first `FAIL`, and the checkpoint error points back to the prior stage. On a Mac, use `runs/runcpu.sh`.
 
 ## 8. NaN troubleshooting
@@ -165,7 +169,9 @@ Caveat: `runcpu.sh` and `speedrun.sh` set `NANOCHAT_BASE_DIR="$HOME/.cache/nanoc
 | `FAIL stage=base_train … exit code 1` right after startup on Intel Mac | torch 2.2.2 issue | Check for the `[norm]` line, see [section 7](#7-mac--intel-torch). |
 | `ERROR: 5 consecutive NaN losses` | Numerical blow-up | See [section 8](#8-nan-troubleshooting). |
 | Out-of-memory / MPS allocator failure during train | Batch too large for device RAM | Check for an `[auto-fit]` line; see [section 11](#11-memory--oom). Do not treat this as NaN. |
-| `WARN no CUDA device detected` (speedrun) | Wrong script for this machine | Use `runs/runcpu.sh`. |
+| `Device mps not supported` / `BackendCompilerFailed` (Inductor) | `torch.compile` ran on MPS (old build) | Re-run on a build that skips compile on MPS ([section 7](#7-mac--intel-torch)); you should see `[compile] … adjusted=eager`. |
+| `ERROR no CUDA device detected` (speedrun, exit 1) | Wrong script for this machine | Use `bash runs/runcpu.sh`. Do not override; speedrun is 8xH100-only. |
+| Train stage re-runs despite `model_*.pt` on disk | No `.train_ok` marker (partial/probe/interrupted run, or pre-marker upgrade) | Let it retrain, or `touch …/base_checkpoints/.train_ok` only if you know train finished cleanly. |
 
 The missing-checkpoint error is almost always a **symptom**: scroll up to the first `FAIL`, because the checkpoint was never produced.
 

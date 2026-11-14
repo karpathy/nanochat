@@ -45,3 +45,18 @@
 **Deferred**
 - Heartbeat / train-loop ETA (still planned)
 - Tip rotation / knob-diff vs last run UI beyond one line
+
+## fix-mps-skip-inductor-compile
+
+**Added**
+- `nanochat.common.inductor_supports_device` / `maybe_torch_compile` — skip Inductor on MPS (echo lives in the helper)
+- `tests/test_compile_device.py` — eager-on-mps + AdamW/Muon dispatch + foreach-copy path
+- `tests/test_stage_completion_markers.sh` — `.train_ok` required for train SKIP
+
+**Changed**
+- `scripts/{base_train,chat_sft}.py` — compile via helper; step-0-only forward announce; write `.train_ok`
+- `nanochat/optim.py` — AdamW/Muon MPS float-scalar paths; no empty-params IndexError; foreach bypass
+- `nanochat/loss_eval.py` — val-bpb progress on non-CUDA only (CUDA stays quiet)
+- `runs/speedrun.sh` — hard `exit 1` without CUDA
+- `runs/_stage_lib.sh` — train SKIP via `.train_ok` (not any `model_*.pt`)
+- `docs/RUNNING.md` — `[compile]` legend row; CUDA/speedrun + marker docs

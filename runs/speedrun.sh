@@ -37,9 +37,10 @@ uv sync --extra gpu
 # activate venv so that `python` uses the project's venv instead of system python
 set +u; source .venv/bin/activate; set -u
 
-# Soft check only: warn but keep going (e.g. dry runs, or CUDA visible only to torchrun workers)
+# Hard refuse on non-CUDA: speedrun launches 8-way depth-24 training that can wedged a laptop (OOM / kernel panic).
 if ! python -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
-    log "WARN no CUDA device detected; speedrun expects 8xH100 (Mac/CPU: use runs/runcpu.sh). See docs/RUNNING.md"
+    log "ERROR no CUDA device detected; speedrun expects 8xH100. Use: bash runs/runcpu.sh (Mac/CPU). See docs/RUNNING.md §1/§10"
+    exit 1
 fi
 
 # -----------------------------------------------------------------------------

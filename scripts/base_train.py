@@ -30,7 +30,7 @@ from nanochat.defaults import DEFAULT_DEPTH, DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_
 from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size, format_oom_retry_line, is_out_of_memory_error, oom_after_rehalve_error, oom_rehalve_once, training_module_after_oom_rehalve
 from nanochat.gpt import GPT, GPTConfig, Linear
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, maybe_torch_compile
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
@@ -268,8 +268,9 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-# dynamic=False is safe while batch shape is fixed; an OOM rehalve falls back to orig_model
-model = torch.compile(model, dynamic=False)
+# dynamic=False is safe while batch shape is fixed; an OOM rehalve falls back to orig_model.
+# MPS: Inductor has no backend — maybe_torch_compile leaves the model eager (and echoes once).
+model = maybe_torch_compile(model, device_type, dynamic=False)
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
@@ -331,6 +332,7 @@ if weight_decay_scaled != args.weight_decay:
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
+print0("Building optimizer (MuonAdamW)...")
 optimizer = model.setup_optimizer(
     # AdamW hyperparameters
     unembedding_lr=args.unembedding_lr * batch_lr_scale,
@@ -340,10 +342,13 @@ optimizer = model.setup_optimizer(
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,
 )
+print0("Optimizer ready")
 
 if resuming:
+    print0("Loading optimizer state from checkpoint...")
     optimizer.load_state_dict(optimizer_data)
     del optimizer_data
+    print0("Optimizer state loaded")
 
 # -----------------------------------------------------------------------------
 # GradScaler for fp16 training (bf16/fp32 don't need it — bf16 has the same exponent range as fp32)
@@ -355,10 +360,13 @@ if scaler is not None:
 # Initialize the DataLoaders for train/val
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
 # Built through a function because an OOM re-halve has to rebuild it at the smaller batch size
+print0("Building train dataloader...")
 build_train_loader = lambda resume_state_dict: tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=resume_state_dict)
 train_loader = build_train_loader(dataloader_resume_state_dict)
 build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
+print0("Fetching first train batch (tokenization / disk I/O can take a while)...")
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
+print0(f"First train batch ready: x.shape={tuple(x.shape)}")
 
 # -----------------------------------------------------------------------------
 # Calculate the number of iterations we will train for and set up the various schedulers
@@ -495,6 +503,7 @@ while True:
         model.eval()
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
+        print0(f"Step {step:05d} | starting validation bpb ({eval_steps} steps, ~{args.eval_tokens:,} tokens)...")
         with disable_fp8(model):
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
@@ -596,6 +605,9 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+    # Announce once before the first (often longest) step — not every non-CUDA step (echo firehose).
+    if step == 0:
+        print0(f"Step {step:05d} | training forward/backward ({grad_accum_steps} micro-steps)...")
     try:
         train_loss, x, y, dataloader_state_dict = accumulate_gradients(x, y)
     except (RuntimeError, MemoryError) as step_error:
@@ -704,3 +716,8 @@ if val_bpb is not None:
 # cleanup
 wandb_run.finish() # wandb run finish
 compute_cleanup()
+if master_process:  # marker: last action of a successful run (shell SKIP gate; see runs/_stage_lib.sh)
+    marker_dir = os.path.join(get_base_dir(), "base_checkpoints")
+    os.makedirs(marker_dir, exist_ok=True)
+    open(os.path.join(marker_dir, ".train_ok"), "w").close()
+    print0(f"Wrote completion marker: {os.path.join(marker_dir, '.train_ok')}")

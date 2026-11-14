@@ -16,7 +16,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
 import wandb
 import torch
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
+from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, maybe_torch_compile
 from nanochat.defaults import DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_SEQ_LEN
 from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size
 from nanochat.tokenizer import get_token_bytes
@@ -134,7 +134,8 @@ if auto_fit_enabled(args.auto_fit_batch, device_type):
     args.device_batch_size = fitted_batch_size
 
 orig_model = model
-model = torch.compile(model, dynamic=False)
+# MPS: Inductor has no backend — maybe_torch_compile leaves the model eager (and echoes once).
+model = maybe_torch_compile(model, device_type, dynamic=False)
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
@@ -441,6 +442,8 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+    if step == 0:
+        print0(f"Step {step:05d} | training forward/backward ({grad_accum_steps} micro-steps)...")
     for micro_step in range(grad_accum_steps):
         loss = model(x, y)
         train_loss = loss.detach() # for logging
@@ -516,3 +519,8 @@ print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 # cleanup
 wandb_run.finish() # wandb run finish
 compute_cleanup()
+if master_process:  # marker: last action of a successful run (shell SKIP gate; see runs/_stage_lib.sh)
+    marker_dir = os.path.join(get_base_dir(), "chatsft_checkpoints")
+    os.makedirs(marker_dir, exist_ok=True)
+    open(os.path.join(marker_dir, ".train_ok"), "w").close()
+    print0(f"Wrote completion marker: {os.path.join(marker_dir, '.train_ok')}")
