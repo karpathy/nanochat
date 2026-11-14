@@ -23,6 +23,21 @@ if ! command -v modal &>/dev/null; then
     exit 1
 fi
 
+# Guard: refuse if another run on the shared Volume is already active.
+# "stopped" in the state column means the app finished; anything else is live.
+if ! _APP_LIST=$(modal app list 2>/dev/null); then
+    echo "WARNING: could not check for running Modal apps; proceeding without the concurrency guard." >&2
+    _APP_LIST=""
+fi
+_RUNNING_APP=$(echo "$_APP_LIST" | grep "nanochat-speedrun" | grep -iv "stopped" || true)
+if [ -n "$_RUNNING_APP" ] && [ -z "${RUNMODAL_ALLOW_CONCURRENT:-}" ]; then
+    echo "" >&2
+    echo "ERROR: A nanochat Modal app appears to be running already." >&2
+    echo "  Wait for it to finish, or set RUNMODAL_ALLOW_CONCURRENT=1 to override." >&2
+    echo "" >&2
+    exit 1
+fi
+
 # Print the mode-specific header with cost and time
 if [ "$MODE" = "cpu" ]; then
     cat <<'EOF'
