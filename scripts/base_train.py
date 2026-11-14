@@ -92,6 +92,7 @@ parser.add_argument("--core-metric-every", type=int, default=2000, help="evaluat
 parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
+parser.add_argument("--save-every-secs", type=float, default=-1, help="save checkpoints every N seconds, decided by rank 0 (-1 = disabled)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
@@ -512,6 +513,7 @@ emit_define("Muon", print_fn=print0)
 emit_define("BPB", print_fn=print0)
 emit_define("CORE", print_fn=print0)
 
+last_save_time = time.monotonic()
 while True:
     last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
     flops_so_far = num_flops_per_token * total_batch_size * step
@@ -591,8 +593,15 @@ while True:
             print0(tokenizer.decode(sample[0]))
         model.train()
 
-    # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step
-    if last_step or (step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0):
+    # save checkpoint: at the end of the run, every save_every steps, or every save_every_secs (rank 0 decides, all ranks follow), except at the first step or the resume step
+    time_due = False
+    if args.save_every_secs > 0:
+        time_due = time.monotonic() - last_save_time >= args.save_every_secs
+        if ddp:
+            due_flag = torch.tensor([int(master_process and time_due)], device=device)
+            dist.broadcast(due_flag, src=0)
+            time_due = bool(due_flag.item())
+    if last_step or (step > 0 and step != args.resume_from_step and (time_due or (args.save_every > 0 and step % args.save_every == 0))):
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -615,6 +624,7 @@ while True:
             },
             rank=ddp_rank,
         )
+        last_save_time = time.monotonic()
 
     # termination conditions (TODO: possibly also add loss explosions etc.)
     if last_step:

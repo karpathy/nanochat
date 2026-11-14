@@ -98,10 +98,10 @@ log "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
 # d24 model (slightly undertrained to beat GPT-2 => decrease data:params ratio from compute optimal 10.5 (default) to 8)
-_SAVE_EVERY="${NANOCHAT_SAVE_EVERY:-500}"
+_SAVE_EVERY_SECS="${NANOCHAT_SAVE_EVERY_SECS:-300}"
 _RESUME_FLAG="$(resume_flag base_train "${NANOCHAT_BASE_DIR}/base_checkpoints/d${SPEEDRUN_DEPTH}" "$SPEEDRUN_NPROC")"
 run_stage base_train "depth=$SPEEDRUN_DEPTH device_batch_size=$SPEEDRUN_DEVICE_BATCH_SIZE" "base_eval (or SKIP if .eval_ok)" -- \
-    torchrun --standalone --nproc_per_node="$SPEEDRUN_NPROC" -m scripts.base_train -- --depth="$SPEEDRUN_DEPTH" --target-param-data-ratio="$SPEEDRUN_TARGET_PARAM_DATA_RATIO" --device-batch-size="$SPEEDRUN_DEVICE_BATCH_SIZE" --fp8 --save-every="$_SAVE_EVERY" $_RESUME_FLAG --run=$WANDB_RUN
+    torchrun --standalone --nproc_per_node="$SPEEDRUN_NPROC" -m scripts.base_train -- --depth="$SPEEDRUN_DEPTH" --target-param-data-ratio="$SPEEDRUN_TARGET_PARAM_DATA_RATIO" --device-batch-size="$SPEEDRUN_DEVICE_BATCH_SIZE" --fp8 --save-every-secs="$_SAVE_EVERY_SECS" $_RESUME_FLAG --run=$WANDB_RUN
 # evaluate the model: CORE metric, BPB on train/val, and draw samples
 run_stage base_eval "device_batch_size=$SPEEDRUN_EVAL_DEVICE_BATCH_SIZE" "chat_sft (or SKIP if checkpoints exist)" -- \
     torchrun --standalone --nproc_per_node=8 -m scripts.base_eval -- --device-batch-size="$SPEEDRUN_EVAL_DEVICE_BATCH_SIZE"
@@ -110,7 +110,7 @@ run_stage base_eval "device_batch_size=$SPEEDRUN_EVAL_DEVICE_BATCH_SIZE" "chat_s
 # SFT (teach the model conversation special tokens, tool use, multiple choice)
 
 # chat_sft has no resume wiring intentionally: it runs ≤1500 steps so preemption risk is low.
-# If SFT is ever extended to longer runs, apply the same _SAVE_EVERY/_RESUME_FLAG pattern used above.
+# If SFT is ever extended to longer runs, apply the same _SAVE_EVERY_SECS/_RESUME_FLAG pattern used above.
 run_stage chat_sft "" "chat_eval (or SKIP if .eval_ok)" -- \
     torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
 run_stage chat_eval "" "chat with your model (python3 -m scripts.chat_cli)" -- \
