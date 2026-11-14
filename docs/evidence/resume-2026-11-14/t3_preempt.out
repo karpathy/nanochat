@@ -1,0 +1,2 @@
+pid=61032 sigterm_after=78s
+SIGTERM sent at +78s; exited rc=-15 after 0.0s
