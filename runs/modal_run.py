@@ -120,6 +120,9 @@ def _available_cores() -> int:
 # Wait-for-ack daemon (runs in background during a training function)
 
 
+_VOLUME_COMMIT_LOCK = threading.Lock()
+
+
 def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
     """
     Daemon thread: watch for commit requests, run vol.commit(), update heartbeat.
@@ -145,7 +148,8 @@ def _commit_daemon(volume: modal.Volume, base_dir: str) -> None:
     def _commit_worker() -> list[bool]:
         result = [False]
         try:
-            volume.commit()
+            with _VOLUME_COMMIT_LOCK:
+                volume.commit()
             result[0] = True
         except Exception as e:  # noqa: BLE001 - any commit error must become a failed ack
             print(f"[daemon] ERROR: commit failed: {e}")
@@ -251,22 +255,15 @@ def _run_training(script: str, extra_env: dict[str, str]) -> None:
     daemon_thread.start()
     print("[train] Commit daemon started")
 
-    # Commit the Volume on SIGTERM (preemption) so mid-train checkpoints survive restart.
-    # Use Popen so the handler can stop the subprocess before committing — this prevents
-    # vol.commit() from racing an in-progress torch.save() that would leave truncated files.
-    _proc: list[subprocess.Popen] = []  # list so closure can rebind after Popen creation
+    # On preemption, stop the child and let the normal teardown below run the final commit.
+    # Committing inside the handler raced the commit daemon on the same Volume.
+    _proc: list[subprocess.Popen] = []
 
-    def _sigterm_commit(signum, frame):
-        print("[train] SIGTERM received — committing volume before exit", flush=True)
+    def _sigterm_stop_child(signum, frame):
+        print("[train] SIGTERM received — stopping training, then committing volume", flush=True)
         if _proc:
             _proc[0].terminate()
-            try:
-                _proc[0].wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                _proc[0].kill()
-        vol.commit()
-        raise SystemExit(1)
-    signal.signal(signal.SIGTERM, _sigterm_commit)
+    signal.signal(signal.SIGTERM, _sigterm_stop_child)
 
     print(f"[train] Running {script}...")
     proc = subprocess.Popen(
@@ -286,7 +283,8 @@ def _run_training(script: str, extra_env: dict[str, str]) -> None:
 
     # Always commit final state (even if the script failed)
     print(f"[train] {script} finished (exit code {returncode}); final volume commit...")
-    vol.commit()
+    with _VOLUME_COMMIT_LOCK:
+        vol.commit()
 
     if returncode != 0:
         raise RuntimeError(f"{script} failed with exit code {returncode}")

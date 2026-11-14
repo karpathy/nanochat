@@ -98,3 +98,28 @@ def test_multi_rank_falls_back_to_lower_complete_step(tmp_path):
     # step 1000: only 3 of 4 shards (rank 3 missing)
     _full_checkpoint(d, 1000, world_size=3)
     assert find_safe_resume_step(d, world_size=4) == 500
+
+
+def test_world_size_zero_raises(tmp_path):
+    """world_size < 1 would make the shard check vacuously pass — reject it."""
+    import pytest
+    with pytest.raises(ValueError):
+        find_safe_resume_step(str(tmp_path), world_size=0)
+
+
+def test_atomic_save_leaves_no_tmp_and_is_discovered(tmp_path):
+    """Completed save leaves no .tmp file and the step is discoverable."""
+    d = str(tmp_path)
+    _full_checkpoint(d, 500)
+    assert not [f for f in os.listdir(d) if f.endswith(".tmp")]
+    assert find_safe_resume_step(d) == 500
+
+
+def test_interrupted_tmp_write_is_ignored(tmp_path):
+    """A leftover model_000500.pt.tmp (killed mid-write) never counts as a checkpoint."""
+    d = str(tmp_path)
+    torch.save(_MODEL, os.path.join(d, "model_000500.pt.tmp"))
+    _meta_path = os.path.join(d, "meta_000500.json")
+    with open(_meta_path, "w", encoding="utf-8") as f:
+        f.write("{}")
+    assert find_safe_resume_step(d) == -1

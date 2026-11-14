@@ -59,23 +59,31 @@ def _patch_missing_keys(model_data, model_config):
         model_data["x0_lambdas"] = torch.zeros(n_layer)
         log0(f"Patching missing x0_lambdas in model data to 0.0")
 
+def _atomic_write(path, write_fn):
+    # A killed write leaves only *.tmp, which find_safe_resume_step never matches.
+    tmp_path = path + ".tmp"
+    write_fn(tmp_path)
+    os.replace(tmp_path, path)
+
 def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data, rank=0):
     if rank == 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
         # Save the model state parameters
         model_path = os.path.join(checkpoint_dir, f"model_{step:06d}.pt")
-        torch.save(model_data, model_path)
+        _atomic_write(model_path, lambda p: torch.save(model_data, p))
         logger.info(f"Saved model parameters to: {model_path}")
         # Save the metadata dict as json
         meta_path = os.path.join(checkpoint_dir, f"meta_{step:06d}.json")
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta_data, f, indent=2)
+        def _write_meta(p):
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(meta_data, f, indent=2)
+        _atomic_write(meta_path, _write_meta)
         logger.info(f"Saved metadata to: {meta_path}")
     # Note that optimizer state is sharded across ranks, so each rank must save its own.
     if optimizer_data is not None:
         os.makedirs(checkpoint_dir, exist_ok=True)
         optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}_rank{rank:d}.pt")
-        torch.save(optimizer_data, optimizer_path)
+        _atomic_write(optimizer_path, lambda p: torch.save(optimizer_data, p))
         logger.info(f"Saved optimizer state to: {optimizer_path}")
 
 def load_checkpoint(checkpoint_dir, step, device, load_optimizer=False, rank=0):
@@ -172,6 +180,8 @@ def find_safe_resume_step(checkpoint_dir: str, world_size: int = 1) -> int:
     Returns -1 if no fully-committed step exists (fresh start, empty dir, or missing artifacts).
     Validates all three artifact types so a crash mid-save never produces a permanent crash-loop.
     """
+    if world_size < 1:
+        raise ValueError(f"world_size must be >= 1, got {world_size}")
     if not os.path.isdir(checkpoint_dir):
         return -1
     files = os.listdir(checkpoint_dir)

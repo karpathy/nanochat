@@ -61,12 +61,7 @@ run_stage tok_eval "" "base_train (or SKIP if checkpoints exist)" -- \
 # I tuned this run to complete in about 30 minutes on my MacBook Pro M3 Max.
 # To get better results, try increasing num_iterations, or get other ideas from your favorite LLM.
 _SAVE_EVERY="${NANOCHAT_SAVE_EVERY:-500}"
-_RESUME_FLAG=""
-if ! force_stage base_train; then
-    _RESUME_STEP="$(python3 -m nanochat.checkpoint_manager find-resume-step \
-        "${NANOCHAT_BASE_DIR}/base_checkpoints/d${RUNCPU_DEPTH}" 2>/dev/null || echo "-1")"
-    [ "${_RESUME_STEP:-0}" -gt 0 ] && _RESUME_FLAG="--resume-from-step=${_RESUME_STEP}"
-fi
+_RESUME_FLAG="$(resume_flag base_train "${NANOCHAT_BASE_DIR}/base_checkpoints/d${RUNCPU_DEPTH}")"
 run_stage base_train "depth=$RUNCPU_DEPTH device_batch_size=$RUNCPU_DEVICE_BATCH_SIZE" "base_eval (or SKIP if .eval_ok)" -- \
     python -m scripts.base_train \
     --depth="$RUNCPU_DEPTH" \
