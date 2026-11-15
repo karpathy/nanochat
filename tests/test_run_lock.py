@@ -560,3 +560,30 @@ _dir_mtime_epoch "{tmp_path}"
         assert val.isdigit() and int(val) > 0, (
             f"_dir_mtime_epoch returned non-integer: {val!r}"
         )
+
+
+class TestRunLockNonNumericHeartbeat:
+    """
+    Scenario: A partial write leaves a non-numeric or empty heartbeat file.
+              Readers must treat that as "no heartbeat" rather than epoch 0.
+    Slice: runs/_run_lock.sh — _read_epoch validation guard (FIX 2)
+    """
+
+    def test_non_numeric_heartbeat_refuses_acquire(self, tmp_path):
+        """
+        Scenario: Heartbeat file contains garbage text; second acquire must be refused,
+                  not trigger an arithmetic error or treat it as stale.
+        Slice: _read_epoch ''|*[!0-9]* guard
+        ### Given: .run.lock/ exists with heartbeat file containing "PARTIAL"
+        ### When: _run_lock.sh is sourced (default NANOCHAT_LOCK_STALE_SECS=600)
+        ### Then: exits 1 — treated as live-unknown (non-numeric = no valid timestamp)
+        """
+        lock_dir = tmp_path / ".run.lock"
+        lock_dir.mkdir()
+        (lock_dir / "heartbeat").write_text("PARTIAL\n")
+        (lock_dir / "run_id").write_text("some-run\n")
+
+        r = _run(_run_lock_script(str(tmp_path)))
+        assert r.returncode == 1, (
+            f"Expected non-numeric heartbeat to be refused; rc={r.returncode}, stderr={r.stderr}"
+        )

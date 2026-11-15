@@ -48,6 +48,17 @@ _dir_mtime_epoch() {
     stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
 }
 
+_read_epoch() {
+    # Read a numeric epoch from $1 (a file), or fall back to $2 (a default value).
+    # Rejects empty or non-numeric content so callers treat it as "no value".
+    local val
+    val=$(cat "$1" 2>/dev/null) || val=""
+    case "${val}" in
+        ''|*[!0-9]*) val="$2" ;;
+    esac
+    printf '%s' "${val}"
+}
+
 _is_lock_stale() {
     # Returns 0 (true) when the lock looks stale.
     # Returns 1 (false) when the lock looks live or state is unreadable.
@@ -57,7 +68,8 @@ _is_lock_stale() {
     # unrecoverable stuck lock when a crash leaves an empty lock dir.
     local last_beat now age
     if [ -f "${_LOCK_HEARTBEAT_FILE}" ]; then
-        last_beat=$(cat "${_LOCK_HEARTBEAT_FILE}" 2>/dev/null) || return 1
+        last_beat=$(_read_epoch "${_LOCK_HEARTBEAT_FILE}" "")
+        [ -n "${last_beat}" ] || return 1
     else
         last_beat=$(_dir_mtime_epoch "${_LOCK_DIR}") || return 1
     fi
@@ -67,7 +79,12 @@ _is_lock_stale() {
 }
 
 _update_heartbeat() {
-    date +%s > "${_LOCK_HEARTBEAT_FILE}"
+    # Write atomically: truncate-first (>) leaves an empty file briefly visible
+    # to readers under set -u, which arithmetic treats as 0 (epoch Jan 1 1970).
+    # Write to a sibling temp file then rename over the target.
+    local _tmp="${_LOCK_HEARTBEAT_FILE}.tmp.$$"
+    date +%s > "${_tmp}"
+    mv "${_tmp}" "${_LOCK_HEARTBEAT_FILE}"
 }
 
 _is_same_id_stale() {
@@ -76,7 +93,8 @@ _is_same_id_stale() {
     # Falls back to dir mtime when heartbeat is missing (crashed mid-acquire).
     local last_beat now age threshold
     if [ -f "${_LOCK_HEARTBEAT_FILE}" ]; then
-        last_beat=$(cat "${_LOCK_HEARTBEAT_FILE}" 2>/dev/null) || return 1
+        last_beat=$(_read_epoch "${_LOCK_HEARTBEAT_FILE}" "")
+        [ -n "${last_beat}" ] || return 1
     else
         last_beat=$(_dir_mtime_epoch "${_LOCK_DIR}") || return 1
     fi
