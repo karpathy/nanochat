@@ -531,3 +531,93 @@ class TestRunLockMissingHeartbeatFallback:
         assert r2.returncode == 1, (
             "Expected fresh empty lock dir to be refused; rc={r2.returncode}, stderr={r2.stderr}"
         )
+
+
+class TestRunLockStatHelper:
+    """
+    Scenario: _dir_mtime_epoch must return a bare integer on the current platform
+              (macOS uses stat -f %m; Linux uses stat -c %Y).
+    Slice: runs/_run_lock.sh — _dir_mtime_epoch portability (FIX 1)
+    """
+
+    def test_dir_mtime_epoch_returns_integer(self, tmp_path):
+        """
+        Scenario: _dir_mtime_epoch called on a real directory returns a numeric epoch.
+        Slice: stat portability — bare integer, no extra text
+        ### Given: a real directory path
+        ### When: _dir_mtime_epoch is called in a bash subshell
+        ### Then: stdout is a non-empty string of digits only
+        """
+        script = f"""#!/usr/bin/env bash
+set -euo pipefail
+export NANOCHAT_BASE_DIR="{tmp_path}"
+source "{RUN_LOCK}"
+_dir_mtime_epoch "{tmp_path}"
+"""
+        r = _run(script)
+        assert r.returncode == 0, f"_dir_mtime_epoch failed: {r.stderr}"
+        val = r.stdout.strip()
+        assert val.isdigit() and int(val) > 0, (
+            f"_dir_mtime_epoch returned non-integer: {val!r}"
+        )
+
+
+class TestRunLockNonNumericHeartbeat:
+    """
+    Scenario: A partial write leaves a non-numeric or empty heartbeat file.
+              Readers must treat that as "no heartbeat" rather than epoch 0.
+    Slice: runs/_run_lock.sh — _read_epoch validation guard (FIX 2)
+    """
+
+    def test_non_numeric_heartbeat_refuses_acquire(self, tmp_path):
+        """
+        Scenario: Heartbeat file contains garbage text; second acquire must be refused,
+                  not trigger an arithmetic error or treat it as stale.
+        Slice: _read_epoch ''|*[!0-9]* guard
+        ### Given: .run.lock/ exists with heartbeat file containing "PARTIAL"
+        ### When: _run_lock.sh is sourced (default NANOCHAT_LOCK_STALE_SECS=600)
+        ### Then: exits 1 — treated as live-unknown (non-numeric = no valid timestamp)
+        """
+        lock_dir = tmp_path / ".run.lock"
+        lock_dir.mkdir()
+        (lock_dir / "heartbeat").write_text("PARTIAL\n")
+        (lock_dir / "run_id").write_text("some-run\n")
+
+        r = _run(_run_lock_script(str(tmp_path)))
+        assert r.returncode == 1, (
+            f"Expected non-numeric heartbeat to be refused; rc={r.returncode}, stderr={r.stderr}"
+        )
+
+
+class TestRunLockSameIdMtimeFallback:
+    """
+    Scenario: Same-run-ID reclaim via mtime fallback when heartbeat is absent.
+    Slice: runs/_run_lock.sh — _is_same_id_stale dir-mtime path (FIX 3)
+    """
+
+    def test_same_run_id_old_empty_lock_dir_is_reclaimed(self, tmp_path):
+        """
+        Scenario: Same-run-ID lock dir has no heartbeat and an old mtime; must be reclaimed.
+        Slice: _is_same_id_stale mtime fallback with NANOCHAT_LOCK_HB_INTERVAL=5
+        ### Given: empty .run.lock/ with run_id="my-run" and old mtime (touch -t)
+        ### When: sourced with NANOCHAT_RUN_ID="my-run" and NANOCHAT_LOCK_HB_INTERVAL=5
+        ### Then: exits 0 — same-ID lock treated as stale via mtime and reclaimed
+        """
+        import subprocess
+
+        lock_dir = tmp_path / ".run.lock"
+        lock_dir.mkdir()
+        (lock_dir / "run_id").write_text("my-run\n")
+        # No heartbeat file.  Set mtime old enough: threshold = 2 * 5 = 10 s.
+        subprocess.run(
+            ["touch", "-t", "202001010000.00", str(lock_dir)],
+            check=True,
+        )
+
+        r = _run(_run_lock_script(
+            str(tmp_path),
+            extra_env={"NANOCHAT_RUN_ID": "my-run", "NANOCHAT_LOCK_HB_INTERVAL": "5"},
+        ))
+        assert r.returncode == 0 and "ACQUIRED" in r.stdout, (
+            f"Expected same-ID reclaim via mtime; rc={r.returncode}, stderr={r.stderr}"
+        )
