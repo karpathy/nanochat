@@ -316,6 +316,39 @@ class TestConfigMismatchGuard:
         saved = {k: v for k, v in _SAVED.items() if k != "num_iterations"}
         assert_resume_config_matches(saved, {**_SAVED, "num_iterations": 500}, _GUARD_KEYS)
 
+    def test_user_config_subdict_is_used_when_present(self):
+        """
+        Scenario: chat_sft passes _saved_meta.get("user_config", _saved_meta) — when the
+        checkpoint meta has a user_config sub-dict the guard reads from it, not the top level.
+        Slice: assert_resume_config_matches via user_config path (S6)
+        ### Given: saved meta has a user_config subdict with matching values and
+                   top-level keys that differ from the current config
+        ### When: guard is called with _saved_meta.get("user_config", _saved_meta)
+        ### Then: no exception — values are compared against user_config, not top level
+        """
+        meta = {
+            "user_config": dict(_SAVED),
+            "device_batch_size": 999,  # top-level mismatch — must be ignored
+        }
+        # Simulates what chat_sft.py does
+        assert_resume_config_matches(meta.get("user_config", meta), dict(_SAVED), _GUARD_KEYS)
+
+    def test_user_config_subdict_mismatch_raises(self):
+        """
+        Scenario: user_config subdict has a changed guard key.
+        Slice: assert_resume_config_matches via user_config path (S6)
+        ### Given: saved meta has user_config with max_seq_len=512; current is 1024
+        ### When: guard is called with _saved_meta.get("user_config", _saved_meta)
+        ### Then: ValueError names max_seq_len
+        """
+        meta = {"user_config": dict(_SAVED)}
+        with pytest.raises(ValueError, match="max_seq_len"):
+            assert_resume_config_matches(
+                meta.get("user_config", meta),
+                {**_SAVED, "max_seq_len": 1024},
+                _GUARD_KEYS,
+            )
+
 
 # ---------------------------------------------------------------------------
 # § Shell: find-resume-step CLI and resume_flag
