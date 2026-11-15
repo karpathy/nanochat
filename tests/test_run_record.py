@@ -226,13 +226,14 @@ def test_compare_table_lists_each_run_with_key_columns(tmp_path: Path) -> None:
     assert "abc*" in lines[1]
 
 
-def test_replay_local_run_includes_uv_sync(tmp_path: Path) -> None:
+def test_replay_local_cpu_uses_runcpu_not_runmodal(tmp_path: Path) -> None:
     """
-    Scenario: replay of a local-cpu run prints git checkout, uv sync, and runmodal.sh.
-    Slice: nanochat/run_record.py replay_commands local path.
+    Scenario: replay of a local-cpu run uses runcpu.sh, not runmodal.sh.
+    runmodal.sh only accepts cpu|gpu modes; local runs must go to the dedicated scripts.
+    Slice: nanochat/run_record.py replay_commands local-cpu path (FIX 3).
     ### Given: a run.json for a local-cpu run with a known code_rev
     ### When: replay_commands is called
-    ### Then: output has git checkout, uv sync --extra cpu, and MODE=... bash runs/runmodal.sh
+    ### Then: output has git checkout, uv sync --extra cpu, and bash runs/runcpu.sh
     """
     # ### Given
     _run_json(tmp_path, mode="local-cpu", code_rev="abc1234", code_dirty=False)
@@ -241,7 +242,8 @@ def test_replay_local_run_includes_uv_sync(tmp_path: Path) -> None:
     # ### Then
     assert cmds[0] == "git checkout abc1234"
     assert cmds[1] == "uv sync --extra cpu"
-    assert cmds[2] == "MODE=local-cpu bash runs/runmodal.sh"
+    assert cmds[2] == "bash runs/runcpu.sh"
+    assert all("runmodal" not in c for c in cmds), "local-cpu must not reference runmodal.sh"
 
 
 def test_replay_modal_run_omits_uv_sync(tmp_path: Path) -> None:
