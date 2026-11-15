@@ -20,7 +20,10 @@ _LOCK_RUN_ID_FILE="${_LOCK_DIR}/run_id"
 _LOCK_HEARTBEAT_FILE="${_LOCK_DIR}/heartbeat"
 _RECLAIM_DIR="${_LOCK_DIR}.reclaim"
 _RECLAIM_HELD=0
-_STALE_SECS=600
+# Both thresholds are overridable via env vars so tests can run fast.
+_STALE_SECS="${NANOCHAT_LOCK_STALE_SECS:-600}"
+_HB_REFRESH_INTERVAL="${NANOCHAT_LOCK_HB_INTERVAL:-60}"
+_HB_PID=""
 
 # _LOCK_RUN_ID: use NANOCHAT_RUN_ID from env if set; fall back to PID-timestamp so
 # ownership checks work even when no explicit run ID is passed.
@@ -54,6 +57,22 @@ _update_heartbeat() {
     date +%s > "${_LOCK_HEARTBEAT_FILE}"
 }
 
+_start_heartbeat_refresher() {
+    # Runs in the background; writes the heartbeat every _HB_REFRESH_INTERVAL seconds.
+    # _release_run_lock kills and waits for it before removing the lock directory.
+    # Redirect stdout/stderr to /dev/null so the background subshell and its sleep
+    # children do not hold inherited pipe fds open (which would delay communicate()
+    # EOF when tests capture output via subprocess.run(capture_output=True)).
+    (
+        exec >/dev/null 2>/dev/null
+        while true; do
+            sleep "${_HB_REFRESH_INTERVAL}"
+            _update_heartbeat 2>/dev/null || true
+        done
+    ) &
+    _HB_PID=$!
+}
+
 _drop_reclaim_gate() {
     if [ "${_RECLAIM_HELD}" = "1" ]; then
         rmdir "${_RECLAIM_DIR}" 2>/dev/null || true
@@ -62,6 +81,12 @@ _drop_reclaim_gate() {
 }
 
 _release_run_lock() {
+    # Kill the background refresher first so it cannot write after we remove the lock dir.
+    # wait ensures the zombie is reaped and bash can exit without stalling on a background child.
+    if [ -n "${_HB_PID:-}" ]; then
+        kill "${_HB_PID}" 2>/dev/null || true
+        wait "${_HB_PID}" 2>/dev/null || true
+    fi
     _drop_reclaim_gate
     # Ownership check: never delete a lock that another process has taken over.
     if [ "$(_read_run_id "${_LOCK_RUN_ID_FILE}")" = "${_LOCK_RUN_ID}" ]; then
@@ -69,10 +94,12 @@ _release_run_lock() {
     fi
 }
 
-# Caller must own the lock directory. Records our run ID + heartbeat and installs traps.
+# Caller must own the lock directory. Records our run ID + heartbeat, starts the
+# background refresher, and installs traps so the lock is always released.
 _claim_run_lock() {
     echo "${_LOCK_RUN_ID}" > "${_LOCK_RUN_ID_FILE}"
     _update_heartbeat
+    _start_heartbeat_refresher
     # NOTE: these traps overwrite any trap the caller set for EXIT/INT/TERM.
     # Callers must not install competing traps after sourcing _run_lock.sh.
     trap '_release_run_lock' EXIT
@@ -87,19 +114,49 @@ _acquire_run_lock() {
     fi
 
     # Lock directory exists: is the holder still active?
+    # Volume-relative lock path for operator remove commands (e.g. cpu/.run.lock or gpu/.run.lock).
+    local _vol_lock_path
+    _vol_lock_path="$(basename "${NANOCHAT_BASE_DIR}")/.run.lock"
+
     # Treat a missing heartbeat file as "live-unknown" (holder mid-acquire, heartbeat not yet written).
     if [ ! -f "${_LOCK_HEARTBEAT_FILE}" ]; then
         echo "ERROR: lock dir exists but no heartbeat recorded (holder may be mid-acquire). Try again in a moment." >&2
-        echo "  If no run is active, remove it with: modal volume rm -r nanochat-modal .run.lock" >&2
+        echo "  If no run is active, remove it with: modal volume rm -r nanochat-modal ${_vol_lock_path}" >&2
+        exit 1
+    fi
+
+    # ITEM A: a container that was preempted and restarted can reclaim its own lock even when
+    # the heartbeat is still fresh (restart within _STALE_SECS). Same run ID = same logical run.
+    local held_run_id
+    held_run_id="$(_read_run_id "${_LOCK_RUN_ID_FILE}")"
+    if [ "${held_run_id:-}" = "${_LOCK_RUN_ID}" ]; then
+        # Our own lock: take the reclaim gate and replace it without the stale check.
+        if ! mkdir "${_RECLAIM_DIR}" 2>/dev/null; then
+            echo "ERROR: another run is reclaiming the lock on ${NANOCHAT_BASE_DIR}." >&2
+            echo "  If no run is active, remove it with: rm -rf \"${_RECLAIM_DIR}\"" >&2
+            exit 1
+        fi
+        _RECLAIM_HELD=1
+        trap '_release_run_lock' EXIT
+        trap '_release_run_lock; exit 130' INT
+        trap '_release_run_lock; exit 143' TERM
+        local own_tmp="${_LOCK_DIR}.stale.$$"
+        if mv "${_LOCK_DIR}" "${own_tmp}" 2>/dev/null; then
+            rm -rf "${own_tmp}"
+        fi
+        if mkdir "${_LOCK_DIR}" 2>/dev/null; then
+            _claim_run_lock
+            _drop_reclaim_gate
+            return 0
+        fi
+        echo "ERROR: could not reclaim own lock on ${NANOCHAT_BASE_DIR}." >&2
         exit 1
     fi
 
     if ! _is_lock_stale; then
-        local held_run_id
-        held_run_id="$(_read_run_id "${_LOCK_RUN_ID_FILE}")"
         echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (run ${held_run_id:-unknown})." >&2
         echo "  If that run has ended, remove the stale lock with:" >&2
-        echo "    modal volume rm -r nanochat-modal .run.lock" >&2
+        echo "    modal volume rm -r nanochat-modal ${_vol_lock_path}" >&2
         exit 1
     fi
 
