@@ -59,7 +59,7 @@ else
     echo "WARNING: could not check for running Modal apps; proceeding without the concurrency guard." >&2
     _RUNNING_APP=""
 fi
-if [ -n "$_RUNNING_APP" ] && [ -z "${RUNMODAL_ALLOW_CONCURRENT:-}" ]; then
+if [ -n "$_RUNNING_APP" ] && [ "${RUNMODAL_ALLOW_CONCURRENT:-}" != "1" ]; then
     echo "" >&2
     echo "ERROR: A nanochat Modal app appears to be running already." >&2
     echo "  Wait for it to finish, or set RUNMODAL_ALLOW_CONCURRENT=1 to override." >&2

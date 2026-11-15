@@ -197,20 +197,37 @@ def test_guard_refuses_multiple_apps_with_one_live_matching(fake_modal_multiple_
     assert not record.exists()
 
 
-def test_guard_bypassed_with_any_nonempty_value(fake_modal_multiple_apps: tuple[Path, Path]) -> None:
+def test_guard_bypassed_only_with_value_one(fake_modal_multiple_apps: tuple[Path, Path]) -> None:
     """
-    Scenario: RUNMODAL_ALLOW_CONCURRENT with any non-empty value bypasses the guard.
-    Slice: guard check uses [ -z ] on RUNMODAL_ALLOW_CONCURRENT, so any non-empty value is truthy.
-    ### Given: a running nanochat-speedrun app and RUNMODAL_ALLOW_CONCURRENT=0
+    Scenario: RUNMODAL_ALLOW_CONCURRENT=1 bypasses the guard.
+    Slice: the guard bypasses only on the exact value 1, so 0 or false cannot disable it by accident.
+    ### Given: a running nanochat-speedrun app and RUNMODAL_ALLOW_CONCURRENT=1
     ### When: runmodal.sh is invoked
     ### Then: exits 0, modal run is called (guard is bypassed)
     """
     fake_bin, record = fake_modal_multiple_apps
 
-    result = _run(fake_bin, None, extra_env={"RUNMODAL_ALLOW_CONCURRENT": "0"})
+    result = _run(fake_bin, None, extra_env={"RUNMODAL_ALLOW_CONCURRENT": "1"})
 
     assert result.returncode == 0, result.stderr
     assert record.exists()
+
+
+@pytest.mark.parametrize("value", ["0", "false", "yes"])
+def test_guard_not_bypassed_by_other_values(fake_modal_multiple_apps: tuple[Path, Path], value: str) -> None:
+    """
+    Scenario: any value other than 1 keeps the guard on.
+    Slice: "0" must not disable the guard, which is the trap a non-empty check would create.
+    ### Given: a running nanochat-speedrun app and RUNMODAL_ALLOW_CONCURRENT set to a value other than 1
+    ### When: runmodal.sh is invoked
+    ### Then: exits non-zero, modal run is not called
+    """
+    fake_bin, record = fake_modal_multiple_apps
+
+    result = _run(fake_bin, None, extra_env={"RUNMODAL_ALLOW_CONCURRENT": value})
+
+    assert result.returncode != 0
+    assert not record.exists()
 
 
 def test_guard_not_bypassed_with_empty_string(fake_modal_multiple_apps: tuple[Path, Path]) -> None:
