@@ -27,6 +27,18 @@ _read_pid_file() {
     fi
 }
 
+_get_start_time() {
+    # Portable: get process start time in seconds since epoch.
+    # ps -o etimes= returns elapsed seconds; we compute start_time = now - elapsed.
+    # Falls back to empty string if process doesn't exist or ps fails.
+    local pid="$1"
+    local now
+    now=$(date +%s) || return 1
+    local elapsed
+    elapsed=$(ps -o etimes= -p "${pid}" 2>/dev/null) || return 1
+    echo $((now - elapsed))
+}
+
 _drop_reclaim_gate() {
     if [ "${_RECLAIM_HELD}" = "1" ]; then
         rmdir "${_RECLAIM_DIR}" 2>/dev/null || true
@@ -37,14 +49,16 @@ _drop_reclaim_gate() {
 _release_run_lock() {
     _drop_reclaim_gate
     # Ownership check: never delete a lock that another process has taken over.
-    if [ "$(_read_pid_file "${_LOCK_PID_FILE}")" = "$$" ]; then
+    if [ "$(_read_pid_file "${_LOCK_PID_FILE}" | awk '{print $1}')" = "$$" ]; then
         rm -rf "${_LOCK_DIR}"
     fi
 }
 
-# Caller must own the lock directory. Records our PID and installs the traps.
+# Caller must own the lock directory. Records our PID + start-time and installs the traps.
 _claim_run_lock() {
-    echo $$ > "${_LOCK_PID_FILE}"
+    local current_start_time
+    current_start_time="$(_get_start_time $$)" || current_start_time=""
+    echo "$$ ${current_start_time}" > "${_LOCK_PID_FILE}"
     trap '_release_run_lock' EXIT
     trap '_release_run_lock; exit 130' INT
     trap '_release_run_lock; exit 143' TERM
@@ -59,17 +73,39 @@ _acquire_run_lock() {
     # Lock directory exists: is the holder still alive?
     # Treat a missing or empty PID file as "live-unknown" (holder mid-acquire, not yet written PID).
     local held_pid
-    held_pid="$(_read_pid_file "${_LOCK_PID_FILE}")"
+    local held_start_time
+    local file_content
+    file_content="$(_read_pid_file "${_LOCK_PID_FILE}")"
+    held_pid=$(echo "${file_content}" | awk '{print $1}')
+    held_start_time=$(echo "${file_content}" | awk '{print $2}')
+
     if [ -z "${held_pid}" ]; then
         echo "ERROR: lock dir exists but no PID recorded (holder may be mid-acquire). Try again in a moment." >&2
         echo "  If no run is active, remove it with: rm -rf \"${_LOCK_DIR}\"" >&2
         exit 1
     fi
     if kill -0 "${held_pid}" 2>/dev/null; then
-        echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (PID ${held_pid})." >&2
-        echo "  If that run has ended, remove the stale lock with:" >&2
-        echo "    rm -rf \"${_LOCK_DIR}\"" >&2
-        exit 1
+        # Process exists. Check if start times match to guard against PID reuse.
+        if [ -n "${held_start_time}" ]; then
+            local current_held_start_time
+            current_held_start_time="$(_get_start_time "${held_pid}")" || current_held_start_time=""
+            if [ -n "${current_held_start_time}" ] && [ "${held_start_time}" != "${current_held_start_time}" ]; then
+                # PID has been reused — original holder is gone, proceed with reclaim.
+                : # Fall through to reclaim
+            else
+                # Same PID, same start time — original holder still alive.
+                echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (PID ${held_pid})." >&2
+                echo "  If that run has ended, remove the stale lock with:" >&2
+                echo "    rm -rf \"${_LOCK_DIR}\"" >&2
+                exit 1
+            fi
+        else
+            # Old lock file has only PID (no start time). Fall back to PID-only logic.
+            echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (PID ${held_pid})." >&2
+            echo "  If that run has ended, remove the stale lock with:" >&2
+            echo "    rm -rf \"${_LOCK_DIR}\"" >&2
+            exit 1
+        fi
     fi
 
     # Holder looks dead. Take the reclaim gate so only one process does this at a time.
@@ -87,7 +123,8 @@ _acquire_run_lock() {
     # Re-check under the gate: the PID may have been rewritten since we first read it.
     # Also re-apply the live-unknown guard: a new holder may have written its PID while we
     # were taking the reclaim gate.
-    held_pid="$(_read_pid_file "${_LOCK_PID_FILE}")"
+    file_content="$(_read_pid_file "${_LOCK_PID_FILE}")"
+    held_pid=$(echo "${file_content}" | awk '{print $1}')
     if [ -z "${held_pid}" ]; then
         echo "ERROR: lock dir exists but no PID recorded after taking reclaim gate. Try again in a moment." >&2
         exit 1
@@ -108,7 +145,7 @@ _acquire_run_lock() {
     fi
 
     local winner_pid
-    winner_pid="$(_read_pid_file "${_LOCK_PID_FILE}")"
+    winner_pid="$(_read_pid_file "${_LOCK_PID_FILE}" | awk '{print $1}')"
     echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (PID ${winner_pid:-?})." >&2
     exit 1
 }
