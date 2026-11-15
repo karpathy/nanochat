@@ -198,28 +198,27 @@ class TestRunLockReclaimAndSafety:
         assert (lock_dir / "heartbeat").exists()
         assert not (tmp_path / ".run.lock.reclaim").exists()
 
-    def test_lock_not_released_when_run_id_overwritten(self, tmp_path):
+    def test_lock_not_released_when_instance_token_overwritten(self, tmp_path):
         """
-        Scenario: Lock run_id is overwritten mid-run with a different value; EXIT trap
-                  must NOT delete the lock (it now belongs to a different holder).
-        Slice: _release_run_lock ownership check
-        ### Given: _run_lock.sh acquires the lock (writes its own run_id), then the run_id
-                   file is overwritten with a different value before the script exits
+        Scenario: Lock instance_token is overwritten mid-run; EXIT trap must NOT delete the
+                  lock — ownership now uses instance_token (hostname:pid:start-time), not run_id.
+        Slice: _release_run_lock instance-token ownership check (BLOCKER 2 fix)
+        ### Given: _run_lock.sh acquires the lock, then instance_token is overwritten
         ### When: the script exits normally (EXIT trap fires)
-        ### Then: .run.lock dir still exists — the lock belongs to the other run_id
+        ### Then: .run.lock dir still exists — instance_token mismatch prevents deletion
         """
         script = f"""#!/usr/bin/env bash
 set -euo pipefail
 export NANOCHAT_BASE_DIR="{tmp_path}"
 source "{RUN_LOCK}"
-# Overwrite run_id with a different value AFTER acquiring
-echo "other-run-id" > "{tmp_path}/.run.lock/run_id"
-# EXIT trap fires here: sees run_id "other-run-id" != our _LOCK_RUN_ID, must NOT rm the lock
+# Simulate a different process claiming the lock by overwriting instance_token
+echo "other-host:99999:0" > "{tmp_path}/.run.lock/instance_token"
+# EXIT trap fires: instance_token != ours, must NOT rm the lock
 """
         r = _run(script)
         assert r.returncode == 0, r.stderr
         lock_dir = tmp_path / ".run.lock"
-        assert lock_dir.exists(), "lock was released despite run_id mismatch — ownership check missing"
+        assert lock_dir.exists(), "lock was released despite instance_token mismatch — ownership check broken"
 
 
 class TestRunLockHeartbeat:
@@ -353,21 +352,23 @@ class TestRunLockSelfReclaim:
     Slice: runs/_run_lock.sh ITEM A — same-run-ID fast reclaim
     """
 
-    def test_same_run_id_reclaims_fresh_heartbeat_lock(self, tmp_path):
+    def test_same_run_id_fresh_heartbeat_is_refused(self, tmp_path):
         """
-        Scenario: Lock is held with a fresh heartbeat but the SAME run ID as the caller;
-                  the caller is a restarted container that owns this lock.
-        Slice: ITEM A — same run ID skips staleness check
-        ### Given: .run.lock/ with a current heartbeat and run_id="my-run"
+        Scenario: Lock is held with a fresh heartbeat by the SAME run ID; must be REFUSED
+                  because the previous instance is still alive (BLOCKER 2 fix).
+        Slice: same-run-ID reclaim now requires a 2 * _HB_REFRESH_INTERVAL stale heartbeat
+        ### Given: .run.lock/ with a current-timestamp heartbeat and run_id="my-run"
         ### When: _run_lock.sh is sourced with NANOCHAT_RUN_ID="my-run"
-        ### Then: exits 0 — same run ID reclaims the lock regardless of heartbeat age
+        ### Then: exits 1 — fresh heartbeat means the previous instance is live
         """
         lock_dir = tmp_path / ".run.lock"
         _write_fresh_lock(lock_dir, run_id="my-run")
 
         r = _run(_run_lock_script(str(tmp_path), extra_env={"NANOCHAT_RUN_ID": "my-run"}))
-        assert r.returncode == 0, r.stderr
-        assert "ACQUIRED" in r.stdout
+        assert r.returncode == 1, (
+            "fresh-heartbeat same-ID lock must be REFUSED (BLOCKER 2 fix)"
+        )
+        assert "ERROR" in r.stderr
 
     def test_different_run_id_fresh_heartbeat_still_refused(self, tmp_path):
         """
@@ -415,4 +416,76 @@ echo "ACQUIRED"
         assert r.returncode == 1
         assert "cpu/.run.lock" in r.stderr, (
             f"Expected 'cpu/.run.lock' in stderr; got:\n{r.stderr}"
+        )
+
+
+class TestRunLockOrphanedRefresher:
+    """
+    Scenario: When the holder is killed with SIGKILL, the refresher must detect the dead
+              parent and stop advancing the heartbeat (BLOCKER 1 fix).
+    Slice: runs/_run_lock.sh — parent-alive check in _start_heartbeat_refresher
+    """
+
+    def test_refresher_stops_when_holder_is_killed_9(self, tmp_path):
+        """
+        Scenario: Holder is killed with SIGKILL (traps do not fire); background refresher must
+                  detect the dead parent and stop — otherwise the lock never goes stale.
+        Slice: BLOCKER 1 — kill -0 $parent in refresher loop
+        ### Given: a holder process acquires the lock with NANOCHAT_LOCK_HB_INTERVAL=1
+        ### When: the holder is killed with SIGKILL (-9)
+        ### Then: the heartbeat stops advancing within 2 intervals (2 s)
+
+        Before this fix, the refresher had no parent-alive check and kept writing the
+        heartbeat indefinitely after kill -9, so the lock never appeared stale.
+        """
+        import os
+        import signal
+        import subprocess
+        import threading
+        import time
+
+        script = f"""#!/usr/bin/env bash
+set -euo pipefail
+export NANOCHAT_BASE_DIR="{tmp_path}"
+export NANOCHAT_LOCK_HB_INTERVAL=1
+source "{RUN_LOCK}"
+echo "ACQUIRED" >&2
+sleep 60
+"""
+        proc = subprocess.Popen(
+            ["bash", "-c", script],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        acquired = threading.Event()
+
+        def _read_stderr():
+            for line in proc.stderr:
+                if b"ACQUIRED" in line:
+                    acquired.set()
+                    break
+
+        t = threading.Thread(target=_read_stderr, daemon=True)
+        t.start()
+        assert acquired.wait(timeout=5), "holder did not acquire lock in time"
+
+        # Let the refresher tick at least once to confirm it is running.
+        time.sleep(1.5)
+        hb_file = tmp_path / ".run.lock" / "heartbeat"
+        assert hb_file.exists(), "heartbeat file missing after acquire"
+
+        # Kill with SIGKILL — EXIT trap cannot fire.
+        os.kill(proc.pid, signal.SIGKILL)
+        proc.wait()
+
+        # Wait > 2 intervals for the refresher to notice parent is gone and exit.
+        time.sleep(3)
+
+        # Read twice, 1 s apart; both readings must be stable (heartbeat stopped).
+        hb_after = int(hb_file.read_text().strip())
+        time.sleep(1)
+        hb_later = int(hb_file.read_text().strip())
+
+        assert hb_after == hb_later, (
+            f"Heartbeat advanced from {hb_after} to {hb_later}s after SIGKILL — "
+            "refresher still running (BLOCKER 1 not fixed)"
         )
