@@ -104,6 +104,7 @@ A few more notes:
 
 - The code will run just fine on the Ampere 8XA100 GPU node as well, but a bit slower.
 - All code will run just fine on even a single GPU by omitting `torchrun`, and will produce ~identical results (code will automatically switch to gradient accumulation), but you'll have to wait 8 times longer.
+- Note: `base_train` in `speedrun.sh` respects the GPU count variable, but `base_eval`, `chat_sft`, and `chat_eval` hardcode 8 GPUs. To use fewer than 8, edit those `--nproc_per_node=8` lines in [runs/speedrun.sh](runs/speedrun.sh) or reduce `--device-batch-size` to fit in memory.
 - If your GPU(s) have less than 80GB, you'll have to tune some of the hyperparameters or you will OOM / run out of VRAM. Look for `--device-batch-size` in the scripts and reduce it until things fit. E.g. from 32 (default) to 16, 8, 4, 2, or even 1. Less than that you'll have to know a bit more what you're doing and get more creative.
 - Most of the code is fairly vanilla PyTorch so it should run on anything that supports that - xpu, mps, or etc, but I haven't personally exercised all of these code paths so there might be sharp edges.
 
@@ -142,6 +143,7 @@ On a Mac (or any CPU/MPS machine) use `bash runs/runcpu.sh`. Do not run `runs/sp
 - On MPS, training stays **eager** (`torch.compile` / Inductor is skipped); auto-fit may shrink `device_batch_size`. Knobs live in `nanochat/defaults.py` + `runs/profiles.sh`.
 - Stage markers, `FORCE_STAGES`, log legend, memory/OOM, NaN, RoPE, and torch 2.2.2 notes: [docs/RUNNING.md](docs/RUNNING.md).
 - Console legends and stage terms: [docs/RUNNING.md §5–§6b](docs/RUNNING.md#5-reading-the-logs-echo-legend).
+- What to do after training finishes (chat, eval, results location, stale lock): [docs/RUNNING.md §13](docs/RUNNING.md#13-after-all-done). The same guide covers `speedrun.sh` failure shapes; link it from your GPU node too.
 
 ## Precision / dtype
 
