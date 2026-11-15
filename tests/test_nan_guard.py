@@ -373,3 +373,81 @@ class TestCollectiveCheckFiniteLoss:
 
         ### When / Then (no exception)
         collective_check_finite_loss(loss, step=7, targets=targets)
+
+    # ------------------------------------------------------------------
+    # S1 + S2: nan_flag parameter — multi-micro-step accumulation
+    # ------------------------------------------------------------------
+
+    def test_nan_flag_true_raises_on_finite_last_loss(self):
+        """
+        Scenario: S1 — a NaN occurred in an earlier micro-step; the last
+                  micro-step's loss is finite.  The old code (checking only
+                  the last loss) would NOT have raised; the new code must.
+        Slice: collective_check_finite_loss nan_flag=True single-process path.
+
+        Given nan_flag=True (earlier micro-step had NaN) and a FINITE last loss,
+        When collective_check_finite_loss is called,
+        Then RuntimeError is raised — proving the flag covers ALL micro-steps.
+
+        Old-code counterfactual: calling collective_check_finite_loss(finite_loss, ...)
+        without nan_flag would NOT raise, silently swallowing the earlier NaN.
+        """
+        ### Given
+        loss = torch.tensor(1.0)   # finite — the LAST micro-step was fine
+        targets = self._targets(n_unmasked=2)
+        ### When / Then
+        with pytest.raises(RuntimeError):
+            collective_check_finite_loss(loss, step=3, targets=targets, nan_flag=True)
+
+    def test_nan_flag_false_does_not_raise_on_nan_loss(self):
+        """
+        Scenario: nan_flag=False explicitly says this rank had no NaN; must not raise
+                  even if the loss tensor is non-finite (caller says no NaN this rank).
+        Slice: collective_check_finite_loss nan_flag=False single-process path.
+
+        Given nan_flag=False and a NaN loss tensor,
+        When collective_check_finite_loss is called,
+        Then no exception is raised (caller's accumulated flag takes precedence).
+        """
+        ### Given
+        loss = torch.tensor(float('nan'))
+        targets = self._targets(n_unmasked=2)
+        ### When / Then (no exception — caller says no NaN on this rank)
+        collective_check_finite_loss(loss, step=0, targets=targets, nan_flag=False)
+
+    def test_nan_flag_reports_nan_batch_unmasked_count(self):
+        """
+        Scenario: S2 — the error message must report unmasked tokens from the
+                  micro-batch that produced the NaN, not from a later prefetched batch.
+        Slice: collective_check_finite_loss nan_flag=True targets-reporting path.
+
+        Given nan_flag=True, a finite last loss, and targets with exactly 3
+              unmasked tokens (the NaN batch),
+        When collective_check_finite_loss is called,
+        Then the RuntimeError message contains '3'.
+        """
+        ### Given: targets from the NaN micro-batch have 3 unmasked tokens
+        nan_batch_targets = self._targets(n=8, n_unmasked=3)
+        loss = torch.tensor(1.0)  # last micro-step was fine
+        ### When / Then
+        with pytest.raises(RuntimeError, match="3"):
+            collective_check_finite_loss(
+                loss, step=0, targets=nan_batch_targets, nan_flag=True
+            )
+
+    def test_nan_flag_none_behaves_like_old_api(self):
+        """
+        Scenario: nan_flag=None (default) is backward-compatible — behaviour
+                  is identical to the original signature.
+        Slice: collective_check_finite_loss nan_flag=None backward-compat path.
+
+        Given nan_flag=None (omitted) and a NaN loss,
+        When collective_check_finite_loss is called,
+        Then RuntimeError is raised (same as the original API).
+        """
+        ### Given
+        loss = torch.tensor(float('nan'))
+        targets = self._targets(n_unmasked=1)
+        ### When / Then
+        with pytest.raises(RuntimeError):
+            collective_check_finite_loss(loss, step=1, targets=targets)

@@ -583,8 +583,14 @@ while True:
     t0 = time.time()
     if step == 0:
         print0(f"Step {step:05d} | training forward/backward ({grad_accum_steps} micro-steps)...")
+    # S1: accumulate a non-finite flag across ALL micro-steps so a NaN in micro-step 0
+    # of N is not silently swallowed when micro-step N-1 happens to be finite.
+    # S2: clone y from the NaN micro-batch before next(train_loader) overwrites it,
+    # so the error message reports the right unmasked-token count.
+    nan_flag = False
+    nan_targets = None  # targets from the micro-batch that produced the first NaN
     for micro_step in range(grad_accum_steps):
-        # FIX 4: warn on a micro-batch where every target is masked (fully-masked SFT batch).
+        # Warn on a micro-batch where every target is masked (fully-masked SFT batch).
         n_valid = int((y != IGNORE_INDEX).sum())
         if n_valid == 0:
             print0(
@@ -593,6 +599,10 @@ while True:
             )
         loss = model(x, y)
         train_loss = loss.detach() # for logging
+        # Accumulate flag; clone targets before the prefetch below can overwrite them.
+        if not nan_flag and not torch.isfinite(train_loss):
+            nan_flag = True
+            nan_targets = y.clone()
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         if scaler is not None:
             scaler.scale(loss).backward()
@@ -600,11 +610,13 @@ while True:
             loss.backward()
         x, y, sft_loader_state = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
         progress = max(progress, approx_progress) # only increase progress monotonically
-    # FIX 2: collective non-finite check — once per outer step, all ranks agree before raising.
-    # Avoids the DDP hang caused by a single rank raising inside the micro-step loop while
-    # the other ranks continue into the next all-reduce.
-    # y here is the prefetched next-step y; fine for the unmasked-count in any error message.
-    collective_check_finite_loss(train_loss, step, y)
+    # Single collective check after all micro-steps: covers every micro-batch (S1) and
+    # reports unmasked tokens from the batch that caused the NaN, not the prefetched one (S2).
+    collective_check_finite_loss(
+        train_loss, step,
+        nan_targets if nan_flag else y,
+        nan_flag=nan_flag,
+    )
     # step the optimizer
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
