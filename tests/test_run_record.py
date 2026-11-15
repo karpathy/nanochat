@@ -20,6 +20,7 @@ from nanochat.run_record import (
     percentile,
     read_events,
     record_span,
+    replay_commands,
     summarize,
     update_run,
 )
@@ -223,3 +224,54 @@ def test_compare_table_lists_each_run_with_key_columns(tmp_path: Path) -> None:
     assert len(lines) == 3
     assert "modal-cpu" in lines[1] and "local-cpu" in lines[2]
     assert "abc*" in lines[1]
+
+
+def test_replay_local_run_includes_uv_sync(tmp_path: Path) -> None:
+    """
+    Scenario: replay of a local-cpu run prints git checkout, uv sync, and runmodal.sh.
+    Slice: nanochat/run_record.py replay_commands local path.
+    ### Given: a run.json for a local-cpu run with a known code_rev
+    ### When: replay_commands is called
+    ### Then: output has git checkout, uv sync --extra cpu, and MODE=... bash runs/runmodal.sh
+    """
+    # ### Given
+    _run_json(tmp_path, mode="local-cpu", code_rev="abc1234", code_dirty=False)
+    # ### When
+    cmds = replay_commands(str(tmp_path))
+    # ### Then
+    assert cmds[0] == "git checkout abc1234"
+    assert cmds[1] == "uv sync --extra cpu"
+    assert cmds[2] == "MODE=local-cpu bash runs/runmodal.sh"
+
+
+def test_replay_modal_run_omits_uv_sync(tmp_path: Path) -> None:
+    """
+    Scenario: replay of a modal-cpu run omits uv sync (not a local run).
+    Slice: nanochat/run_record.py replay_commands modal path.
+    ### Given: a run.json for a modal-cpu run
+    ### When: replay_commands is called
+    ### Then: output has git checkout and runmodal.sh but no uv sync
+    """
+    # ### Given
+    _run_json(tmp_path, mode="modal-cpu", code_rev="def5678", code_dirty=False)
+    # ### When
+    cmds = replay_commands(str(tmp_path))
+    # ### Then
+    assert cmds[0] == "git checkout def5678"
+    assert all("uv sync" not in c for c in cmds)
+    assert cmds[1] == "MODE=modal-cpu bash runs/runmodal.sh"
+
+
+def test_replay_cli_prints_commands(tmp_path: Path) -> None:
+    """
+    Scenario: the CLI replay subcommand exits 0 and prints one line per command.
+    Slice: nanochat/run_record.py main() replay dispatch.
+    ### Given: a local-cpu run directory
+    ### When: main(["replay", run_dir]) is invoked
+    ### Then: returns 0
+    """
+    # ### Given
+    from nanochat.run_record import main as rr_main
+    _run_json(tmp_path, mode="local-cpu", code_rev="abc1234", code_dirty=False)
+    # ### When / Then
+    assert rr_main(["replay", str(tmp_path)]) == 0

@@ -300,6 +300,26 @@ def find_run_dirs(root: str) -> list[str]:
 # CLI
 
 
+def replay_commands(run_dir: str) -> list[str]:
+    """Return the shell commands needed to replay a run.
+
+    For every run:
+      git checkout <code_rev>
+      MODE=<mode> bash runs/runmodal.sh
+
+    For local runs (mode contains "local") an extra line is inserted:
+      uv sync --extra cpu
+    """
+    run = _read_json(os.path.join(run_dir, RUN_JSON))
+    code_rev = run.get("code_rev") or "unknown"
+    mode = run.get("mode") or "local"
+    lines: list[str] = [f"git checkout {code_rev}"]
+    if "local" in mode:
+        lines.append("uv sync --extra cpu")
+    lines.append(f"MODE={mode} bash runs/runmodal.sh")
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m nanochat.run_record")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -315,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
     p_span.add_argument("start", type=int)
     p_cmp = sub.add_parser("compare", help="table of every run under a root")
     p_cmp.add_argument("root")
+    p_replay = sub.add_parser("replay", help="print commands to reproduce a run")
+    p_replay.add_argument("run_dir")
     args = parser.parse_args(argv)
 
     if args.cmd == "start":
@@ -322,6 +344,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "span":
         record_span(args.run_dir, args.stage, args.status, args.dur_s, args.hook_s, args.start)
+        return 0
+    if args.cmd == "replay":
+        for line in replay_commands(args.run_dir):
+            print(line)
         return 0
     dirs = find_run_dirs(args.root)
     if not dirs:

@@ -36,6 +36,7 @@ from nanochat.common import (
     DummyWandb,
     autodetect_device_type,
     compute_cleanup,
+    compute_eta_str,
     compute_init,
     format_duration,
     get_base_dir,
@@ -55,6 +56,7 @@ from nanochat.memory import (
     fit_device_batch_size,
 )
 from nanochat.run_record import make_run_logger
+from nanochat.term_style import paint
 from nanochat.sft_loader import SftLoaderState
 from nanochat.tokenizer import get_token_bytes
 from scripts.chat_eval import run_chat_eval
@@ -475,7 +477,7 @@ while True:
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
         val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
+        print0(paint("done", f"Step {step:05d} | Validation bpb: {val_bpb:.4f}"))
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
         wandb_run.log({
@@ -511,7 +513,7 @@ while True:
             return sum((task_results[t] - baseline_accuracies[t]) / (1.0 - baseline_accuracies[t]) for t in tasks) / len(tasks)
         chatcore = centered_mean(all_tasks)
         chatcore_cat = centered_mean(categorical_tasks)
-        print0(f"Step {step:05d} | ChatCORE: {chatcore:.4f} | ChatCORE_cat: {chatcore_cat:.4f}")
+        print0(paint("done", f"Step {step:05d} | ChatCORE: {chatcore:.4f} | ChatCORE_cat: {chatcore_cat:.4f}"))
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -619,8 +621,14 @@ while True:
     mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
+    # ETA: fail-soft — a failure must never abort training
+    try:
+        steps_done = step - 10
+        eta_str = compute_eta_str(total_training_time, steps_done, args.num_iterations)
+    except Exception:
+        eta_str = ""
     total_str = f"/{args.num_iterations:05d}" if args.num_iterations > 0 else ""
-    print0(f"step {step:05d}{total_str} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {format_duration(total_training_time)}")
+    print0(f"step {step:05d}{total_str} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {format_duration(total_training_time)}{eta_str}")
     if step % 10 == 0:
         wandb_run.log({
             "step": step,

@@ -28,6 +28,7 @@ import torch.distributed as dist
 import wandb
 
 from nanochat.checkpoint_manager import (
+    assert_resume_config_matches,
     load_checkpoint,
     remove_stale_tmp,
     save_checkpoint,
@@ -365,6 +366,23 @@ if total_batch_size == -1:
     predicted_batch_size = B_REF * batch_size_ratio ** 0.383
     total_batch_size = 2 ** round(math.log2(predicted_batch_size)) # clamp to nearest power of 2 for efficiency
     print0(f"Auto-computed optimal batch size: {total_batch_size:,} tokens")
+
+# Resume config guard: refuse to resume if key training dimensions changed since the checkpoint.
+_base_train_guard_keys = ["device_batch_size", "max_seq_len", "total_batch_size", "num_iterations", "world_size"]
+if resuming:
+    assert_resume_config_matches(
+        meta_data.get("user_config", meta_data),
+        {
+            "device_batch_size": args.device_batch_size,
+            "max_seq_len": args.max_seq_len,
+            "total_batch_size": total_batch_size,
+            "num_iterations": args.num_iterations,
+            "world_size": ddp_world_size,
+        },
+        _base_train_guard_keys,
+        stage="base_train",
+        hint="use FORCE_STAGES=base_train to restart from scratch",
+    )
 
 # 3) Knowing the batch size, we can now calculate a learning rate correction (bigger batch size allows higher learning rates)
 batch_lr_scale = 1.0
