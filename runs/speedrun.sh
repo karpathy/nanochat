@@ -25,6 +25,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/_stage_lib.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/_run_lock.sh"
 # Run knobs come from nanochat/defaults.py (PROFILE_SPEEDRUN); profiles.sh is its emitted shell form.
 source "$(dirname "${BASH_SOURCE[0]}")/profiles.sh"
+# B2 fix: export DEPTH so _stage_lib.sh can embed it in stage markers (profile+depth scoping).
+# Value comes from nanochat/defaults.py → profiles.sh (SSOT: SPEEDRUN_DEPTH).
+DEPTH="$SPEEDRUN_DEPTH"
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
