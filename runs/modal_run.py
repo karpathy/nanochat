@@ -63,7 +63,7 @@ MODAL_MODE = os.environ.get("NANOCHAT_MODAL_MODE", "cpu")
 def _nanochat_image(extra: str) -> modal.Image:
     """Image with the uv-synced deps for one extra (gpu or cpu). Local source is the last layer."""
     return (
-        modal.Image.debian_slim(python_version="3.11")
+        modal.Image.debian_slim(python_version="3.12")
         .pip_install("uv")
         .add_local_file("pyproject.toml", remote_path="/root/nanochat/pyproject.toml", copy=True)
         .add_local_file("uv.lock", remote_path="/root/nanochat/uv.lock", copy=True)
