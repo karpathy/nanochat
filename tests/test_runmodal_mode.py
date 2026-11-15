@@ -7,9 +7,15 @@ Scope: runs/runmodal.sh MODE selection. Uses a fake `modal` CLI on PATH, so noth
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+# Add runs dir to path for imports
+RUNS_DIR = Path(__file__).resolve().parents[1] / "runs"
+if str(RUNS_DIR) not in sys.path:
+    sys.path.insert(0, str(RUNS_DIR))
 
 RUNMODAL = Path(__file__).resolve().parents[1] / "runs" / "runmodal.sh"
 
@@ -65,8 +71,8 @@ def test_rejects_unknown_mode(fake_modal: tuple[Path, Path]) -> None:
 
 def test_defaults_to_cpu_mode(fake_modal: tuple[Path, Path]) -> None:
     """
-    Scenario: no MODE set, so the run is CPU and modal gets --mode cpu.
-    Slice: default mode selection.
+    Scenario: no MODE set, so the run is CPU and modal gets --mode cpu and --detach.
+    Slice: default mode selection, detached by default.
     """
     # ### Given
     fake_bin, record = fake_modal
@@ -78,14 +84,15 @@ def test_defaults_to_cpu_mode(fake_modal: tuple[Path, Path]) -> None:
     assert result.returncode == 0, result.stderr
     argv = record.read_text().split()
     assert argv[:4] == ["run", "runs/modal_run.py", "--mode", "cpu"]
+    assert "--detach" in argv
     assert "--run-id" in argv and "--code-rev" in argv
     assert "CPU mode" in result.stdout
 
 
 def test_gpu_mode_passes_gpu_and_shows_gpu_cost(fake_modal: tuple[Path, Path]) -> None:
     """
-    Scenario: MODE=gpu passes --mode gpu and prints the H100 cost banner.
-    Slice: GPU path stays selectable for later.
+    Scenario: MODE=gpu passes --mode gpu --detach and prints the H100 cost banner.
+    Slice: GPU path stays selectable for later, detached by default.
     """
     # ### Given
     fake_bin, record = fake_modal
@@ -97,6 +104,7 @@ def test_gpu_mode_passes_gpu_and_shows_gpu_cost(fake_modal: tuple[Path, Path]) -
     assert result.returncode == 0, result.stderr
     argv = record.read_text().split()
     assert argv[:4] == ["run", "runs/modal_run.py", "--mode", "gpu"]
+    assert "--detach" in argv
     assert "GPU mode" in result.stdout
     assert "8×H100" in result.stdout
 
@@ -209,18 +217,37 @@ def test_guard_warns_and_proceeds_when_modal_unavailable(
     assert record.exists()
 
 
-def test_given_modal_env_when_modal_run_then_no_color_set() -> None:
-    """
-    Scenario: _modal_env() includes NO_COLOR=1 to disable color in container.
-    Slice: NO_COLOR ensures plain text in archived logs.
-    """
-    # ### Given
-    from runs.modal_run import _modal_env
+@pytest.fixture
+def fake_modal_app_id(tmp_path: Path) -> Path:
+    """Fake `modal`: `app list` returns no apps; `run` prints the app id then 200 lines, like a real detached run."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "modal"
+    script.write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = "app" ]; then echo "[]"; exit 0; fi\n'
+        'echo "Initialized. View run at https://modal.com/apps/neomatrix369/main/ap-abc123XYZ"\n'
+        'for i in $(seq 1 200); do echo "line $i"; done\n'
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return bin_dir
 
-    # ### When
-    env = _modal_env("/base/dir")
 
-    # ### Then
-    assert env["NO_COLOR"] == "1"
-    assert env["NANOCHAT_BASE_DIR"] == "/base/dir"
-    assert env["PYTHONPATH"] == "/root/nanochat"
+def test_detached_launch_succeeds_and_records_app_id(fake_modal_app_id: Path) -> None:
+    """
+    Scenario: a detached launch prints the app id then keeps logging; the launcher must not fail.
+    Slice: stopping the reader early (SIGPIPE) turned a successful launch into exit 141 and cut the log.
+    ### Given: fake modal that prints the app id and 200 more lines
+    ### When: runmodal.sh runs detached (default)
+    ### Then: exit 0, app.id records the app and mode, PENDING_DOWNLOAD is set, full run.log kept
+    """
+    result = _run(fake_modal_app_id, None)
+
+    assert result.returncode == 0, result.stderr
+    run_dirs = list((fake_modal_app_id.parent / "archive").iterdir())
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    assert (run_dir / "app.id").read_text().strip() == "ap-abc123XYZ cpu"
+    assert (run_dir / "PENDING_DOWNLOAD").exists()
+    assert "line 200" in (run_dir / "run.log").read_text()
+

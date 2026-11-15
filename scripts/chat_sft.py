@@ -9,30 +9,55 @@ Or torchrun for training:
 torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --device-batch-size=16
 """
 
-import gc
 import argparse
+import gc
 import os
+
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import time
-import wandb
-import torch
-from nanochat.run_record import make_run_logger
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized, maybe_torch_compile, format_duration
-from nanochat.defaults import DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_SEQ_LEN
-from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size
-from nanochat.tokenizer import get_token_bytes
-from nanochat.checkpoint_manager import (
-    save_checkpoint, load_checkpoint, load_model, load_optimizer_state,
-    find_safe_resume_step, should_save_checkpoint, assert_resume_config_matches,
-    apply_sft_resume_state,
-)
-from nanochat.sft_loader import SftLoaderState
-from nanochat.loss_eval import evaluate_bpb
-import torch.distributed as dist
-from nanochat.flash_attention import HAS_FA3
-from nanochat.engine import Engine
-from scripts.chat_eval import run_chat_eval
 
+import torch
+import torch.distributed as dist
+import wandb
+
+from nanochat.checkpoint_manager import (
+    apply_sft_resume_state,
+    assert_resume_config_matches,
+    find_safe_resume_step,
+    load_checkpoint,
+    load_model,
+    load_optimizer_state,
+    save_checkpoint,
+    should_save_checkpoint,
+)
+from nanochat.common import (
+    COMPUTE_DTYPE,
+    COMPUTE_DTYPE_REASON,
+    DummyWandb,
+    autodetect_device_type,
+    compute_cleanup,
+    compute_init,
+    format_duration,
+    get_base_dir,
+    get_peak_flops,
+    is_ddp_initialized,
+    maybe_torch_compile,
+    print0,
+)
+from nanochat.defaults import DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_SEQ_LEN
+from nanochat.engine import Engine
+from nanochat.flash_attention import HAS_FA3
+from nanochat.loss_eval import evaluate_bpb
+from nanochat.memory import (
+    auto_fit_echo_lines,
+    auto_fit_enabled,
+    empty_device_cache,
+    fit_device_batch_size,
+)
+from nanochat.run_record import make_run_logger
+from nanochat.sft_loader import SftLoaderState
+from nanochat.tokenizer import get_token_bytes
+from scripts.chat_eval import run_chat_eval
 from tasks.common import TaskMixture
 from tasks.gsm8k import GSM8K
 from tasks.mmlu import MMLU
@@ -147,6 +172,17 @@ orig_model = model
 # MPS: Inductor has no backend — maybe_torch_compile leaves the model eager (and echoes once).
 model = maybe_torch_compile(model, device_type, dynamic=False)
 depth = model.config.n_layer
+
+base_dir = get_base_dir()
+_sft_output_dirname = args.model_tag if args.model_tag else f"d{depth}"
+checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", _sft_output_dirname)
+_auto_detect_resume_step = args.resume_from_step
+if _auto_detect_resume_step == -1:
+    _auto_detect_resume_step = find_safe_resume_step(checkpoint_dir, ddp_world_size)
+if _auto_detect_resume_step > 0:
+    print0("=" * 60)
+    print0(f"Resuming SFT from step {_auto_detect_resume_step}")
+    print0("=" * 60)
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
 world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
@@ -161,16 +197,11 @@ token_bytes = get_token_bytes(device=device)
 # Note that pretraining ramps weight_decay to zero by end of pretraining, so SFT continues with zero
 optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_lr=args.embedding_lr, matrix_lr=args.matrix_lr, weight_decay=0.0)
 
-# Checkpoint directory for mid-training saves (and auto-resume)
-base_dir = get_base_dir()
-_sft_output_dirname = args.model_tag if args.model_tag else f"d{depth}"
-checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", _sft_output_dirname)
+# Checkpoint directory for mid-training saves (and auto-resume) is defined above with depth.
 
-# Auto-detect resume step
+# Use pre-detected resume step (banner already printed above if resuming)
 if args.resume_from_step == -1:
-    args.resume_from_step = find_safe_resume_step(checkpoint_dir, ddp_world_size)
-    if args.resume_from_step >= 0:
-        print0(f"Resuming SFT from step {args.resume_from_step} (auto-detected)")
+    args.resume_from_step = _auto_detect_resume_step
 
 # Resume: read the SFT model + optimizer this rank saved, and the loader position.
 # Config-mismatch guard: refuse to resume if key training dimensions changed.
@@ -429,8 +460,6 @@ if _sft_resume_loop_state:
     smooth_train_loss = _sft_resume_loop_state.get("smooth_train_loss", 0)
     total_training_time = _sft_resume_loop_state.get("total_training_time", 0)
     progress = _sft_resume_loop_state.get("progress", 0)
-    if args.resume_from_step > 0:
-        print0(f"Resuming SFT optimization from step {args.resume_from_step}")
 while True:
     flops_so_far = num_flops_per_token * args.total_batch_size * step
 
@@ -592,7 +621,8 @@ while True:
     mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
-    print0(f"step {step:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {format_duration(total_training_time)}")
+    total_str = f"/{args.num_iterations:05d}" if args.num_iterations > 0 else ""
+    print0(f"step {step:05d}{total_str} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {format_duration(total_training_time)}")
     if step % 10 == 0:
         wandb_run.log({
             "step": step,

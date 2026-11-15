@@ -32,7 +32,11 @@ if ! command -v modal &>/dev/null; then
     exit 1
 fi
 
-VOLUME="nanochat-modal"
+# Source Modal config (NANOCHAT_MODAL_VOLUME)
+SCRIPTDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPTDIR/_modal_config.sh"
+
+VOLUME="$NANOCHAT_MODAL_VOLUME"
 LOCAL_RUNS="${NANOCHAT_MODAL_ARCHIVE:-$HOME/.cache/nanochat-modal/runs}"
 
 usage() {
@@ -125,6 +129,74 @@ done
 set -- ${rest[@]+"${rest[@]}"}
 
 case "$cmd" in
+    finish-download)
+        # Download artifacts after run stops: called from runmodal.sh finish
+        RUN_ID="${1:-}"
+        if [ -z "$RUN_ID" ]; then
+            echo "ERROR: usage: bash runs/modal_peek.sh finish-download <run-id>" >&2
+            exit 1
+        fi
+        ARCHIVE_DIR="$LOCAL_RUNS/$RUN_ID"
+        APP_ID_FILE="$ARCHIVE_DIR/app.id"
+        if [ ! -f "$APP_ID_FILE" ]; then
+            echo "ERROR: $APP_ID_FILE not found" >&2
+            exit 1
+        fi
+        read -r APP_ID MODE < "$APP_ID_FILE"
+
+        # Check app state: must be stopped
+        APP_STATE=$(modal app list --json | python3 -c "
+import json, sys
+try:
+    for a in json.load(sys.stdin):
+        if a.get('app_id') == '$APP_ID':
+            print(a.get('state', 'unknown'))
+            sys.exit(0)
+    print('not_found')
+except:
+    print('error')
+" 2>/dev/null || echo "error")
+
+        if [ "$APP_STATE" = "error" ] || [ "$APP_STATE" = "not_found" ]; then
+            echo "ERROR: could not find app $APP_ID in modal app list" >&2
+            exit 1
+        fi
+        if [ "$APP_STATE" != "stopped" ]; then
+            echo "ERROR: app $APP_ID is not stopped (state: $APP_STATE)" >&2
+            echo "Check logs: bash runs/modal_peek.sh logs $APP_ID" >&2
+            exit 1
+        fi
+
+        # Check if chatsft_checkpoints exists on Volume (mode-prefixed path)
+        if ! modal volume ls "$VOLUME" "/$MODE/chatsft_checkpoints" 2>/dev/null | grep -q .; then
+            # Fallback: check legacy root path (runs launched before the mode-prefix migration)
+            if modal volume ls "$VOLUME" "chatsft_checkpoints" 2>/dev/null | grep -q .; then
+                echo "WARNING: found chatsft_checkpoints at Volume root, not at /$MODE/ — this run was launched before the mode-prefix migration." >&2
+                echo "  Move the artifacts: modal volume cp $VOLUME /chatsft_checkpoints $VOLUME /$MODE/chatsft_checkpoints" >&2
+                echo "  Then re-run: bash runs/runmodal.sh finish $RUN_ID" >&2
+            else
+                echo "ERROR: /$MODE/chatsft_checkpoints not found on Volume $VOLUME" >&2
+            fi
+            exit 1
+        fi
+
+        # Download artifacts (uv run so modal is on the Python path regardless of active venv)
+        echo "Downloading artifacts from Volume $VOLUME, mode $MODE..."
+        if ! (cd "$(dirname "$SCRIPTDIR")" && NANOCHAT_MODAL_VOLUME="$VOLUME" \
+              uv run --frozen python -c "
+import sys, os
+from runs.modal_run import _download_artifacts
+_download_artifacts('$MODE')
+"); then
+            echo "ERROR: download failed" >&2
+            exit 1
+        fi
+
+        # Remove marker
+        rm -f "$ARCHIVE_DIR/PENDING_DOWNLOAD"
+        echo "Download complete. Artifacts in: ~/.cache/nanochat-modal/$MODE"
+        ;;
+
     status)
         echo "== Running apps =="
         modal app list
