@@ -52,8 +52,8 @@ if [ "$MODE" = "cpu" ]; then
           The first run measures real time; the cost is printed there too.
  Time:    unmeasured. Keep laptop awake; use screen/tmux (see docs/RUNNING.md)
 
- On completion: tokenizer + chat checkpoint downloaded to ~/.cache/nanochat-modal
-   NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python3 -m scripts.chat_cli
+ On completion: tokenizer + chat checkpoint downloaded to ~/.cache/nanochat-modal/cpu
+   NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_cli
 ============================================================================
 EOF
 else
@@ -64,8 +64,8 @@ else
  Cost: ~$40–60 (~$3/GPU/hr × 8 GPUs × ~1.5–2h). First run higher (image bake).
  Time: ~1.5–2h training + prefetch + image build. Keep laptop awake.
 
- On completion: tokenizer + chat checkpoint downloaded to ~/.cache/nanochat-modal
-   NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python3 -m scripts.chat_cli
+ On completion: tokenizer + chat checkpoint downloaded to ~/.cache/nanochat-modal/gpu
+   NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/gpu python3 -m scripts.chat_cli
 ============================================================================
 EOF
 fi

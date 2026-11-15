@@ -24,7 +24,7 @@ You do not need a local GPU to run training on Modal, but you do need enough loc
 - **Python 3.11 or newer** for the local `modal` CLI. The CLI warns that 3.10 is end-of-life.
 - **`bash`, `git`, and the `modal` CLI** on `PATH`. The script stops if `modal` is missing.
 - **Network access** during the run. The laptop stays attached to the job, so keep it awake and use `screen` or `tmux`.
-- **Disk:** room under `~/.cache/nanochat-modal` for the downloaded tokenizer and chat checkpoint.
+- **Disk:** room under `~/.cache/nanochat-modal/<mode>` for the downloaded tokenizer and chat checkpoint.
 
 You do not need a local GPU or the training dependencies. Modal builds them into its own image. For the local install paths and the torch build per platform, see the README [Setup](../README.md#setup) section; for dtype per device, see [Precision / dtype](../README.md#precision--dtype).
 
@@ -127,7 +127,7 @@ The script:
 3. Runs the pipeline on Modal:
    - **Prefetch** (CPU on Modal): downloads the training data shards to a Modal Volume (8 shards in CPU mode, 170 in GPU mode)
    - **Train**: `runcpu.sh` on the CPU machine (CPU mode), or `speedrun.sh` on 8×H100 (GPU mode)
-   - **Download**: pulls the trained tokenizer and SFT checkpoints back to your laptop under `~/.cache/nanochat-modal`
+   - **Download**: pulls the trained tokenizer and SFT checkpoints back to your laptop under `~/.cache/nanochat-modal/<mode>`
    - **Print local chat tip**: shows the command to chat with your model locally
 
 For scripted/automated runs, skip the confirmation with:
@@ -173,7 +173,7 @@ Each stage's marker file lives on the Volume, so a re-run of `runmodal.sh` skips
 
 ## Chat locally
 
-After a successful run, your trained model is on your laptop at `~/.cache/nanochat-modal/`. To chat with it:
+After a successful run, your trained model is on your laptop under `~/.cache/nanochat-modal/<mode>/` (`cpu` or `gpu`). Each mode has its own folder, kept separate from the local `~/.cache/nanochat` used by `runcpu.sh` and `speedrun.sh`. To chat with it:
 
 ### Prerequisites for chatting
 - Local Python environment with PyTorch: run `uv sync --extra cpu` in the repo (same as for `runcpu.sh`)
@@ -182,13 +182,31 @@ After a successful run, your trained model is on your laptop at `~/.cache/nanoch
 
 ### Chat command
 ```bash
-NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python3 -m scripts.chat_cli -p "Why is the sky blue?"
+NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_cli -p "Why is the sky blue?"
 ```
 
 Start an interactive session with:
 ```bash
-NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python3 -m scripts.chat_cli
+NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_cli
 ```
+
+Use `/gpu` in place of `/cpu` for a GPU run.
+
+### Pull the models from the Volume by hand
+
+The run downloads the models for you. Use this command only when the download was skipped or failed, or to refresh a copy after a later run:
+
+```bash
+modal volume get nanochat-modal /tokenizer ~/.cache/nanochat-modal/cpu/tokenizer --force
+modal volume get nanochat-modal /chatsft_checkpoints ~/.cache/nanochat-modal/cpu/chatsft_checkpoints --force
+```
+
+- `nanochat-modal` is the Volume name. `/tokenizer` and `/chatsft_checkpoints` are paths on the Volume.
+- The last argument is the local folder. Use `/gpu` for a GPU run.
+- `--force` overwrites files already on your laptop.
+- A folder is copied recursively. To check what is on the Volume first, run `modal volume ls nanochat-modal` (or `modal volume ls nanochat-modal base_checkpoints` for a subfolder).
+- Add `--profile <name>` or `-e <env>` if your Modal CLI uses a non-default profile or environment.
+- Read-only: `modal volume get` only copies. It never changes the Volume.
 
 The model is a ~1.6B parameter GPT-2-grade transformer. It is not as capable as GPT-3.5, but it makes reasonable guesses and can write stories, poems, and answer factual questions (sometimes incorrectly). Have fun.
 
@@ -200,7 +218,7 @@ You can safely re-run `bash runs/runmodal.sh` multiple times:
 
 - **Finished stages SKIP** — their markers exist on the Volume, so the data/checkpoint is not re-computed
 - **Killed mid-stage** — that stage reruns on the next call (mid-stage resume is not verified on Modal; treat that stage as restarting from its beginning)
-- **Data caches do not collide** — Modal stores artifacts on the Volume; your laptop uses `~/.cache/nanochat-modal/`, separate from the local `~/.cache/nanochat` (if you run `runcpu.sh` or `speedrun.sh` locally)
+- **Data caches do not collide** — Modal stores artifacts on the Volume; your laptop uses `~/.cache/nanochat-modal/<mode>/`, separate from the local `~/.cache/nanochat` (if you run `runcpu.sh` or `speedrun.sh` locally)
 
 To force a stage to rerun (useful if you made code changes):
 ```bash
@@ -226,10 +244,10 @@ Where artifacts live:
 | Tokenizer | Modal Volume `/data/nanochat-modal/tokenizer/` | ~100 MB |
 | Base checkpoints (intermediate) | Modal Volume `/data/nanochat-modal/base_checkpoints/` | ~2–3 GB |
 | SFT checkpoints (final model) | Modal Volume `/data/nanochat-modal/chatsft_checkpoints/` | ~3–5 GB |
-| Local chat copy (after download) | `~/.cache/nanochat-modal/tokenizer/` + `/chatsft_checkpoints/` | ~3–5 GB |
+| Local chat copy (after download) | `~/.cache/nanochat-modal/<mode>/tokenizer/` + `/chatsft_checkpoints/` | ~3–5 GB |
 | HF caches (transformers, tokenizers) | Modal Volume `/data/nanochat-modal/hf_home/` | ~2 GB |
 
-The Volume persists across runs, so stages can skip if their marker exists. Your laptop's `~/.cache/nanochat-modal/` is populated only after a successful full run.
+The Volume persists across runs, so stages can skip if their marker exists. Your laptop's `~/.cache/nanochat-modal/<mode>/` is populated only after a successful full run.
 
 ## Which scripts apply to Modal
 
