@@ -373,3 +373,27 @@ def get_peak_bandwidth(device_name: str) -> float:
     # Unknown GPU - return inf so MBU shows as 0% rather than a wrong guess
     logger.warning(f"Peak bandwidth undefined for: {device_name}, MBU will show as 0%")
     return float('inf')
+
+
+def check_finite_loss(loss: "torch.Tensor", step: int, targets: "torch.Tensor") -> None:
+    """Raise RuntimeError immediately if *loss* is not finite (NaN or inf).
+
+    Calling this inside the micro-step loop, before the EMA update, prevents a
+    single bad batch from corrupting the smooth-loss tracker for the entire run.
+
+    Args:
+        loss:    scalar loss tensor (detached is fine).
+        step:    current outer optimiser step (for the error message).
+        targets: target tensor for the same micro-batch, used to count unmasked
+                 tokens (targets != -1) so the error message is actionable.
+
+    Raises:
+        RuntimeError: if loss is NaN or inf.
+    """
+    if not torch.isfinite(loss):
+        n_unmasked = int((targets >= 0).sum().item())
+        raise RuntimeError(
+            f"Non-finite loss ({loss.item()}) at step {step}. "
+            f"Unmasked token count in last micro-batch: {n_unmasked}. "
+            f"Halting to prevent EMA corruption."
+        )
