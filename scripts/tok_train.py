@@ -9,9 +9,14 @@ import torch
 from nanochat.tokenizer import RustBPETokenizer
 from nanochat.common import get_base_dir
 from nanochat.dataset import parquets_iter_batched
+from nanochat.glossary import emit_define
 
 # -----------------------------------------------------------------------------
 # Parse command line arguments
+
+emit_define("BPE")
+emit_define("vocab")
+emit_define("compression ratio")
 
 parser = argparse.ArgumentParser(description='Train a BPE tokenizer')
 parser.add_argument('--max-chars', type=int, default=2_000_000_000, help='Maximum characters to train on (default: 2B)')

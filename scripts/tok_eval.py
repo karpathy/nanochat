@@ -6,6 +6,7 @@ import os
 from nanochat.common import get_base_dir
 from nanochat.tokenizer import get_tokenizer, RustBPETokenizer
 from nanochat.dataset import parquets_iter_batched
+from nanochat.glossary import emit_define
 
 # Random text I got from a random website this morning
 news_text = r"""
@@ -161,6 +162,8 @@ all_text = [
 ]
 if val_text:
     all_text.append(("climbmix-val", val_text))
+
+emit_define("compression ratio")
 
 # Try out current default compared to GPT-2 and GPT-4 tokenizers
 tokenizer_results = {}
