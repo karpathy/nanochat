@@ -21,9 +21,9 @@ You do not need a local GPU to run training on Modal, but you do need enough loc
 
 ### Your machine (where you run `runmodal.sh`)
 
-- **Python 3.11 or newer** for the local `modal` CLI. The CLI warns that 3.10 is end-of-life.
+- **Python 3.11 or newer** for the local `modal` CLI. Modal's CLI printed this during our pytest run: `Python 3.10 is EOL and Modal will not support it in version 1.7.0`.
 - **`bash`, `git`, and the `modal` CLI** on `PATH`. The script stops if `modal` is missing.
-- **Network access** during the run. The laptop stays attached to the job, so keep it awake and use `screen` or `tmux`.
+- **Network access** during the run. Runs are detached by default, so the job keeps going if this terminal disconnects. `ATTACHED=1` streams output here instead; then keep the laptop awake and use `screen` or `tmux`.
 - **Disk:** room under `~/.cache/nanochat-modal/<mode>` for the downloaded tokenizer and chat checkpoint.
 
 You do not need a local GPU or the training dependencies. Modal builds them into its own image. For the local install paths and the torch build per platform, see the README [Setup](../README.md#setup) section; for dtype per device, see [Precision / dtype](../README.md#precision--dtype).
@@ -95,7 +95,7 @@ The runner sets the rest (`SKIP_SETUP`, `NANOCHAT_BASE_DIR`, `NANOCHAT_RUNCPU_*`
 - **Wall-clock time:** ~1.5–2h training, plus ~30 min prefetch (CPU) and ~15 min image build (first run only)
 
 For both modes:
-  - Keep your laptop awake; the job is attached to your terminal
+  - Runs are detached by default, so the job keeps going if this terminal disconnects. With `ATTACHED=1`, keep your laptop awake
   - Use `screen` or `tmux` if you expect network drops (see [RUNNING.md](RUNNING.md) for tmux tips)
 
 The script shows cost and time estimates before charging anything and asks for confirmation.
@@ -204,16 +204,16 @@ If the training failed and the model files are missing, the script exits with an
 
 > **Auto-download may still fail (fix in code, not yet tested end to end).** The auto-downloader now searches `chatsft_checkpoints/` recursively, so it finds models in `chatsft_checkpoints/d<depth>/` (`runs/modal_run.py:503-524`, commit `829d5f7`). No automated test covers it yet. If the download step reports "SFT incomplete: no model checkpoints", use the manual commands below instead. A re-download with `--force` can also nest folders as `chatsft_checkpoints/chatsft_checkpoints/`; delete the nested copy first if that happens.
 
-The run downloads the models for you. Use these commands only when the download was skipped or failed, or to refresh a copy after a later run:
+Attached runs (`ATTACHED=1`) download the models when they finish. Detached runs do not: after the app stops, run `bash runs/runmodal.sh finish <run-id>`. Use these manual commands only if that also fails, or to refresh a copy:
 
 ```bash
 # CPU run
-modal volume get nanochat-modal /tokenizer ~/.cache/nanochat-modal/cpu/tokenizer --force
-modal volume get nanochat-modal /chatsft_checkpoints ~/.cache/nanochat-modal/cpu/chatsft_checkpoints --force
+modal volume get nanochat-modal /cpu/tokenizer ~/.cache/nanochat-modal/cpu/tokenizer --force
+modal volume get nanochat-modal /cpu/chatsft_checkpoints ~/.cache/nanochat-modal/cpu/chatsft_checkpoints --force
 
 # GPU run
-modal volume get nanochat-modal /tokenizer ~/.cache/nanochat-modal/gpu/tokenizer --force
-modal volume get nanochat-modal /chatsft_checkpoints ~/.cache/nanochat-modal/gpu/chatsft_checkpoints --force
+modal volume get nanochat-modal /gpu/tokenizer ~/.cache/nanochat-modal/gpu/tokenizer --force
+modal volume get nanochat-modal /gpu/chatsft_checkpoints ~/.cache/nanochat-modal/gpu/chatsft_checkpoints --force
 ```
 
 - `nanochat-modal` is the Volume name. `/tokenizer` and `/chatsft_checkpoints` are paths on the Volume.
@@ -283,7 +283,7 @@ Run `bash runs/modal_peek.sh status` to check whether the remote job is still li
 bash runs/modal_peek.sh logs -f          # stream logs from the current app
 ```
 
-When it finishes, re-run `bash runs/runmodal.sh` — finished stages SKIP and only the download step reruns.
+When it finishes, run `bash runs/runmodal.sh finish <run-id>` to download the models. Re-running `bash runs/runmodal.sh` starts a new run with a new run id and new Modal billing, so do not use it just to download.
 
 ## Storage map
 
@@ -342,7 +342,7 @@ Your local runs are never affected by Modal's env vars, and Modal artifacts neve
 - Re-run; skipped stages cost nothing, and only the killed stage reruns
 
 **"Download failed"**
-- If `modal volume get` fails partway through, re-run the script; it will skip earlier stages and retry the download
+- If `modal volume get` fails partway through, run `bash runs/runmodal.sh finish <run-id>` again. Do not re-run the whole job just to download
 
 **"Missing tokenizer or chatsft_checkpoints after a 'successful' run"**
 - The training job failed partway through, and the script correctly did not print a success tip

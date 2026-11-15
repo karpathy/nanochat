@@ -2,7 +2,7 @@
 
 ## Needs your decision
 
-- **Live Modal CPU run is still running and its loss is `nan`.** App `ap-1uTQ0hJAC2gQgVwK3YRLVR` (`nanochat-speedrun`, 1 task, started 2026-11-15 13:25 GMT). Run `20261115-132517-cpu` reached `base_train` and `base_eval` DONE, then loss has been `nan` from about step 244. Stop it with `modal app stop ap-1uTQ0hJAC2gQgVwK3YRLVR`, or let it finish. Nothing has been stopped; this is your call because it costs money.
+- **Live Modal CPU run is still running and its loss is `nan`.** App `ap-1uTQ0hJAC2gQgVwK3YRLVR` (`nanochat-speedrun`, 1 task, started 2026-11-15 13:25 GMT). Run `20261115-132517-cpu` finished `base_train` and `base_eval` with finite loss, then `chat_sft` loss has been `nan` from step 4 (`run.log:2966`). Stop it with `modal app stop ap-1uTQ0hJAC2gQgVwK3YRLVR`, or let it finish. Nothing has been stopped; this is your call because it costs money.
 
 ## Backlog (order agreed 2026-11-15)
 
@@ -13,11 +13,13 @@ Work top to bottom. MoSCoW from the plans. A row moves to the history table belo
 | 1 | modal-fix-b1-download | **Must** | [modal-lifecycle-bugs](2026-11-15-modal-lifecycle-bugs.md) B1 | CODE FIXED, NOT VERIFIED | Commit `829d5f7` changed `_download_artifacts()` (`runs/modal_run.py:503-524`) to walk `chatsft_checkpoints/` recursively. No test yet and no download run yet. Next: add a test with a mocked Volume, then mark DONE. Docs callout in `docs/MODAL.md` updated 2026-11-15. |
 | 2 | modal-fix-b2-depth-markers | **Must** | [modal-lifecycle-bugs](2026-11-15-modal-lifecycle-bugs.md) B2 | PARKED until the GPU run is near (user, 2026-11-15) | Still open: stage markers in `runs/_stage_lib.sh` carry no profile or depth. A GPU run can skip on a CPU depth-6 checkpoint. Workaround: `FORCE_STAGES=all`. Must land before any GPU run. |
 | 3 | modal-fix-b3-heartbeat-lock | **Should** | [modal-lifecycle-bugs](2026-11-15-modal-lifecycle-bugs.md) B3 | NOT STARTED | Lock still uses PID + `kill -0` (`runs/_run_lock.sh:87`, `:132`). Replace with run ID + heartbeat (600 s stale threshold). Do before the next Modal run can be cancelled. Workaround: `modal volume rm -r nanochat-modal .run.lock`. |
-| 3a | env-test-import-python-pin | **Should** | PR #41 caveat | NOT STARTED | Plain `uv run pytest` fails at collection (`No module named 'nanochat'`); it passes with `PYTHONPATH=.`. Fix the import path (project install or a pytest `pythonpath` setting). `.python-version` pins 3.10, which Modal now flags as end-of-life (it asks for 3.11+). Choose the pin and update it. |
+| 3a | env-test-import-python-pin | **Should** | PR #41 caveat | NOT STARTED | Plain `uv run pytest` fails at collection (`No module named 'nanochat'`); it passes with `PYTHONPATH=.`. Fix the import path (project install or a pytest `pythonpath` setting). `.python-version` pins 3.10, which Modal flags as end-of-life (its pytest-run warning: `Python 3.10 is EOL and Modal will not support it in version 1.7.0`). Choose the pin and update it. |
 | 4 | run-record-replay | **Could** | Session plan `~/.claude/plans/with-our-current-setup-tranquil-rossum.md` (not in repo) | NOT STARTED | Add `python3 -m nanochat.run_record replay <run-dir>`. Print `git checkout <code_rev>`, `uv sync --extra cpu` for local runs, and `MODE=<mode> bash runs/runmodal.sh`. The old plan said `--mode`, but `runmodal.sh` reads `MODE` from the environment. Only `nanochat/run_record.py` changes. |
 | 5 | cli-learn-color-could-items | **Could** | [cli-learn-color-ux](2026-11-14-cli-learn-color-ux.md) "Could" | NOT STARTED | Colour and define lines for `tok_train`, `tok_eval`, `chat_sft`, `chat_eval`; `chat_cli` welcome plaque. Decide whether `base_train` keeps its `CORE` define call. |
 | 6 | train-heartbeat-eta | **Could** | [GROWTH.md](GROWTH.md) fix-forward-mac-phase15 "Deferred" | NOT STARTED | Heartbeat and train-loop ETA. Planned in phase 1.5, never built. Not the same as B3 (lock heartbeat). |
 | 7 | review-fix-could-suggestions | **Could** | [pr27-29-review-fixes](2026-11-14-pr27-29-review-fixes.md) S3,S4,N1-N2 | NOT STARTED | S3 (trap-ownership comment in `_run_lock.sh:34-36`), S4 (cap serialised `doc_buffer` in `dataloader.py`). Nits: N1 (explicit `time_due` param in `should_save_checkpoint`), N2 (`conv_buffer` type annotation in `sft_loader.py`). |
+| 13 | modal-preemption-resume | **Should** | [resume-all-stages](2026-11-14-resume-all-stages.md) "Modal path not covered" | REOPENED: NOT VERIFIED on Modal | Local resume is verified (Step A; SIGTERM on MPS). The Modal path is not: run `20261114-125440-cpu` was preempted, restarted `base_train` with no resume evidence, then failed with a torch backward traceback and RemoteError (`run.log:4440`, `:4940`). The earlier DONE claim is withdrawn. |
+| 14 | modal-cpu-live-run | **Should** | [HANDOFF.md](../../HANDOFF.md) steps 1 to 8 | REOPENED: NOT COMPLETE | No archived run prints `ALL DONE`. `20261115-004549`: build aborted because `.omc/state/idle-notif-cooldown.json` changed during the image build. `20261115-004651` and `20261115-125031`: only the Initialized line, outcome not recorded. `20261115-010057`: ConnectionError (DNS). `20261115-131340`: lock conflict, another run active on PID 5 (`run.log:25`). `20261115-132517`: base_train and base_eval DONE; `chat_sft` loss `nan` from step 4 (`run.log:2966`); still running at audit time. Measured numbers: none. |
 | 8 | modal-cpu-timing-docs | **Should** | [MODAL.md](../MODAL.md), [README.md](../../README.md) "Cloud CPU" row | BLOCKED on rank 14 | README and MODAL.md say CPU timing is "Unmeasured". That is accurate today because no run has finished. Once a CPU run prints `ALL DONE`, measure wall time, stage times and tok/s with `run_record compare` on the pulled run record, and put the numbers in both docs. Blocked until the `nan` run is stopped or finishes. |
 | 9 | modal-pipeline-diagram | **Could** | [MODAL.md](../MODAL.md) "How it works" | NOT STARTED | Audit gap: the Modal pipeline (local launcher, Modal container, Volume, commit daemon, `finish` download) has no diagram. Add one Mermaid flowchart to MODAL.md, checked against `runs/runmodal.sh`, `runs/modal_run.py` and `runs/modal_peek.sh`. Create only when the user confirms (audit rule). |
 | 10 | agents-md-decision | **Could** | global `~/.claude/CLAUDE.md` (imports `@AGENTS.md`) | DECISION NEEDED | Repo has no `AGENTS.md` or `CLAUDE.md`, so the sync-docs agent rows are not applicable. Decide: add a short `AGENTS.md` pointing to this `docs/plan/` tracker, or leave it out. Leaving it out is the default. |
@@ -31,12 +33,6 @@ Work top to bottom. MoSCoW from the plans. A row moves to the history table belo
 | tok-train-atomicity | Low impact. User decision. |
 | softcap-logits-memory | Parked in the 2026-11-14 backlog decision. No design chosen. |
 | base-eval-headers-colour | Would change existing script output. |
-
-### Waiting
-
-| slice_id | reason |
-|----------|--------|
-| graphiti-stepA-save | Saved to Graphiti on 2026-11-15; the session episode's facts were confirmed by search. Closed in the table below. |
 
 ### Closed (reference, moved from the old backlog)
 
@@ -54,8 +50,6 @@ Work top to bottom. MoSCoW from the plans. A row moves to the history table belo
 | 10 | live-modal-apps-check | Must | DONE 2026-11-15 | `modal app list`: earlier `nanochat-gpu-probe` apps are stopped. |
 | 11 | review-fix-should-suggestions | Should | DONE (PRs #33, #34, #35) | S7 in PR #33; S1 in [PR #34](https://github.com/neomatrix369/nanochat/pull/34); S5+S6 in [PR #35](https://github.com/neomatrix369/nanochat/pull/35). |
 | 12 | modal-guard-tests | Should | DONE (PR #30) | Cases a–f in `tests/test_runmodal_mode.py` (commit `dbd6445`). |
-| 13 | modal-preemption-resume | Should | DONE (verified 2026-11-15) | SIGTERM and commit-gap checks passed on CPU runs. |
-| 14 | modal-cpu-live-run | Should | **REOPENED: NOT COMPLETE** | Previously marked DONE. The logs do not support that. None of the 7 archived runs under `~/.cache/nanochat-modal/runs/` prints `ALL DONE`. Failures: `20261114-125440` RemoteError; `20261115-010057` ConnectionError (DNS); `20261115-131340` `runcpu.sh` exit 1. `20261115-132517` is still running with loss `nan`. Measured numbers: none yet. |
 | 15 | modal-review-and-cpu-docs | Should | DONE (PR #37) | Lifecycle gaps in `docs/MODAL.md`, `docs/RUNNING.md` §13, `README.md`. |
 | 16 | graphiti-stepA-save | Should | DONE 2026-11-15 (see PROGRESS.md) | Graphiti up; save written. Local fallback not needed. |
 | 17 | modal-daemon-cleanup | Could | DONE (PR #30) | `runs/modal_run.py` daemon + SIGTERM cleanup (commit `651d789`). |
@@ -73,7 +67,7 @@ Work top to bottom. MoSCoW from the plans. A row moves to the history table belo
 | local-resume-and-guard | [2026-11-14-local-resume-and-guard.md](2026-11-14-local-resume-and-guard.md) | SUPERSEDED (MERGED) | Do not rebuild. |
 | modal-guard-hardware-capture | [2026-11-14-modal-guard-hardware-capture.md](2026-11-14-modal-guard-hardware-capture.md) | MERGED (guard); accelerator open | [PR #24](https://github.com/neomatrix369/nanochat/pull/24), [PR #25](https://github.com/neomatrix369/nanochat/pull/25). |
 | cli-learn-color-ux | [2026-11-14-cli-learn-color-ux.md](2026-11-14-cli-learn-color-ux.md) | MERGED | PRs [#20](https://github.com/neomatrix369/nanochat/pull/20) to [#23](https://github.com/neomatrix369/nanochat/pull/23). Could items at rank 5. |
-| docs-sync-audit-2026-11-15 | `/sync-docs` audit (this session) | DONE | Fixed `docs/MODAL.md`: B1 callout now matches code; `finish` recovery command added. Reconciled TRAIL and PROGRESS with the code and logs. Decisions are in the 2026-11-15 rows of PROGRESS.md. |
+| docs-sync-audit-2026-11-15 | `/sync-docs` audit (this session) | DONE on PR #41, pending merge | Fixed `docs/MODAL.md`: B1 callout now matches code; `finish` recovery command added. Reconciled TRAIL and PROGRESS with the code and logs. Decisions are in the 2026-11-15 rows of PROGRESS.md. |
 
 ### Housekeeping done
 
