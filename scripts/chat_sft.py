@@ -179,7 +179,8 @@ if args.resume_from_step > 0:
     _sft_resume_model_data, _sft_resume_optim_data, _saved_meta = load_checkpoint(
         checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)
     assert_resume_config_matches(
-        _saved_meta, {**{k: getattr(args, k) for k in _guard_keys[:-1]}, "world_size": ddp_world_size},
+        _saved_meta.get("user_config", _saved_meta),
+        {**{k: getattr(args, k) for k in _guard_keys[:-1]}, "world_size": ddp_world_size},
         _guard_keys, stage="SFT", hint="Use FORCE_STAGES=chat_sft to restart from scratch",
     )
     _sft_resume_loader_state = SftLoaderState.from_dict(
@@ -188,7 +189,7 @@ if args.resume_from_step > 0:
     _sft_resume_loop_state = _saved_meta.get("loop_state") or {}
 else:
     _sft_resume_model_data = _sft_resume_optim_data = None
-    _sft_resume_loader_state = None
+    _sft_resume_loader_state = SftLoaderState.initial(ddp_rank)
     _sft_resume_loop_state = {}
 
 # Optionally warm-start optimizer from pretrained checkpoint (momentum buffers etc.)
