@@ -52,7 +52,7 @@ class TestComputeEtaStr:
 
 
 class TestGetBaseDir:
-    """Test get_base_dir with require_explicit flag."""
+    """Test get_base_dir returns default and env-override paths."""
 
     def test_get_base_dir_default_no_explicit(self):
         # Scenario: require_explicit=False (default)

@@ -7,7 +7,7 @@ python -m scripts.chat_cli
 import argparse
 
 from nanochat.checkpoint_manager import load_model
-from nanochat.common import autodetect_device_type, compute_init, get_base_dir
+from nanochat.common import autodetect_device_type, compute_init
 from nanochat.engine import Engine
 
 parser = argparse.ArgumentParser(description='Chat with the model')

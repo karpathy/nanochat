@@ -138,6 +138,7 @@ set +e
 NANOCHAT_MODAL_MODE="$MODE" NANOCHAT_MODAL_VOLUME="$NANOCHAT_MODAL_VOLUME" modal run \
     runs/modal_run.py --mode "$MODE" --run-id "$RUN_ID" --code-rev "$CODE_REV" \
     $DETACH_FLAG 2>&1 | tee "$RUN_LOG" | while IFS= read -r line; do
+        printf '%s\n' "$line"
         if [[ ! -f "$ARCHIVE_DIR/app.id" && "$line" =~ modal\.com/apps/[^[:space:]]*/(ap-[A-Za-z0-9]+) ]]; then
             echo "${BASH_REMATCH[1]} $MODE" > "$ARCHIVE_DIR/app.id"
         fi
