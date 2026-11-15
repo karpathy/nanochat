@@ -551,3 +551,81 @@ class TestApplySftResumeState:
         ### Then
         assert len(model_calls) == 1 and model_calls[0] is model_data
         assert len(opt_calls) == 1 and opt_calls[0] is optim_data
+
+
+# ---------------------------------------------------------------------------
+# § base_train resume config guard
+# ---------------------------------------------------------------------------
+
+_BASE_TRAIN_GUARD_KEYS = ["device_batch_size", "max_seq_len", "total_batch_size", "num_iterations", "world_size"]
+_BASE_TRAIN_SAVED = {
+    "device_batch_size": 8,
+    "max_seq_len": 512,
+    "total_batch_size": 524288,
+    "num_iterations": -1,
+    "world_size": 1,
+}
+
+
+class TestBaseTrainResumeGuard:
+    """
+    Scenario: base_train refuses to resume when key training dimensions changed.
+    Slice: nanochat.checkpoint_manager.assert_resume_config_matches (called by scripts.base_train).
+    """
+
+    @pytest.mark.parametrize("changed_key,current_val", [
+        ("device_batch_size", 16),
+        ("max_seq_len", 1024),
+        ("total_batch_size", 1048576),
+    ])
+    def test_mismatch_raises_naming_the_key(self, changed_key: str, current_val: int) -> None:
+        """
+        Scenario: A guard key changed between the checkpoint and the current CLI args.
+        Slice: assert_resume_config_matches base_train guard keys
+        ### Given: saved meta with original base_train values wrapped in user_config
+        ### When: one key is different in the current config
+        ### Then: ValueError names that key
+        """
+        ### Given
+        saved_meta = {"user_config": dict(_BASE_TRAIN_SAVED)}
+        current = {**_BASE_TRAIN_SAVED, changed_key: current_val}
+        ### When / Then
+        with pytest.raises(ValueError, match=changed_key):
+            assert_resume_config_matches(
+                saved_meta.get("user_config", saved_meta),
+                current,
+                _BASE_TRAIN_GUARD_KEYS,
+                stage="base_train",
+                hint="use FORCE_STAGES=base_train to restart from scratch",
+            )
+
+    def test_matching_config_does_not_raise(self) -> None:
+        """
+        Scenario: Config matches the checkpoint exactly.
+        Slice: assert_resume_config_matches base_train guard keys
+        ### Given: identical saved and current configs
+        ### When: guard runs
+        ### Then: no exception
+        """
+        ### Given
+        saved_meta = {"user_config": dict(_BASE_TRAIN_SAVED)}
+        ### When / Then (no exception)
+        assert_resume_config_matches(
+            saved_meta.get("user_config", saved_meta),
+            dict(_BASE_TRAIN_SAVED),
+            _BASE_TRAIN_GUARD_KEYS,
+        )
+
+    def test_key_absent_from_old_checkpoint_is_skipped(self) -> None:
+        """
+        Scenario: An old checkpoint predates world_size tracking.
+        Slice: assert_resume_config_matches missing-key path
+        ### Given: saved user_config has no world_size key
+        ### When: current config has world_size=2
+        ### Then: no exception (cannot compare absent key)
+        """
+        ### Given
+        saved = {k: v for k, v in _BASE_TRAIN_SAVED.items() if k != "world_size"}
+        current = {**_BASE_TRAIN_SAVED, "world_size": 2}
+        ### When / Then
+        assert_resume_config_matches(saved, current, _BASE_TRAIN_GUARD_KEYS)
