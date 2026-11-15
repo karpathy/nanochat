@@ -61,6 +61,8 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 
 | When (UTC) | PR | What landed |
 |------------|----|-------------|
+| 2026-11-15 13:10 | [#35](https://github.com/neomatrix369/nanochat/pull/35) | `SftLoaderState.initial` in `chat_sft`; guard keys read from `user_config` subdict when present; tests for that path |
+| 2026-11-15 12:39 | [#34](https://github.com/neomatrix369/nanochat/pull/34) | Run lock stores PID + start time so PID reuse is detected; DDP resume tests |
 | 2026-11-15 | [#33](https://github.com/neomatrix369/nanochat/pull/33) | `ddp_rank_position` SSOT in `common.py`; `apply_sft_resume_state` + `assert_resume_config_matches` in `checkpoint_manager.py`; `world_size` guarded on resume; run-lock live-unknown (empty PID) guard; 303 tests pass |
 | 2026-11-14 | [#32](https://github.com/neomatrix369/nanochat/pull/32) | Modal CPU pre-flight check and run-watching guidance in `docs/MODAL.md` |
 | 2026-11-14 | [#31](https://github.com/neomatrix369/nanochat/pull/31) | Plan doc: nw-crafter review findings for PRs #27–29 |
