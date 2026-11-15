@@ -112,22 +112,22 @@ class TestRunLock:
         assert r.returncode == 0
         assert not lock_dir.exists()
 
-    def test_missing_heartbeat_treated_as_live_unknown(self, tmp_path):
+    def test_missing_heartbeat_fresh_dir_is_refused(self, tmp_path):
         """
-        Scenario: Lock dir exists but heartbeat file is absent; treated as live-unknown to
-        close the mid-acquire window (holder may have done mkdir but not yet written heartbeat).
-        Slice: _acquire_run_lock edge-case: empty lock dir
-        ### Given: .run.lock/ exists but contains no heartbeat file
+        Scenario: Lock dir exists but heartbeat file is absent and the dir mtime is recent;
+        treated as a live mid-acquire holder (mtime fallback: not stale yet).
+        Slice: _acquire_run_lock edge-case: empty lock dir with fresh mtime
+        ### Given: .run.lock/ exists but contains no heartbeat file (just created)
         ### When: acquire runs
-        ### Then: exits 1 with a message indicating the heartbeat is not yet recorded
+        ### Then: exits 1 — dir mtime is fresh, not stale
         """
         lock_dir = tmp_path / ".run.lock"
         lock_dir.mkdir()
-        # no heartbeat written
+        # no heartbeat written; mtime is now → not stale
 
         r = _run(_run_lock_script(str(tmp_path)))
         assert r.returncode == 1
-        assert "no heartbeat recorded" in r.stderr
+        assert "ERROR" in r.stderr
 
 
 class TestRunLockReclaimAndSafety:
@@ -488,4 +488,46 @@ sleep 60
         assert hb_after == hb_later, (
             f"Heartbeat advanced from {hb_after} to {hb_later}s after SIGKILL — "
             "refresher still running (BLOCKER 1 not fixed)"
+        )
+
+
+class TestRunLockMissingHeartbeatFallback:
+    """
+    Scenario: A crash between mkdir and heartbeat write leaves an empty lock dir.
+              Without a fallback the lock is unrecoverable until manually deleted.
+    Slice: runs/_run_lock.sh — _is_lock_stale dir-mtime fallback
+    """
+
+    def test_empty_lock_dir_old_mtime_is_reclaimed(self, tmp_path):
+        """
+        Scenario: Empty lock dir whose mtime is older than _STALE_SECS allows a new run to
+                  acquire; empty lock dir with a fresh mtime refuses a new run.
+        Slice: missing-heartbeat mtime fallback in _is_lock_stale
+        ### Given: an empty .run.lock dir with an old mtime (via touch -t)
+        ### When: _run_lock.sh is sourced with NANOCHAT_LOCK_STALE_SECS=10
+        ### Then: exits 0 — old empty dir is treated as stale and reclaimed
+
+        Before this fix, missing heartbeat was treated as "live-unknown" and refused.
+        """
+        import subprocess
+
+        lock_dir = tmp_path / ".run.lock"
+        lock_dir.mkdir()
+        # Set mtime to 60 s in the past (well beyond our 10 s test threshold).
+        subprocess.run(
+            ["touch", "-t", "202001010000.00", str(lock_dir)],
+            check=True,
+        )
+
+        r = _run(_run_lock_script(str(tmp_path), extra_env={"NANOCHAT_LOCK_STALE_SECS": "10"}))
+        assert r.returncode == 0 and "ACQUIRED" in r.stdout, (
+            f"Expected reclaim of old empty lock dir; rc={r.returncode}, stderr={r.stderr}"
+        )
+
+        # Fresh empty lock dir must be refused (mtime = now, not stale).
+        lock_dir2 = tmp_path / "fresh" / ".run.lock"
+        lock_dir2.mkdir(parents=True)
+        r2 = _run(_run_lock_script(str(tmp_path / "fresh"), extra_env={"NANOCHAT_LOCK_STALE_SECS": "10"}))
+        assert r2.returncode == 1, (
+            "Expected fresh empty lock dir to be refused; rc={r2.returncode}, stderr={r2.stderr}"
         )
