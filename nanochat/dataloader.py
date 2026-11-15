@@ -131,8 +131,12 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
 
     while True:
         pq_idx, rg_idx, doc_offset, epoch = reader_position
-        # State from before this batch: the training loop holds a prefetched batch, so resuming here re-yields it
-        state_dict = {"pq_idx": pq_idx, "rg_idx": rg_idx, "doc_offset": doc_offset, "epoch": epoch, "doc_buffer": list(doc_buffer)}
+        # State from before this batch: the training loop holds a prefetched batch, so resuming here re-yields it.
+        # doc_buffer can hold up to buffer_size (default 1000) tokenised documents.  Cap the serialised
+        # snapshot to _DOC_BUFFER_CHECKPOINT_CAP entries so meta_*.json stays small (< a few KB).
+        _DOC_BUFFER_CHECKPOINT_CAP = 20
+        state_dict = {"pq_idx": pq_idx, "rg_idx": rg_idx, "doc_offset": doc_offset, "epoch": epoch,
+                      "doc_buffer": list(doc_buffer)[:_DOC_BUFFER_CHECKPOINT_CAP]}
         for row_idx in range(B):
             pos = 0
             while pos < row_capacity:

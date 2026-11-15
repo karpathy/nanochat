@@ -15,7 +15,7 @@ class SftLoaderState:
     consumed: int
     epoch: int
     it: int
-    conv_buffer: list  # list of [token_ids, loss_mask] pairs (JSON-serialisable)
+    conv_buffer: list[list[list[int]]]  # list of [token_ids, loss_mask] pairs (JSON-serialisable)
 
     def to_dict(self):
         return {
