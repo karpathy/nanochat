@@ -12,6 +12,8 @@ import sys
 import pytest
 
 from nanochat.checkpoint_manager import (
+    BASE_TRAIN_RESUME_KEYS,
+    SFT_RESUME_KEYS,
     assert_resume_config_matches,
     apply_sft_resume_state,
     should_save_checkpoint,
@@ -557,13 +559,13 @@ class TestApplySftResumeState:
 # § base_train resume config guard
 # ---------------------------------------------------------------------------
 
-_BASE_TRAIN_GUARD_KEYS = ["device_batch_size", "max_seq_len", "total_batch_size", "num_iterations", "world_size"]
+# FIX 3c: key list is now owned by checkpoint_manager; test imports the constant.
 _BASE_TRAIN_SAVED = {
     "device_batch_size": 8,
     "max_seq_len": 512,
-    "total_batch_size": 524288,
+    "total_batch_size": 524288,  # FIX 3a: saved value is the RESOLVED batch size, not -1
     "num_iterations": -1,
-    "world_size": 1,
+    "world_size": 1,             # FIX 3b: world_size is now saved in user_config
 }
 
 
@@ -594,7 +596,7 @@ class TestBaseTrainResumeGuard:
             assert_resume_config_matches(
                 saved_meta.get("user_config", saved_meta),
                 current,
-                _BASE_TRAIN_GUARD_KEYS,
+                BASE_TRAIN_RESUME_KEYS,
                 stage="base_train",
                 hint="use FORCE_STAGES=base_train to restart from scratch",
             )
@@ -613,7 +615,7 @@ class TestBaseTrainResumeGuard:
         assert_resume_config_matches(
             saved_meta.get("user_config", saved_meta),
             dict(_BASE_TRAIN_SAVED),
-            _BASE_TRAIN_GUARD_KEYS,
+            BASE_TRAIN_RESUME_KEYS,
         )
 
     def test_key_absent_from_old_checkpoint_is_skipped(self) -> None:
@@ -628,4 +630,61 @@ class TestBaseTrainResumeGuard:
         saved = {k: v for k, v in _BASE_TRAIN_SAVED.items() if k != "world_size"}
         current = {**_BASE_TRAIN_SAVED, "world_size": 2}
         ### When / Then
-        assert_resume_config_matches(saved, current, _BASE_TRAIN_GUARD_KEYS)
+        assert_resume_config_matches(saved, current, BASE_TRAIN_RESUME_KEYS)
+
+    def test_auto_batch_resume_does_not_refuse(self) -> None:
+        """
+        Scenario: FIX 3a — auto-batch run saves the RESOLVED batch size in user_config.
+                  Resuming with the same resolved value must NOT be refused.
+        Slice: assert_resume_config_matches auto-batch guard path
+        ### Given: checkpoint user_config has total_batch_size=524288 (resolved from -1)
+        ### When: current config also computes total_batch_size=524288
+        ### Then: no exception — resolved values match
+        """
+        ### Given: checkpoint saved the RESOLVED value (not -1)
+        saved_meta = {"user_config": {**_BASE_TRAIN_SAVED, "total_batch_size": 524288}}
+        current = {**_BASE_TRAIN_SAVED, "total_batch_size": 524288}
+        ### When / Then
+        assert_resume_config_matches(
+            saved_meta.get("user_config", saved_meta),
+            current,
+            BASE_TRAIN_RESUME_KEYS,
+        )
+
+    def test_changed_world_size_refuses(self) -> None:
+        """
+        Scenario: FIX 3b — world_size is now saved in user_config; changing it must refuse.
+        Slice: assert_resume_config_matches world_size guard path
+        ### Given: checkpoint saved world_size=1
+        ### When: current run uses world_size=2
+        ### Then: ValueError names world_size
+        """
+        ### Given
+        saved_meta = {"user_config": {**_BASE_TRAIN_SAVED, "world_size": 1}}
+        current = {**_BASE_TRAIN_SAVED, "world_size": 2}
+        ### When / Then
+        with pytest.raises(ValueError, match="world_size"):
+            assert_resume_config_matches(
+                saved_meta.get("user_config", saved_meta),
+                current,
+                BASE_TRAIN_RESUME_KEYS,
+            )
+
+    def test_changed_max_seq_len_refuses(self) -> None:
+        """
+        Scenario: Changing max_seq_len is always a resume blocker.
+        Slice: assert_resume_config_matches max_seq_len guard path
+        ### Given: checkpoint saved max_seq_len=512
+        ### When: current run uses max_seq_len=1024
+        ### Then: ValueError names max_seq_len
+        """
+        ### Given
+        saved_meta = {"user_config": dict(_BASE_TRAIN_SAVED)}
+        current = {**_BASE_TRAIN_SAVED, "max_seq_len": 1024}
+        ### When / Then
+        with pytest.raises(ValueError, match="max_seq_len"):
+            assert_resume_config_matches(
+                saved_meta.get("user_config", saved_meta),
+                current,
+                BASE_TRAIN_RESUME_KEYS,
+            )

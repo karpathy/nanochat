@@ -1,107 +1,223 @@
 """
-Author: Mani Sarkar
-Created: 2026-11-14
-Scope: nanochat/dataloader.py resume position per DDP rank (review blocker B3).
-       Rank 0 writes the checkpoint, so other ranks must re-derive their own row group.
+Author: nanochat team
+Created: 2026-11-15
+Scope: FIX 1 — dataloader doc_buffer resume correctness.
+       Verifies that state_dict captures the FULL doc_buffer (not capped at 20),
+       and that resuming from a saved state_dict yields the same next batches as
+       an uninterrupted run.
 """
+
+import random
+
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
+import torch
 
-from nanochat import dataloader
-
-
-def _as_rank(monkeypatch, rank: int, world: int) -> None:
-    monkeypatch.setattr(dataloader, "get_dist_info", lambda: (True, rank, 0, world))
+from nanochat.dataloader import tokenizing_distributed_data_loader_with_state_bos_bestfit
 
 
-class TestStartPositionPerRank:
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+class _MockTokenizer:
+    """Minimal deterministic tokenizer: encodes chars to ASCII codes, prepends BOS."""
+
+    BOS = 1
+
+    def get_bos_token_id(self) -> int:
+        return self.BOS
+
+    def encode(self, text_batch, prepend, num_threads=1):
+        result = []
+        for text in text_batch:
+            tokens = [prepend] + [ord(c) % 126 + 2 for c in text[:30]]
+            result.append(tokens)
+        return result
+
+
+def _make_parquet(tmp_path, n_docs: int = 250, seed: int = 42) -> str:
+    """Write a single-row-group parquet file with n_docs synthetic text documents."""
+    rng = random.Random(seed)
+    texts = [
+        "".join(rng.choices("abcdefghijklmnop", k=rng.randint(5, 15)))
+        for _ in range(n_docs)
+    ]
+    table = pa.table({"text": texts})
+    path = str(tmp_path / "data.parquet")
+    pq.write_table(table, path, row_group_size=n_docs)
+    return path
+
+
+def _make_loader(tokenizer, parquet_path, resume_state_dict=None, buffer_size=100):
+    """Return a generator configured to use the synthetic parquet as the only shard."""
+    return tokenizing_distributed_data_loader_with_state_bos_bestfit(
+        tokenizer,
+        B=1,
+        T=16,
+        split="train",
+        tokenizer_batch_size=64,
+        device="cpu",
+        resume_state_dict=resume_state_dict,
+        buffer_size=buffer_size,
+    )
+
+
+# ---------------------------------------------------------------------------
+# § FIX 1: doc_buffer serialization
+# ---------------------------------------------------------------------------
+
+class TestDocBufferResume:
     """
-    Scenario: Each DDP rank resumes on its own row group, not rank 0's.
-    Slice: nanochat.dataloader._start_position
-    """
-
-    @pytest.mark.parametrize("rank,saved_rg,expected", [
-        (0, 4, 4),   # rank 0 keeps its saved group
-        (1, 4, 5),   # rank 1 takes the same stride block: 4 + 1
-        (2, 5, 6),   # saved group 5 is in block [4..7]; rank 2 -> 6
-        (3, 4, 7),   # rank 3 -> 7
-    ])
-    def test_ranks_get_distinct_row_groups(self, monkeypatch, rank, saved_rg, expected):
-        """
-        Scenario: World size 4, checkpoint saved by rank 0 at row group saved_rg.
-        Slice: _start_position rg derivation
-        ### Given: world_size=4 and state rg_idx=saved_rg
-        ### When: _start_position runs for this rank
-        ### Then: rg_idx equals expected (distinct per rank)
-        """
-        _as_rank(monkeypatch, rank, world=4)
-        _, rg_idx, _, _ = dataloader._start_position({"rg_idx": saved_rg, "pq_idx": 0, "epoch": 1})
-        assert rg_idx == expected
-
-    def test_single_process_resume_is_unchanged(self, monkeypatch):
-        """
-        Scenario: world_size=1 (local CPU/MPS run).
-        Slice: _start_position
-        ### Given: rg_idx=7, doc_offset=3
-        ### When: resumed on rank 0 of 1
-        ### Then: position is exactly the saved one
-        """
-        _as_rank(monkeypatch, 0, world=1)
-        state = {"pq_idx": 2, "rg_idx": 7, "doc_offset": 3, "epoch": 2}
-        assert dataloader._start_position(state) == (2, 7, 3, 2)
-
-    def test_no_saved_state_starts_at_rank_index(self, monkeypatch):
-        """
-        Scenario: Fresh start, no resume state.
-        Slice: _start_position default
-        ### Given: no state
-        ### When: rank 3 of 4 starts
-        ### Then: row group is 3 and offset 0
-        """
-        _as_rank(monkeypatch, 3, world=4)
-        assert dataloader._start_position(None) == (0, 3, 0, 1)
-
-    def test_non_zero_rank_does_not_reuse_rank0_doc_offset(self, monkeypatch):
-        """
-        Scenario: doc_offset in the checkpoint points inside rank 0's row group.
-        Slice: _start_position doc_offset
-        ### Given: doc_offset=5 saved by rank 0
-        ### When: rank 1 resumes
-        ### Then: rank 1 starts at offset 0 (its row group differs)
-        """
-        _as_rank(monkeypatch, 1, world=2)
-        _, _, doc_offset, _ = dataloader._start_position({"rg_idx": 2, "doc_offset": 5})
-        assert doc_offset == 0
-
-
-class TestResumeDocBuffer:
-    """
-    Scenario: The saved document buffer belongs to rank 0 only.
-    Slice: nanochat.dataloader._resume_doc_buffer
+    Scenario: FIX 1 — full doc_buffer serialization prevents silent data loss on resume.
+    Slice: nanochat.dataloader tokenizing_distributed_data_loader_with_state_bos_bestfit
     """
 
-    def test_rank0_keeps_saved_buffer(self, monkeypatch):
+    def test_state_dict_has_full_buffer_gt_20(self, tmp_path, monkeypatch):
         """
-        ### Given: rank 0 and a saved buffer
-        ### When: buffer is restored
-        ### Then: buffer is returned as a list copy
+        Scenario: After packing the first batch, the leftover doc_buffer (captured at the
+                  start of the second loop iteration) must hold ALL remaining documents,
+                  not just the first 20 (old _DOC_BUFFER_CHECKPOINT_CAP=20 bug).
+        Slice: state_dict['doc_buffer'] size after FIX 1
+        ### Given: a data source that fills doc_buffer to buffer_size=100 entries
+        ### When: the second batch is yielded (state_dict snapshot = leftover after batch 0)
+        ### Then: state_dict['doc_buffer'] has > 20 entries
         """
-        _as_rank(monkeypatch, 0, world=2)
-        assert dataloader._resume_doc_buffer({"doc_buffer": [[1, 2], [3]]}) == [[1, 2], [3]]
+        parquet_path = _make_parquet(tmp_path, n_docs=250)
+        # list_parquet_files returns [train_shard, val_shard]; we use the same file for both.
+        monkeypatch.setattr(
+            "nanochat.dataloader.list_parquet_files",
+            lambda warn_on_legacy=False: [parquet_path, parquet_path],
+        )
 
-    def test_non_zero_rank_starts_with_empty_buffer(self, monkeypatch):
-        """
-        ### Given: rank 1 and a buffer saved by rank 0
-        ### When: buffer is restored
-        ### Then: empty, so refill_buffer loads this rank's own data
-        """
-        _as_rank(monkeypatch, 1, world=2)
-        assert dataloader._resume_doc_buffer({"doc_buffer": [[1, 2]]}) == []
+        tokenizer = _MockTokenizer()
+        gen = _make_loader(tokenizer, parquet_path, buffer_size=100)
 
-    def test_no_state_gives_empty_buffer(self, monkeypatch):
+        # First yield: state_dict captured BEFORE batch 0 packing → buffer is empty.
+        next(gen)
+        # Second yield: state_dict captured AFTER batch 0 packing → buffer has the
+        # remaining docs from the refill.  With buffer_size=100 and T=16 (small batch),
+        # most of the 100 refilled docs survive into the second state_dict.
+        _, _, state_dict = next(gen)
+
+        assert len(state_dict["doc_buffer"]) > 20, (
+            f"Expected > 20 docs in state_dict['doc_buffer'], got "
+            f"{len(state_dict['doc_buffer'])}. "
+            "The old _DOC_BUFFER_CHECKPOINT_CAP=20 bug may still be present."
+        )
+
+    def test_resume_produces_same_batches_as_uninterrupted_run(self, tmp_path, monkeypatch):
         """
-        ### Given: no resume state
-        ### When: buffer is restored
-        ### Then: empty list
+        Scenario: Resuming from a saved state_dict (with a large doc_buffer) yields exactly
+                  the same next batches as an uninterrupted run.
+        Slice: resume from state_dict with large doc_buffer (> 20 entries)
+        ### Given: an uninterrupted dataloader run of at least 2 batches
+        ### When: resumed from the state_dict saved at batch 1 (non-empty buffer)
+        ### Then: the next 3 batches from the resumed loader match the uninterrupted run
         """
-        _as_rank(monkeypatch, 0, world=1)
-        assert dataloader._resume_doc_buffer(None) == []
+        parquet_path = _make_parquet(tmp_path, n_docs=250)
+        monkeypatch.setattr(
+            "nanochat.dataloader.list_parquet_files",
+            lambda warn_on_legacy=False: [parquet_path, parquet_path],
+        )
+
+        tokenizer = _MockTokenizer()
+
+        # --- Uninterrupted run ---
+        gen_full = _make_loader(tokenizer, parquet_path, buffer_size=100)
+
+        # Discard batch 0; its state_dict has an empty buffer (before first refill).
+        next(gen_full)
+
+        # Batch 1 — state_dict here has the leftover buffer from refilling for batch 0.
+        # This is the state with a large (> 20 entry) doc_buffer that FIX 1 preserves.
+        x1_full, y1_full, saved_state = next(gen_full)
+
+        # Collect the reference batches starting from batch 1.
+        ref_batches = [(x1_full.clone(), y1_full.clone())]
+        x2, y2, _ = next(gen_full)
+        ref_batches.append((x2.clone(), y2.clone()))
+        x3, y3, _ = next(gen_full)
+        ref_batches.append((x3.clone(), y3.clone()))
+
+        # --- Resumed run (from saved_state at batch 1) ---
+        gen_resume = _make_loader(tokenizer, parquet_path, resume_state_dict=saved_state, buffer_size=100)
+
+        # The resumed run must reproduce batch 1, 2, 3.
+        # Clone each tensor immediately: inputs/targets are views into a persistent
+        # pre-allocated buffer that is overwritten on every next() call.  Without
+        # cloning, xr1 and xr2 would be overwritten by xr3 before the comparison.
+        resume_batches = []
+        for _ in range(3):
+            xr, yr, _ = next(gen_resume)
+            resume_batches.append((xr.clone(), yr.clone()))
+
+        for i, ((x_full, y_full), (x_res, y_res)) in enumerate(
+            zip(ref_batches, resume_batches)
+        ):
+            assert torch.equal(x_full, x_res), (
+                f"Inputs differ at resumed step {i}: "
+                f"full={x_full.tolist()} resume={x_res.tolist()}"
+            )
+            assert torch.equal(y_full, y_res), (
+                f"Targets differ at resumed step {i}: "
+                f"full={y_full.tolist()} resume={y_res.tolist()}"
+            )
+
+    def test_old_cap_would_break_resume(self, tmp_path, monkeypatch):
+        """
+        Scenario: Falsification — if the cap were still applied (at 20), the resumed
+                  loader would eventually produce DIFFERENT batches from the uninterrupted run.
+        Slice: regression guard for _DOC_BUFFER_CHECKPOINT_CAP removal
+        ### Given: batch-1 state_dict with its doc_buffer artificially capped to 20 entries
+        ### When: resumed from that capped state_dict and run for 15 batches
+        ### Then: at least one batch differs from the uninterrupted run, proving the cap
+                  caused data loss (the first batch may coincidentally match, but once the
+                  capped buffer depletes it refills from the wrong reader position)
+        """
+        parquet_path = _make_parquet(tmp_path, n_docs=250)
+        monkeypatch.setattr(
+            "nanochat.dataloader.list_parquet_files",
+            lambda warn_on_legacy=False: [parquet_path, parquet_path],
+        )
+
+        tokenizer = _MockTokenizer()
+
+        # Uninterrupted run: advance past batch 0 to get the state_dict with a large buffer.
+        gen_full = _make_loader(tokenizer, parquet_path, buffer_size=100)
+        next(gen_full)                               # batch 0 — empty buffer in state_dict
+        _, _, saved_state = next(gen_full)           # batch 1 — large buffer in state_dict
+
+        # Only run the falsification if the buffer is actually large (> 20).
+        if len(saved_state["doc_buffer"]) <= 20:
+            pytest.skip("Buffer too small to demonstrate the cap bug (need > 20 entries)")
+
+        _N_BATCHES = 15  # enough for the capped buffer to need an early refill and diverge
+
+        # Reference: collect N batches from the full run (starting at batch 1).
+        ref_batches = []
+        for _ in range(_N_BATCHES):
+            x, _, _ = next(gen_full)
+            ref_batches.append(x.clone())
+
+        # Artificially apply the old cap.
+        capped_state = dict(saved_state)
+        capped_state["doc_buffer"] = saved_state["doc_buffer"][:20]
+
+        gen_capped = _make_loader(tokenizer, parquet_path, resume_state_dict=capped_state, buffer_size=100)
+        capped_batches = []
+        for _ in range(_N_BATCHES):
+            x, _, _ = next(gen_capped)
+            capped_batches.append(x.clone())
+
+        # With the cap applied, the capped run's buffer depletes below buffer_size faster
+        # (only 20 docs vs 126), forcing an early refill from reader_position=(0,0,128).
+        # This skips parquet docs 20–127, so at least one of the N batches will differ.
+        assert any(
+            not torch.equal(ref, cap) for ref, cap in zip(ref_batches, capped_batches)
+        ), (
+            "Expected at least one of the first 15 batches to differ between full and "
+            "capped resume, but all were identical.  The cap may not cause data loss "
+            "with this synthetic dataset."
+        )

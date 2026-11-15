@@ -1,15 +1,16 @@
 """
 Author: nanochat team
 Created: 2026-11-15
-Scope: NaN-guard for SFT training — safe loss on all-masked batches and
-       fail-fast check_finite_loss helper.
+Scope: NaN-guard for SFT training — safe loss on all-masked batches,
+       fail-fast check_finite_loss helper, and collective_check_finite_loss
+       (FIX 2: single-process path; collective path tested via mock dist).
 """
 
 import pytest
 import torch
 import torch.nn.functional as F
 
-from nanochat.common import check_finite_loss
+from nanochat.common import check_finite_loss, collective_check_finite_loss
 
 
 # ---------------------------------------------------------------------------
@@ -249,3 +250,126 @@ class TestCheckFiniteLoss:
         ### When
         with pytest.raises(RuntimeError, match="3"):
             check_finite_loss(loss, step=1, targets=targets)
+
+
+# ---------------------------------------------------------------------------
+# FIX 2: collective_check_finite_loss — single-process path (no dist)
+# ---------------------------------------------------------------------------
+
+class TestCollectiveCheckFiniteLoss:
+    """
+    Scenario: FIX 2 — collective NaN guard delegates to check_finite_loss on
+              a single process and raises on all ranks when dist is active.
+    Slice: nanochat.common.collective_check_finite_loss
+
+    The collective (multi-rank) path is not exercised here because tests run
+    single-process.  It is covered by the mock-dist tests below.
+    """
+
+    def _targets(self, n: int = 4, n_unmasked: int = 2) -> torch.Tensor:
+        t = torch.full((1, n), -1, dtype=torch.long)
+        for i in range(n_unmasked):
+            t[0, i] = i + 1
+        return t
+
+    def test_finite_loss_does_not_raise_single_process(self):
+        """
+        Scenario: single-process run with a finite loss — no exception.
+        Slice: collective_check_finite_loss single-process happy path.
+
+        Given a finite loss and not-distributed,
+        When collective_check_finite_loss is called,
+        Then no exception is raised.
+        """
+        ### Given
+        loss = torch.tensor(1.0)
+        targets = self._targets()
+        ### When / Then
+        collective_check_finite_loss(loss, step=0, targets=targets)
+
+    def test_nan_loss_raises_single_process(self):
+        """
+        Scenario: single-process run with NaN loss — raises RuntimeError.
+        Slice: collective_check_finite_loss single-process NaN path.
+
+        Given a NaN loss and not-distributed,
+        When collective_check_finite_loss is called,
+        Then RuntimeError is raised (delegates to check_finite_loss).
+        """
+        ### Given
+        loss = torch.tensor(float('nan'))
+        targets = self._targets()
+        ### When / Then
+        with pytest.raises(RuntimeError):
+            collective_check_finite_loss(loss, step=5, targets=targets)
+
+    def test_inf_loss_raises_single_process(self):
+        """
+        Scenario: single-process run with infinite loss — raises RuntimeError.
+        Slice: collective_check_finite_loss single-process inf path.
+
+        Given an infinite loss,
+        When collective_check_finite_loss is called,
+        Then RuntimeError is raised.
+        """
+        ### Given
+        loss = torch.tensor(float('inf'))
+        targets = self._targets()
+        ### When / Then
+        with pytest.raises(RuntimeError):
+            collective_check_finite_loss(loss, step=3, targets=targets)
+
+    def test_collective_raises_on_all_ranks_when_flag_set(self, monkeypatch):
+        """
+        Scenario: FIX 2 collective path — when the all-reduced flag is 1, every rank raises.
+        Slice: collective_check_finite_loss mock-dist path.
+
+        Given a mocked is_ddp_initialized() returning True and a mocked dist.all_reduce
+              that always sets the flag to 1 (simulating a peer rank that saw NaN),
+        When collective_check_finite_loss is called with a FINITE local loss,
+        Then RuntimeError is raised on this rank too (collective decision).
+        """
+        import torch.distributed as dist
+        from nanochat import common as common_mod
+
+        ### Given: fake dist is "initialized"
+        monkeypatch.setattr(common_mod, "is_ddp_initialized", lambda: True)
+
+        # Simulate an all_reduce that always sets flag to 1 (some rank saw NaN).
+        def _fake_all_reduce(tensor, op):
+            tensor.fill_(1.0)
+
+        monkeypatch.setattr(dist, "all_reduce", _fake_all_reduce)
+
+        loss = torch.tensor(0.5)   # locally finite
+        targets = self._targets(n_unmasked=2)
+
+        ### When / Then
+        with pytest.raises(RuntimeError):
+            collective_check_finite_loss(loss, step=10, targets=targets)
+
+    def test_collective_does_not_raise_when_flag_zero(self, monkeypatch):
+        """
+        Scenario: all-reduced flag is 0 — no rank saw NaN; must not raise.
+        Slice: collective_check_finite_loss mock-dist no-raise path.
+
+        Given a mocked dist that keeps the flag at 0 (all ranks finite),
+        When collective_check_finite_loss is called with a finite loss,
+        Then no exception is raised.
+        """
+        import torch.distributed as dist
+        from nanochat import common as common_mod
+
+        ### Given
+        monkeypatch.setattr(common_mod, "is_ddp_initialized", lambda: True)
+
+        def _fake_all_reduce(tensor, op):
+            pass  # leave flag at 0
+
+        monkeypatch.setattr(dist, "all_reduce", _fake_all_reduce)
+
+        loss = torch.tensor(1.5)
+        targets = self._targets(n_unmasked=2)
+
+        ### When / Then (no exception)
+        collective_check_finite_loss(loss, step=7, targets=targets)
