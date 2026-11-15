@@ -243,6 +243,26 @@ class TestSftLoaderStateRoundTrip:
         assert s.cursor == 1
         assert s.consumed == 1
 
+    def test_snapshot_replay_round_trip(self):
+        """
+        Scenario: Serialize and deserialize SftLoaderState; confirm lossless round-trip.
+        Slice: nanochat.sft_loader.SftLoaderState snapshot-replay
+        ### Given: a SftLoaderState with known values (cursor=5, consumed=3, epoch=2, it=10)
+        ### When: serialized via to_dict() and deserialized via from_dict(d, ddp_rank=0)
+        ### Then: all scalar fields match exactly
+        """
+        # Given
+        original = SftLoaderState(cursor=5, consumed=3, epoch=2, it=10, conv_buffer=[])
+        # When
+        d = original.to_dict()
+        restored = SftLoaderState.from_dict(d, ddp_rank=0, ddp_world_size=1)
+        # Then
+        assert restored.cursor == 5
+        assert restored.consumed == 3
+        assert restored.epoch == 2
+        assert restored.it == 10
+        assert restored.conv_buffer == []
+
 
 # § Config-mismatch guard
 # ---------------------------------------------------------------------------
