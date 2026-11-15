@@ -29,6 +29,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/profiles.sh"
 RUNCPU_DEVICE_BATCH_SIZE="${NANOCHAT_RUNCPU_DEVICE_BATCH_SIZE:-$RUNCPU_DEVICE_BATCH_SIZE}"
 RUNCPU_NUM_ITERATIONS="${NANOCHAT_RUNCPU_NUM_ITERATIONS:-$RUNCPU_NUM_ITERATIONS}"
 RUNCPU_EVAL_DEVICE_BATCH_SIZE="${NANOCHAT_RUNCPU_EVAL_DEVICE_BATCH_SIZE:-$RUNCPU_EVAL_DEVICE_BATCH_SIZE}"
+# B2 fix: export DEPTH so _stage_lib.sh can embed it in stage markers (profile+depth scoping).
+# Value comes from nanochat/defaults.py → profiles.sh (SSOT: RUNCPU_DEPTH).
+DEPTH="$RUNCPU_DEPTH"
 
 # Python venv setup: if SKIP_SETUP is set, skip uv/venv/sync (expect .venv to exist, e.g. the Modal image)
 if [ -z "${SKIP_SETUP:-}" ]; then

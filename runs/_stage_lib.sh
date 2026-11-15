@@ -3,7 +3,8 @@
 # Provides: log, fmt_dur, stage_done, pipeline_map, run_stage, FORCE_STAGES parsing,
 #           health_strip, print_knob_diff, write_last_run_json, print_run_tip.
 # Echo contract: docs/plan/2026-11-13-fix-forward-mac.md ("Echo contract"); legend: docs/RUNNING.md.
-# Requires the caller to have set NANOCHAT_BASE_DIR and PROFILE, and `set -euo pipefail`.
+# Requires the caller to have set NANOCHAT_BASE_DIR, PROFILE, and DEPTH (profile depth, e.g.
+# DEPTH=$RUNCPU_DEPTH from profiles.sh), and `set -euo pipefail`.
 # Color and plaque helpers (gated on TTY and NO_COLOR).
 
 # True if color should be applied (stdout is TTY and NO_COLOR unset). NANOCHAT_PLAIN is art-only.
@@ -114,9 +115,32 @@ stage_path() {
 }
 
 stage_done() {
-    local p
-    p="$(stage_path "$1")"
-    [ -f "$p" ]
+    local stage="$1" marker_path
+    marker_path="$(_stage_marker_path "$stage")"
+    if [ -n "$marker_path" ]; then
+        # Depth-sensitive stage: require exact profile+depth marker.
+        # An old generic marker (.train_ok/.eval_ok) or one for a different profile/depth
+        # is treated as a mismatch → returns false → stage reruns.
+        [ -f "$marker_path" ]
+    else
+        # Depth-independent stage (tok_train, tok_eval): use legacy artifact path.
+        local p
+        p="$(stage_path "$stage")"
+        [ -f "$p" ]
+    fi
+}
+
+# Profile+depth-qualified marker path for depth-sensitive stages (empty for tok_train/tok_eval).
+# Callers set DEPTH from their profile knob (e.g. DEPTH=$RUNCPU_DEPTH in runcpu.sh).
+# Canonical SSOT for the depth value: nanochat/defaults.py → runs/profiles.sh → $DEPTH.
+_stage_marker_path() {
+    local stage="$1" dir
+    case "$stage" in
+        base_train|base_eval) dir="$NANOCHAT_BASE_DIR/base_checkpoints" ;;
+        chat_sft|chat_eval)   dir="$NANOCHAT_BASE_DIR/chatsft_checkpoints" ;;
+        *) echo ""; return 0 ;;
+    esac
+    echo "$dir/.stage_${stage}_${PROFILE}_d${DEPTH:-}"
 }
 
 stage_purpose() {
@@ -265,16 +289,34 @@ run_stage() {
         if stage_forced "$stage"; then
             log "FORCE stage=$stage reason=FORCE_STAGES=$FORCE_STAGES"
         else
-            local saved_note="skip-saved: unknown (no prior timing)" prev
+            local saved_note="skip-saved: unknown (no prior timing)" prev _skip_path
             if [ -f "$STAGE_ELAPSED_DIR/$stage" ]; then
                 prev="$(cat "$STAGE_ELAPSED_DIR/$stage")"
                 SAVED_TOTAL=$((SAVED_TOTAL + prev))
                 saved_note="skip-saved: ~$(fmt_dur "$prev") (last run) · cumulative_saved=~$(fmt_dur "$SAVED_TOTAL")"
             fi
-            log "SKIP stage=$stage reason=artifact exists path=$(stage_path "$stage") (FORCE_STAGES=$stage to redo)"
+            _skip_path="$(_stage_marker_path "$stage")"
+            [ -z "$_skip_path" ] && _skip_path="$(stage_path "$stage")"
+            log "SKIP stage=$stage reason=marker exists profile=$PROFILE depth=${DEPTH:-?} path=$_skip_path (FORCE_STAGES=$stage to redo)"
             local skip_line="  $saved_note · ETA: n/a (skipped)"
             _paint "SKIP" "$skip_line"
             return 0
+        fi
+    else
+        # Depth-sensitive stage not done: explain if a stale or wrong-profile marker exists.
+        local _mm_path _mm_dir _any_mm
+        _mm_path="$(_stage_marker_path "$stage")"
+        if [ -n "$_mm_path" ]; then
+            _mm_dir="$(dirname "$_mm_path")"
+            _any_mm=""
+            if [ -f "$(stage_path "$stage")" ]; then
+                _any_mm="old-generic-marker"
+            elif [ -n "$(find "$_mm_dir" -maxdepth 1 -name ".stage_${stage}_*" 2>/dev/null | head -n 1)" ]; then
+                _any_mm="wrong-profile-or-depth"
+            fi
+            if [ -n "$_any_mm" ]; then
+                log "RUN stage=$stage reason=profile/depth mismatch (no marker for profile=$PROFILE depth=${DEPTH:-?} existing=$_any_mm)"
+            fi
         fi
     fi
 
@@ -297,6 +339,9 @@ run_stage() {
     case "$stage" in
         tok_eval|base_train|base_eval|chat_sft|chat_eval)
             rm -f "$(stage_path "$stage")"
+            local _pre_marker
+            _pre_marker="$(_stage_marker_path "$stage")"
+            [ -n "$_pre_marker" ] && rm -f "$_pre_marker"
             ;;
     esac
 
@@ -340,6 +385,9 @@ run_stage() {
             case "$stage" in
                 tok_eval|base_train|base_eval|chat_sft|chat_eval)
                     rm -f "$(stage_path "$stage")"
+                    local _hf_marker
+                    _hf_marker="$(_stage_marker_path "$stage")"
+                    [ -n "$_hf_marker" ] && rm -f "$_hf_marker"
                     echo "  Deleted marker $(stage_path "$stage") due to hook failure" >&2
                     exit 1
                     ;;
@@ -352,6 +400,15 @@ run_stage() {
                     ;;
             esac
         fi
+    fi
+
+    # Write profile+depth marker after the stage and its hook both succeed.
+    # This is the artifact that stage_done() checks on subsequent runs.
+    local _new_marker
+    _new_marker="$(_stage_marker_path "$stage")"
+    if [ -n "$_new_marker" ]; then
+        mkdir -p "$(dirname "$_new_marker")"
+        touch "$_new_marker"
     fi
 
     record_span "$stage" ok "$elapsed" "$hook_s" "$t0_epoch"
