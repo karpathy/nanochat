@@ -140,7 +140,8 @@ _stage_marker_path() {
         chat_sft|chat_eval)   dir="$NANOCHAT_BASE_DIR/chatsft_checkpoints" ;;
         *) echo ""; return 0 ;;
     esac
-    echo "$dir/.stage_${stage}_${PROFILE}_d${DEPTH:-}"
+    : "${DEPTH:?_stage_lib.sh requires DEPTH to be set for depth-sensitive stages (base_train/base_eval/chat_sft/chat_eval)}"
+    echo "$dir/.stage_${stage}_${PROFILE}_d${DEPTH}"
 }
 
 stage_purpose() {

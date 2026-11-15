@@ -167,3 +167,57 @@ stage_done tok_train && echo "TOK_DONE" || echo "TOK_NOT_DONE"
         assert "TOK_DONE" in r.stdout, (
             "tok_train should still use legacy artifact path (tokenizer is depth-independent)"
         )
+
+
+class TestStageLibDepthGuard:
+    """
+    Scenario: _stage_lib.sh must fail loudly when DEPTH is unset for depth-sensitive stages.
+    Slice: runs/_stage_lib.sh FIX 2 — DEPTH:? guard in _stage_marker_path
+    """
+
+    def test_depth_unset_fails_for_depth_sensitive_stage(self, tmp_path):
+        """
+        Scenario: Caller forgot to set DEPTH; calling _stage_marker_path on base_train must fail.
+        Slice: FIX 2 — ${DEPTH:?} guard in _stage_marker_path depth branch
+        ### Given: _stage_lib.sh sourced without DEPTH set
+        ### When: _stage_marker_path is called for base_train
+        ### Then: exits non-zero with a message containing "DEPTH"
+        """
+        script = f"""
+set -euo pipefail
+export NANOCHAT_BASE_DIR="{tmp_path}"
+PROFILE=runcpu
+# Deliberately do NOT set DEPTH
+source "{STAGE_LIB}"
+mkdir -p "{tmp_path}/base_checkpoints"
+_stage_marker_path base_train
+"""
+        r = _run_bash(script)
+        assert r.returncode != 0, "Expected failure when DEPTH is unset for a depth-sensitive stage"
+        assert "DEPTH" in r.stderr, (
+            f"Expected 'DEPTH' in error output; got:\n{r.stderr}"
+        )
+
+    def test_depth_unset_does_not_fail_for_tok_train(self, tmp_path):
+        """
+        Scenario: tok_train is depth-independent; calling _stage_marker_path must succeed even
+                  when DEPTH is unset.
+        Slice: FIX 2 — depth-free stages return empty string without touching DEPTH
+        ### Given: _stage_lib.sh sourced without DEPTH set
+        ### When: _stage_marker_path is called for tok_train
+        ### Then: exits 0 and outputs an empty string (no marker path for depth-free stages)
+        """
+        script = f"""
+set -euo pipefail
+export NANOCHAT_BASE_DIR="{tmp_path}"
+PROFILE=runcpu
+# Deliberately do NOT set DEPTH
+source "{STAGE_LIB}"
+result="$(_stage_marker_path tok_train)"
+[ -z "$result" ] && echo "EMPTY_OK" || echo "NOT_EMPTY:$result"
+"""
+        r = _run_bash(script)
+        assert r.returncode == 0, r.stderr
+        assert "EMPTY_OK" in r.stdout, (
+            "tok_train _stage_marker_path should return empty string without needing DEPTH"
+        )
