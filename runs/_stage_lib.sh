@@ -133,7 +133,7 @@ stage_purpose() {
 # Human-readable disk size for a file or directory (best-effort; never fails the run).
 fmt_bytes() {
     local path="$1" bytes
-    bytes="$(du -sk "$path" 2>/dev/null | awk '{print $1 * 1024}')" || bytes=""
+    bytes="$(du -sk "$path" 2>/dev/null | awk '{printf "%d\n", $1 * 1024}')" || bytes=""
     if [ -z "$bytes" ] || [ "$bytes" -eq 0 ]; then
         echo "unknown"
         return
