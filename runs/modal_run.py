@@ -485,7 +485,10 @@ if MODAL_MODE == "gpu":
     )
     def train(run_id: str, code_rev: str) -> None:
         """GPU train: speedrun.sh with SKIP_SETUP=1 and wait-for-ack hooks."""
-        _run_training("runs/speedrun.sh", _run_record_env(run_id, "modal-gpu", code_rev))
+        try:
+            _run_training("runs/speedrun.sh", _run_record_env(run_id, "modal-gpu", code_rev))
+        finally:
+            _archive_artifacts(run_id, "gpu")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

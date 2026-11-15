@@ -161,5 +161,18 @@ if [ -n "$DETACH_FLAG" ]; then
     touch "$ARCHIVE_DIR/PENDING_DOWNLOAD"
     echo "To download artifacts: bash runs/runmodal.sh finish $RUN_ID" >&2
 else
-    bash "$SCRIPTDIR/modal_peek.sh" finish-download "$RUN_ID"
+    # Modal app state may lag a few seconds after the local process exits.
+    # Retry finish-download up to 30 s before giving up.
+    _downloaded=0
+    for _i in 1 2 3 4 5 6; do
+        if bash "$SCRIPTDIR/modal_peek.sh" finish-download "$RUN_ID"; then
+            _downloaded=1
+            break
+        fi
+        echo "App not yet stopped; retrying in 5s... ($_i/6)" >&2
+        sleep 5
+    done
+    if [ "$_downloaded" -eq 0 ]; then
+        echo "Download deferred. Run when ready: bash runs/runmodal.sh finish $RUN_ID" >&2
+    fi
 fi
