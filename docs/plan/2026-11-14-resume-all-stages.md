@@ -1,6 +1,6 @@
 # Plan: resume after interruption for every stage
 
-Status: `base_train` resume verified end to end (2026-11-14). Kill at step 11, resume from checkpoint: all 189 overlapping steps match exactly (loss, epoch, pq, rg). `chat_sft` resume is planned in `docs/plan/2026-11-14-local-resume-and-guard.md`. Branch: `docs/trail-priority-backlog`. Owner: Mani Sarkar.
+Status: `base_train` resume verified end to end (Step A, 2026-11-15). Kill after the step-7 checkpoint, resume from it: 193 overlapping steps (7-199) match (pq and rg exact, loss within 1e-6). Evidence: `docs/evidence/resume-step-a-pass-2026-11-15/`. The earlier 2026-11-14 "189 steps match" claim came from a run made before the data-position fix and is withdrawn. `chat_sft` resume is implemented (`docs/plan/2026-11-14-local-resume-and-guard.md`); its data-order check has not been run. Branch: `docs/trail-priority-backlog`. Owner: Mani Sarkar.
 
 ## Goal
 
@@ -17,7 +17,7 @@ Today only `base_train` resumes mid-stage. This plan covers the rest.
 | `dataset` (shard download) | Skips shards that already exist; `.tmp` then rename per shard | Shard granularity | Verify a killed `.tmp` is re-fetched, not kept |
 | `tok_train` | Restarts from zero | None | Tokenizer saved only at the end. Check whether a killed `tokenizer.save` can leave a partial `tokenizer.pkl` that `stage_done` treats as finished |
 | `tok_eval` | Restarts from zero | None | Writes `.tok_eval_ok` at end. Cheap to rerun |
-| `base_train` | Resumes | Last complete checkpoint (`find_safe_resume_step`) | **Verified e2e 2026-11-14**: 189 steps match exactly after resume |
+| `base_train` | Resumes | Last complete checkpoint (`find_safe_resume_step`) | **Verified e2e 2026-11-15** (Step A): steps 7-199 match after resume from step 7 (pq, rg exact; loss within 1e-6) |
 | `base_eval` | Restarts from zero | None | Writes `.eval_ok` at end. CORE metric is slow to rerun |
 | `chat_sft` | Restarts from zero | None | Saves checkpoints, but no `--resume-from-step` is wired and no dataloader state is saved for resume |
 | `chat_eval` | Restarts from zero | None | Writes `.eval_ok` at end. Cheap to rerun |
