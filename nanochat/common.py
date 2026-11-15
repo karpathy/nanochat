@@ -375,6 +375,11 @@ def get_peak_bandwidth(device_name: str) -> float:
     return float('inf')
 
 
+# Sentinel value used to mark ignored/masked target positions (e.g. in SFT loss).
+# Single source of truth: imported in gpt.py, chat_sft.py, and test code.
+IGNORE_INDEX: int = -1
+
+
 def check_finite_loss(loss: "torch.Tensor", step: int, targets: "torch.Tensor") -> None:
     """Raise RuntimeError immediately if *loss* is not finite (NaN or inf).
 
@@ -385,13 +390,54 @@ def check_finite_loss(loss: "torch.Tensor", step: int, targets: "torch.Tensor") 
         loss:    scalar loss tensor (detached is fine).
         step:    current outer optimiser step (for the error message).
         targets: target tensor for the same micro-batch, used to count unmasked
-                 tokens (targets != -1) so the error message is actionable.
+                 tokens (targets != IGNORE_INDEX) so the error message is actionable.
 
     Raises:
         RuntimeError: if loss is NaN or inf.
     """
     if not torch.isfinite(loss):
-        n_unmasked = int((targets >= 0).sum().item())
+        n_unmasked = int((targets != IGNORE_INDEX).sum().item())
+        raise RuntimeError(
+            f"Non-finite loss ({loss.item()}) at step {step}. "
+            f"Unmasked token count in last micro-batch: {n_unmasked}. "
+            f"Halting to prevent EMA corruption."
+        )
+
+
+def collective_check_finite_loss(
+    loss: "torch.Tensor", step: int, targets: "torch.Tensor"
+) -> None:
+    """Check for non-finite loss collectively — no-op when not distributed.
+
+    Single-process path delegates to check_finite_loss unchanged.
+    Multi-rank path: all-ranks all-reduce a flag (MAX) so every rank agrees on
+    whether *any* rank saw a non-finite loss.  When the flag is set all ranks
+    raise with the same error format, preventing NCCL hangs caused by a rank
+    raising before its peers reach the next collective.
+
+    Args:
+        loss:    scalar loss tensor from this rank's last micro-batch.
+        step:    current outer optimiser step (for the error message).
+        targets: target tensor for the same micro-batch (used to count unmasked
+                 tokens in the error message).
+
+    Raises:
+        RuntimeError: on ALL ranks if any rank's loss was non-finite.
+    """
+    if not is_ddp_initialized():
+        # Single-process path: pure-rank check is sufficient.
+        check_finite_loss(loss, step, targets)
+        return
+
+    # Build a per-rank flag; all-reduce (MAX) so every rank knows if any rank
+    # detected a non-finite loss.
+    flag = torch.zeros(1, device=loss.device, dtype=torch.float32)
+    if not torch.isfinite(loss):
+        flag.fill_(1.0)
+    dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+
+    if flag.item() > 0:
+        n_unmasked = int((targets != IGNORE_INDEX).sum().item())
         raise RuntimeError(
             f"Non-finite loss ({loss.item()}) at step {step}. "
             f"Unmasked token count in last micro-batch: {n_unmasked}. "
