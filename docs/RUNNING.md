@@ -5,7 +5,7 @@ Level 2 guide. The short version lives in the [README](../README.md#running-on-c
 Design source: [docs/plan/2026-11-13-fix-forward-mac.md](plan/2026-11-13-fix-forward-mac.md).
 
 **Contents**
-[1 Pick a script](#1-pick-a-script) · [2 First run](#2-first-run-expectations) · [3 Fix-forward loop](#3-the-fix-forward-loop) · [4 Re-run map](#4-what-a-re-run-keeps-and-skips) · [5 Echo legend](#5-reading-the-logs-echo-legend) · [6 Glossary](#6-enrichment-glossary) · [6b Terms](#6b-terms) · [7 Mac / Intel torch](#7-mac--intel-torch) · [8 NaN](#8-nan-troubleshooting) · [9 Controls](#9-controls) · [10 Failure shapes](#10-common-failure-shapes) · [11 Memory / OOM](#11-memory--oom) · [12 Defaults and profiles](#12-defaults-and-profiles)
+[1 Pick a script](#1-pick-a-script) · [2 First run](#2-first-run-expectations) · [3 Fix-forward loop](#3-the-fix-forward-loop) · [4 Re-run map](#4-what-a-re-run-keeps-and-skips) · [5 Echo legend](#5-reading-the-logs-echo-legend) · [6 Glossary](#6-enrichment-glossary) · [6b Terms](#6b-terms) · [7 Mac / Intel torch](#7-mac--intel-torch) · [8 NaN](#8-nan-troubleshooting) · [9 Controls](#9-controls) · [10 Failure shapes](#10-common-failure-shapes) · [11 Memory / OOM](#11-memory--oom) · [12 Defaults and profiles](#12-defaults-and-profiles) · [13 After ALL DONE](#13-after-all-done)
 
 How-to first (§1–4, §8–10), then reference (§5–6, §6b, §9). Kept in one L2 file on purpose so a stuck runner can stay on one page (plan doc mapping); use the TOC to jump.
 
@@ -251,3 +251,39 @@ One place to turn the dials — no hunting through shell scripts and argparse fo
 - **GPU / speedrun** — edit `PROFILE_SPEEDRUN` the same way, or pass flags on the `torchrun` line; leave `--auto-fit-batch` off unless you want MPS-style fitting on CUDA.
 
 Sync is checked by `tests/test_defaults.py` (emitted shell vars must match `PROFILE_*`). Memory math is covered by `tests/test_memory.py`.
+
+## 13. After ALL DONE
+
+When the script prints `ALL DONE cumulative=…` the pipeline has finished. Here's what to do next.
+
+**Stop the run / Ctrl-C**
+If you need to abort, press `Ctrl-C`. The script stops at the current stage. Finished stages are marked (`.train_ok`, `.eval_ok`), so a re-run picks up where it left off at no cost.
+
+**Chat with your model**
+```bash
+source .venv/bin/activate   # if not already active
+python -m scripts.chat_cli -p "What is the capital of France?"
+python -m scripts.chat_cli   # interactive
+```
+The model is a small depth-6 demo; expect limited responses.
+
+**Evaluate the chat model (optional)**
+```bash
+python -m scripts.chat_eval -i sft -x 50   # quick: 50 problems per task
+python -m scripts.chat_eval -i sft          # full eval
+```
+
+**Where results live**
+All artifacts are under `$NANOCHAT_BASE_DIR` (default `~/.cache/nanochat`):
+- `tokenizer/tokenizer.pkl` — trained BPE tokenizer
+- `base_checkpoints/d<depth>/` — pretrained model
+- `chatsft_checkpoints/d<depth>/` — SFT chat model
+- `last_metrics.json` — latest val_bpb / CORE metric
+- `last_run.json` — knob snapshot from the last successful full run
+
+**Stale run lock (local)**
+If `bash runs/runcpu.sh` was killed abruptly, it may leave a `.run.lock` directory at `$NANOCHAT_BASE_DIR/.run.lock`. The next run exits "another run is already active". Remove it and re-run:
+```bash
+rm -rf "$NANOCHAT_BASE_DIR/.run.lock"
+bash runs/runcpu.sh
+```
