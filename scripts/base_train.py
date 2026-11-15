@@ -39,6 +39,7 @@ from nanochat.common import (
     DummyWandb,
     autodetect_device_type,
     compute_cleanup,
+    compute_eta_str,
     compute_init,
     format_duration,
     get_base_dir,
@@ -70,7 +71,6 @@ from nanochat.memory import (
     training_module_after_oom_rehalve,
 )
 from nanochat.metrics_trend import emit_metric_trend
-from nanochat.glossary import emit_define
 from nanochat.run_record import make_run_logger
 from nanochat.term_style import paint
 from nanochat.tokenizer import get_token_bytes, get_tokenizer
@@ -216,6 +216,18 @@ def build_model_meta(depth):
         model_meta = GPT(config)
     return model_meta
 
+# If we are resuming, check before building the model
+base_dir = get_base_dir()
+output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
+checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
+resuming = args.resume_from_step != -1
+
+# Print resume banner before model build
+if resuming:
+    print0("=" * 60)
+    print0(f"Resuming optimization from step {args.resume_from_step}")
+    print0("=" * 60)
+
 # Build the model, move to device, init the weights
 model = build_model_meta(args.depth) # 1) Build on meta device (only shapes/dtypes, no data)
 model_config = model.config
@@ -225,14 +237,9 @@ model.to_empty(device=device) # 2) All tensors get storage on target device but 
 model.init_weights() # 3) All tensors get initialized
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
-base_dir = get_base_dir()
-output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
-checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
-resuming = args.resume_from_step != -1
 if master_process:
     remove_stale_tmp(checkpoint_dir)
 if resuming:
-    print0(f"Resuming optimization from step {args.resume_from_step}")
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)
     model.load_state_dict(model_data, strict=True, assign=True)
     del model_data # free up this memory after the copy
@@ -737,15 +744,8 @@ while True:
     mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
-    # Calculate ETA based on average time per step (excluding first 10 steps)
     steps_done = step - 10
-    if steps_done > 0:
-        avg_time_per_step = total_training_time / steps_done
-        remaining_steps = num_iterations - step
-        eta_seconds = remaining_steps * avg_time_per_step
-        eta_str = f" | eta: {format_duration(eta_seconds)}"
-    else:
-        eta_str = ""
+    eta_str = compute_eta_str(total_training_time, steps_done, num_iterations)
     epoch = f"{dataloader_state_dict['epoch']} pq: {dataloader_state_dict['pq_idx']} rg: {dataloader_state_dict['rg_idx']}"
     mfu_field = paint("done", f"bf16_mfu: {mfu:.2f}")
     print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | {mfu_field} | epoch: {epoch} | total time: {format_duration(total_training_time)}{eta_str}")

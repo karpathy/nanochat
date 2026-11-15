@@ -5,10 +5,10 @@ Intended to be run single GPU only atm:
 python -m scripts.chat_cli
 """
 import argparse
-import torch
-from nanochat.common import compute_init, autodetect_device_type
-from nanochat.engine import Engine
+
 from nanochat.checkpoint_manager import load_model
+from nanochat.common import autodetect_device_type, compute_init, get_base_dir
+from nanochat.engine import Engine
 
 parser = argparse.ArgumentParser(description='Chat with the model')
 parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|rl")
@@ -21,6 +21,9 @@ parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu
 args = parser.parse_args()
 
 # Init the model and tokenizer
+
+# Require explicit NANOCHAT_BASE_DIR for chat CLI
+get_base_dir(require_explicit=True)
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)

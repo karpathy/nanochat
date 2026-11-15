@@ -68,14 +68,19 @@ def setup_default_logging():
 setup_default_logging()
 logger = logging.getLogger(__name__)
 
-def get_base_dir():
+def get_base_dir(require_explicit: bool = False):
     # co-locate nanochat intermediates with other cached data in ~/.cache (by default)
     if os.environ.get("NANOCHAT_BASE_DIR"):
         nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR")
     else:
         home_dir = os.path.expanduser("~")
         cache_dir = os.path.join(home_dir, ".cache")
-        nanochat_dir = os.path.join(cache_dir, "nanochat")
+        default_path = os.path.join(cache_dir, "nanochat")
+        if require_explicit:
+            raise RuntimeError(
+                f"NANOCHAT_BASE_DIR not set. Set it explicitly (default would be: {default_path})"
+            )
+        nanochat_dir = default_path
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
@@ -121,6 +126,17 @@ def format_duration(seconds: float) -> str:
     hours, rest = divmod(total, 3600)
     minutes, secs = divmod(rest, 60)
     return f"{hours}h {minutes}m {secs}s"
+
+def compute_eta_str(total_training_time: float, steps_done: int, num_iterations: int) -> str:
+    """Compute ETA string from total training time and step counts. Returns empty string if not ready."""
+    if steps_done <= 0:
+        return ""
+    avg_time_per_step = total_training_time / steps_done
+    remaining_steps = num_iterations - steps_done - 10  # offset for first 10 steps
+    if remaining_steps <= 0:
+        return ""
+    eta_seconds = remaining_steps * avg_time_per_step
+    return f" | eta: {format_duration(eta_seconds)}"
 
 def print0(s="",**kwargs):
     ddp_rank = int(os.environ.get('RANK', 0))
