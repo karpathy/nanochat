@@ -59,14 +59,17 @@ _update_heartbeat() {
 
 _start_heartbeat_refresher() {
     # Runs in the background; writes the heartbeat every _HB_REFRESH_INTERVAL seconds.
-    # _release_run_lock kills and waits for it before removing the lock directory.
+    # Checks that the parent process is still alive before each write; exits when the
+    # parent is gone (covers kill -9 where EXIT traps do not fire — BLOCKER 1 fix).
     # Redirect stdout/stderr to /dev/null so the background subshell and its sleep
     # children do not hold inherited pipe fds open (which would delay communicate()
     # EOF when tests capture output via subprocess.run(capture_output=True)).
+    local _parent_pid=$$
     (
         exec >/dev/null 2>/dev/null
         while true; do
             sleep "${_HB_REFRESH_INTERVAL}"
+            kill -0 "${_parent_pid}" 2>/dev/null || exit 0
             _update_heartbeat 2>/dev/null || true
         done
     ) &

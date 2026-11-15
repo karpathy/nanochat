@@ -416,3 +416,75 @@ echo "ACQUIRED"
         assert "cpu/.run.lock" in r.stderr, (
             f"Expected 'cpu/.run.lock' in stderr; got:\n{r.stderr}"
         )
+
+
+class TestRunLockOrphanedRefresher:
+    """
+    Scenario: When the holder is killed with SIGKILL, the refresher must detect the dead
+              parent and stop advancing the heartbeat (BLOCKER 1 fix).
+    Slice: runs/_run_lock.sh — parent-alive check in _start_heartbeat_refresher
+    """
+
+    def test_refresher_stops_when_holder_is_killed_9(self, tmp_path):
+        """
+        Scenario: Holder is killed with SIGKILL (traps do not fire); background refresher must
+                  detect the dead parent and stop — otherwise the lock never goes stale.
+        Slice: BLOCKER 1 — kill -0 $parent in refresher loop
+        ### Given: a holder process acquires the lock with NANOCHAT_LOCK_HB_INTERVAL=1
+        ### When: the holder is killed with SIGKILL (-9)
+        ### Then: the heartbeat stops advancing within 2 intervals (2 s)
+
+        Before this fix, the refresher had no parent-alive check and kept writing the
+        heartbeat indefinitely after kill -9, so the lock never appeared stale.
+        """
+        import os
+        import signal
+        import subprocess
+        import threading
+        import time
+
+        script = f"""#!/usr/bin/env bash
+set -euo pipefail
+export NANOCHAT_BASE_DIR="{tmp_path}"
+export NANOCHAT_LOCK_HB_INTERVAL=1
+source "{RUN_LOCK}"
+echo "ACQUIRED" >&2
+sleep 60
+"""
+        proc = subprocess.Popen(
+            ["bash", "-c", script],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        acquired = threading.Event()
+
+        def _read_stderr():
+            for line in proc.stderr:
+                if b"ACQUIRED" in line:
+                    acquired.set()
+                    break
+
+        t = threading.Thread(target=_read_stderr, daemon=True)
+        t.start()
+        assert acquired.wait(timeout=5), "holder did not acquire lock in time"
+
+        # Let the refresher tick at least once to confirm it is running.
+        time.sleep(1.5)
+        hb_file = tmp_path / ".run.lock" / "heartbeat"
+        assert hb_file.exists(), "heartbeat file missing after acquire"
+
+        # Kill with SIGKILL — EXIT trap cannot fire.
+        os.kill(proc.pid, signal.SIGKILL)
+        proc.wait()
+
+        # Wait > 2 intervals for the refresher to notice parent is gone and exit.
+        time.sleep(3)
+
+        # Read twice, 1 s apart; both readings must be stable (heartbeat stopped).
+        hb_after = int(hb_file.read_text().strip())
+        time.sleep(1)
+        hb_later = int(hb_file.read_text().strip())
+
+        assert hb_after == hb_later, (
+            f"Heartbeat advanced from {hb_after} to {hb_later}s after SIGKILL — "
+            "refresher still running (BLOCKER 1 not fixed)"
+        )
