@@ -42,6 +42,11 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | 2026-11-14 | modal-nanochat-minimum | Modal CPU mode runs first; GPU phase waits for a payment method and a separate go-ahead | HANDOFF: GPU needs billing set up at Modal; the CPU run proves the pipeline for less money |
 | 2026-11-14 | modal-guard-hardware-capture | CPU and GPU Modal runs must not run at once; the launch guard blocks it | Both mount the shared Volume `nanochat-modal`, so stage markers, archives and commits collide |
 | 2026-11-14 | resume-all-stages | Checkpoint and resume logic has one owner shared by local and Modal runs | Verified in the session plan `can-we-check-if-shimmering-storm`; Modal adds only the commit daemon, so no second copy to keep in sync |
+| 2026-11-15 | docs-sync-audit | Modal CPU live run reopened as NOT COMPLETE (TRAIL rank 14) | No archived run prints `ALL DONE`; latest run reports loss `nan` from about step 244 and is still running on Modal. The earlier "completed" note was unsupported |
+| 2026-11-15 | docs-sync-audit | B1 recorded as CODE FIXED, NOT VERIFIED | `829d5f7` makes the checkpoint search recursive; no test or executed download yet. `docs/MODAL.md` callout updated to match |
+| 2026-11-15 | docs-sync-audit | AGENTS.md and CLAUDE.md treated as not applicable | Neither file exists in this repo. The global rule that imports `@AGENTS.md` does not apply here |
+| 2026-11-15 | backlog | Order: B1 test, then B3 heartbeat lock, then reconcile, then Could items (rank 4–7), then GPU last. B2 parked | User asked to stall B2 until a GPU run is near; GPU is blocked on payment; B1 and B3 are the Modal safety items before the next run |
+| 2026-11-15 | modal-gpu-phase | No GPU run until B2 lands and the user gives an explicit go-ahead | Blocked on payment method; B2 can silently skip a wrong checkpoint |
 ## Slice states
 
 | slice_id | state | evidence |

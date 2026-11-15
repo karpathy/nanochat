@@ -1,45 +1,60 @@
 # TRAIL
 
-## Backlog (priority order, 2026-11-14)
+## Needs your decision
+
+- **Live Modal CPU run is still running and its loss is `nan`.** App `ap-1uTQ0hJAC2gQgVwK3YRLVR` (`nanochat-speedrun`, 1 task, started 2026-11-15 13:25 GMT). Run `20261115-132517-cpu` reached `base_train` and `base_eval` DONE, then loss has been `nan` from about step 244. Stop it with `modal app stop ap-1uTQ0hJAC2gQgVwK3YRLVR`, or let it finish. Nothing has been stopped; this is your call because it costs money.
+
+## Backlog (order agreed 2026-11-15)
 
 Work top to bottom. MoSCoW from the plans. A row moves to the history table below once merged or closed.
 
 | rank | slice_id | MoSCoW | plan | state | notes |
 |------|----------|--------|------|-------|-------|
-| 1 | review-fix-b1-nameerror | **Must** | [pr27-29-review-fixes](2026-11-14-pr27-29-review-fixes.md) B1 | DONE (on fix/resume-review-blockers) | `del _saved_meta` fix in `chat_sft.py` (commit `cc5fab1`). Ships with ranks 2–6. |
-| 2 | review-fix-s2-base-dir | **Must** | [pr27-29-review-fixes](2026-11-14-pr27-29-review-fixes.md) S2 | DONE (on fix/resume-review-blockers) | `${NANOCHAT_BASE_DIR:?must be set}` in `_run_lock.sh` (commit `aee798f`). |
-| 3 | review-fix-b4-guard-extract | **Must** | [pr27-29-review-fixes](2026-11-14-pr27-29-review-fixes.md) B4 | DONE (on fix/resume-review-blockers) | `assert_resume_config_matches` extracted to `nanochat/checkpoint_manager.py:202`; `chat_sft.py` imports and calls it; `tests/test_sft_resume.py` imports and tests from `nanochat.checkpoint_manager`. Ships with this branch. |
-| 4 | review-fix-b2-sft-weights | **Must** | [pr27-29-review-fixes](2026-11-14-pr27-29-review-fixes.md) B2 | DONE (on fix/resume-review-blockers) | `apply_sft_resume_state` extracted to `checkpoint_manager.py`; called from `chat_sft.py` on resume; tested in `test_sft_resume.py::TestApplySftResumeState` (commit `cc5fab1` + review fixes). |
-| 5 | review-fix-b3-ddp-sharding | **Must** | [pr27-29-review-fixes](2026-11-14-pr27-29-review-fixes.md) B3 | DONE (on fix/resume-review-blockers) | `ddp_rank_position` extracted to `nanochat/common.py`; used in `dataloader.py` and `sft_loader.py` (commits `97ec941`, `2096327`, review fixes). |
-| 6 | review-fix-b5-lock-race | **Must** | [pr27-29-review-fixes](2026-11-14-pr27-29-review-fixes.md) B5 | DONE (on fix/resume-review-blockers) | `mkdir .reclaim` gate + ownership check (commit `aee798f`); review fixes close mid-acquire window (empty PID = live-unknown). |
-| 7 | resume-data-position | **Must** | [resume-all-stages](2026-11-14-resume-all-stages.md) "Prioritized work order" #1 | PASSED 2026-11-15 (Step A: steps 7-199 match; evidence `docs/evidence/resume-step-a-pass-2026-11-15/`) | Fix is commit `97ec941` on `fix/resume-review-blockers`. Step A verified 2026-11-15 (evidence in `docs/evidence/resume-step-a-pass-2026-11-15/`). Ships with this branch. |
-| 8 | resume-wording-correction | **Must** | [resume-all-stages](2026-11-14-resume-all-stages.md) #2 | DONE 2026-11-15 (wording fixed in RUNNING.md and resume-all-stages.md; `chat_sft` data order still unchecked) | Fix "verified" wording in `docs/RUNNING.md` and `resume-all-stages.md`. Say the restart picks the right checkpoint and LR schedule; data order is not restored until rank 7 passes. |
-| 9 | master-warning-70ce9e2 | **Must** | [resume-all-stages](2026-11-14-resume-all-stages.md) "Housekeeping" | DONE (user decision 2026-11-15: leave it) | Docs-only commit `70ce9e2` (MoSCoW plan) on `master` — left in place. No runtime impact. |
-| 10 | live-modal-apps-check | **Must** | [modal-guard-hardware-capture](2026-11-14-modal-guard-hardware-capture.md) "Open blocker" | DONE 2026-11-15 | `modal app list` checked: all prior `nanochat-gpu-probe` apps show `stopped` state. No live apps. Modal CPU run (rank 14) launched. |
-| 11 | review-fix-should-suggestions | **Should** | [pr27-29-review-fixes](2026-11-14-pr27-29-review-fixes.md) S1,S5-S7 | DONE (PRs #33, #34, #35 merged 2026-11-15) | S7 merged in PR #33. S1 (PID+start-time in lock): [PR #34](https://github.com/neomatrix369/nanochat/pull/34). S5+S6 (`SftLoaderState.initial` + guard from `user_config`, with tests for the `user_config` subdict path): [PR #35](https://github.com/neomatrix369/nanochat/pull/35). |
-| 12 | modal-guard-tests | **Should** | [modal-guard-hardware-capture](2026-11-14-modal-guard-hardware-capture.md) Workstream A | DONE (PR #30 merged 2026-11-14) | Cases a, b, c1, c2, d, e, f in `tests/test_runmodal_mode.py` (commit `dbd6445`). |
-| 13 | modal-preemption-resume | **Should** | [resume-all-stages](2026-11-14-resume-all-stages.md) "Modal path not covered" | DONE (verified 2026-11-15, multiple runs) | Modal preemption (SIGTERM) + commit gap verified across multiple CPU runs. Resume picks up correctly after preemption. |
-| 14 | modal-cpu-live-run | **Should** | [HANDOFF.md](../../HANDOFF.md) steps 1 to 8 | DONE (completed 2026-11-15) | Full `runcpu` pipeline on Modal CPU completed. Record real numbers in `PROGRESS.md` and `docs/MODAL.md` (rank 15 covers docs). |
-| 15 | modal-review-and-cpu-docs | **Should** | [HANDOFF.md](../../HANDOFF.md) "Known gaps" and step 9 | DONE (PR #37 merged 2026-11-15) | Lifecycle gaps added to `docs/MODAL.md`, `docs/RUNNING.md` §13, `README.md`. After-run steps, CPU/GPU split, B1/B2/B3 warnings, stale lock recovery. [PR #37](https://github.com/neomatrix369/nanochat/pull/37). |
-| 16 | graphiti-stepA-save | **Should** | [resume-all-stages](2026-11-14-resume-all-stages.md) "Housekeeping" | WAITING (Graphiti down) | Save the Step A outcome to Graphiti once it is back online. Fallback: `~/.claude/knowledge-export.md`. |
-| 17 | modal-daemon-cleanup | **Could** | [local-resume-and-guard](2026-11-14-local-resume-and-guard.md) "Modal refactor" | DONE (PR #30 merged 2026-11-14) | `runs/modal_run.py` daemon + SIGTERM cleanup (commit `651d789`). `contextlib.suppress` nit included. |
-| 19 | run-record-replay | **Could** | Session plan `~/.claude/plans/with-our-current-setup-tranquil-rossum.md` (not in repo) | UNCLAIMED | Add `python3 -m nanochat.run_record replay <run-dir>` that prints `git checkout`, `uv sync`, and the `runmodal.sh --mode` line. Only `nanochat/run_record.py` changes. |
-| 20 | cli-learn-color-could-items | **Could** | [cli-learn-color-ux](2026-11-14-cli-learn-color-ux.md) "Could" | UNCLAIMED | Colour and define lines for `tok_train`, `tok_eval`, `chat_sft`, `chat_eval`; `chat_cli` welcome plaque. Decide whether `base_train` keeps its `CORE` define call. |
-| 21 | train-heartbeat-eta | **Could** | [GROWTH.md](GROWTH.md) fix-forward-mac-phase15 "Deferred" | UNCLAIMED | Heartbeat and train-loop ETA. Planned in phase 1.5, never built. |
-| 22 | review-fix-could-suggestions | **Could** | [pr27-29-review-fixes](2026-11-14-pr27-29-review-fixes.md) S3,S4,N1-N2 | NOT STARTED | S3 (add trap-ownership comment in `_run_lock.sh:34-36`), S4 (cap serialised `doc_buffer` in `dataloader.py`). Nits: N1 (explicit `time_due` param in `should_save_checkpoint`), N2 (`conv_buffer: list[list[list[int]]]` type annotation in `sft_loader.py`). |
-| 23 | modal-fix-b1-download | **Must** | [modal-lifecycle-bugs](2026-11-15-modal-lifecycle-bugs.md) B1 | NOT STARTED — must land before next paid Modal run | Fix `_download_artifacts()` in `runs/modal_run.py:492-507` to search `chatsft_checkpoints/d*/model_*.pt` recursively. Workaround in `docs/MODAL.md`. |
-| 24 | modal-fix-b2-depth-markers | **Must** | [modal-lifecycle-bugs](2026-11-15-modal-lifecycle-bugs.md) B2 | NOT STARTED — must land before next GPU run | Embed profile+depth in stage marker filenames in `runs/_stage_lib.sh:109-120`. CPU depth-6 and GPU depth-24 share the Volume; silent wrong-checkpoint risk. Workaround: `FORCE_STAGES=all`. |
-| 25 | modal-fix-b3-heartbeat-lock | **Should** | [modal-lifecycle-bugs](2026-11-15-modal-lifecycle-bugs.md) B3 | NOT STARTED | Replace PID+kill-0 lock with run-ID+heartbeat (stale threshold 600 s) in `runs/_run_lock.sh`. Workaround: `modal volume rm -r nanochat-modal .run.lock`. |
+| 1 | modal-fix-b1-download | **Must** | [modal-lifecycle-bugs](2026-11-15-modal-lifecycle-bugs.md) B1 | CODE FIXED, NOT VERIFIED | Commit `829d5f7` changed `_download_artifacts()` (`runs/modal_run.py:503-524`) to walk `chatsft_checkpoints/` recursively. No test yet and no download run yet. Next: add a test with a mocked Volume, then mark DONE. Docs callout in `docs/MODAL.md` updated 2026-11-15. |
+| 2 | modal-fix-b2-depth-markers | **Must** | [modal-lifecycle-bugs](2026-11-15-modal-lifecycle-bugs.md) B2 | PARKED until the GPU run is near (user, 2026-11-15) | Still open: stage markers in `runs/_stage_lib.sh` carry no profile or depth. A GPU run can skip on a CPU depth-6 checkpoint. Workaround: `FORCE_STAGES=all`. Must land before any GPU run. |
+| 3 | modal-fix-b3-heartbeat-lock | **Should** | [modal-lifecycle-bugs](2026-11-15-modal-lifecycle-bugs.md) B3 | NOT STARTED | Lock still uses PID + `kill -0` (`runs/_run_lock.sh:87`, `:132`). Replace with run ID + heartbeat (600 s stale threshold). Do before the next Modal run can be cancelled. Workaround: `modal volume rm -r nanochat-modal .run.lock`. |
+| 4 | run-record-replay | **Could** | Session plan `~/.claude/plans/with-our-current-setup-tranquil-rossum.md` (not in repo) | NOT STARTED | Add `python3 -m nanochat.run_record replay <run-dir>`. Print `git checkout <code_rev>`, `uv sync --extra cpu` for local runs, and `MODE=<mode> bash runs/runmodal.sh`. The old plan said `--mode`, but `runmodal.sh` reads `MODE` from the environment. Only `nanochat/run_record.py` changes. |
+| 5 | cli-learn-color-could-items | **Could** | [cli-learn-color-ux](2026-11-14-cli-learn-color-ux.md) "Could" | NOT STARTED | Colour and define lines for `tok_train`, `tok_eval`, `chat_sft`, `chat_eval`; `chat_cli` welcome plaque. Decide whether `base_train` keeps its `CORE` define call. |
+| 6 | train-heartbeat-eta | **Could** | [GROWTH.md](GROWTH.md) fix-forward-mac-phase15 "Deferred" | NOT STARTED | Heartbeat and train-loop ETA. Planned in phase 1.5, never built. Not the same as B3 (lock heartbeat). |
+| 7 | review-fix-could-suggestions | **Could** | [pr27-29-review-fixes](2026-11-14-pr27-29-review-fixes.md) S3,S4,N1-N2 | NOT STARTED | S3 (trap-ownership comment in `_run_lock.sh:34-36`), S4 (cap serialised `doc_buffer` in `dataloader.py`). Nits: N1 (explicit `time_due` param in `should_save_checkpoint`), N2 (`conv_buffer` type annotation in `sft_loader.py`). |
+| 8 | modal-gpu-phase | **Won't (for now)** | [HANDOFF.md](../../HANDOFF.md) | BLOCKED | 8×H100 run (~$40–60, ~2 h). No payment method on the `neomatrix369` Modal workspace. Needs a card and your explicit go-ahead. Do only after rank 2 (B2) lands. |
 
 ### Won't (this iteration)
 
 | slice_id | reason |
 |----------|--------|
-| modal-gpu-phase | 8×H100 run (~$40–60, ~2 h). Blocked: no payment method on the `neomatrix369` Modal workspace. Needs a card and an explicit go-ahead. |
 | tip-rotation-knob-diff-ui | Deferred in GROWTH phase 1.5. Only one line of tip text ships. |
 | tok-train-atomicity | Low impact. User decision. |
 | softcap-logits-memory | Parked in the 2026-11-14 backlog decision. No design chosen. |
 | base-eval-headers-colour | Would change existing script output. |
+
+### Waiting
+
+| slice_id | reason |
+|----------|--------|
+| graphiti-stepA-save | Graphiti was back on 2026-11-15 (`get_status` ok). Save attempted this session; see PROGRESS.md. |
+
+### Closed (reference, moved from the old backlog)
+
+| rank (old) | slice_id | MoSCoW | state | notes |
+|------------|----------|--------|-------|-------|
+| 1 | review-fix-b1-nameerror | Must | DONE (on fix/resume-review-blockers) | `del _saved_meta` fix in `chat_sft.py` (commit `cc5fab1`). |
+| 2 | review-fix-s2-base-dir | Must | DONE | `${NANOCHAT_BASE_DIR:?must be set}` in `_run_lock.sh` (commit `aee798f`). |
+| 3 | review-fix-b4-guard-extract | Must | DONE | `assert_resume_config_matches` in `nanochat/checkpoint_manager.py`. |
+| 4 | review-fix-b2-sft-weights | Must | DONE | `apply_sft_resume_state` in `checkpoint_manager.py`; tested in `test_sft_resume.py`. |
+| 5 | review-fix-b3-ddp-sharding | Must | DONE | `ddp_rank_position` in `nanochat/common.py`. |
+| 6 | review-fix-b5-lock-race | Must | DONE | `mkdir .reclaim` gate + ownership check (commit `aee798f`). |
+| 7 | resume-data-position | Must | PASSED 2026-11-15 | Commit `97ec941`. Step A: steps 7–199 match (evidence `docs/evidence/resume-step-a-pass-2026-11-15/`). |
+| 8 | resume-wording-correction | Must | DONE 2026-11-15 | Wording fixed in RUNNING.md and resume-all-stages.md. Data order checked only through rank 7. |
+| 9 | master-warning-70ce9e2 | Must | DONE (user decision: leave it) | Docs-only commit `70ce9e2` on `master`. |
+| 10 | live-modal-apps-check | Must | DONE 2026-11-15 | `modal app list`: earlier `nanochat-gpu-probe` apps are stopped. |
+| 11 | review-fix-should-suggestions | Should | DONE (PRs #33, #34, #35) | S7 in PR #33; S1 in [PR #34](https://github.com/neomatrix369/nanochat/pull/34); S5+S6 in [PR #35](https://github.com/neomatrix369/nanochat/pull/35). |
+| 12 | modal-guard-tests | Should | DONE (PR #30) | Cases a–f in `tests/test_runmodal_mode.py` (commit `dbd6445`). |
+| 13 | modal-preemption-resume | Should | DONE (verified 2026-11-15) | SIGTERM and commit-gap checks passed on CPU runs. |
+| 14 | modal-cpu-live-run | Should | **REOPENED: NOT COMPLETE** | Previously marked DONE. The logs do not support that. None of the 7 archived runs under `~/.cache/nanochat-modal/runs/` prints `ALL DONE`. Failures: `20261114-125440` RemoteError; `20261115-010057` ConnectionError (DNS); `20261115-131340` `runcpu.sh` exit 1. `20261115-132517` is still running with loss `nan`. Measured numbers: none yet. |
+| 15 | modal-review-and-cpu-docs | Should | DONE (PR #37) | Lifecycle gaps in `docs/MODAL.md`, `docs/RUNNING.md` §13, `README.md`. |
+| 16 | graphiti-stepA-save | Should | DONE 2026-11-15 (see PROGRESS.md) | Graphiti up; save written. Local fallback not needed. |
+| 17 | modal-daemon-cleanup | Could | DONE (PR #30) | `runs/modal_run.py` daemon + SIGTERM cleanup (commit `651d789`). |
 
 ## History
 
@@ -48,17 +63,18 @@ Work top to bottom. MoSCoW from the plans. A row moves to the history table belo
 | fix-forward-mac-phase1 | [2026-11-13-fix-forward-mac.md](2026-11-13-fix-forward-mac.md) Phase 1 | PASSED (merged) | [PR #4](https://github.com/neomatrix369/nanochat/pull/4) + follow-up [PR #5](https://github.com/neomatrix369/nanochat/pull/5) |
 | fix-forward-mac-phase2 | same plan Phase 2 | PASSED (merged) | [PR #6](https://github.com/neomatrix369/nanochat/pull/6) merged `f8d7174` |
 | fix-forward-mac-phase15 | [2026-11-13-fix-forward-mac-phase15.md](2026-11-13-fix-forward-mac-phase15.md) | PASSED (merged) | [PR #8](https://github.com/neomatrix369/nanochat/pull/8) merged `3054e4a` |
-| fix-mps-skip-inductor | (hotfix; see GROWTH / RUNNING §7) | PASSED (merged) | [PR #10](https://github.com/neomatrix369/nanochat/pull/10) merged `f6ef779`: skip Inductor on MPS, MPS AdamW/Muon, progress flush, `.train_ok` + CUDA hard-fail, RoPE grow-on-demand |
-| modal-nanochat-minimum | [2026-11-14-modal-nanochat-minimum.md](2026-11-14-modal-nanochat-minimum.md) | MERGED; live run pending (see rank 14) | [PR #14](https://github.com/neomatrix369/nanochat/pull/14) merged `5225a3d`. CPU-mode commits `9eed864`, `31974eb`, `3c6ba61` are on master. Live Modal run not executed. |
-| resume-all-stages | [2026-11-14-resume-all-stages.md](2026-11-14-resume-all-stages.md) | MERGED (`c9cf80e`); resume NOT equivalent yet | [PR #26](https://github.com/neomatrix369/nanochat/pull/26) merged to master. `base_train` mid-stage resume, time-based save, atomic writes. Step A done 2026-11-14: data position wrong (`rg` 3 vs 1). Fix is rank 7. |
-| local-resume-and-guard | [2026-11-14-local-resume-and-guard.md](2026-11-14-local-resume-and-guard.md) | SUPERSEDED (MERGED) | Work shipped: Step A (`docs/evidence/resume-step-a-pass-2026-11-15/`), `chat_sft` resume (`scripts/chat_sft.py:170-203`), local lock (`runs/_run_lock.sh`, `tests/test_run_lock.py`), guard tests (`tests/test_runmodal_mode.py`). 86 tests pass across the resume, lock, dataloader, runmodal and SIGTERM suites. Do not rebuild. |
-| modal-guard-hardware-capture | [2026-11-14-modal-guard-hardware-capture.md](2026-11-14-modal-guard-hardware-capture.md) | MERGED (guard); tests, runtime docs on master; accelerator open | [PR #24](https://github.com/neomatrix369/nanochat/pull/24) and [PR #25](https://github.com/neomatrix369/nanochat/pull/25) merged (`282c84c`, `ffea067`). Runtime-config docs on master (`fe8b8ba`). Ranks 7, 10, 13. |
-| cli-learn-color-ux | [2026-11-14-cli-learn-color-ux.md](2026-11-14-cli-learn-color-ux.md) | MERGED | PRs [#20](https://github.com/neomatrix369/nanochat/pull/20) to [#23](https://github.com/neomatrix369/nanochat/pull/23) merged to master (`edfb3d3`, `9153d28`, `cf49fab`, `993962f`). Could items at rank 15. |
+| fix-mps-skip-inductor | (hotfix; see GROWTH / RUNNING §7) | PASSED (merged) | [PR #10](https://github.com/neomatrix369/nanochat/pull/10) merged `f6ef779` |
+| modal-nanochat-minimum | [2026-11-14-modal-nanochat-minimum.md](2026-11-14-modal-nanochat-minimum.md) | MERGED; CPU run NOT complete (see rank 14) | [PR #14](https://github.com/neomatrix369/nanochat/pull/14) merged `5225a3d`. Modal image build and 8×H100 run not executed. |
+| resume-all-stages | [2026-11-14-resume-all-stages.md](2026-11-14-resume-all-stages.md) | MERGED; Step A PASSED 2026-11-15 | [PR #26](https://github.com/neomatrix369/nanochat/pull/26); fix in [PR #33](https://github.com/neomatrix369/nanochat/pull/33). Modal path covered only by rank 13 CPU checks. |
+| local-resume-and-guard | [2026-11-14-local-resume-and-guard.md](2026-11-14-local-resume-and-guard.md) | SUPERSEDED (MERGED) | Do not rebuild. |
+| modal-guard-hardware-capture | [2026-11-14-modal-guard-hardware-capture.md](2026-11-14-modal-guard-hardware-capture.md) | MERGED (guard); accelerator open | [PR #24](https://github.com/neomatrix369/nanochat/pull/24), [PR #25](https://github.com/neomatrix369/nanochat/pull/25). |
+| cli-learn-color-ux | [2026-11-14-cli-learn-color-ux.md](2026-11-14-cli-learn-color-ux.md) | MERGED | PRs [#20](https://github.com/neomatrix369/nanochat/pull/20) to [#23](https://github.com/neomatrix369/nanochat/pull/23). Could items at rank 5. |
+| docs-sync-audit-2026-11-15 | `/sync-docs` audit (this session) | DONE | Fixed `docs/MODAL.md`: B1 callout now matches code; `finish` recovery command added. Reconciled TRAIL and PROGRESS with the code and logs. See audit notes in PROGRESS.md. |
 
 ### Housekeeping done
 
-- Stray branch `docs/resume-priority-plan` is gone (not in `git branch`).
+- Stray branch `docs/resume-priority-plan` is gone.
 - Plan commit `3f1b67f` reached master through PR #27 and PR #28.
-- PR #30 created 2026-11-14 covering ranks 12 (modal-guard-tests, `dbd6445`) and 17 (modal-daemon-cleanup, `651d789`). Awaiting review and merge.
+- PR #30 covered ranks 12 and 17. Merged.
 - `nw-software-crafter-reviewer` review of PRs #27–#29 completed 2026-11-14: CHANGES_REQUESTED, 5 blockers. Fixes tracked at ranks 1–6, 11. Plan: [pr27-29-review-fixes](2026-11-14-pr27-29-review-fixes.md).
-- 4-reviewer pass on PR #31 (`docs/pr27-29-review-plan`) completed 2026-11-14: B5 promoted to Must (rank 6); B1+B2 must ship together (ranks 1, 4); B2/B3/B5 fix specs corrected; B4 locator fixed (`:860-927` → `:183-255`); rank 11 split into Should (rank 11) and Could (rank 22).
+- 4-reviewer pass on PR #31 completed 2026-11-14: B5 promoted to Must; B1+B2 must ship together; rank 11 split into Should and Could (rank 22 at that time, now rank 7).

@@ -202,7 +202,7 @@ If the training failed and the model files are missing, the script exits with an
 
 ### Pull the models from the Volume by hand
 
-> **Auto-download may fail (known issue — fix queued).** The auto-downloader searches only the top level of `chatsft_checkpoints/`, but checkpoints live in `chatsft_checkpoints/d<depth>/`. If the download step reports "SFT incomplete: no model checkpoints", use the manual commands below instead. A re-download with `--force` can also nest folders as `chatsft_checkpoints/chatsft_checkpoints/`; delete the nested copy first if that happens.
+> **Auto-download may still fail (fix in code, not yet tested end to end).** The auto-downloader now searches `chatsft_checkpoints/` recursively, so it finds models in `chatsft_checkpoints/d<depth>/` (`runs/modal_run.py:503-524`, commit `829d5f7`). No automated test covers it yet. If the download step reports "SFT incomplete: no model checkpoints", use the manual commands below instead. A re-download with `--force` can also nest folders as `chatsft_checkpoints/chatsft_checkpoints/`; delete the nested copy first if that happens.
 
 The run downloads the models for you. Use these commands only when the download was skipped or failed, or to refresh a copy after a later run:
 
@@ -237,7 +237,7 @@ Once `ALL DONE` appears in the terminal:
    bash runs/modal_peek.sh pull            # copy run record to ~/.cache/nanochat-modal/runs/
    bash runs/modal_peek.sh cost            # billing summary for this month
    ```
-4. **Re-download** (if the auto-download step failed): see "Pull the models from the Volume by hand" above.
+4. **Re-download** (if the auto-download step failed): run `bash runs/runmodal.sh finish <run-id>`, which downloads the run's artifacts after the Modal run has stopped. If that also fails, see "Pull the models from the Volume by hand" above.
 5. **Evaluate the chat model** (optional):
    ```bash
    NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_eval -i sft -x 50
