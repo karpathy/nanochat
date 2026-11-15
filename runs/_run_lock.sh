@@ -24,6 +24,8 @@ _RECLAIM_HELD=0
 _STALE_SECS="${NANOCHAT_LOCK_STALE_SECS:-600}"
 _HB_REFRESH_INTERVAL="${NANOCHAT_LOCK_HB_INTERVAL:-60}"
 _HB_PID=""
+# Per-process instance token (hostname:pid:start-time); set by _claim_run_lock.
+_LOCK_INSTANCE_TOKEN=""
 
 # _LOCK_RUN_ID: use NANOCHAT_RUN_ID from env if set; fall back to PID-timestamp so
 # ownership checks work even when no explicit run ID is passed.
@@ -55,6 +57,22 @@ _is_lock_stale() {
 
 _update_heartbeat() {
     date +%s > "${_LOCK_HEARTBEAT_FILE}"
+}
+
+_is_same_id_stale() {
+    # Returns 0 (true) when the heartbeat is older than 2 * _HB_REFRESH_INTERVAL.
+    # Used for same-run-ID reclaim: a live holder refreshes within _HB_REFRESH_INTERVAL s,
+    # so 2x gives a safe margin. After kill -9, the BLOCKER 1 fix stops the refresher,
+    # so a restarted container can reclaim after 2 * _HB_REFRESH_INTERVAL = 120 s (default).
+    if [ ! -f "${_LOCK_HEARTBEAT_FILE}" ]; then
+        return 1  # missing = live-unknown, treat as NOT stale
+    fi
+    local last_beat now age threshold
+    last_beat=$(cat "${_LOCK_HEARTBEAT_FILE}" 2>/dev/null) || return 1
+    now=$(date +%s)
+    age=$(( now - last_beat ))
+    threshold=$(( _HB_REFRESH_INTERVAL * 2 ))
+    [ "${age}" -ge "${threshold}" ]
 }
 
 _start_heartbeat_refresher() {
@@ -91,16 +109,23 @@ _release_run_lock() {
         wait "${_HB_PID}" 2>/dev/null || true
     fi
     _drop_reclaim_gate
-    # Ownership check: never delete a lock that another process has taken over.
-    if [ "$(_read_run_id "${_LOCK_RUN_ID_FILE}")" = "${_LOCK_RUN_ID}" ]; then
+    # Ownership check via instance token (hostname:pid:start-time), which is unique per
+    # process instance even when two restarts share the same NANOCHAT_RUN_ID.
+    # Never delete a lock claimed by a different process instance (BLOCKER 2 fix).
+    local stored_token
+    stored_token=$(cat "${_LOCK_DIR}/instance_token" 2>/dev/null) || stored_token=""
+    if [ -n "${_LOCK_INSTANCE_TOKEN:-}" ] && [ "${stored_token}" = "${_LOCK_INSTANCE_TOKEN}" ]; then
         rm -rf "${_LOCK_DIR}"
     fi
 }
 
-# Caller must own the lock directory. Records our run ID + heartbeat, starts the
-# background refresher, and installs traps so the lock is always released.
+# Caller must own the lock directory. Records run ID + per-process instance token +
+# heartbeat, starts the background refresher, and installs traps.
 _claim_run_lock() {
     echo "${_LOCK_RUN_ID}" > "${_LOCK_RUN_ID_FILE}"
+    # Instance token is unique per process even when two restarts share a run ID.
+    _LOCK_INSTANCE_TOKEN="${HOSTNAME:-unknown}:$$:$(date +%s)"
+    echo "${_LOCK_INSTANCE_TOKEN}" > "${_LOCK_DIR}/instance_token"
     _update_heartbeat
     _start_heartbeat_refresher
     # NOTE: these traps overwrite any trap the caller set for EXIT/INT/TERM.
@@ -128,12 +153,20 @@ _acquire_run_lock() {
         exit 1
     fi
 
-    # ITEM A: a container that was preempted and restarted can reclaim its own lock even when
-    # the heartbeat is still fresh (restart within _STALE_SECS). Same run ID = same logical run.
+    # Same-run-ID reclaim: a preempted container that restarts can reclaim its own lock,
+    # but only after the previous instance looks dead. A live holder refreshes the heartbeat
+    # every _HB_REFRESH_INTERVAL s; after kill -9 the BLOCKER 1 fix stops the refresher,
+    # so the heartbeat goes stale within one interval. Threshold = 2 * _HB_REFRESH_INTERVAL
+    # gives a safe margin: live → always fresh; killed → stale after ~2 intervals (120 s default).
+    # This prevents a second process with the same NANOCHAT_RUN_ID from stealing a live lock.
     local held_run_id
     held_run_id="$(_read_run_id "${_LOCK_RUN_ID_FILE}")"
     if [ "${held_run_id:-}" = "${_LOCK_RUN_ID}" ]; then
-        # Our own lock: take the reclaim gate and replace it without the stale check.
+        if ! _is_same_id_stale; then
+            echo "ERROR: same run ID ${_LOCK_RUN_ID} is already active on ${NANOCHAT_BASE_DIR} (heartbeat is fresh — previous instance still running)." >&2
+            exit 1
+        fi
+        # Previous instance looks dead: reclaim via the standard gate.
         if ! mkdir "${_RECLAIM_DIR}" 2>/dev/null; then
             echo "ERROR: another run is reclaiming the lock on ${NANOCHAT_BASE_DIR}." >&2
             echo "  If no run is active, remove it with: rm -rf \"${_RECLAIM_DIR}\"" >&2

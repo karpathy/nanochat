@@ -198,28 +198,27 @@ class TestRunLockReclaimAndSafety:
         assert (lock_dir / "heartbeat").exists()
         assert not (tmp_path / ".run.lock.reclaim").exists()
 
-    def test_lock_not_released_when_run_id_overwritten(self, tmp_path):
+    def test_lock_not_released_when_instance_token_overwritten(self, tmp_path):
         """
-        Scenario: Lock run_id is overwritten mid-run with a different value; EXIT trap
-                  must NOT delete the lock (it now belongs to a different holder).
-        Slice: _release_run_lock ownership check
-        ### Given: _run_lock.sh acquires the lock (writes its own run_id), then the run_id
-                   file is overwritten with a different value before the script exits
+        Scenario: Lock instance_token is overwritten mid-run; EXIT trap must NOT delete the
+                  lock — ownership now uses instance_token (hostname:pid:start-time), not run_id.
+        Slice: _release_run_lock instance-token ownership check (BLOCKER 2 fix)
+        ### Given: _run_lock.sh acquires the lock, then instance_token is overwritten
         ### When: the script exits normally (EXIT trap fires)
-        ### Then: .run.lock dir still exists — the lock belongs to the other run_id
+        ### Then: .run.lock dir still exists — instance_token mismatch prevents deletion
         """
         script = f"""#!/usr/bin/env bash
 set -euo pipefail
 export NANOCHAT_BASE_DIR="{tmp_path}"
 source "{RUN_LOCK}"
-# Overwrite run_id with a different value AFTER acquiring
-echo "other-run-id" > "{tmp_path}/.run.lock/run_id"
-# EXIT trap fires here: sees run_id "other-run-id" != our _LOCK_RUN_ID, must NOT rm the lock
+# Simulate a different process claiming the lock by overwriting instance_token
+echo "other-host:99999:0" > "{tmp_path}/.run.lock/instance_token"
+# EXIT trap fires: instance_token != ours, must NOT rm the lock
 """
         r = _run(script)
         assert r.returncode == 0, r.stderr
         lock_dir = tmp_path / ".run.lock"
-        assert lock_dir.exists(), "lock was released despite run_id mismatch — ownership check missing"
+        assert lock_dir.exists(), "lock was released despite instance_token mismatch — ownership check broken"
 
 
 class TestRunLockHeartbeat:
@@ -353,21 +352,23 @@ class TestRunLockSelfReclaim:
     Slice: runs/_run_lock.sh ITEM A — same-run-ID fast reclaim
     """
 
-    def test_same_run_id_reclaims_fresh_heartbeat_lock(self, tmp_path):
+    def test_same_run_id_fresh_heartbeat_is_refused(self, tmp_path):
         """
-        Scenario: Lock is held with a fresh heartbeat but the SAME run ID as the caller;
-                  the caller is a restarted container that owns this lock.
-        Slice: ITEM A — same run ID skips staleness check
-        ### Given: .run.lock/ with a current heartbeat and run_id="my-run"
+        Scenario: Lock is held with a fresh heartbeat by the SAME run ID; must be REFUSED
+                  because the previous instance is still alive (BLOCKER 2 fix).
+        Slice: same-run-ID reclaim now requires a 2 * _HB_REFRESH_INTERVAL stale heartbeat
+        ### Given: .run.lock/ with a current-timestamp heartbeat and run_id="my-run"
         ### When: _run_lock.sh is sourced with NANOCHAT_RUN_ID="my-run"
-        ### Then: exits 0 — same run ID reclaims the lock regardless of heartbeat age
+        ### Then: exits 1 — fresh heartbeat means the previous instance is live
         """
         lock_dir = tmp_path / ".run.lock"
         _write_fresh_lock(lock_dir, run_id="my-run")
 
         r = _run(_run_lock_script(str(tmp_path), extra_env={"NANOCHAT_RUN_ID": "my-run"}))
-        assert r.returncode == 0, r.stderr
-        assert "ACQUIRED" in r.stdout
+        assert r.returncode == 1, (
+            "fresh-heartbeat same-ID lock must be REFUSED (BLOCKER 2 fix)"
+        )
+        assert "ERROR" in r.stderr
 
     def test_different_run_id_fresh_heartbeat_still_refused(self, tmp_path):
         """
