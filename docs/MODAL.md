@@ -224,6 +224,82 @@ modal volume get nanochat-modal /gpu/chatsft_checkpoints ~/.cache/nanochat-modal
 - Add `--profile <name>` or `-e <env>` if your Modal CLI uses a non-default profile or environment.
 - Read-only: `modal volume get` only copies. It never changes the Volume.
 
+## How the pieces fit
+
+Your laptop launches the job, and the Modal container does the work. Everything the job writes lands on one shared Volume, `nanochat-modal`. Each mode has its own folder there (`/cpu/` or `/gpu/`), and each run has a record under `/runs/<run-id>/`.
+
+```mermaid
+flowchart LR
+  subgraph Laptop
+    LAUNCH["runmodal.sh (launch)"]
+    FIN["runmodal.sh finish"]
+    PEEK["modal_peek.sh"]
+    ARCH["~/.cache/nanochat-modal/runs/run-id"]
+    LOCAL["~/.cache/nanochat-modal/mode"]
+  end
+  subgraph Modal
+    CONT["container: modal_run.py"]
+    STAGE["runcpu.sh or speedrun.sh stages"]
+    HOOK["modal_hook.sh (post-stage)"]
+    DAEMON["commit daemon"]
+  end
+  VOL[("Volume nanochat-modal: mode folders, runs/run-id")]
+
+  LAUNCH -->|"modal run --detach"| CONT
+  CONT --> STAGE
+  STAGE -->|"markers and artifacts under /mode/"| VOL
+  STAGE -->|"stage done"| HOOK
+  HOOK -->|"commit request"| DAEMON
+  DAEMON -->|"volume.commit"| VOL
+  FIN -->|"modal volume get"| VOL
+  FIN --> LOCAL
+  PEEK -->|"reads run record"| VOL
+  PEEK --> ARCH
+```
+
+The post-stage hook waits for the commit daemon before the next stage starts. This is the handshake:
+
+```mermaid
+sequenceDiagram
+  participant S as Stage script
+  participant K as modal_hook.sh
+  participant D as Commit daemon
+  participant V as Modal Volume
+  S->>K: stage finished
+  K->>K: delete old heartbeat, write request file
+  D->>D: sees request, writes heartbeat
+  D->>V: volume.commit()
+  alt commit succeeds
+    D->>K: request file removed (ack)
+    K-->>S: continue to next stage
+  else commit fails
+    D->>K: write .modal_commit_failed
+    K-->>S: fail fast
+  end
+  Note over K,D: the hook gives up after 120 s with no heartbeat, or 600 s per stage
+```
+
+Read the first diagram for "where does my data live?" and the second for "why did a stage stop after finishing?"
+
+## Command quick-reference (Modal)
+
+| Command | Category | What it does |
+|---|---|---|
+| `bash runs/runmodal.sh` | regular | Launch a run (`MODE=cpu` default, or `MODE=gpu`) |
+| `bash runs/runmodal.sh finish <run-id>` | maintenance | Download a finished run's models to your laptop |
+| `bash runs/modal_peek.sh status` | maintenance | Show running apps and active containers (read-only) |
+| `bash runs/modal_peek.sh apps [N]` | maintenance | List the last N Modal apps, including stopped ones |
+| `bash runs/modal_peek.sh past` | maintenance | List archived runs, both local and on the Volume |
+| `bash runs/modal_peek.sh report [run-id]` | maintenance | Show one run's config, resources, and status |
+| `bash runs/modal_peek.sh compare` | maintenance | One table of every run on the Volume |
+| `bash runs/modal_peek.sh pull [run-id]` | maintenance | Copy a run's config, report, and manifest to your laptop |
+| `bash runs/modal_peek.sh info [app-id]` | maintenance | Show an app's lifecycle, functions, and state |
+| `bash runs/modal_peek.sh logs [app-id] [N] [-f]` | maintenance | Show the last N log lines of an app; `-f` streams |
+| `bash runs/modal_peek.sh container [ta-id] [N] [-f]` | maintenance | Show the last N log lines of one container; `-f` streams |
+| `bash runs/modal_peek.sh cost [PERIOD]` | maintenance | Show the billing summary, e.g. "this month" |
+
+Every `modal_peek.sh` command is read-only. Stop an app by hand with `modal app stop <app-id>`.
+
 ## After the run finishes
 
 Once `ALL DONE` appears in the terminal:
