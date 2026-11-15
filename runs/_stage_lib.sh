@@ -279,7 +279,12 @@ run_stage() {
     fi
 
     _print_plaque "$stage" start "$(stage_purpose "$stage")"
-    _paint "START" "$(log "START stage=$stage profile=$PROFILE${knobs:+ $knobs} ETA: unknown until first train step")"
+    local eta_note
+    case "$stage" in
+        base_train|chat_sft) eta_note="ETA after first train step" ;;
+        *) eta_note="ETA: n/a" ;;
+    esac
+    _paint "START" "$(log "START stage=$stage profile=$PROFILE${knobs:+ $knobs} $eta_note")"
     # One packed enrichment line (purpose + health) — Phase 1 sparsity discipline.
     echo "  purpose: $(stage_purpose "$stage") · $(health_strip)" || true
     # Learn line after purpose (empty string suppresses the output).

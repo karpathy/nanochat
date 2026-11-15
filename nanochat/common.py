@@ -128,6 +128,17 @@ def format_duration(seconds: float) -> str:
     minutes, secs = divmod(rest, 60)
     return f"{hours}h {minutes}m {secs}s"
 
+def compute_eta_str(total_training_time: float, steps_done: int, num_iterations: int) -> str:
+    """Compute ETA string from total training time and step counts. Returns empty string if not ready."""
+    if steps_done <= 0:
+        return ""
+    avg_time_per_step = total_training_time / steps_done
+    remaining_steps = num_iterations - steps_done - 10  # offset for first 10 steps
+    if remaining_steps <= 0:
+        return ""
+    eta_seconds = remaining_steps * avg_time_per_step
+    return f" | eta: {format_duration(eta_seconds)}"
+
 def print0(s="",**kwargs):
     ddp_rank = int(os.environ.get('RANK', 0))
     if ddp_rank == 0:
