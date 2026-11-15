@@ -174,8 +174,75 @@ class TestSftLoaderStateRoundTrip:
         assert d["cursor"] == 5
         assert d["conv_buffer"] == buf
 
+    @pytest.mark.parametrize("rank,saved_cursor,expected_cursor", [
+        (0, 0, 0),   # rank 0 keeps its own cursor
+        (1, 0, 1),   # rank 1 gets block_base + 1 = 0 + 1
+        (2, 0, 2),   # rank 2 gets 0 + 2
+        (3, 0, 3),   # rank 3 gets 0 + 3
+        (1, 4, 5),   # saved cursor 4 → block_base 4; rank 1 → 5
+        (2, 8, 10),  # saved cursor 8 → block_base 8; rank 2 → 10
+    ])
+    def test_ddp_ranks_get_distinct_cursors(self, rank, saved_cursor, expected_cursor):
+        """
+        Scenario: DDP resume — each rank re-derives its own cursor from rank-0's saved value.
+        Slice: SftLoaderState.from_dict DDP re-derivation
+        ### Given: world_size=4, checkpoint written by rank 0 with saved_cursor
+        ### When: from_dict is called for this rank
+        ### Then: cursor equals expected_cursor (distinct per rank)
+        """
+        # Given
+        d = {"cursor": saved_cursor, "consumed": saved_cursor}
+        # When
+        s = SftLoaderState.from_dict(d, ddp_rank=rank, ddp_world_size=4)
+        # Then
+        assert s.cursor == expected_cursor
 
-# ---------------------------------------------------------------------------
+    def test_ddp_non_zero_rank_gets_empty_conv_buffer(self):
+        """
+        Scenario: conv_buffer belongs to rank 0 only; other ranks start empty.
+        Slice: SftLoaderState.from_dict conv_buffer DDP
+        ### Given: saved state has a non-empty conv_buffer
+        ### When: from_dict is called for rank 1 of 2
+        ### Then: conv_buffer is empty (rank 1 must refill from its own row group)
+        """
+        # Given
+        d = {"cursor": 0, "consumed": 0, "conv_buffer": [[1, 2], [3, 4]]}
+        # When
+        s = SftLoaderState.from_dict(d, ddp_rank=1, ddp_world_size=2)
+        # Then
+        assert s.conv_buffer == []
+
+    def test_ddp_rank0_keeps_saved_conv_buffer(self):
+        """
+        Scenario: rank 0 resumes exactly where it left off, including the conv_buffer.
+        Slice: SftLoaderState.from_dict conv_buffer rank 0
+        ### Given: saved state has a non-empty conv_buffer
+        ### When: from_dict is called for rank 0 of 2
+        ### Then: conv_buffer is preserved
+        """
+        # Given
+        buf = [[1, 2], [3, 4]]
+        d = {"cursor": 0, "consumed": 0, "conv_buffer": buf}
+        # When
+        s = SftLoaderState.from_dict(d, ddp_rank=0, ddp_world_size=2)
+        # Then
+        assert s.conv_buffer == buf
+
+    def test_missing_cursor_defaults_to_rank_not_re_derived(self):
+        """
+        Scenario: No saved state; default cursor is rank-specific, not re-derived.
+        Slice: SftLoaderState.from_dict empty-dict path
+        ### Given: empty dict, rank=1, world_size=4
+        ### When: from_dict is called
+        ### Then: cursor == 1 (the default), not 2 (which the formula would give if applied)
+        """
+        # Given / When
+        s = SftLoaderState.from_dict({}, ddp_rank=1, ddp_world_size=4)
+        # Then
+        assert s.cursor == 1
+        assert s.consumed == 1
+
+
 # § Config-mismatch guard
 # ---------------------------------------------------------------------------
 

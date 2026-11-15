@@ -182,3 +182,29 @@ class TestRunLockReclaimAndSafety:
         assert r.returncode == 1
         assert (lock_dir / "pid").read_text() == str(os.getpid())
         assert not (tmp_path / ".run.lock.reclaim").exists()
+
+    def test_lock_not_released_when_pid_overwritten(self, tmp_path):
+        """
+        Scenario: Lock PID is overwritten mid-run with a different live PID; EXIT trap
+                  must NOT delete the lock (it now belongs to a different process).
+        Slice: _release_run_lock ownership check
+        ### Given: _run_lock.sh acquires the lock (writes its own PID), then the PID
+                   file is overwritten with a different live PID before the script exits
+        ### When: the script exits normally (EXIT trap fires)
+        ### Then: .run.lock dir still exists — the lock belongs to the other PID
+        """
+        # This test falsifies the ownership guard: deleting the
+        # `if [ "$(_read_pid_file ...)" = "$$" ]` check in _release_run_lock causes
+        # the lock to be removed unconditionally, making this assertion fail.
+        other_pid = os.getpid()  # Python's PID — definitely live, definitely != bash's $$
+        script = f"""#!/usr/bin/env bash
+set -euo pipefail
+export NANOCHAT_BASE_DIR="{tmp_path}"
+source "{RUN_LOCK}"
+echo "{other_pid}" > "{tmp_path}/.run.lock/pid"
+# EXIT trap fires here: sees PID {other_pid} != $$, must NOT rm the lock
+"""
+        r = _run(script)
+        assert r.returncode == 0, r.stderr
+        lock_dir = tmp_path / ".run.lock"
+        assert lock_dir.exists(), "lock was released despite PID mismatch — ownership check missing"

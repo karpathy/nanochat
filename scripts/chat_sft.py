@@ -179,7 +179,7 @@ if args.resume_from_step > 0:
         checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)
     assert_resume_config_matches(_saved_meta, {k: getattr(args, k) for k in _guard_keys}, _guard_keys)
     _sft_resume_loader_state = SftLoaderState.from_dict(
-        _saved_meta.get("dataloader_state_dict") or {}, ddp_rank
+        _saved_meta.get("dataloader_state_dict") or {}, ddp_rank, ddp_world_size
     )
     _sft_resume_loop_state = _saved_meta.get("loop_state") or {}
 else:

@@ -26,11 +26,23 @@ class SftLoaderState:
         return cls(cursor=ddp_rank, consumed=ddp_rank, epoch=1, it=0, conv_buffer=[])
 
     @classmethod
-    def from_dict(cls, d, ddp_rank):
+    def from_dict(cls, d, ddp_rank, ddp_world_size: int = 1):
+        # Re-derive each rank's cursor/consumed from rank-0's saved value, mirroring
+        # dataloader._start_position so DDP ranks don't all resume on rank-0's stream.
+        # Only applies when the key was actually saved; defaults are already rank-specific.
+        ws = ddp_world_size
+        if "cursor" in d:
+            cursor = (d["cursor"] // ws) * ws + ddp_rank
+        else:
+            cursor = ddp_rank
+        if "consumed" in d:
+            consumed = (d["consumed"] // ws) * ws + ddp_rank
+        else:
+            consumed = ddp_rank
         return cls(
-            cursor=d.get("cursor", ddp_rank),
-            consumed=d.get("consumed", ddp_rank),
+            cursor=cursor,
+            consumed=consumed,
             epoch=d.get("epoch", 1),
             it=d.get("it", 0),
-            conv_buffer=list(d.get("conv_buffer", [])),
+            conv_buffer=list(d.get("conv_buffer", [])) if ddp_rank == 0 else [],
         )
