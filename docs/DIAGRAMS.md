@@ -7,7 +7,7 @@ Every diagram for this project lives in this file. Other docs link here, so ther
 | [Training pipeline](#training-pipeline) | Which stages run, in what order, and what each one writes | [RUNNING.md](RUNNING.md) §4, [MODAL.md](MODAL.md), [README](../README.md) |
 | [Skip decision](#skip-decision) | Why a stage prints `SKIP`, `FORCE`, or `START` | [RUNNING.md](RUNNING.md) §4 |
 | [Modal data flow and commit handshake](MODAL.md#how-the-pieces-fit) | Where data lives on the laptop and the Volume, and why a stage waits after it finishes | [MODAL.md](MODAL.md) |
-| Checkpoint and resume | Planned. When a checkpoint counts as complete, what a resume restores, and when it refuses | Not yet written |
+| [Checkpoint and resume](#checkpoint-and-resume) | When a checkpoint counts as complete, what a resume restores, and when it refuses | [RUNNING.md](RUNNING.md) §4, [MODAL.md](MODAL.md) |
 
 ## Training pipeline
 
@@ -39,3 +39,52 @@ flowchart TD
 ```
 
 A stray `model_*.pt` from a probe or an interrupted run does not count as finished. Only the marker does.
+
+## Checkpoint and resume
+
+A checkpoint is a set of files written during a long stage. It is not a stage marker. Two stages save checkpoints:
+
+- **base_train:** `base_checkpoints/d<depth>/`
+- **chat_sft:** `chatsft_checkpoints/d<depth>/`
+
+### When a checkpoint is saved, and when it counts
+
+```mermaid
+flowchart TD
+  A["Step finishes"] --> B{"Save point?"}
+  B -- "no, or step 0, or the step we resumed from" --> C["Keep training"]
+  B -- "yes: every N steps, every S seconds, or the last step" --> D["Write model, meta, and optimizer files, each through a temp file"]
+  D --> E{"All files present, one optimizer file per rank?"}
+  E -- yes --> F["Complete: a resume can use this step"]
+  E -- no --> G["Incomplete: resume ignores it"]
+```
+
+### What a resume does
+
+```mermaid
+flowchart TD
+  S["Stage starts"] --> F{"FORCE_STAGES names this stage?"}
+  F -- yes --> Z["Start from step 0"]
+  F -- no --> P["Find the highest complete checkpoint"]
+  P -- none --> Z
+  P -- "found step N" --> G{"chat_sft only: do the saved settings match?"}
+  G -- no --> R["Refuse; hint: FORCE_STAGES=chat_sft"]
+  G -- "yes, or base_train (no check)" --> L["Restore model, optimizer, and data position"]
+  L --> N["Continue from step N"]
+```
+
+### The two stages side by side
+
+| | base_train | chat_sft |
+|---|---|---|
+| Who picks the resume step | The runner's probe passes `--resume-from-step` | The script auto-detects it |
+| Config check before resume | **None** (see the gap below) | Refuses if `device_batch_size`, `max_seq_len`, `total_batch_size`, `num_iterations`, or `world_size` changed |
+| Restores | Model, optimizer, data position | Model, optimizer, data position, loop state |
+| Local status | Kill and SIGTERM verified on CPU/MPS (Step A) | Implemented; not verified end to end |
+| Modal status | Not verified. Run `20261114-125440-cpu` restarted at step 0 after preemption | Not verified |
+
+Known gaps:
+
+- **No config check in base_train.** Change a setting and resume, and it goes ahead silently. Tracked as TRAIL rank 3b.
+- **DDP data position:** rank 0 is restored exactly. Ranks 1 and up snap to the nearest stride, so they may re-read or skip a few samples (see [RUNNING.md](RUNNING.md) §4).
+- **Stage markers** are separate from checkpoints and are not depth-scoped. See TRAIL rank 2 (B2).

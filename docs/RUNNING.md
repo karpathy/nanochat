@@ -56,6 +56,7 @@ The flow of stages and the skip rule are diagrammed in [DIAGRAMS.md](DIAGRAMS.md
 
 Notes:
 
+- Checkpoints, the resume rules, and their known gaps are diagrammed in [DIAGRAMS.md](DIAGRAMS.md#checkpoint-and-resume).
 - Markers are written **last**, after a clean finish. A crashed train/eval leaves no marker (or the shell clears it at the next `START`), so the stage re-runs. A stray `model_*.pt` from a probe or interrupt is **not** enough to SKIP.
 - Upgrading from older skip-on-`model_*.pt` behavior: if you already finished train and want to keep SKIP without redoing it, `touch "$NANOCHAT_BASE_DIR/base_checkpoints/.train_ok"` (and the chatsft equivalent if needed).
 - **Mid-stage resume (`base_train`):** if `base_train` is interrupted, a re-run continues from its last complete checkpoint. The script saves one every `NANOCHAT_SAVE_EVERY_SECS` seconds (default 300). A checkpoint counts only when its model, meta and optimizer files are all present. `FORCE_STAGES=base_train` starts from step 0 instead. The checkpoint check is unit-tested. Local kill and SIGTERM checks on CPU/MPS resume from the last complete checkpoint, and the model, optimizer and learning-rate schedule come back from it. Data order matches too. A kill after the step-7 checkpoint, then a resume, reproduced steps 7-199 of an uninterrupted 200-step run: same row group and pq, loss within 1e-6 (logged precision). Evidence: `docs/evidence/resume-step-a-pass-2026-11-15/`. The Modal preemption path is not covered.

@@ -152,7 +152,7 @@ Keep your terminal visible (or use `tmux attach`). Key signals to look for in th
 
 **If the machine spec is rejected** (Modal returns a resource error for 64 cores / 128 GiB), lower `cpu=64` and `memory=131072` in `runs/modal_run.py` and re-run.
 
-**If the run exceeds the timeout** and is killed mid-stage, re-run as normal — finished stages SKIP and only the interrupted stage reruns. Mid-stage resume is implemented for `base_train` and `chat_sft`, but its Modal path is not verified, so treat the stage as restarting from its beginning.
+**If the run exceeds the timeout** and is killed mid-stage, re-run as normal — finished stages SKIP and only the interrupted stage reruns. Mid-stage resume is implemented for `base_train` and `chat_sft`, but its Modal path is not verified, so treat the stage as restarting from its beginning. The resume rules are diagrammed in [DIAGRAMS.md](DIAGRAMS.md#checkpoint-and-resume).
 
 After the run, check the run record with `bash runs/modal_peek.sh report`.
 
