@@ -303,12 +303,18 @@ def find_run_dirs(root: str) -> list[str]:
 def replay_commands(run_dir: str) -> list[str]:
     """Return the shell commands needed to replay a run.
 
-    For every run:
+    For Modal runs:
       git checkout <code_rev>
       MODE=<mode> bash runs/runmodal.sh
 
-    For local runs (mode contains "local") an extra line is inserted:
+    For local runs (mode contains "local"):
+      git checkout <code_rev>
       uv sync --extra cpu
+      bash runs/runcpu.sh      # for local-cpu (or any local non-gpu)
+      bash runs/speedrun.sh    # for local-gpu
+
+    runmodal.sh only accepts cpu|gpu modes; local runs must use the dedicated
+    runner scripts (runcpu.sh / speedrun.sh) or the script exits with an error.
     """
     run = _read_json(os.path.join(run_dir, RUN_JSON))
     code_rev = run.get("code_rev") or "unknown"
@@ -316,7 +322,10 @@ def replay_commands(run_dir: str) -> list[str]:
     lines: list[str] = [f"git checkout {code_rev}"]
     if "local" in mode:
         lines.append("uv sync --extra cpu")
-    lines.append(f"MODE={mode} bash runs/runmodal.sh")
+        runner = "bash runs/speedrun.sh" if "gpu" in mode else "bash runs/runcpu.sh"
+        lines.append(runner)
+    else:
+        lines.append(f"MODE={mode} bash runs/runmodal.sh")
     return lines
 
 
