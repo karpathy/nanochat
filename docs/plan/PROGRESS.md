@@ -50,6 +50,7 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | 2026-11-15 | backlog | Audit follow-ups added as ranks 8–10: CPU timing docs (blocked on a finished run), pipeline diagram (Could, on confirmation), AGENTS.md decision (Could, default is to skip) | Each follows from an audit row; ranked after the Modal safety items (B1, B3) and the Could items, because none of them block a run |
 | 2026-11-15 | backlog | Run-record replay stays at rank 4 (no duplicate row) | Already tracked in TRAIL; only its start was undone (branch deleted, no edits) |
 | 2026-11-15 | backlog | Test-import and Python-pin fix added as rank 3a (Should) | PR #41 reviewers would hit `No module named 'nanochat'` under plain `uv run pytest`; `.python-version` 3.10 is end-of-life for Modal |
+| 2026-11-15 | docs | All project diagrams live in `docs/DIAGRAMS.md`; other docs link to them | One place to update when the pipeline changes. The README has no Mermaid diagram, so its link sits under the Modal section |
 ## Slice states
 
 | slice_id | state | evidence |

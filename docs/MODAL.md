@@ -281,6 +281,8 @@ sequenceDiagram
 
 Read the first diagram for "where does my data live?" and the second for "why did a stage stop after finishing?"
 
+The training stages and their skip markers are diagrammed in [DIAGRAMS.md](DIAGRAMS.md#training-pipeline).
+
 ## Command quick-reference (Modal)
 
 | Command | Category | What it does |

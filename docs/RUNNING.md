@@ -52,6 +52,8 @@ A stage is skipped when its artifact already exists. Paths are relative to `$NAN
 | `chat_sft` | `chatsft_checkpoints/.train_ok` | end of `scripts/chat_sft.py` (rank 0) |
 | `chat_eval` (speedrun only) | `chatsft_checkpoints/.eval_ok` | end of `scripts/chat_eval.py` |
 
+The flow of stages and the skip rule are diagrammed in [DIAGRAMS.md](DIAGRAMS.md#training-pipeline) and [DIAGRAMS.md](DIAGRAMS.md#skip-decision).
+
 Notes:
 
 - Markers are written **last**, after a clean finish. A crashed train/eval leaves no marker (or the shell clears it at the next `START`), so the stage re-runs. A stray `model_*.pt` from a probe or interrupt is **not** enough to SKIP.
