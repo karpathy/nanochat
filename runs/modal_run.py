@@ -60,10 +60,14 @@ CPU_MEMORY_MIB = 131072  # 128 GiB
 MODAL_MODE = os.environ.get("NANOCHAT_MODAL_MODE", "cpu")
 
 
+# Must match .python-version and pyproject requires-python. tests/test_modal_image_python.py enforces it.
+PYTHON_VERSION = "3.12"
+
+
 def _nanochat_image(extra: str) -> modal.Image:
     """Image with the uv-synced deps for one extra (gpu or cpu). Local source is the last layer."""
     return (
-        modal.Image.debian_slim(python_version="3.11")
+        modal.Image.debian_slim(python_version=PYTHON_VERSION)
         .pip_install("uv")
         .add_local_file("pyproject.toml", remote_path="/root/nanochat/pyproject.toml", copy=True)
         .add_local_file("uv.lock", remote_path="/root/nanochat/uv.lock", copy=True)
@@ -79,7 +83,7 @@ def _nanochat_image(extra: str) -> modal.Image:
         .add_local_dir(
             ".",
             remote_path="/root/nanochat",
-            ignore=[".venv", ".git", ".omc", "**/.pytest_cache", "**/__pycache__"],
+            ignore=[".venv", "**/.venv", ".git", ".omc", ".claude", ".worktrees", ".reports", ".test-results", "**/.pytest_cache", "**/__pycache__"],
         )
     )
 
