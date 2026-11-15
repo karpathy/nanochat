@@ -97,8 +97,9 @@ Get it to write stories or poems. Ask it to tell you who you are to see a halluc
 | **Local GPU** | `bash runs/speedrun.sh` | 8×H100 bare metal | ~1.5–2 hours | $40–60 (yours) |
 | **Cloud CPU (Modal)** | `bash runs/runmodal.sh` (default `MODE=cpu`) | Modal, up to 64 cores / 128 GiB, no GPU | Unmeasured (first run measures it) | Scales with cores; check `modal billing rates` |
 | **Cloud GPU (Modal)** | `MODE=gpu bash runs/runmodal.sh` | Modal 8×H100 | ~1.5–2 hours | ~$40–60 (first run higher) |
+| **Modal: download a finished run** | `bash runs/runmodal.sh finish <run-id>` | Your laptop | Minutes | Download only; see [docs/MODAL.md](docs/MODAL.md) for runs that cannot use it |
 
-The **Cloud** options train on Modal without requiring local hardware. `MODE=cpu` runs the small `runcpu` profile on a heavy CPU machine, with no GPU payment gate. `MODE=gpu` runs the GPT-2-grade `speedrun` profile on 8×H100 and needs a Modal payment method and an 8×H100 entitlement. For details, prerequisites, and how to use the trained model locally afterward, see [docs/MODAL.md](docs/MODAL.md).
+The **Cloud** options train on Modal without requiring local hardware. `MODE=cpu` runs the small `runcpu` profile on a heavy CPU machine, with no GPU payment gate. `MODE=gpu` runs the GPT-2-grade `speedrun` profile on 8×H100 and needs a Modal payment method and an 8×H100 entitlement. For details, prerequisites, and how to use the trained model locally afterward, see [docs/MODAL.md](docs/MODAL.md). All project diagrams (training pipeline, Modal data flow, skip rules) are in [docs/DIAGRAMS.md](docs/DIAGRAMS.md).
 
 A few more notes:
 

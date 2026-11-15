@@ -27,6 +27,8 @@ File: new `runs/test_modal_download.sh`.
 
 **Workaround (in docs):** manual `modal volume get nanochat-modal chatsft_checkpoints/d<depth>/ ~/.cache/nanochat-modal/<mode>/chatsft_checkpoints/`.
 
+**Status (2026-11-15 audit):** CODE FIXED, NOT VERIFIED. Commit `829d5f7` made the search recursive (`os.walk` over `chatsft_checkpoints/`, `runs/modal_run.py:503-524`). Still missing: a test with a mocked Volume, and a real download run. The `--force` nesting risk is not addressed in code. `docs/MODAL.md` callout updated to match.
+
 ---
 
 ## B2: Stage markers are depth-free — shared across CPU and GPU
