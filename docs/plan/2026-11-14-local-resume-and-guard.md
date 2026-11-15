@@ -1,5 +1,7 @@
 # Plan: check Modal-side changes reach local CPU/GPU runs
 
+> **Status: SUPERSEDED (MERGED).** Steps A, B and C and the guard tests are shipped. Step A evidence: `docs/evidence/resume-step-a-pass-2026-11-15/`. `chat_sft` resume: `scripts/chat_sft.py:170-203`. Local lock: `runs/_run_lock.sh`, `tests/test_run_lock.py`. Guard tests: `tests/test_runmodal_mode.py`. Kept for history. Do not rebuild.
+
 ## Context
 
 Work on PR #26 (`feat/checkpoint-mid-train-resume`, not yet merged to `master`) and the Modal

@@ -19,7 +19,7 @@ Today only `base_train` resumes mid-stage. This plan covers the rest.
 | `tok_eval` | Restarts from zero | None | Writes `.tok_eval_ok` at end. Cheap to rerun |
 | `base_train` | Resumes | Last complete checkpoint (`find_safe_resume_step`) | **Verified e2e 2026-11-15** (Step A): steps 7-199 match after resume from step 7 (pq, rg exact; loss within 1e-6) |
 | `base_eval` | Restarts from zero | None | Writes `.eval_ok` at end. CORE metric is slow to rerun |
-| `chat_sft` | Restarts from zero | None | Saves checkpoints, but no `--resume-from-step` is wired and no dataloader state is saved for resume |
+| `chat_sft` | Resumes | Last complete checkpoint (`find_safe_resume_step`, auto-detect or `--resume-from-step`) | **Implemented, not verified.** Config guard, model and optimizer restore, and dataloader state are in place. Data-order check still open |
 | `chat_eval` | Restarts from zero | None | Writes `.eval_ok` at end. Cheap to rerun |
 | Modal wrapper (`modal_run.py`) | SIGTERM stops the whole process group, then final commit | Via the stage that is resumed | Only tested locally, not on a real preemption |
 
@@ -55,21 +55,20 @@ Exit: a table of observed results. Gaps found here go into Phase 2 or 3.
 
 Exit: no stage can leave a partial artifact that its `stage_done` check accepts.
 
-### Phase 3: resume `chat_sft` (follow-up PR, decided 2026-11-14)
+### Phase 3: resume `chat_sft` (implemented, not verified)
 
-Not in PR #26. PR #26 merges once `base_train` is verified.
+Status (checked 2026-11-15 against code): implemented.
 
-- Save a complete checkpoint every N steps (same `save_checkpoint` contract as `base_train`:
-  model + meta + optim shards, atomic writes).
-- Save the dataloader state in `meta`, as `base_train` already does, so a resumed run
-  does not repeat or skip conversations.
-- Add `--resume-from-step` to `scripts/chat_sft.py`.
-- Wire `resume_flag chat_sft <dir> <nproc>` into `speedrun.sh` and `runcpu.sh`.
-  Use the same `--save-every` default as base training.
-- Tests: `find_safe_resume_step` reads the `chatsft_checkpoints` directory.
-  A CPU run that is killed after step N resumes at N.
+- Checkpoints: `scripts/chat_sft.py` saves with `--save-every-secs` (default 300 s) and `--save-every` (default 0, disabled). Both are in `scripts/chat_sft.py:77-78`.
+- Resume: `--resume-from-step` (`scripts/chat_sft.py:79`). Auto-detect via `find_safe_resume_step`. Config guard `assert_resume_config_matches`, model and optimizer restore `apply_sft_resume_state`, dataloader state saved in `meta` (`scripts/chat_sft.py:170-203`, `:497-504`).
+- Wired: `resume_flag chat_sft` in `runs/runcpu.sh:85` and `runs/speedrun.sh:113`.
+- Tests: `tests/test_sft_resume.py`.
 
-Exit: `chat_sft` resumes after a kill, with the same guarantees as `base_train`.
+Still open (the only outstanding exit criterion):
+- **Data-order check:** run an interrupted `chat_sft` and an uninterrupted one. Confirm the conversation stream matches after resume, the same way Step A checked `base_train`.
+- **Continuity, not step-count equality:** `chat_sft` has no fixed total step count (`scripts/chat_sft.py:246`). The exit criterion is continuity of the conversation stream and of the learning-rate progress.
+
+Exit: an interrupted `chat_sft` resumes with the same conversation stream and learning-rate progress as an uninterrupted run.
 
 ### Phase 4: `dataset` and Modal
 

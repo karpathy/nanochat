@@ -1,5 +1,8 @@
 # Modal nanochat — consolidated plan (post-review)
 
+> **Status (2026-11-15): OPEN.** Code merged on master. The merge gates are not met: live CPU run gates C1-C6 have no evidence yet, and C9 (reviewer sign-off on the final commit) is pending. Auto-download depth bug (`runs/modal_run.py` looks only at the top of `chatsft_checkpoints/`) is documented in `docs/MODAL.md`, not fixed.
+
+
 > **Overview:** One `runmodal` wraps `speedrun.sh` on Modal 8×H100; existing script edits are env-opt-in so **local CPU**, **local GPU**, and **Modal** all keep working; wait-for-ack Volume commits; auto-download chat model; docs for new/existing users.
 
 ## In-repo plan home
