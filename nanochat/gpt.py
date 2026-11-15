@@ -536,7 +536,19 @@ class GPT(nn.Module):
         if targets is not None:
             # training: given the targets, compute and return the loss
             # TODO experiment with chunked cross-entropy?
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+            flat_logits = logits.view(-1, logits.size(-1))
+            flat_targets = targets.view(-1)
+            if loss_reduction == 'mean':
+                # Guard: a micro-batch where every target is masked (ignore_index=-1) would
+                # make F.cross_entropy divide 0/0 and return NaN. Instead return a zero
+                # loss that is still part of the computation graph (zero gradient).
+                n_valid = (flat_targets != -1).sum()
+                if n_valid == 0:
+                    loss = (flat_logits * 0).sum()
+                else:
+                    loss = F.cross_entropy(flat_logits, flat_targets, ignore_index=-1, reduction='sum') / n_valid
+            else:
+                loss = F.cross_entropy(flat_logits, flat_targets, ignore_index=-1, reduction=loss_reduction)
             return loss
         else:
             # inference: just return the logits directly
