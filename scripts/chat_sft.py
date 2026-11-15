@@ -21,6 +21,7 @@ import torch.distributed as dist
 import wandb
 
 from nanochat.checkpoint_manager import (
+    SFT_RESUME_KEYS,
     apply_sft_resume_state,
     assert_resume_config_matches,
     find_safe_resume_step,
@@ -33,9 +34,12 @@ from nanochat.checkpoint_manager import (
 from nanochat.common import (
     COMPUTE_DTYPE,
     COMPUTE_DTYPE_REASON,
+    IGNORE_INDEX,
     DummyWandb,
     autodetect_device_type,
+    collective_check_finite_loss,
     compute_cleanup,
+    compute_eta_str,
     compute_init,
     format_duration,
     get_base_dir,
@@ -55,6 +59,7 @@ from nanochat.memory import (
     fit_device_batch_size,
 )
 from nanochat.run_record import make_run_logger
+from nanochat.term_style import paint
 from nanochat.sft_loader import SftLoaderState
 from nanochat.tokenizer import get_token_bytes
 from scripts.chat_eval import run_chat_eval
@@ -199,20 +204,23 @@ optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_
 
 # Checkpoint directory for mid-training saves (and auto-resume) is defined above with depth.
 
+# FIX 3b: record world_size in user_config so the resume guard can verify it.
+user_config["world_size"] = ddp_world_size
+
 # Use pre-detected resume step (banner already printed above if resuming)
 if args.resume_from_step == -1:
     args.resume_from_step = _auto_detect_resume_step
 
 # Resume: read the SFT model + optimizer this rank saved, and the loader position.
 # Config-mismatch guard: refuse to resume if key training dimensions changed.
-_guard_keys = ["device_batch_size", "max_seq_len", "total_batch_size", "num_iterations", "world_size"]
+# FIX 3c: guard key list lives in checkpoint_manager (single owner).
 if args.resume_from_step > 0:
     _sft_resume_model_data, _sft_resume_optim_data, _saved_meta = load_checkpoint(
         checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)
     assert_resume_config_matches(
         _saved_meta.get("user_config", _saved_meta),
-        {**{k: getattr(args, k) for k in _guard_keys[:-1]}, "world_size": ddp_world_size},
-        _guard_keys, stage="SFT", hint="Use FORCE_STAGES=chat_sft to restart from scratch",
+        {**{k: getattr(args, k) for k in SFT_RESUME_KEYS[:-1]}, "world_size": ddp_world_size},
+        SFT_RESUME_KEYS, stage="SFT", hint="Use FORCE_STAGES=chat_sft to restart from scratch",
     )
     _sft_resume_loader_state = SftLoaderState.from_dict(
         _saved_meta.get("dataloader_state_dict") or {}, ddp_rank, ddp_world_size
@@ -475,7 +483,7 @@ while True:
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
         val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
+        print0(paint("done", f"Step {step:05d} | Validation bpb: {val_bpb:.4f}"))
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
         wandb_run.log({
@@ -511,7 +519,7 @@ while True:
             return sum((task_results[t] - baseline_accuracies[t]) / (1.0 - baseline_accuracies[t]) for t in tasks) / len(tasks)
         chatcore = centered_mean(all_tasks)
         chatcore_cat = centered_mean(categorical_tasks)
-        print0(f"Step {step:05d} | ChatCORE: {chatcore:.4f} | ChatCORE_cat: {chatcore_cat:.4f}")
+        print0(paint("done", f"Step {step:05d} | ChatCORE: {chatcore:.4f} | ChatCORE_cat: {chatcore_cat:.4f}"))
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -523,15 +531,13 @@ while True:
 
     # mid-training time-based save + final save at last_step
     elapsed = time.monotonic() - last_save_time
-    raw_time_due = should_save_checkpoint(step, args.resume_from_step, elapsed,
-                                          args.save_every_secs, 0, False)
+    time_due: bool = args.save_every_secs > 0 and elapsed >= args.save_every_secs
     if ddp and args.save_every_secs > 0:
-        due_flag = torch.tensor([int(master_process and raw_time_due)], device=device)
+        due_flag = torch.tensor([int(master_process and time_due)], device=device)
         dist.broadcast(due_flag, src=0)
-        raw_time_due = bool(due_flag.item())
-    agreed_elapsed = float("inf") if raw_time_due else 0.0
-    if should_save_checkpoint(step, args.resume_from_step, agreed_elapsed,
-                              args.save_every_secs, args.save_every, last_step):
+        time_due = bool(due_flag.item())
+    if should_save_checkpoint(step, args.resume_from_step, time_due,
+                              args.save_every, last_step):
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -577,9 +583,26 @@ while True:
     t0 = time.time()
     if step == 0:
         print0(f"Step {step:05d} | training forward/backward ({grad_accum_steps} micro-steps)...")
+    # S1: accumulate a non-finite flag across ALL micro-steps so a NaN in micro-step 0
+    # of N is not silently swallowed when micro-step N-1 happens to be finite.
+    # S2: clone y from the NaN micro-batch before next(train_loader) overwrites it,
+    # so the error message reports the right unmasked-token count.
+    nan_flag = False
+    nan_targets = None  # targets from the micro-batch that produced the first NaN
     for micro_step in range(grad_accum_steps):
+        # Warn on a micro-batch where every target is masked (fully-masked SFT batch).
+        n_valid = int((y != IGNORE_INDEX).sum())
+        if n_valid == 0:
+            print0(
+                f"WARNING: step {step}, micro-step {micro_step}: all targets are masked "
+                f"(IGNORE_INDEX={IGNORE_INDEX}); loss will be 0.0 and gradients will be zero."
+            )
         loss = model(x, y)
         train_loss = loss.detach() # for logging
+        # Accumulate flag; clone targets before the prefetch below can overwrite them.
+        if not nan_flag and not torch.isfinite(train_loss):
+            nan_flag = True
+            nan_targets = y.clone()
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         if scaler is not None:
             scaler.scale(loss).backward()
@@ -587,6 +610,13 @@ while True:
             loss.backward()
         x, y, sft_loader_state = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
         progress = max(progress, approx_progress) # only increase progress monotonically
+    # Single collective check after all micro-steps: covers every micro-batch (S1) and
+    # reports unmasked tokens from the batch that caused the NaN, not the prefetched one (S2).
+    collective_check_finite_loss(
+        train_loss, step,
+        nan_targets if nan_flag else y,
+        nan_flag=nan_flag,
+    )
     # step the optimizer
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
@@ -621,8 +651,14 @@ while True:
     mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
+    # ETA: fail-soft — a failure must never abort training
+    try:
+        steps_done = step - 10
+        eta_str = compute_eta_str(total_training_time, steps_done, args.num_iterations)
+    except Exception:
+        eta_str = ""
     total_str = f"/{args.num_iterations:05d}" if args.num_iterations > 0 else ""
-    print0(f"step {step:05d}{total_str} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {format_duration(total_training_time)}")
+    print0(f"step {step:05d}{total_str} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {format_duration(total_training_time)}{eta_str}")
     if step % 10 == 0:
         wandb_run.log({
             "step": step,

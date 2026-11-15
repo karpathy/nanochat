@@ -15,6 +15,8 @@ import torch
 import torch.distributed as dist
 
 from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0, autodetect_device_type, get_base_dir
+from nanochat.glossary import emit_define
+from nanochat.term_style import paint
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
 
@@ -193,6 +195,7 @@ if __name__ == "__main__":
     parser.add_argument('--device-type', type=str, default='', choices=['cuda', 'cpu', 'mps'], help='Device type for evaluation: cuda|cpu|mps. empty => autodetect')
     args = parser.parse_args()
 
+    emit_define("ChatCORE")
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 
@@ -236,7 +239,7 @@ if __name__ == "__main__":
             centered_acc = (acc - baseline_acc) / (1.0 - baseline_acc)
             centered_mean += centered_acc
         chatcore_metric = centered_mean / len(results)
-        print0(f"ChatCORE metric: {chatcore_metric:.4f}")
+        print0(paint("done", f"ChatCORE metric: {chatcore_metric:.4f}"))
 
     compute_cleanup()
     if ddp_rank == 0: # marker: last action of a successful run

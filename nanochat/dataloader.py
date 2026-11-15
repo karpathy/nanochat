@@ -131,8 +131,12 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
 
     while True:
         pq_idx, rg_idx, doc_offset, epoch = reader_position
-        # State from before this batch: the training loop holds a prefetched batch, so resuming here re-yields it
-        state_dict = {"pq_idx": pq_idx, "rg_idx": rg_idx, "doc_offset": doc_offset, "epoch": epoch, "doc_buffer": list(doc_buffer)}
+        # State from before this batch: the training loop holds a prefetched batch, so resuming here re-yields it.
+        # Serialise the FULL doc_buffer so that a resume re-yields exactly the same next batch.
+        # (An earlier cap of 20 caused silent data loss on resume: reader_position had already advanced
+        # past every document in the buffer, so the capped entries were never re-read from disk.)
+        state_dict = {"pq_idx": pq_idx, "rg_idx": rg_idx, "doc_offset": doc_offset, "epoch": epoch,
+                      "doc_buffer": list(doc_buffer)}
         for row_idx in range(B):
             pos = 0
             while pos < row_capacity:

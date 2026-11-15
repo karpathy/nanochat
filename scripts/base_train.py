@@ -28,6 +28,8 @@ import torch.distributed as dist
 import wandb
 
 from nanochat.checkpoint_manager import (
+    BASE_TRAIN_RESUME_KEYS,
+    assert_resume_config_matches,
     load_checkpoint,
     remove_stale_tmp,
     save_checkpoint,
@@ -36,8 +38,10 @@ from nanochat.checkpoint_manager import (
 from nanochat.common import (
     COMPUTE_DTYPE,
     COMPUTE_DTYPE_REASON,
+    IGNORE_INDEX,
     DummyWandb,
     autodetect_device_type,
+    collective_check_finite_loss,
     compute_cleanup,
     compute_eta_str,
     compute_init,
@@ -366,6 +370,29 @@ if total_batch_size == -1:
     total_batch_size = 2 ** round(math.log2(predicted_batch_size)) # clamp to nearest power of 2 for efficiency
     print0(f"Auto-computed optimal batch size: {total_batch_size:,} tokens")
 
+# FIX 3a: overwrite the raw CLI value (-1 when auto) with the resolved batch size so the
+# checkpoint stores the value actually used, not the sentinel that triggers auto-compute.
+user_config["total_batch_size"] = total_batch_size
+# FIX 3b: record world_size in user_config so the resume guard can verify it.
+user_config["world_size"] = ddp_world_size
+
+# Resume config guard: refuse to resume if key training dimensions changed since the checkpoint.
+# FIX 3c: guard key list lives in checkpoint_manager (single owner).
+if resuming:
+    assert_resume_config_matches(
+        meta_data.get("user_config", meta_data),
+        {
+            "device_batch_size": args.device_batch_size,
+            "max_seq_len": args.max_seq_len,
+            "total_batch_size": total_batch_size,
+            "num_iterations": args.num_iterations,
+            "world_size": ddp_world_size,
+        },
+        BASE_TRAIN_RESUME_KEYS,
+        stage="base_train",
+        hint="use FORCE_STAGES=base_train to restart from scratch",
+    )
+
 # 3) Knowing the batch size, we can now calculate a learning rate correction (bigger batch size allows higher learning rates)
 batch_lr_scale = 1.0
 batch_ratio = total_batch_size / B_REF # B/B_ref
@@ -522,15 +549,39 @@ def accumulate_gradients(x, y):
     Reads train_loader and grad_accum_steps at call time, so a retry after an OOM re-halve
     runs on the rebuilt loader and the doubled micro-step count.
     """
+    # S1: accumulate a non-finite flag across ALL micro-steps so a NaN in micro-step 0
+    # of N is not silently swallowed when micro-step N-1 happens to be finite.
+    # S2: clone y from the NaN micro-batch before next(train_loader) overwrites the
+    # persistent buffer, so the error message reports the right unmasked-token count.
+    nan_flag = False
+    nan_targets = None  # targets from the micro-batch that produced the first NaN
     for micro_step in range(grad_accum_steps):
+        # Warn on a micro-batch where every target is masked (SFT-style masking; rare in pretraining).
+        n_valid = int((y != IGNORE_INDEX).sum())
+        if n_valid == 0:
+            print0(
+                f"WARNING: step {step}, micro-step {micro_step}: all targets are masked "
+                f"(IGNORE_INDEX={IGNORE_INDEX}); loss will be 0.0 and gradients will be zero."
+            )
         loss = model(x, y)
         train_loss = loss.detach() # for logging
+        # Accumulate flag; clone targets before the prefetch below overwrites the persistent buffer.
+        if not nan_flag and not torch.isfinite(train_loss):
+            nan_flag = True
+            nan_targets = y.clone()
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         if scaler is not None:
             scaler.scale(loss).backward()
         else:
             loss.backward()
         x, y, next_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+    # Single collective check after all micro-steps: covers every micro-batch (S1) and
+    # reports unmasked tokens from the batch that caused the NaN, not the prefetched one (S2).
+    collective_check_finite_loss(
+        train_loss, step,
+        nan_targets if nan_flag else y,
+        nan_flag=nan_flag,
+    )
     return train_loss, x, y, next_state_dict
 
 def rehalve_after_oom():
@@ -638,16 +689,13 @@ while True:
     # save checkpoint: at the end of the run, every save_every steps, or every save_every_secs (rank 0 decides, all ranks follow), except at the first step or the resume step
     elapsed = time.monotonic() - last_save_time
     # Rank 0 decides if time is due; broadcast so all ranks agree before saving.
-    raw_time_due = should_save_checkpoint(step, args.resume_from_step, elapsed,
-                                          args.save_every_secs, 0, False)
+    time_due: bool = args.save_every_secs > 0 and elapsed >= args.save_every_secs
     if ddp and args.save_every_secs > 0:
-        due_flag = torch.tensor([int(master_process and raw_time_due)], device=device)
+        due_flag = torch.tensor([int(master_process and time_due)], device=device)
         dist.broadcast(due_flag, src=0)
-        raw_time_due = bool(due_flag.item())
-    # Pass inf/0 so the agreed time_due survives the check on every rank's clock.
-    agreed_elapsed = float("inf") if raw_time_due else 0.0
-    if should_save_checkpoint(step, args.resume_from_step, agreed_elapsed,
-                              args.save_every_secs, args.save_every, last_step):
+        time_due = bool(due_flag.item())
+    if should_save_checkpoint(step, args.resume_from_step, time_due,
+                              args.save_every, last_step):
         save_checkpoint(
             checkpoint_dir,
             step,

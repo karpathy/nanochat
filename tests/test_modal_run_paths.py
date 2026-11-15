@@ -1,13 +1,15 @@
 """
 Author: nanochat Modal slice (Claude)
 Created: 2026-11-15
-Scope: runs/modal_run.py artefact archive and commit-daemon paths on the mode-prefixed Volume.
+Scope: runs/modal_run.py artefact archive, commit-daemon paths, and
+       _download_artifacts() recursive checkpoint walk on the mode-prefixed Volume.
 """
 
 import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -74,3 +76,41 @@ def test_training_commit_daemon_watches_the_mode_folder(volume: Path, monkeypatc
 
     # Then: the commit daemon is pointed at the mode folder, where the hook writes its files
     assert started["args"][1] == f"{volume}/cpu"
+
+
+def test_download_artifacts_finds_nested_checkpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Scenario: Checkpoints are saved under chatsft_checkpoints/d<depth>/, not at the top
+              level. _download_artifacts() must walk recursively and find them.
+    Slice: _download_artifacts() recursive os.walk (commit 829d5f7).
+    ### Given: a fake cache dir with tokenizer/ and chatsft_checkpoints/d6/model_000100.pt
+    ### When: _download_artifacts("cpu") is called with mocked modal volume get
+    ### Then: no exception; stdout contains "Found 1 checkpoint"
+    """
+    # ### Given
+    # Redirect HOME so cache_dir lands in tmp_path instead of the real ~/.cache
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cache_dir = tmp_path / ".cache" / "nanochat-modal" / "cpu"
+
+    # Create the directory layout that `modal volume get --force` would produce.
+    # Tokenizer at the top level; checkpoint one level down (d6/).
+    (cache_dir / "tokenizer").mkdir(parents=True)
+    nested = cache_dir / "chatsft_checkpoints" / "d6"
+    nested.mkdir(parents=True)
+    (nested / "model_000100.pt").write_bytes(b"fake-weights")
+
+    # Mock subprocess.run so no real `modal` binary is invoked.
+    monkeypatch.setattr(
+        modal_run.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(returncode=0),
+    )
+
+    # ### When
+    modal_run._download_artifacts("cpu")  # must not raise
+
+    # ### Then (output captured via capsys is not needed; absence of exception is the oracle)
+    # The function only raises RuntimeError when no model_*.pt files are found,
+    # so reaching here proves the recursive walk located the nested checkpoint.

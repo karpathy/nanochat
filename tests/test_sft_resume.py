@@ -12,6 +12,8 @@ import sys
 import pytest
 
 from nanochat.checkpoint_manager import (
+    BASE_TRAIN_RESUME_KEYS,
+    SFT_RESUME_KEYS,
     assert_resume_config_matches,
     apply_sft_resume_state,
     should_save_checkpoint,
@@ -48,67 +50,67 @@ class TestShouldSaveCheckpoint:
         # Given: last_step=True, any other condition
         # When: called
         # Then: returns True
-        assert should_save_checkpoint(10, -1, 0.0, 300, 0, True) is True
+        assert should_save_checkpoint(10, -1, False, 0, True) is True
 
     def test_step_zero_does_not_save(self):
         # Given: step=0
         # When: called
         # Then: returns False (step 0 is the initialisation step, not a training step)
-        assert should_save_checkpoint(0, -1, 1000.0, 300, 0, False) is False
+        assert should_save_checkpoint(0, -1, True, 0, False) is False
 
     def test_resume_step_skipped(self):
         # Given: step equals resume_from_step
         # When: called
         # Then: returns False (avoid double-saving the checkpoint we just loaded)
-        assert should_save_checkpoint(5, 5, 1000.0, 300, 0, False) is False
+        assert should_save_checkpoint(5, 5, True, 0, False) is False
 
     def test_time_due_triggers_save(self):
-        # Given: elapsed >= save_every_secs, step > 0, not resume step, not last_step
+        # Given: caller computed time_due=True (elapsed >= save_every_secs), step > 0
         # When: called
         # Then: returns True
-        assert should_save_checkpoint(3, -1, 350.0, 300, 0, False) is True
+        assert should_save_checkpoint(3, -1, True, 0, False) is True
 
     def test_time_not_due_no_save(self):
-        # Given: elapsed < save_every_secs, no step_due
+        # Given: caller computed time_due=False, no step_due
         # When: called
         # Then: returns False
-        assert should_save_checkpoint(3, -1, 100.0, 300, 0, False) is False
+        assert should_save_checkpoint(3, -1, False, 0, False) is False
 
     def test_step_due_triggers_save(self):
-        # Given: step is a multiple of save_every=10, elapsed not due
+        # Given: step is a multiple of save_every=10, time_due=False
         # When: called
         # Then: returns True
-        assert should_save_checkpoint(10, -1, 0.0, 300, 10, False) is True
+        assert should_save_checkpoint(10, -1, False, 10, False) is True
 
     def test_step_not_divisible_no_save(self):
-        # Given: step not a multiple of save_every, time not due
+        # Given: step not a multiple of save_every, time_due=False
         # When: called
         # Then: returns False
-        assert should_save_checkpoint(7, -1, 0.0, 300, 10, False) is False
+        assert should_save_checkpoint(7, -1, False, 10, False) is False
 
     def test_save_every_zero_disables_step_trigger(self):
-        # Given: save_every=0 (disabled), time not due
+        # Given: save_every=0 (disabled), time_due=False
         # When: called
         # Then: returns False
-        assert should_save_checkpoint(10, -1, 0.0, 300, 0, False) is False
+        assert should_save_checkpoint(10, -1, False, 0, False) is False
 
-    def test_save_every_secs_zero_disables_time_trigger(self):
-        # Given: save_every_secs=0 (disabled), save_every=0 (disabled)
+    def test_save_every_zero_with_time_due_saves(self):
+        # Given: save_every=0 (step trigger disabled), but time_due=True
         # When: called on a non-last step
-        # Then: returns False
-        assert should_save_checkpoint(5, -1, 9999.0, 0, 0, False) is False
+        # Then: returns True (time_due wins)
+        assert should_save_checkpoint(5, -1, True, 0, False) is True
 
-    def test_inf_elapsed_always_time_due(self):
-        # Given: elapsed=inf (broadcast-agreed time_due on all DDP ranks)
-        # When: called with save_every_secs finite
-        # Then: returns True
-        assert should_save_checkpoint(3, -1, float("inf"), 300, 0, False) is True
+    def test_time_due_true_always_saves_on_valid_step(self):
+        # Given: time_due=True (caller broadcast-agreed across DDP ranks)
+        # When: called with a valid step (> 0, not resume step)
+        # Then: returns True regardless of save_every
+        assert should_save_checkpoint(3, -1, True, 0, False) is True
 
-    def test_zero_elapsed_never_time_due(self):
-        # Given: elapsed=0 (broadcast-agreed not time_due)
-        # When: called with large save_every_secs and no step due
+    def test_both_false_no_save(self):
+        # Given: time_due=False and step not divisible, not last step
+        # When: called
         # Then: returns False
-        assert should_save_checkpoint(3, -1, 0.0, 300, 0, False) is False
+        assert should_save_checkpoint(3, -1, False, 0, False) is False
 
 
 # ---------------------------------------------------------------------------
@@ -551,3 +553,176 @@ class TestApplySftResumeState:
         ### Then
         assert len(model_calls) == 1 and model_calls[0] is model_data
         assert len(opt_calls) == 1 and opt_calls[0] is optim_data
+
+
+# ---------------------------------------------------------------------------
+# § base_train resume config guard
+# ---------------------------------------------------------------------------
+
+# FIX 3c: key list is now owned by checkpoint_manager; test imports the constant.
+_BASE_TRAIN_SAVED = {
+    "device_batch_size": 8,
+    "max_seq_len": 512,
+    "total_batch_size": 524288,  # FIX 3a: saved value is the RESOLVED batch size, not -1
+    "num_iterations": -1,
+    "world_size": 1,             # FIX 3b: world_size is now saved in user_config
+}
+
+
+class TestBaseTrainResumeGuard:
+    """
+    Scenario: base_train refuses to resume when key training dimensions changed.
+    Slice: nanochat.checkpoint_manager.assert_resume_config_matches (called by scripts.base_train).
+    """
+
+    @pytest.mark.parametrize("changed_key,current_val", [
+        ("device_batch_size", 16),
+        ("max_seq_len", 1024),
+        ("total_batch_size", 1048576),
+    ])
+    def test_mismatch_raises_naming_the_key(self, changed_key: str, current_val: int) -> None:
+        """
+        Scenario: A guard key changed between the checkpoint and the current CLI args.
+        Slice: assert_resume_config_matches base_train guard keys
+        ### Given: saved meta with original base_train values wrapped in user_config
+        ### When: one key is different in the current config
+        ### Then: ValueError names that key
+        """
+        ### Given
+        saved_meta = {"user_config": dict(_BASE_TRAIN_SAVED)}
+        current = {**_BASE_TRAIN_SAVED, changed_key: current_val}
+        ### When / Then
+        with pytest.raises(ValueError, match=changed_key):
+            assert_resume_config_matches(
+                saved_meta.get("user_config", saved_meta),
+                current,
+                BASE_TRAIN_RESUME_KEYS,
+                stage="base_train",
+                hint="use FORCE_STAGES=base_train to restart from scratch",
+            )
+
+    def test_matching_config_does_not_raise(self) -> None:
+        """
+        Scenario: Config matches the checkpoint exactly.
+        Slice: assert_resume_config_matches base_train guard keys
+        ### Given: identical saved and current configs
+        ### When: guard runs
+        ### Then: no exception
+        """
+        ### Given
+        saved_meta = {"user_config": dict(_BASE_TRAIN_SAVED)}
+        ### When / Then (no exception)
+        assert_resume_config_matches(
+            saved_meta.get("user_config", saved_meta),
+            dict(_BASE_TRAIN_SAVED),
+            BASE_TRAIN_RESUME_KEYS,
+        )
+
+    def test_key_absent_from_old_checkpoint_is_skipped(self) -> None:
+        """
+        Scenario: An old checkpoint predates world_size tracking.
+        Slice: assert_resume_config_matches missing-key path
+        ### Given: saved user_config has no world_size key
+        ### When: current config has world_size=2
+        ### Then: no exception (cannot compare absent key)
+        """
+        ### Given
+        saved = {k: v for k, v in _BASE_TRAIN_SAVED.items() if k != "world_size"}
+        current = {**_BASE_TRAIN_SAVED, "world_size": 2}
+        ### When / Then
+        assert_resume_config_matches(saved, current, BASE_TRAIN_RESUME_KEYS)
+
+    def test_auto_batch_resume_does_not_refuse(self) -> None:
+        """
+        Scenario: FIX 3a — auto-batch run saves the RESOLVED batch size in user_config.
+                  Resuming with the same resolved value must NOT be refused.
+        Slice: assert_resume_config_matches auto-batch guard path
+        ### Given: checkpoint user_config has total_batch_size=524288 (resolved from -1)
+        ### When: current config also computes total_batch_size=524288
+        ### Then: no exception — resolved values match
+        """
+        ### Given: checkpoint saved the RESOLVED value (not -1)
+        saved_meta = {"user_config": {**_BASE_TRAIN_SAVED, "total_batch_size": 524288}}
+        current = {**_BASE_TRAIN_SAVED, "total_batch_size": 524288}
+        ### When / Then
+        assert_resume_config_matches(
+            saved_meta.get("user_config", saved_meta),
+            current,
+            BASE_TRAIN_RESUME_KEYS,
+        )
+
+    def test_changed_world_size_refuses(self) -> None:
+        """
+        Scenario: FIX 3b — world_size is now saved in user_config; changing it must refuse.
+        Slice: assert_resume_config_matches world_size guard path
+        ### Given: checkpoint saved world_size=1
+        ### When: current run uses world_size=2
+        ### Then: ValueError names world_size
+        """
+        ### Given
+        saved_meta = {"user_config": {**_BASE_TRAIN_SAVED, "world_size": 1}}
+        current = {**_BASE_TRAIN_SAVED, "world_size": 2}
+        ### When / Then
+        with pytest.raises(ValueError, match="world_size"):
+            assert_resume_config_matches(
+                saved_meta.get("user_config", saved_meta),
+                current,
+                BASE_TRAIN_RESUME_KEYS,
+            )
+
+    def test_changed_max_seq_len_refuses(self) -> None:
+        """
+        Scenario: Changing max_seq_len is always a resume blocker.
+        Slice: assert_resume_config_matches max_seq_len guard path
+        ### Given: checkpoint saved max_seq_len=512
+        ### When: current run uses max_seq_len=1024
+        ### Then: ValueError names max_seq_len
+        """
+        ### Given
+        saved_meta = {"user_config": dict(_BASE_TRAIN_SAVED)}
+        current = {**_BASE_TRAIN_SAVED, "max_seq_len": 1024}
+        ### When / Then
+        with pytest.raises(ValueError, match="max_seq_len"):
+            assert_resume_config_matches(
+                saved_meta.get("user_config", saved_meta),
+                current,
+                BASE_TRAIN_RESUME_KEYS,
+            )
+
+    def test_legacy_minus_one_batch_size_does_not_refuse(self) -> None:
+        """
+        Scenario: S3 — checkpoint written before FIX 3a stored the resolved batch size.
+                  The old code saved total_batch_size=-1 (auto-compute sentinel).
+                  Resuming with the now-resolved concrete value must NOT be refused.
+        Slice: assert_resume_config_matches legacy -1 sentinel path
+
+        Given: an old checkpoint whose user_config has total_batch_size=-1 (the
+               auto-compute sentinel that the pre-FIX 3a code never replaced),
+        When: the current run supplies the resolved value (524288),
+        Then: no exception is raised (saved -1 is treated as "unknown / not yet resolved").
+
+        Contrast: if the saved value were any concrete non-negative number *different*
+        from the current value, the guard would refuse (see test_mismatch_raises_naming_the_key).
+        """
+        ### Given: legacy checkpoint with unresolved sentinel
+        saved = {**_BASE_TRAIN_SAVED, "total_batch_size": -1}
+        current = {**_BASE_TRAIN_SAVED, "total_batch_size": 524288}
+        ### When / Then (no exception)
+        assert_resume_config_matches(saved, current, BASE_TRAIN_RESUME_KEYS)
+
+    def test_changed_concrete_batch_size_still_refuses(self) -> None:
+        """
+        Scenario: S3 counterpart — if the SAVED batch size is a concrete value that
+                  differs from the current one, the guard must still refuse.
+        Slice: assert_resume_config_matches concrete mismatch path
+
+        Given: saved total_batch_size=524288, current=1048576,
+        When: guard runs,
+        Then: ValueError names total_batch_size.
+        """
+        ### Given
+        saved = {**_BASE_TRAIN_SAVED, "total_batch_size": 524288}
+        current = {**_BASE_TRAIN_SAVED, "total_batch_size": 1048576}
+        ### When / Then
+        with pytest.raises(ValueError, match="total_batch_size"):
+            assert_resume_config_matches(saved, current, BASE_TRAIN_RESUME_KEYS)

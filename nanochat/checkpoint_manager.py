@@ -185,19 +185,35 @@ def remove_stale_tmp(checkpoint_dir: str) -> int:
     return len(stale)
 
 
-def should_save_checkpoint(step: int, resume_from_step: int, elapsed_secs: float,
-                           save_every_secs: float, save_every: int, last_step: bool) -> bool:
+def should_save_checkpoint(step: int, resume_from_step: int, time_due: bool,
+                           save_every: int, last_step: bool) -> bool:
     """Pure predicate: true when this step should write a checkpoint.
 
-    Callers own the DDP broadcast so the decision is consistent across ranks.
+    ``time_due`` must be computed and DDP-broadcast by the caller so all ranks
+    agree on the same boolean without relying on each rank's local clock.
+    Removing the opaque ``float("inf") / 0.0`` sentinel from earlier versions.
     """
     if last_step:
         return True
     if step <= 0 or step == resume_from_step:
         return False
-    time_due = save_every_secs > 0 and elapsed_secs >= save_every_secs
     step_due = save_every > 0 and step % save_every == 0
     return time_due or step_due
+
+
+# Shared guard-key list so the two training scripts stay in sync.
+# Both use the same keys; kept as a single constant with two aliases so each
+# script's resume check remains independently evolvable if script-specific
+# keys are ever added.
+_TRAINING_RESUME_KEYS: list[str] = [
+    "device_batch_size",
+    "max_seq_len",
+    "total_batch_size",
+    "num_iterations",
+    "world_size",
+]
+BASE_TRAIN_RESUME_KEYS: list[str] = _TRAINING_RESUME_KEYS
+SFT_RESUME_KEYS: list[str] = _TRAINING_RESUME_KEYS
 
 
 def assert_resume_config_matches(
@@ -210,12 +226,19 @@ def assert_resume_config_matches(
 ) -> None:
     """Raise ValueError if a training dimension changed since the checkpoint was saved.
 
-    Keys missing from either side are not compared (older checkpoints lack some keys).
+    Skips comparison when:
+    - the key is absent from either side (old checkpoints may lack new keys), or
+    - the saved value is ``-1`` (the auto-compute sentinel used before FIX 3a stored
+      the resolved batch size; treat as "unknown / not yet determined" so an in-flight
+      run can resume without being refused by the guard).
     """
     for key in keys:
         saved_val = saved_meta.get(key)
         current_val = current.get(key)
-        if saved_val is not None and current_val is not None and saved_val != current_val:
+        # Skip: absent key OR legacy auto-compute sentinel (-1 means "not yet resolved").
+        if saved_val is None or saved_val == -1 or current_val is None:
+            continue
+        if saved_val != current_val:
             raise ValueError(
                 f"Cannot resume {stage}: '{key}' changed from {saved_val} (saved) "
                 f"to {current_val} (current). {hint}."

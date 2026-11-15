@@ -67,9 +67,9 @@ flowchart TD
   F -- yes --> Z["Start from step 0"]
   F -- no --> P["Find the highest complete checkpoint"]
   P -- none --> Z
-  P -- "found step N" --> G{"chat_sft only: do the saved settings match?"}
-  G -- no --> R["Refuse; hint: FORCE_STAGES=chat_sft"]
-  G -- "yes, or base_train (no check)" --> L["Restore model, optimizer, and data position"]
+  P -- "found step N" --> G{"Do the saved settings match? (base_train and chat_sft)"}
+  G -- no --> R["Refuse; hint: FORCE_STAGES=&lt;stage&gt;"]
+  G -- yes --> L["Restore model, optimizer, and data position"]
   L --> N["Continue from step N"]
 ```
 
@@ -78,13 +78,12 @@ flowchart TD
 | | base_train | chat_sft |
 |---|---|---|
 | Who picks the resume step | The runner's probe passes `--resume-from-step` | The script auto-detects it |
-| Config check before resume | **None** (see the gap below) | Refuses if `device_batch_size`, `max_seq_len`, `total_batch_size`, `num_iterations`, or `world_size` changed |
+| Config check before resume | Refuses if `device_batch_size`, `max_seq_len`, `total_batch_size`, `num_iterations`, or `world_size` changed (`assert_resume_config_matches`, shared key list in `nanochat/checkpoint_manager.py`) | Same check; same shared key list |
 | Restores | Model, optimizer, data position | Model, optimizer, data position, loop state |
 | Local status | Kill and SIGTERM verified on CPU/MPS (Step A) | Implemented; not verified end to end |
 | Modal status | Not verified. Run `20261114-125440-cpu` restarted at step 0 after preemption | Not verified |
 
 Known gaps:
 
-- **No config check in base_train.** Change a setting and resume, and it goes ahead silently. Tracked as TRAIL rank 3b.
 - **DDP data position:** rank 0 is restored exactly. Ranks 1 and up snap to the nearest stride, so they may re-read or skip a few samples (see [RUNNING.md](RUNNING.md) §4).
-- **Stage markers** are separate from checkpoints and are not depth-scoped. See TRAIL rank 2 (B2).
+- **Stage markers** are separate from checkpoints and are profile+depth-scoped (e.g. `.stage_base_train_runcpu_d6`). A marker mismatch causes the stage to rerun.

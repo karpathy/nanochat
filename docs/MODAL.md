@@ -146,7 +146,7 @@ Keep your terminal visible (or use `tmux attach`). Key signals to look for in th
 | `NANOCHAT_BASE_DIR=/data/nanochat-modal/<mode>` | Volume path is set correctly in the container |
 | `OMP_NUM_THREADS=<N>` | Actual core count the container received; confirms the CPU spec was accepted |
 | Per-step loss lines from `base_train` | Training is progressing |
-| `.train_ok` written | Base train finished and saved its marker; eval stage can start |
+| Stage marker `.stage_base_train_<profile>_d<depth>` written | Base train finished; eval stage can start |
 | `SKIP` on a stage line | That stage's marker already exists; re-run is picking up where it left off |
 | `modal volume get …` progress bar | Download of tokenizer and SFT checkpoint to your laptop underway |
 
@@ -165,9 +165,9 @@ The job is split into stages, each marked in a persistent Modal Volume so re-run
 | Prefetch | Download 170 shards of ClimbMix (CPU, ~30 min) | `base_data_climbmix/` on Volume |
 | Tokenizer | Train a BPE tokenizer (~5 min, GPU) | `tokenizer/tokenizer.pkl` |
 | Base train | Pre-train the LLM (~45 min, 8×H100) | `base_checkpoints/` |
-| Base eval | Measure CORE metric (~10 min) | `.eval_ok` marker |
+| Base eval | Measure CORE metric (~10 min) | Stage marker `.stage_base_eval_<profile>_d<depth>` |
 | SFT | Fine-tune for chat (~15 min) | `chatsft_checkpoints/` |
-| Chat eval | Evaluate on MMLU/GSM8K (~10 min, optional) | `.eval_ok` marker |
+| Chat eval | Evaluate on MMLU/GSM8K (~10 min, optional) | Stage marker `.stage_chat_eval_<profile>_d<depth>` |
 
 Each stage's marker file lives on the Volume, so a re-run of `runmodal.sh` skips finished stages and only redoes stages that failed or were forced (`FORCE_STAGES=stage_name`).
 
@@ -324,12 +324,11 @@ Once `ALL DONE` appears in the terminal:
 
 ## Switching CPU ↔ GPU
 
-> **Known issue: stage markers are shared and depth-free.** A GPU run after a CPU run will SKIP the tokenizer, base train, eval, and SFT stages because the CPU run's markers already exist on the Volume — it then uses the depth-6 CPU checkpoint for a depth-24 GPU run, which is silently wrong. A permanent fix is queued.
->
-> **Workaround:** always use `FORCE_STAGES=all` when switching modes:
-> ```bash
-> FORCE_STAGES=all MODE=gpu bash runs/runmodal.sh
-> ```
+Stage markers are profile+depth-tagged (e.g. `.stage_base_train_runcpu_d6`). Switching from CPU to GPU (or any profile/depth change) causes a marker mismatch: the stage logs `RUN … reason=profile/depth mismatch` and reruns automatically — it will not silently reuse a checkpoint from the wrong run. On Modal each mode has its own folder (`cpu/`, `gpu/`), so a GPU run does not see CPU markers; the mismatch line appears on a shared local base directory. Old depth-free `.train_ok` markers from before this change are treated as mismatches and cause a rerun. To explicitly force all stages to rerun regardless of markers:
+
+```bash
+FORCE_STAGES=all MODE=gpu bash runs/runmodal.sh
+```
 
 ## Idempotent re-runs
 
@@ -427,10 +426,11 @@ Your local runs are never affected by Modal's env vars, and Modal artifacts neve
 - Check the job logs: `bash runs/modal_peek.sh logs` or `modal app logs <app-id>`
 - Fix the issue and re-run with the relevant `FORCE_STAGES=…` if needed
 
-**"another run is already active … (PID 5)" (stale run lock)**
-- A cancelled run left `/data/nanochat-modal/.run.lock` on the Volume. The PID is container-local and meaningless after a job restarts.
+**"another run is already active … (run &lt;id&gt;)" (stale run lock)**
+- The lock uses a run ID and a heartbeat file; a lock is considered stale when the heartbeat has not been refreshed for more than 600 seconds. A background refresher keeps the heartbeat fresh while a run is alive, so a stale lock means the run has genuinely ended.
 - Confirm no run is actually live: `bash runs/modal_peek.sh status`
-- Remove the stale lock: `modal volume rm -r nanochat-modal .run.lock`
-- Re-run normally. Note: the error text says `rm -rf`, which does not apply to Modal Volumes — use `modal volume rm` instead.
+- A stale lock (no heartbeat for more than 10 minutes) is reclaimed automatically on the next run, so usually you only need to re-run.
+- Do not delete a lock whose heartbeat is fresh. Only if you have confirmed no run is live and the lock still blocks you after 10 minutes, remove it (the path is mode-prefixed, e.g. `cpu/.run.lock` for a CPU run): `modal volume rm -r nanochat-modal cpu/.run.lock`
+- A same-run-ID restart (e.g. a preempted Modal container that restarts) reclaims its own lock automatically once its heartbeat is at least 120 seconds old.
 
 For more details on stage markers, artifacts, re-runs, and failure diagnosis, see [docs/RUNNING.md](RUNNING.md).
