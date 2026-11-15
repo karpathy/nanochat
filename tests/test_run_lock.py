@@ -587,3 +587,37 @@ class TestRunLockNonNumericHeartbeat:
         assert r.returncode == 1, (
             f"Expected non-numeric heartbeat to be refused; rc={r.returncode}, stderr={r.stderr}"
         )
+
+
+class TestRunLockSameIdMtimeFallback:
+    """
+    Scenario: Same-run-ID reclaim via mtime fallback when heartbeat is absent.
+    Slice: runs/_run_lock.sh — _is_same_id_stale dir-mtime path (FIX 3)
+    """
+
+    def test_same_run_id_old_empty_lock_dir_is_reclaimed(self, tmp_path):
+        """
+        Scenario: Same-run-ID lock dir has no heartbeat and an old mtime; must be reclaimed.
+        Slice: _is_same_id_stale mtime fallback with NANOCHAT_LOCK_HB_INTERVAL=5
+        ### Given: empty .run.lock/ with run_id="my-run" and old mtime (touch -t)
+        ### When: sourced with NANOCHAT_RUN_ID="my-run" and NANOCHAT_LOCK_HB_INTERVAL=5
+        ### Then: exits 0 — same-ID lock treated as stale via mtime and reclaimed
+        """
+        import subprocess
+
+        lock_dir = tmp_path / ".run.lock"
+        lock_dir.mkdir()
+        (lock_dir / "run_id").write_text("my-run\n")
+        # No heartbeat file.  Set mtime old enough: threshold = 2 * 5 = 10 s.
+        subprocess.run(
+            ["touch", "-t", "202001010000.00", str(lock_dir)],
+            check=True,
+        )
+
+        r = _run(_run_lock_script(
+            str(tmp_path),
+            extra_env={"NANOCHAT_RUN_ID": "my-run", "NANOCHAT_LOCK_HB_INTERVAL": "5"},
+        ))
+        assert r.returncode == 0 and "ACQUIRED" in r.stdout, (
+            f"Expected same-ID reclaim via mtime; rc={r.returncode}, stderr={r.stderr}"
+        )
