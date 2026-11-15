@@ -51,9 +51,9 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | fix-forward-mac-phase15 | PASSED (merged) | [PR #8](https://github.com/neomatrix369/nanochat/pull/8) merged 2026-11-13 (`3054e4a` on master); Gate 4 APPROVED (code-reviewer, critic, architect); pre-push 126p/18s; phase15 unit 17p; ddd N/A |
 | fix-mps-skip-inductor | PASSED (merged) | [PR #10](https://github.com/neomatrix369/nanochat/pull/10) merged 2026-11-14 (`f6ef779` on master); skip Inductor on MPS + MPS AdamW/Muon; progress flush; `.train_ok` + speedrun CUDA hard-fail; RoPE grow-on-demand (`22d1282`); Gate 4 polish |
 | modal-nanochat-minimum | MERGED — live run pending | [PR #14](https://github.com/neomatrix369/nanochat/pull/14) merged 2026-11-14 (merge `5225a3d` on master; branch commits `4d60902`…`03d0c4d`). Local verification done: 142 passed / 16 skipped; bash -n and py_compile clean; nWave code, platform and architecture/docs reviewers APPROVED (last commit `03d0c4d` applied their follow-ups after approval, not re-reviewed). **Not verified:** Modal image build, prefetch, 8×H100 train, volume get, `modal app stop` billing stop. Next: see [HANDOFF.md](../../HANDOFF.md). |
-| resume-all-stages | MERGED (`c9cf80e`); resume NOT equivalent yet | [PR #26](https://github.com/neomatrix369/nanochat/pull/26) merged to master. `base_train` resume and time-based save in code. Verified locally on CPU/MPS (kill and SIGTERM); loss close but not bit-identical. Step A done 2026-11-14: data position wrong (`rg` 3 vs 1), evidence in `docs/evidence/resume-step-a-2026-11-14/`. Fix in progress on `fix/resume-data-position` (rank 1). Modal path not covered (rank 8). |
-| resume-data-position | CODE COMMITTED (`65705f7`), STEP A CHECK NOT RUN | Commit `65705f7` is on `docs/trail-priority-backlog`. Branch `fix/resume-data-position` was deleted (no unique commits). Blocks rank 2. |
-| local-resume-and-guard | CODE COMMITTED on `fix/modal-daemon-cleanup` | Ranks 5, 6, 7, 12 all committed: `chat_sft` resume (`805e1e0`), run-lock (`f5d6548`), guard tests (`dbd6445`), daemon cleanup (`651d789`). 275 tests pass. Pending PR and merge. |
+| resume-all-stages | MERGED; Step A PASSED 2026-11-15 | [PR #26](https://github.com/neomatrix369/nanochat/pull/26) merged to master. Data-position fix shipped in [PR #33](https://github.com/neomatrix369/nanochat/pull/33) (`97ec941`). Step A verified 2026-11-15: steps 7–199 match uninterrupted run (evidence `docs/evidence/resume-step-a-pass-2026-11-15/`). Modal path not yet covered (TRAIL rank 13). |
+| resume-data-position | MERGED (via PR #33) | Fix: `ddp_rank_position` extracted to `nanochat/common.py` as SSOT; used in `dataloader.py` and `sft_loader.py`. Step A passed 2026-11-15. |
+| local-resume-and-guard | MERGED (PRs #30, #33) | Run-lock + daemon cleanup in [PR #30](https://github.com/neomatrix369/nanochat/pull/30). `chat_sft` resume, review fixes, `world_size` guard, `apply_sft_resume_state` in [PR #33](https://github.com/neomatrix369/nanochat/pull/33). 303 tests pass. |
 | modal-guard-hardware-capture | MERGED (guard) | PRs #24 and #25 merged (`282c84c`, `ffea067`). Docs and accelerator recording open. |
 | cli-learn-color-ux | MERGED | PRs #20 to #23 merged to master. |
 
@@ -61,6 +61,13 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 
 | When (UTC) | PR | What landed |
 |------------|----|-------------|
+| 2026-11-15 | [#33](https://github.com/neomatrix369/nanochat/pull/33) | `ddp_rank_position` SSOT in `common.py`; `apply_sft_resume_state` + `assert_resume_config_matches` in `checkpoint_manager.py`; `world_size` guarded on resume; run-lock live-unknown (empty PID) guard; 303 tests pass |
+| 2026-11-14 | [#32](https://github.com/neomatrix369/nanochat/pull/32) | Modal CPU pre-flight check and run-watching guidance in `docs/MODAL.md` |
+| 2026-11-14 | [#31](https://github.com/neomatrix369/nanochat/pull/31) | Plan doc: nw-crafter review findings for PRs #27–29 |
+| 2026-11-14 | [#30](https://github.com/neomatrix369/nanochat/pull/30) | Modal daemon clean SIGTERM + `contextlib.suppress`; concurrency guard tests (`tests/test_runmodal_guard.py`) |
+| 2026-11-14 | [#29](https://github.com/neomatrix369/nanochat/pull/29) | `base_train` resume at exact batch via `ddp_rank_position` (data-position fix) |
+| 2026-11-14 | [#28](https://github.com/neomatrix369/nanochat/pull/28) | Plan docs: Step A resume result + data-position bug record |
+| 2026-11-14 | [#27](https://github.com/neomatrix369/nanochat/pull/27) | Plan docs: MoSCoW pending items, owners, resume evidence |
 | 2026-11-14 12:00 | [#14](https://github.com/neomatrix369/nanochat/pull/14) | Modal wrapper (runmodal.sh, modal_run.py, modal_hook.sh); env opt-in for NANOCHAT_BASE_DIR / SKIP_SETUP / post-stage hook; always-activate `.venv`; python3 everywhere; docs/MODAL.md; review fixes |
 | 2026-11-14 | [#10](https://github.com/neomatrix369/nanochat/pull/10) | MPS skip Inductor/compile; MPS optim paths; `.train_ok`; speedrun CUDA hard-fail; RoPE grow-on-demand |
 | 2026-11-13 16:46 | [#8](https://github.com/neomatrix369/nanochat/pull/8) | Phase 1.5: knob diff, packed health, trend crumb, tip |
