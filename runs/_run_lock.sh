@@ -40,17 +40,25 @@ _read_run_id() {
     fi
 }
 
+_dir_mtime_epoch() {
+    # Portable: stat -f %m (macOS/BSD) with fallback to stat -c %Y (Linux/GNU).
+    stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+}
+
 _is_lock_stale() {
-    # Returns 0 (true) when the heartbeat is older than _STALE_SECS.
-    # Returns 1 (false) when the heartbeat is fresh or unreadable.
-    if [ ! -f "${_LOCK_HEARTBEAT_FILE}" ]; then
-        return 1  # missing heartbeat = live-unknown, treat as NOT stale
+    # Returns 0 (true) when the lock looks stale.
+    # Returns 1 (false) when the lock looks live or state is unreadable.
+    # Heartbeat present: compare its recorded epoch to now.
+    # Heartbeat missing (crashed mid-acquire): fall back to the lock dir mtime.
+    # A missing heartbeat that is itself old enough is stale — prevents an
+    # unrecoverable stuck lock when a crash leaves an empty lock dir.
+    local last_beat now age
+    if [ -f "${_LOCK_HEARTBEAT_FILE}" ]; then
+        last_beat=$(cat "${_LOCK_HEARTBEAT_FILE}" 2>/dev/null) || return 1
+    else
+        last_beat=$(_dir_mtime_epoch "${_LOCK_DIR}") || return 1
     fi
-    local last_beat
-    last_beat=$(cat "${_LOCK_HEARTBEAT_FILE}" 2>/dev/null) || return 1
-    local now
     now=$(date +%s)
-    local age
     age=$(( now - last_beat ))
     [ "${age}" -ge "${_STALE_SECS}" ]
 }
@@ -60,15 +68,15 @@ _update_heartbeat() {
 }
 
 _is_same_id_stale() {
-    # Returns 0 (true) when the heartbeat is older than 2 * _HB_REFRESH_INTERVAL.
-    # Used for same-run-ID reclaim: a live holder refreshes within _HB_REFRESH_INTERVAL s,
-    # so 2x gives a safe margin. After kill -9, the BLOCKER 1 fix stops the refresher,
-    # so a restarted container can reclaim after 2 * _HB_REFRESH_INTERVAL = 120 s (default).
-    if [ ! -f "${_LOCK_HEARTBEAT_FILE}" ]; then
-        return 1  # missing = live-unknown, treat as NOT stale
-    fi
+    # Returns 0 (true) when the lock looks stale for same-run-ID reclaim.
+    # Threshold = 2 * _HB_REFRESH_INTERVAL (a live holder refreshes within one interval).
+    # Falls back to dir mtime when heartbeat is missing (crashed mid-acquire).
     local last_beat now age threshold
-    last_beat=$(cat "${_LOCK_HEARTBEAT_FILE}" 2>/dev/null) || return 1
+    if [ -f "${_LOCK_HEARTBEAT_FILE}" ]; then
+        last_beat=$(cat "${_LOCK_HEARTBEAT_FILE}" 2>/dev/null) || return 1
+    else
+        last_beat=$(_dir_mtime_epoch "${_LOCK_DIR}") || return 1
+    fi
     now=$(date +%s)
     age=$(( now - last_beat ))
     threshold=$(( _HB_REFRESH_INTERVAL * 2 ))
@@ -146,13 +154,6 @@ _acquire_run_lock() {
     local _vol_lock_path
     _vol_lock_path="$(basename "${NANOCHAT_BASE_DIR}")/.run.lock"
 
-    # Treat a missing heartbeat file as "live-unknown" (holder mid-acquire, heartbeat not yet written).
-    if [ ! -f "${_LOCK_HEARTBEAT_FILE}" ]; then
-        echo "ERROR: lock dir exists but no heartbeat recorded (holder may be mid-acquire). Try again in a moment." >&2
-        echo "  If no run is active, remove it with: modal volume rm -r nanochat-modal ${_vol_lock_path}" >&2
-        exit 1
-    fi
-
     # Same-run-ID reclaim: a preempted container that restarts can reclaim its own lock,
     # but only after the previous instance looks dead. A live holder refreshes the heartbeat
     # every _HB_REFRESH_INTERVAL s; after kill -9 the BLOCKER 1 fix stops the refresher,
@@ -210,12 +211,8 @@ _acquire_run_lock() {
     trap '_release_run_lock; exit 143' TERM
 
     # Re-check under the gate: the heartbeat may have been refreshed since we first read it.
-    # Also re-apply the live-unknown guard: a new holder may have written its heartbeat while
-    # we were taking the reclaim gate.
-    if [ ! -f "${_LOCK_HEARTBEAT_FILE}" ]; then
-        echo "ERROR: lock dir exists but no heartbeat recorded after taking reclaim gate. Try again in a moment." >&2
-        exit 1
-    fi
+    # _is_lock_stale falls back to dir mtime when no heartbeat, so a fresh lock dir
+    # (new holder mid-acquire) will correctly appear non-stale without a separate guard.
     if ! _is_lock_stale; then
         echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (heartbeat is fresh)." >&2
         exit 1
