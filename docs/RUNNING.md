@@ -47,10 +47,10 @@ A stage is skipped when its artifact already exists. Paths are relative to `$NAN
 |-------|--------------------------|------------|
 | `tok_train` | `tokenizer/tokenizer.pkl` | `scripts/tok_train.py` |
 | `tok_eval` | `tokenizer/.tok_eval_ok` | end of `scripts/tok_eval.py` (and touched by the shell on success) |
-| `base_train` | `base_checkpoints/.train_ok` | end of `scripts/base_train.py` (rank 0) |
-| `base_eval` | `base_checkpoints/.eval_ok` | end of `scripts/base_eval.py` |
-| `chat_sft` | `chatsft_checkpoints/.train_ok` | end of `scripts/chat_sft.py` (rank 0) |
-| `chat_eval` (speedrun only) | `chatsft_checkpoints/.eval_ok` | end of `scripts/chat_eval.py` |
+| `base_train` | `base_checkpoints/.stage_base_train_<PROFILE>_d<DEPTH>` | end of `scripts/base_train.py` (rank 0) |
+| `base_eval` | `base_checkpoints/.stage_base_eval_<PROFILE>_d<DEPTH>` | end of `scripts/base_eval.py` |
+| `chat_sft` | `chatsft_checkpoints/.stage_chat_sft_<PROFILE>_d<DEPTH>` | end of `scripts/chat_sft.py` (rank 0) |
+| `chat_eval` (speedrun only) | `chatsft_checkpoints/.stage_chat_eval_<PROFILE>_d<DEPTH>` | end of `scripts/chat_eval.py` |
 
 The flow of stages and the skip rule are diagrammed in [DIAGRAMS.md](DIAGRAMS.md#training-pipeline) and [DIAGRAMS.md](DIAGRAMS.md#skip-decision).
 
@@ -58,7 +58,7 @@ Notes:
 
 - Checkpoints, the resume rules, and their known gaps are diagrammed in [DIAGRAMS.md](DIAGRAMS.md#checkpoint-and-resume).
 - Markers are written **last**, after a clean finish. A crashed train/eval leaves no marker (or the shell clears it at the next `START`), so the stage re-runs. A stray `model_*.pt` from a probe or interrupt is **not** enough to SKIP.
-- Upgrading from older skip-on-`model_*.pt` behavior: if you already finished train and want to keep SKIP without redoing it, `touch "$NANOCHAT_BASE_DIR/base_checkpoints/.train_ok"` (and the chatsft equivalent if needed).
+- Stage markers are profile+depth-tagged (e.g. `.stage_base_train_runcpu_d6`). A marker is written automatically after a successful stage finish. An old generic `.train_ok` marker or one from a different profile/depth is treated as a mismatch and causes the stage to rerun. Do not create markers by hand; to skip a stage the marker must come from a successful run. To force a stage to rerun, use `FORCE_STAGES`.
 - **Mid-stage resume (`base_train`):** if `base_train` is interrupted, a re-run continues from its last complete checkpoint. The script saves one every `NANOCHAT_SAVE_EVERY_SECS` seconds (default 300). A checkpoint counts only when its model, meta and optimizer files are all present. `FORCE_STAGES=base_train` starts from step 0 instead. The checkpoint check is unit-tested. Local kill and SIGTERM checks on CPU/MPS resume from the last complete checkpoint, and the model, optimizer and learning-rate schedule come back from it. Data order matches too. A kill after the step-7 checkpoint, then a resume, reproduced steps 7-199 of an uninterrupted 200-step run: same row group and pq, loss within 1e-6 (logged precision). Evidence: `docs/evidence/resume-step-a-pass-2026-11-15/`. The Modal preemption path is not covered.
 - **`chat_sft` resumes mid-stage (implemented, not yet verified end to end).** `--resume-from-step` is auto-detected from the last complete checkpoint. The SFT model and optimizer state that run saved are restored. A resume refuses to run if `device_batch_size`, `max_seq_len`, `total_batch_size`, `num_iterations`, or `world_size` changed; use `FORCE_STAGES=chat_sft` to start over. Data order after resume is not yet verified, as for `base_train`. **DDP note:** rank 0's data position is restored exactly; ranks 1+ are snapped to the nearest stride boundary (may re-read or skip a few samples from their last saved group). Exact per-rank resume requires per-rank loader state files, which are not yet implemented.
 - `nanochat.dataset -n 8` runs every time; it only downloads missing shards.
@@ -204,7 +204,7 @@ Root-causing NaN beyond warn/abort is out of scope for Phase 1.
 | Out-of-memory / MPS allocator failure during train | Batch too large for device RAM | Check for an `[auto-fit]` line; see [section 11](#11-memory--oom). Do not treat this as NaN. |
 | `Device mps not supported` / `BackendCompilerFailed` (Inductor) | `torch.compile` ran on MPS (old build) | Re-run on a build that skips compile on MPS ([section 7](#7-mac--intel-torch)); you should see `[compile] … adjusted=eager`. |
 | `ERROR no CUDA device detected` (speedrun, exit 1) | Wrong script for this machine | Use `bash runs/runcpu.sh`. Do not override; speedrun is 8xH100-only. |
-| Train stage re-runs despite `model_*.pt` on disk | No `.train_ok` marker (partial/probe/interrupted run, or pre-marker upgrade) | Let it retrain, or `touch …/base_checkpoints/.train_ok` only if you know train finished cleanly. |
+| Train stage re-runs despite `model_*.pt` on disk | No profile+depth-tagged marker for this profile/depth (partial/probe/interrupted run, or old `.train_ok` from before the tagged-marker change) | Let it retrain. The marker is written automatically on a clean finish. Use `FORCE_STAGES=base_train` to force a fresh start from step 0. |
 | `AssertionError` / crash mentioning rotary length (e.g. `2596 > 2560`) | Few-shot CORE prompts exceeded the old static RoPE cache | Current builds grow the RoPE cache on demand (2× buffer). Re-run; no knob change needed. |
 
 The missing-checkpoint error is almost always a **symptom**: scroll up to the first `FAIL`, because the checkpoint was never produced.
@@ -260,7 +260,7 @@ Sync is checked by `tests/test_defaults.py` (emitted shell vars must match `PROF
 When the script prints `ALL DONE cumulative=…` the pipeline has finished. Here's what to do next.
 
 **Stop the run / Ctrl-C**
-If you need to abort, press `Ctrl-C`. The script stops at the current stage. Finished stages are marked (`.train_ok`, `.eval_ok`), so a re-run picks up where it left off at no cost.
+If you need to abort, press `Ctrl-C`. The script stops at the current stage. Finished stages have a profile+depth-tagged marker (e.g. `.stage_base_train_runcpu_d6`), so a re-run picks up where it left off at no cost.
 
 **Chat with your model**
 ```bash
