@@ -523,15 +523,13 @@ while True:
 
     # mid-training time-based save + final save at last_step
     elapsed = time.monotonic() - last_save_time
-    raw_time_due = should_save_checkpoint(step, args.resume_from_step, elapsed,
-                                          args.save_every_secs, 0, False)
+    time_due: bool = args.save_every_secs > 0 and elapsed >= args.save_every_secs
     if ddp and args.save_every_secs > 0:
-        due_flag = torch.tensor([int(master_process and raw_time_due)], device=device)
+        due_flag = torch.tensor([int(master_process and time_due)], device=device)
         dist.broadcast(due_flag, src=0)
-        raw_time_due = bool(due_flag.item())
-    agreed_elapsed = float("inf") if raw_time_due else 0.0
-    if should_save_checkpoint(step, args.resume_from_step, agreed_elapsed,
-                              args.save_every_secs, args.save_every, last_step):
+        time_due = bool(due_flag.item())
+    if should_save_checkpoint(step, args.resume_from_step, time_due,
+                              args.save_every, last_step):
         save_checkpoint(
             checkpoint_dir,
             step,

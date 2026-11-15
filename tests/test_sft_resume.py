@@ -48,67 +48,67 @@ class TestShouldSaveCheckpoint:
         # Given: last_step=True, any other condition
         # When: called
         # Then: returns True
-        assert should_save_checkpoint(10, -1, 0.0, 300, 0, True) is True
+        assert should_save_checkpoint(10, -1, False, 0, True) is True
 
     def test_step_zero_does_not_save(self):
         # Given: step=0
         # When: called
         # Then: returns False (step 0 is the initialisation step, not a training step)
-        assert should_save_checkpoint(0, -1, 1000.0, 300, 0, False) is False
+        assert should_save_checkpoint(0, -1, True, 0, False) is False
 
     def test_resume_step_skipped(self):
         # Given: step equals resume_from_step
         # When: called
         # Then: returns False (avoid double-saving the checkpoint we just loaded)
-        assert should_save_checkpoint(5, 5, 1000.0, 300, 0, False) is False
+        assert should_save_checkpoint(5, 5, True, 0, False) is False
 
     def test_time_due_triggers_save(self):
-        # Given: elapsed >= save_every_secs, step > 0, not resume step, not last_step
+        # Given: caller computed time_due=True (elapsed >= save_every_secs), step > 0
         # When: called
         # Then: returns True
-        assert should_save_checkpoint(3, -1, 350.0, 300, 0, False) is True
+        assert should_save_checkpoint(3, -1, True, 0, False) is True
 
     def test_time_not_due_no_save(self):
-        # Given: elapsed < save_every_secs, no step_due
+        # Given: caller computed time_due=False, no step_due
         # When: called
         # Then: returns False
-        assert should_save_checkpoint(3, -1, 100.0, 300, 0, False) is False
+        assert should_save_checkpoint(3, -1, False, 0, False) is False
 
     def test_step_due_triggers_save(self):
-        # Given: step is a multiple of save_every=10, elapsed not due
+        # Given: step is a multiple of save_every=10, time_due=False
         # When: called
         # Then: returns True
-        assert should_save_checkpoint(10, -1, 0.0, 300, 10, False) is True
+        assert should_save_checkpoint(10, -1, False, 10, False) is True
 
     def test_step_not_divisible_no_save(self):
-        # Given: step not a multiple of save_every, time not due
+        # Given: step not a multiple of save_every, time_due=False
         # When: called
         # Then: returns False
-        assert should_save_checkpoint(7, -1, 0.0, 300, 10, False) is False
+        assert should_save_checkpoint(7, -1, False, 10, False) is False
 
     def test_save_every_zero_disables_step_trigger(self):
-        # Given: save_every=0 (disabled), time not due
+        # Given: save_every=0 (disabled), time_due=False
         # When: called
         # Then: returns False
-        assert should_save_checkpoint(10, -1, 0.0, 300, 0, False) is False
+        assert should_save_checkpoint(10, -1, False, 0, False) is False
 
-    def test_save_every_secs_zero_disables_time_trigger(self):
-        # Given: save_every_secs=0 (disabled), save_every=0 (disabled)
+    def test_save_every_zero_with_time_due_saves(self):
+        # Given: save_every=0 (step trigger disabled), but time_due=True
         # When: called on a non-last step
-        # Then: returns False
-        assert should_save_checkpoint(5, -1, 9999.0, 0, 0, False) is False
+        # Then: returns True (time_due wins)
+        assert should_save_checkpoint(5, -1, True, 0, False) is True
 
-    def test_inf_elapsed_always_time_due(self):
-        # Given: elapsed=inf (broadcast-agreed time_due on all DDP ranks)
-        # When: called with save_every_secs finite
-        # Then: returns True
-        assert should_save_checkpoint(3, -1, float("inf"), 300, 0, False) is True
+    def test_time_due_true_always_saves_on_valid_step(self):
+        # Given: time_due=True (caller broadcast-agreed across DDP ranks)
+        # When: called with a valid step (> 0, not resume step)
+        # Then: returns True regardless of save_every
+        assert should_save_checkpoint(3, -1, True, 0, False) is True
 
-    def test_zero_elapsed_never_time_due(self):
-        # Given: elapsed=0 (broadcast-agreed not time_due)
-        # When: called with large save_every_secs and no step due
+    def test_both_false_no_save(self):
+        # Given: time_due=False and step not divisible, not last step
+        # When: called
         # Then: returns False
-        assert should_save_checkpoint(3, -1, 0.0, 300, 0, False) is False
+        assert should_save_checkpoint(3, -1, False, 0, False) is False
 
 
 # ---------------------------------------------------------------------------

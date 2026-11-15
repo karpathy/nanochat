@@ -1,42 +1,57 @@
 #!/usr/bin/env bash
 # Atomic run lock: prevents two concurrent runs on the same NANOCHAT_BASE_DIR.
-# Uses mkdir (atomic on POSIX) + PID file; no flock (not on stock macOS).
+# Uses mkdir (atomic on POSIX) + run-ID file + heartbeat file; no flock (not on stock macOS).
 # Source this file after _stage_lib.sh; it must not source _stage_lib.sh itself.
 #
 # Usage: source runs/_run_lock.sh
 # Effect: acquires the lock or exits non-zero with a message.
 # The lock is released automatically via EXIT/INT/TERM trap.
 #
+# Staleness: if the heartbeat file is older than _STALE_SECS (600 s) the holder
+# is considered dead (covers cancelled Modal containers where kill -0 was useless).
 # Reclaiming a dead holder's lock is gated by a second mkdir (<lock>.reclaim).
-# Only the process holding that gate may re-check the PID and replace the lock.
-# A missing PID file is treated as "live-unknown" (holder mid-acquire) and refused.
+# Only the process holding that gate may re-check the heartbeat and replace the lock.
+# A missing heartbeat file is treated as "live-unknown" (holder mid-acquire) and refused.
 
 set -euo pipefail
 
 _LOCK_DIR="${NANOCHAT_BASE_DIR:?must be set}/.run.lock"
-_LOCK_PID_FILE="${_LOCK_DIR}/pid"
+_LOCK_RUN_ID_FILE="${_LOCK_DIR}/run_id"
+_LOCK_HEARTBEAT_FILE="${_LOCK_DIR}/heartbeat"
 _RECLAIM_DIR="${_LOCK_DIR}.reclaim"
 _RECLAIM_HELD=0
+_STALE_SECS=600
 
-_read_pid_file() {
-    local pid_file="$1"
-    if [ -f "${pid_file}" ]; then
-        cat "${pid_file}"
+# _LOCK_RUN_ID: use NANOCHAT_RUN_ID from env if set; fall back to PID-timestamp so
+# ownership checks work even when no explicit run ID is passed.
+_LOCK_RUN_ID="${NANOCHAT_RUN_ID:-$$-$(date +%s)}"
+
+_read_run_id() {
+    local run_id_file="$1"
+    if [ -f "${run_id_file}" ]; then
+        cat "${run_id_file}"
     else
         echo ""
     fi
 }
 
-_get_start_time() {
-    # Portable: get process start time in seconds since epoch.
-    # ps -o etimes= returns elapsed seconds; we compute start_time = now - elapsed.
-    # Falls back to empty string if process doesn't exist or ps fails.
-    local pid="$1"
+_is_lock_stale() {
+    # Returns 0 (true) when the heartbeat is older than _STALE_SECS.
+    # Returns 1 (false) when the heartbeat is fresh or unreadable.
+    if [ ! -f "${_LOCK_HEARTBEAT_FILE}" ]; then
+        return 1  # missing heartbeat = live-unknown, treat as NOT stale
+    fi
+    local last_beat
+    last_beat=$(cat "${_LOCK_HEARTBEAT_FILE}" 2>/dev/null) || return 1
     local now
-    now=$(date +%s) || return 1
-    local elapsed
-    elapsed=$(ps -o etimes= -p "${pid}" 2>/dev/null) || return 1
-    echo $((now - elapsed))
+    now=$(date +%s)
+    local age
+    age=$(( now - last_beat ))
+    [ "${age}" -ge "${_STALE_SECS}" ]
+}
+
+_update_heartbeat() {
+    date +%s > "${_LOCK_HEARTBEAT_FILE}"
 }
 
 _drop_reclaim_gate() {
@@ -49,16 +64,17 @@ _drop_reclaim_gate() {
 _release_run_lock() {
     _drop_reclaim_gate
     # Ownership check: never delete a lock that another process has taken over.
-    if [ "$(_read_pid_file "${_LOCK_PID_FILE}" | awk '{print $1}')" = "$$" ]; then
+    if [ "$(_read_run_id "${_LOCK_RUN_ID_FILE}")" = "${_LOCK_RUN_ID}" ]; then
         rm -rf "${_LOCK_DIR}"
     fi
 }
 
-# Caller must own the lock directory. Records our PID + start-time and installs the traps.
+# Caller must own the lock directory. Records our run ID + heartbeat and installs traps.
 _claim_run_lock() {
-    local current_start_time
-    current_start_time="$(_get_start_time $$)" || current_start_time=""
-    echo "$$ ${current_start_time}" > "${_LOCK_PID_FILE}"
+    echo "${_LOCK_RUN_ID}" > "${_LOCK_RUN_ID_FILE}"
+    _update_heartbeat
+    # NOTE: these traps overwrite any trap the caller set for EXIT/INT/TERM.
+    # Callers must not install competing traps after sourcing _run_lock.sh.
     trap '_release_run_lock' EXIT
     trap '_release_run_lock; exit 130' INT
     trap '_release_run_lock; exit 143' TERM
@@ -70,45 +86,25 @@ _acquire_run_lock() {
         return 0
     fi
 
-    # Lock directory exists: is the holder still alive?
-    # Treat a missing or empty PID file as "live-unknown" (holder mid-acquire, not yet written PID).
-    local held_pid
-    local held_start_time
-    local file_content
-    file_content="$(_read_pid_file "${_LOCK_PID_FILE}")"
-    held_pid=$(echo "${file_content}" | awk '{print $1}')
-    held_start_time=$(echo "${file_content}" | awk '{print $2}')
-
-    if [ -z "${held_pid}" ]; then
-        echo "ERROR: lock dir exists but no PID recorded (holder may be mid-acquire). Try again in a moment." >&2
-        echo "  If no run is active, remove it with: rm -rf \"${_LOCK_DIR}\"" >&2
+    # Lock directory exists: is the holder still active?
+    # Treat a missing heartbeat file as "live-unknown" (holder mid-acquire, heartbeat not yet written).
+    if [ ! -f "${_LOCK_HEARTBEAT_FILE}" ]; then
+        echo "ERROR: lock dir exists but no heartbeat recorded (holder may be mid-acquire). Try again in a moment." >&2
+        echo "  If no run is active, remove it with: modal volume rm -r nanochat-modal .run.lock" >&2
         exit 1
     fi
-    if kill -0 "${held_pid}" 2>/dev/null; then
-        # Process exists. Check if start times match to guard against PID reuse.
-        if [ -n "${held_start_time}" ]; then
-            local current_held_start_time
-            current_held_start_time="$(_get_start_time "${held_pid}")" || current_held_start_time=""
-            if [ -n "${current_held_start_time}" ] && [ "${held_start_time}" != "${current_held_start_time}" ]; then
-                # PID has been reused — original holder is gone, proceed with reclaim.
-                : # Fall through to reclaim
-            else
-                # Same PID, same start time — original holder still alive.
-                echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (PID ${held_pid})." >&2
-                echo "  If that run has ended, remove the stale lock with:" >&2
-                echo "    rm -rf \"${_LOCK_DIR}\"" >&2
-                exit 1
-            fi
-        else
-            # Old lock file has only PID (no start time). Fall back to PID-only logic.
-            echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (PID ${held_pid})." >&2
-            echo "  If that run has ended, remove the stale lock with:" >&2
-            echo "    rm -rf \"${_LOCK_DIR}\"" >&2
-            exit 1
-        fi
+
+    if ! _is_lock_stale; then
+        local held_run_id
+        held_run_id="$(_read_run_id "${_LOCK_RUN_ID_FILE}")"
+        echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (run ${held_run_id:-unknown})." >&2
+        echo "  If that run has ended, remove the stale lock with:" >&2
+        echo "    modal volume rm -r nanochat-modal .run.lock" >&2
+        exit 1
     fi
 
-    # Holder looks dead. Take the reclaim gate so only one process does this at a time.
+    # Holder looks stale (heartbeat > ${_STALE_SECS} s old).
+    # Take the reclaim gate so only one process does this at a time.
     if ! mkdir "${_RECLAIM_DIR}" 2>/dev/null; then
         echo "ERROR: another run is reclaiming the lock on ${NANOCHAT_BASE_DIR}." >&2
         echo "  If no run is active, remove it with: rm -rf \"${_RECLAIM_DIR}\"" >&2
@@ -120,17 +116,15 @@ _acquire_run_lock() {
     trap '_release_run_lock; exit 130' INT
     trap '_release_run_lock; exit 143' TERM
 
-    # Re-check under the gate: the PID may have been rewritten since we first read it.
-    # Also re-apply the live-unknown guard: a new holder may have written its PID while we
-    # were taking the reclaim gate.
-    file_content="$(_read_pid_file "${_LOCK_PID_FILE}")"
-    held_pid=$(echo "${file_content}" | awk '{print $1}')
-    if [ -z "${held_pid}" ]; then
-        echo "ERROR: lock dir exists but no PID recorded after taking reclaim gate. Try again in a moment." >&2
+    # Re-check under the gate: the heartbeat may have been refreshed since we first read it.
+    # Also re-apply the live-unknown guard: a new holder may have written its heartbeat while
+    # we were taking the reclaim gate.
+    if [ ! -f "${_LOCK_HEARTBEAT_FILE}" ]; then
+        echo "ERROR: lock dir exists but no heartbeat recorded after taking reclaim gate. Try again in a moment." >&2
         exit 1
     fi
-    if kill -0 "${held_pid}" 2>/dev/null; then
-        echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (PID ${held_pid})." >&2
+    if ! _is_lock_stale; then
+        echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (heartbeat is fresh)." >&2
         exit 1
     fi
 
@@ -144,9 +138,9 @@ _acquire_run_lock() {
         return 0
     fi
 
-    local winner_pid
-    winner_pid="$(_read_pid_file "${_LOCK_PID_FILE}" | awk '{print $1}')"
-    echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (PID ${winner_pid:-?})." >&2
+    local winner_run_id
+    winner_run_id="$(_read_run_id "${_LOCK_RUN_ID_FILE}")"
+    echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (run ${winner_run_id:-?})." >&2
     exit 1
 }
 
