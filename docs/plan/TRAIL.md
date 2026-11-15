@@ -35,7 +35,7 @@ Work top to bottom. MoSCoW from the plans. A row moves to the history table belo
 
 | slice_id | reason |
 |----------|--------|
-| graphiti-stepA-save | Graphiti was back on 2026-11-15 (`get_status` ok). Save attempted this session; see PROGRESS.md. |
+| graphiti-stepA-save | Saved to Graphiti on 2026-11-15; the session episode's facts were confirmed by search. Closed in the table below. |
 
 ### Closed (reference, moved from the old backlog)
 
@@ -72,7 +72,7 @@ Work top to bottom. MoSCoW from the plans. A row moves to the history table belo
 | local-resume-and-guard | [2026-11-14-local-resume-and-guard.md](2026-11-14-local-resume-and-guard.md) | SUPERSEDED (MERGED) | Do not rebuild. |
 | modal-guard-hardware-capture | [2026-11-14-modal-guard-hardware-capture.md](2026-11-14-modal-guard-hardware-capture.md) | MERGED (guard); accelerator open | [PR #24](https://github.com/neomatrix369/nanochat/pull/24), [PR #25](https://github.com/neomatrix369/nanochat/pull/25). |
 | cli-learn-color-ux | [2026-11-14-cli-learn-color-ux.md](2026-11-14-cli-learn-color-ux.md) | MERGED | PRs [#20](https://github.com/neomatrix369/nanochat/pull/20) to [#23](https://github.com/neomatrix369/nanochat/pull/23). Could items at rank 5. |
-| docs-sync-audit-2026-11-15 | `/sync-docs` audit (this session) | DONE | Fixed `docs/MODAL.md`: B1 callout now matches code; `finish` recovery command added. Reconciled TRAIL and PROGRESS with the code and logs. See audit notes in PROGRESS.md. |
+| docs-sync-audit-2026-11-15 | `/sync-docs` audit (this session) | DONE | Fixed `docs/MODAL.md`: B1 callout now matches code; `finish` recovery command added. Reconciled TRAIL and PROGRESS with the code and logs. Decisions are in the 2026-11-15 rows of PROGRESS.md. |
 
 ### Housekeeping done
 
