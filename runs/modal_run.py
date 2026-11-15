@@ -78,7 +78,7 @@ def _nanochat_image(extra: str) -> modal.Image:
         .add_local_dir(
             ".",
             remote_path="/root/nanochat",
-            ignore=[".venv", ".git", "**/.pytest_cache", "**/__pycache__"],
+            ignore=[".venv", ".git", ".omc", "**/.pytest_cache", "**/__pycache__"],
         )
     )
 
