@@ -226,7 +226,7 @@ def fake_modal_app_id(tmp_path: Path) -> Path:
     script.write_text(
         "#!/bin/bash\n"
         'if [ "$1" = "app" ]; then echo "[]"; exit 0; fi\n'
-        'echo "Modal app id: ap-abc123XYZ"\n'
+        'echo "Initialized. View run at https://modal.com/apps/neomatrix369/main/ap-abc123XYZ"\n'
         'for i in $(seq 1 200); do echo "line $i"; done\n'
     )
     script.chmod(script.stat().st_mode | stat.S_IEXEC)

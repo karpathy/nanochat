@@ -3,14 +3,11 @@ Test resume visibility and config changes.
 
 Author: Claude Haiku 4.5
 Created: 2026-11-15
-Scope: Test compute_eta_str helper, get_base_dir require_explicit, and resume banner logic
+Scope: Test compute_eta_str helper, get_base_dir default path, and resume banner logic
 """
 
 import os
-import tempfile
 from unittest.mock import patch
-
-import pytest
 
 from nanochat.common import compute_eta_str, get_base_dir
 
@@ -54,31 +51,8 @@ class TestComputeEtaStr:
         assert eta == ""
 
 
-class TestGetBaseDirRequireExplicit:
+class TestGetBaseDir:
     """Test get_base_dir with require_explicit flag."""
-
-    def test_get_base_dir_explicit_unset_raises(self):
-        # Scenario: NANOCHAT_BASE_DIR not set, require_explicit=True
-        # Given: Environment has NANOCHAT_BASE_DIR unset
-        # When: We call get_base_dir(require_explicit=True)
-        # Then: Should raise RuntimeError with helpful message
-        with patch.dict(os.environ, {}, clear=False):
-            if "NANOCHAT_BASE_DIR" in os.environ:
-                del os.environ["NANOCHAT_BASE_DIR"]
-            with pytest.raises(RuntimeError) as exc_info:
-                get_base_dir(require_explicit=True)
-            assert "NANOCHAT_BASE_DIR not set" in str(exc_info.value)
-            assert ".cache/nanochat" in str(exc_info.value)
-
-    def test_get_base_dir_explicit_set_succeeds(self):
-        # Scenario: NANOCHAT_BASE_DIR is set, require_explicit=True
-        # Given: Environment has NANOCHAT_BASE_DIR=/tmp/nanochat_test
-        # When: We call get_base_dir(require_explicit=True)
-        # Then: Should succeed and return the path
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch.dict(os.environ, {"NANOCHAT_BASE_DIR": tmpdir}):
-                result = get_base_dir(require_explicit=True)
-                assert result == tmpdir
 
     def test_get_base_dir_default_no_explicit(self):
         # Scenario: require_explicit=False (default)
@@ -89,5 +63,5 @@ class TestGetBaseDirRequireExplicit:
             if "NANOCHAT_BASE_DIR" in os.environ:
                 del os.environ["NANOCHAT_BASE_DIR"]
             with patch("os.makedirs"):
-                result = get_base_dir(require_explicit=False)
+                result = get_base_dir()
                 assert result == os.path.expanduser("~/.cache/nanochat")
