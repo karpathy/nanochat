@@ -219,7 +219,8 @@ modal volume get nanochat-modal /chatsft_checkpoints ~/.cache/nanochat-modal/gpu
 - `nanochat-modal` is the Volume name. `/tokenizer` and `/chatsft_checkpoints` are paths on the Volume.
 - The last argument is the local folder.
 - `--force` overwrites files already on your laptop.
-- A folder is copied recursively. To check what is on the Volume first: `modal volume ls nanochat-modal`.
+- To check what is on the Volume first: `modal volume ls nanochat-modal` (or `modal volume ls nanochat-modal base_checkpoints/d6`).
+- **Verify the result.** On 2026-11-15, `modal volume get` on a folder wrote a single zip-format file at the destination, not a folder of files. Check that the expected files are inside the folder: `find ~/.cache/nanochat-modal/cpu -type f`. You should see `tokenizer.pkl`, `token_bytes.pt`, and `model_*.pt` / `meta_*.json` under `chatsft_checkpoints/d<depth>/`. If you see one file named after the folder, delete it and pull again, or pull the files one at a time.
 - Add `--profile <name>` or `-e <env>` if your Modal CLI uses a non-default profile or environment.
 - Read-only: `modal volume get` only copies. It never changes the Volume.
 
