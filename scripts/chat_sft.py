@@ -36,6 +36,7 @@ from nanochat.common import (
     DummyWandb,
     autodetect_device_type,
     compute_cleanup,
+    compute_eta_str,
     compute_init,
     format_duration,
     get_base_dir,
@@ -622,8 +623,14 @@ while True:
     mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
+    # ETA: fail-soft — a failure must never abort training
+    try:
+        steps_done = step - 10
+        eta_str = compute_eta_str(total_training_time, steps_done, args.num_iterations)
+    except Exception:
+        eta_str = ""
     total_str = f"/{args.num_iterations:05d}" if args.num_iterations > 0 else ""
-    print0(f"step {step:05d}{total_str} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {format_duration(total_training_time)}")
+    print0(f"step {step:05d}{total_str} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {current_epoch} | total time: {format_duration(total_training_time)}{eta_str}")
     if step % 10 == 0:
         wandb_run.log({
             "step": step,
