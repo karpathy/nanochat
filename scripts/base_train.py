@@ -28,6 +28,7 @@ import torch.distributed as dist
 import wandb
 
 from nanochat.checkpoint_manager import (
+    BASE_TRAIN_RESUME_KEYS,
     assert_resume_config_matches,
     load_checkpoint,
     remove_stale_tmp,
@@ -37,8 +38,10 @@ from nanochat.checkpoint_manager import (
 from nanochat.common import (
     COMPUTE_DTYPE,
     COMPUTE_DTYPE_REASON,
+    IGNORE_INDEX,
     DummyWandb,
     autodetect_device_type,
+    collective_check_finite_loss,
     compute_cleanup,
     compute_eta_str,
     compute_init,
@@ -367,8 +370,14 @@ if total_batch_size == -1:
     total_batch_size = 2 ** round(math.log2(predicted_batch_size)) # clamp to nearest power of 2 for efficiency
     print0(f"Auto-computed optimal batch size: {total_batch_size:,} tokens")
 
+# FIX 3a: overwrite the raw CLI value (-1 when auto) with the resolved batch size so the
+# checkpoint stores the value actually used, not the sentinel that triggers auto-compute.
+user_config["total_batch_size"] = total_batch_size
+# FIX 3b: record world_size in user_config so the resume guard can verify it.
+user_config["world_size"] = ddp_world_size
+
 # Resume config guard: refuse to resume if key training dimensions changed since the checkpoint.
-_base_train_guard_keys = ["device_batch_size", "max_seq_len", "total_batch_size", "num_iterations", "world_size"]
+# FIX 3c: guard key list lives in checkpoint_manager (single owner).
 if resuming:
     assert_resume_config_matches(
         meta_data.get("user_config", meta_data),
@@ -379,7 +388,7 @@ if resuming:
             "num_iterations": args.num_iterations,
             "world_size": ddp_world_size,
         },
-        _base_train_guard_keys,
+        BASE_TRAIN_RESUME_KEYS,
         stage="base_train",
         hint="use FORCE_STAGES=base_train to restart from scratch",
     )
@@ -541,6 +550,13 @@ def accumulate_gradients(x, y):
     runs on the rebuilt loader and the doubled micro-step count.
     """
     for micro_step in range(grad_accum_steps):
+        # FIX 4: warn on a micro-batch where every target is masked (SFT-style masking; rare in pretraining).
+        n_valid = int((y != IGNORE_INDEX).sum())
+        if n_valid == 0:
+            print0(
+                f"WARNING: step {step}, micro-step {micro_step}: all targets are masked "
+                f"(IGNORE_INDEX={IGNORE_INDEX}); loss will be 0.0 and gradients will be zero."
+            )
         loss = model(x, y)
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
@@ -549,6 +565,9 @@ def accumulate_gradients(x, y):
         else:
             loss.backward()
         x, y, next_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+    # FIX 6: collective non-finite check — all ranks agree before raising to avoid NCCL hangs.
+    # y here is the prefetched next-step y (fine for the unmasked-count in the error message).
+    collective_check_finite_loss(train_loss, step, y)
     return train_loss, x, y, next_state_dict
 
 def rehalve_after_oom():
