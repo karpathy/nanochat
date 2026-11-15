@@ -324,12 +324,11 @@ Once `ALL DONE` appears in the terminal:
 
 ## Switching CPU ↔ GPU
 
-> **Known issue: stage markers are shared and depth-free.** A GPU run after a CPU run will SKIP the tokenizer, base train, eval, and SFT stages because the CPU run's markers already exist on the Volume — it then uses the depth-6 CPU checkpoint for a depth-24 GPU run, which is silently wrong. A permanent fix is queued.
->
-> **Workaround:** always use `FORCE_STAGES=all` when switching modes:
-> ```bash
-> FORCE_STAGES=all MODE=gpu bash runs/runmodal.sh
-> ```
+Stage markers are profile+depth-tagged (e.g. `.stage_base_train_runcpu_d6`). Switching from CPU to GPU (or any profile/depth change) causes a marker mismatch: the stage logs `RUN … reason=profile/depth mismatch` and reruns automatically — it will not silently reuse a checkpoint from the wrong run. Old depth-free `.train_ok` markers from before this change are treated as mismatches and cause a rerun. To explicitly force all stages to rerun regardless of markers:
+
+```bash
+FORCE_STAGES=all MODE=gpu bash runs/runmodal.sh
+```
 
 ## Idempotent re-runs
 
@@ -427,10 +426,11 @@ Your local runs are never affected by Modal's env vars, and Modal artifacts neve
 - Check the job logs: `bash runs/modal_peek.sh logs` or `modal app logs <app-id>`
 - Fix the issue and re-run with the relevant `FORCE_STAGES=…` if needed
 
-**"another run is already active … (PID 5)" (stale run lock)**
-- A cancelled run left `/data/nanochat-modal/.run.lock` on the Volume. The PID is container-local and meaningless after a job restarts.
+**"another run is already active … (run &lt;id&gt;)" (stale run lock)**
+- The lock uses a run ID and a heartbeat file; a lock is considered stale when the heartbeat has not been refreshed for more than 600 seconds. A background refresher keeps the heartbeat fresh while a run is alive, so a stale lock means the run has genuinely ended.
 - Confirm no run is actually live: `bash runs/modal_peek.sh status`
-- Remove the stale lock: `modal volume rm -r nanochat-modal .run.lock`
-- Re-run normally. Note: the error text says `rm -rf`, which does not apply to Modal Volumes — use `modal volume rm` instead.
+- If the heartbeat is older than 10 minutes, remove the stale lock (the path is mode-prefixed, e.g. `cpu/.run.lock` for a CPU run): `modal volume rm -r nanochat-modal cpu/.run.lock`
+- A same-run-ID restart (e.g. a preempted Modal container that restarts) reclaims its own lock automatically without manual intervention.
+- Re-run normally after removing the lock.
 
 For more details on stage markers, artifacts, re-runs, and failure diagnosis, see [docs/RUNNING.md](RUNNING.md).
