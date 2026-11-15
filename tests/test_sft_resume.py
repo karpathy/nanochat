@@ -12,8 +12,8 @@ import sys
 import pytest
 
 from nanochat.checkpoint_manager import (
-    find_safe_resume_step,
-    load_checkpoint,
+    assert_resume_config_matches,
+    apply_sft_resume_state,
     should_save_checkpoint,
 )
 from nanochat.sft_loader import SftLoaderState
@@ -137,7 +137,7 @@ class TestSftLoaderStateRoundTrip:
         # When: serialised to dict and back
         # Then: all fields are preserved
         s = SftLoaderState(cursor=10, consumed=8, epoch=2, it=5, conv_buffer=[])
-        s2 = SftLoaderState.from_dict(s.to_dict(), ddp_rank=0)
+        s2 = SftLoaderState.from_dict(s.to_dict(), ddp_rank=0, ddp_world_size=1)
         assert s2.cursor == 10
         assert s2.consumed == 8
         assert s2.epoch == 2
@@ -151,14 +151,14 @@ class TestSftLoaderStateRoundTrip:
         buf = [[[1, 2, 3], [1, 1, 0]], [[4, 5], [0, 1]]]
         s = SftLoaderState(cursor=3, consumed=1, epoch=1, it=1, conv_buffer=buf)
         d = s.to_dict()
-        s2 = SftLoaderState.from_dict(d, ddp_rank=0)
+        s2 = SftLoaderState.from_dict(d, ddp_rank=0, ddp_world_size=1)
         assert s2.conv_buffer == buf
 
     def test_from_dict_missing_keys_use_defaults(self):
         # Given: an empty dict (e.g., fresh start, no saved state)
         # When: from_dict is called with ddp_rank=1
         # Then: defaults mirror initial() for that rank
-        s = SftLoaderState.from_dict({}, ddp_rank=1)
+        s = SftLoaderState.from_dict({}, ddp_rank=1, ddp_world_size=4)
         assert s.cursor == 1
         assert s.consumed == 1
         assert s.epoch == 1
@@ -175,84 +175,126 @@ class TestSftLoaderStateRoundTrip:
         assert d["cursor"] == 5
         assert d["conv_buffer"] == buf
 
+    @pytest.mark.parametrize("rank,saved_cursor,expected_cursor", [
+        (0, 0, 0),   # rank 0 keeps its own cursor
+        (1, 0, 1),   # rank 1 gets block_base + 1 = 0 + 1
+        (2, 0, 2),   # rank 2 gets 0 + 2
+        (3, 0, 3),   # rank 3 gets 0 + 3
+        (1, 4, 5),   # saved cursor 4 → block_base 4; rank 1 → 5
+        (2, 8, 10),  # saved cursor 8 → block_base 8; rank 2 → 10
+    ])
+    def test_ddp_ranks_get_distinct_cursors(self, rank, saved_cursor, expected_cursor):
+        """
+        Scenario: DDP resume — each rank re-derives its own cursor from rank-0's saved value.
+        Slice: SftLoaderState.from_dict DDP re-derivation
+        ### Given: world_size=4, checkpoint written by rank 0 with saved_cursor
+        ### When: from_dict is called for this rank
+        ### Then: cursor equals expected_cursor (distinct per rank)
+        """
+        # Given
+        d = {"cursor": saved_cursor, "consumed": saved_cursor}
+        # When
+        s = SftLoaderState.from_dict(d, ddp_rank=rank, ddp_world_size=4)
+        # Then
+        assert s.cursor == expected_cursor
 
-# ---------------------------------------------------------------------------
+    def test_ddp_non_zero_rank_gets_empty_conv_buffer(self):
+        """
+        Scenario: conv_buffer belongs to rank 0 only; other ranks start empty.
+        Slice: SftLoaderState.from_dict conv_buffer DDP
+        ### Given: saved state has a non-empty conv_buffer
+        ### When: from_dict is called for rank 1 of 2
+        ### Then: conv_buffer is empty (rank 1 must refill from its own row group)
+        """
+        # Given
+        d = {"cursor": 0, "consumed": 0, "conv_buffer": [[1, 2], [3, 4]]}
+        # When
+        s = SftLoaderState.from_dict(d, ddp_rank=1, ddp_world_size=2)
+        # Then
+        assert s.conv_buffer == []
+
+    def test_ddp_rank0_keeps_saved_conv_buffer(self):
+        """
+        Scenario: rank 0 resumes exactly where it left off, including the conv_buffer.
+        Slice: SftLoaderState.from_dict conv_buffer rank 0
+        ### Given: saved state has a non-empty conv_buffer
+        ### When: from_dict is called for rank 0 of 2
+        ### Then: conv_buffer is preserved
+        """
+        # Given
+        buf = [[1, 2], [3, 4]]
+        d = {"cursor": 0, "consumed": 0, "conv_buffer": buf}
+        # When
+        s = SftLoaderState.from_dict(d, ddp_rank=0, ddp_world_size=2)
+        # Then
+        assert s.conv_buffer == buf
+
+    def test_missing_cursor_defaults_to_rank_not_re_derived(self):
+        """
+        Scenario: No saved state; default cursor is rank-specific, not re-derived.
+        Slice: SftLoaderState.from_dict empty-dict path
+        ### Given: empty dict, rank=1, world_size=4
+        ### When: from_dict is called
+        ### Then: cursor == 1 (the default), not 2 (which the formula would give if applied)
+        """
+        # Given / When
+        s = SftLoaderState.from_dict({}, ddp_rank=1, ddp_world_size=4)
+        # Then
+        assert s.cursor == 1
+        assert s.consumed == 1
+
+
 # § Config-mismatch guard
 # ---------------------------------------------------------------------------
+
+_GUARD_KEYS = ("device_batch_size", "max_seq_len", "total_batch_size", "num_iterations")
+_SAVED = {"device_batch_size": 8, "max_seq_len": 512, "total_batch_size": 16384, "num_iterations": 1500}
+
 
 class TestConfigMismatchGuard:
     """
     Scenario: Resuming with changed training dimensions must raise ValueError.
-    Slice: scripts.chat_sft — startup config-mismatch check.
+    Slice: nanochat.checkpoint_manager.assert_resume_config_matches (called by scripts.chat_sft).
     """
 
-    @pytest.mark.parametrize("changed_key,saved,current", [
-        ("device_batch_size", 8, 16),
-        ("max_seq_len", 512, 1024),
-        ("total_batch_size", 16384, 32768),
-        ("num_iterations", 1500, 500),
+    @pytest.mark.parametrize("changed_key,current", [
+        ("device_batch_size", 16),
+        ("max_seq_len", 1024),
+        ("total_batch_size", 32768),
+        ("num_iterations", 500),
     ])
-    def test_mismatch_raises(self, tmp_path, changed_key, saved, current, monkeypatch):
+    def test_mismatch_raises_naming_the_key(self, changed_key, current):
         """
-        Scenario: A checkpoint was saved with one value; the CLI says another.
-        Slice: config-mismatch guard
-        ### Given
-        A checkpoint directory containing a step-5 checkpoint whose meta stores the saved value.
-        ### When
-        The guard code runs with the current (mismatched) value.
-        ### Then
-        A ValueError is raised mentioning the key name.
+        Scenario: The saved checkpoint and the CLI disagree on one key.
+        Slice: assert_resume_config_matches
+        ### Given: saved meta with the original values
+        ### When: the current config changes one key
+        ### Then: ValueError names that key
         """
-        ckpt_dir = tmp_path / "chatsft_checkpoints" / "d6"
-        base_meta = {
-            "device_batch_size": 8, "max_seq_len": 512,
-            "total_batch_size": 16384, "num_iterations": 1500,
-        }
-        base_meta[changed_key] = saved
-        _write_fake_checkpoint(str(ckpt_dir), step=5, extra_meta=base_meta)
-
-        import torch
-
-        # Simulate the guard check inline (extracted from chat_sft startup):
-        step = find_safe_resume_step(str(ckpt_dir), world_size=1)
-        assert step == 5
-
-        _, _, saved_meta = load_checkpoint(str(ckpt_dir), step, torch.device("cpu"),
-                                           load_optimizer=False)
-
-        guard_keys = ["device_batch_size", "max_seq_len", "total_batch_size", "num_iterations"]
-        current_values = {**base_meta, changed_key: current}
-
+        current_cfg = {**_SAVED, changed_key: current}
         with pytest.raises(ValueError, match=changed_key):
-            for k in guard_keys:
-                sv = saved_meta.get(k)
-                cv = current_values.get(k)
-                if sv is not None and cv is not None and sv != cv:
-                    raise ValueError(
-                        f"Cannot resume SFT: '{k}' changed from {sv} (saved) to {cv} (current)."
-                    )
+            assert_resume_config_matches(_SAVED, current_cfg, _GUARD_KEYS)
 
-    def test_no_mismatch_does_not_raise(self, tmp_path):
+    def test_matching_config_does_not_raise(self):
         """
-        Scenario: Config matches; no error should be raised.
-        Slice: config-mismatch guard
-        ### Given / ### When / ### Then
+        Scenario: Config matches the checkpoint.
+        Slice: assert_resume_config_matches
+        ### Given: identical saved and current values
+        ### When: the guard runs
+        ### Then: no exception
         """
-        ckpt_dir = tmp_path / "chatsft_checkpoints" / "d6"
-        meta = {"device_batch_size": 8, "max_seq_len": 512,
-                "total_batch_size": 16384, "num_iterations": 1500}
-        _write_fake_checkpoint(str(ckpt_dir), step=5, extra_meta=meta)
+        assert_resume_config_matches(_SAVED, dict(_SAVED), _GUARD_KEYS)
 
-        import torch
-        step = find_safe_resume_step(str(ckpt_dir))
-        _, _, saved_meta = load_checkpoint(str(ckpt_dir), step, torch.device("cpu"),
-                                           load_optimizer=False)
-
-        # Same values → no exception
-        for k, v in meta.items():
-            sv = saved_meta.get(k)
-            if sv is not None and sv != v:
-                raise AssertionError(f"unexpected mismatch on {k}")
+    def test_key_missing_from_old_checkpoint_is_not_compared(self):
+        """
+        Scenario: An older checkpoint lacks a guard key.
+        Slice: assert_resume_config_matches
+        ### Given: saved meta without num_iterations
+        ### When: the current num_iterations differs
+        ### Then: no exception (the key cannot be compared)
+        """
+        saved = {k: v for k, v in _SAVED.items() if k != "num_iterations"}
+        assert_resume_config_matches(saved, {**_SAVED, "num_iterations": 500}, _GUARD_KEYS)
 
 
 # ---------------------------------------------------------------------------
@@ -375,3 +417,84 @@ class TestShellHelpers:
         )
         assert r.returncode == 0
         assert "--resume-from-step" not in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# B2 coverage — apply_sft_resume_state applies checkpoint to model and optimizer
+# ---------------------------------------------------------------------------
+
+class TestApplySftResumeState:
+    """
+    Scenario: chat_sft resume path restores SFT checkpoint weights into model and optimizer.
+    Slice: nanochat/checkpoint_manager.py apply_sft_resume_state
+    """
+
+    def test_model_state_dict_is_loaded(self):
+        """
+        Scenario: apply_sft_resume_state calls load_state_dict on the model with checkpoint data.
+        Slice: apply_sft_resume_state — model side
+        ### Given: a model mock and a state dict
+        ### When: apply_sft_resume_state is called
+        ### Then: model.load_state_dict is called with the given model data
+        """
+        ### Given
+        loaded = []
+        class FakeModel:
+            def load_state_dict(self, d): loaded.append(('model', d))
+        class FakeOpt:
+            def load_state_dict(self, d): loaded.append(('opt', d))
+        model_data = {"weight": [1.0, 2.0]}
+        optim_data = {"state": {}}
+
+        ### When
+        apply_sft_resume_state(FakeModel(), FakeOpt(), model_data, optim_data)
+
+        ### Then
+        assert loaded[0] == ('model', model_data), "model.load_state_dict must be called with checkpoint data"
+
+    def test_optimizer_state_dict_is_loaded(self):
+        """
+        Scenario: apply_sft_resume_state calls load_state_dict on the optimizer with checkpoint data.
+        Slice: apply_sft_resume_state — optimizer side
+        ### Given: a model mock and an optimizer mock
+        ### When: apply_sft_resume_state is called
+        ### Then: optimizer.load_state_dict is called with the given optimizer data
+        """
+        ### Given
+        loaded = []
+        class FakeModel:
+            def load_state_dict(self, d): loaded.append(('model', d))
+        class FakeOpt:
+            def load_state_dict(self, d): loaded.append(('opt', d))
+        model_data = {"weight": [1.0]}
+        optim_data = {"state": {"lr": 1e-4}}
+
+        ### When
+        apply_sft_resume_state(FakeModel(), FakeOpt(), model_data, optim_data)
+
+        ### Then
+        assert loaded[1] == ('opt', optim_data), "optimizer.load_state_dict must be called with checkpoint data"
+
+    def test_deleting_function_breaks_these_tests(self):
+        """
+        Scenario: falsification — if apply_sft_resume_state is a no-op, tests fail.
+        Slice: apply_sft_resume_state — falsifiability proof
+        ### Given: a model that records whether load_state_dict was called
+        ### When: apply_sft_resume_state is called
+        ### Then: both model and optimizer recorded exactly one load_state_dict call
+        """
+        ### Given
+        model_calls, opt_calls = [], []
+        class FakeModel:
+            def load_state_dict(self, d): model_calls.append(d)
+        class FakeOpt:
+            def load_state_dict(self, d): opt_calls.append(d)
+        model_data = {"w": 42}
+        optim_data = {"s": 99}
+
+        ### When
+        apply_sft_resume_state(FakeModel(), FakeOpt(), model_data, optim_data)
+
+        ### Then
+        assert len(model_calls) == 1 and model_calls[0] is model_data
+        assert len(opt_calls) == 1 and opt_calls[0] is optim_data

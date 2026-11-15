@@ -152,7 +152,7 @@ Keep your terminal visible (or use `tmux attach`). Key signals to look for in th
 
 **If the machine spec is rejected** (Modal returns a resource error for 64 cores / 128 GiB), lower `cpu=64` and `memory=131072` in `runs/modal_run.py` and re-run.
 
-**If the run exceeds the timeout** and is killed mid-stage, re-run as normal — finished stages SKIP and only the interrupted stage reruns from the start of that stage (no mid-training resume yet).
+**If the run exceeds the timeout** and is killed mid-stage, re-run as normal — finished stages SKIP and only the interrupted stage reruns. Mid-stage resume is implemented for `base_train` and `chat_sft`, but its Modal path is not verified, so treat the stage as restarting from its beginning.
 
 After the run completes, record the actual core count, wall-clock time per stage, and total cost in `docs/MODAL.md` (the "Cost and time" section above) and in `docs/plan/PROGRESS.md`.
 
@@ -199,7 +199,7 @@ If the training failed and the model files are missing, the script exits with an
 You can safely re-run `bash runs/runmodal.sh` multiple times:
 
 - **Finished stages SKIP** — their markers exist on the Volume, so the data/checkpoint is not re-computed
-- **Killed mid-stage** — that stage reruns on the next call (no mid-training resume; you start that stage over)
+- **Killed mid-stage** — that stage reruns on the next call (mid-stage resume is not verified on Modal; treat that stage as restarting from its beginning)
 - **Data caches do not collide** — Modal stores artifacts on the Volume; your laptop uses `~/.cache/nanochat-modal/`, separate from the local `~/.cache/nanochat` (if you run `runcpu.sh` or `speedrun.sh` locally)
 
 To force a stage to rerun (useful if you made code changes):

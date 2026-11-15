@@ -23,7 +23,8 @@ from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_
 from nanochat.tokenizer import get_token_bytes
 from nanochat.checkpoint_manager import (
     save_checkpoint, load_checkpoint, load_model, load_optimizer_state,
-    find_safe_resume_step, should_save_checkpoint,
+    find_safe_resume_step, should_save_checkpoint, assert_resume_config_matches,
+    apply_sft_resume_state,
 )
 from nanochat.sft_loader import SftLoaderState
 from nanochat.loss_eval import evaluate_bpb
@@ -160,12 +161,46 @@ token_bytes = get_token_bytes(device=device)
 # Note that pretraining ramps weight_decay to zero by end of pretraining, so SFT continues with zero
 optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_lr=args.embedding_lr, matrix_lr=args.matrix_lr, weight_decay=0.0)
 
+# Checkpoint directory for mid-training saves (and auto-resume)
+base_dir = get_base_dir()
+_sft_output_dirname = args.model_tag if args.model_tag else f"d{depth}"
+checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", _sft_output_dirname)
+
+# Auto-detect resume step
+if args.resume_from_step == -1:
+    args.resume_from_step = find_safe_resume_step(checkpoint_dir, ddp_world_size)
+    if args.resume_from_step >= 0:
+        print0(f"Resuming SFT from step {args.resume_from_step} (auto-detected)")
+
+# Resume: read the SFT model + optimizer this rank saved, and the loader position.
+# Config-mismatch guard: refuse to resume if key training dimensions changed.
+_guard_keys = ["device_batch_size", "max_seq_len", "total_batch_size", "num_iterations", "world_size"]
+if args.resume_from_step > 0:
+    _sft_resume_model_data, _sft_resume_optim_data, _saved_meta = load_checkpoint(
+        checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)
+    assert_resume_config_matches(
+        _saved_meta, {**{k: getattr(args, k) for k in _guard_keys[:-1]}, "world_size": ddp_world_size},
+        _guard_keys, stage="SFT", hint="Use FORCE_STAGES=chat_sft to restart from scratch",
+    )
+    _sft_resume_loader_state = SftLoaderState.from_dict(
+        _saved_meta.get("dataloader_state_dict") or {}, ddp_rank, ddp_world_size
+    )
+    _sft_resume_loop_state = _saved_meta.get("loop_state") or {}
+else:
+    _sft_resume_model_data = _sft_resume_optim_data = None
+    _sft_resume_loader_state = None
+    _sft_resume_loop_state = {}
+
 # Optionally warm-start optimizer from pretrained checkpoint (momentum buffers etc.)
 # Note: load_state_dict overwrites param_group metadata (LRs, betas, etc.) with the
 # pretrained values. Since pretraining warmdown brings LRs to ~0, we must save and
 # restore our fresh SFT LRs after loading.
-base_dir = get_base_dir()
-if args.load_optimizer:
+if args.resume_from_step > 0:
+    # Resume restores the SFT weights and optimizer, not the base ones, so earlier SFT training is kept.
+    apply_sft_resume_state(orig_model, optimizer, _sft_resume_model_data, _sft_resume_optim_data)
+    del _sft_resume_model_data, _sft_resume_optim_data
+    print0(f"Restored SFT model and optimizer state from step {args.resume_from_step}")
+elif args.load_optimizer:
     optimizer_data = load_optimizer_state("base", device, rank=ddp_rank, model_tag=args.model_tag, step=args.model_step)
     if optimizer_data is not None:
         base_lrs = [group["lr"] for group in optimizer.param_groups]
@@ -182,41 +217,16 @@ scaler = torch.amp.GradScaler() if COMPUTE_DTYPE == torch.float16 else None
 if scaler is not None:
     print0("GradScaler enabled for fp16 training")
 
-# Override the initial learning rate as a fraction of the base learning rate
-for group in optimizer.param_groups:
-    group["lr"] = group["lr"] * args.init_lr_frac
-    group["initial_lr"] = group["lr"]
-
-# Checkpoint directory for mid-training saves (and auto-resume)
-_sft_output_dirname = args.model_tag if args.model_tag else f"d{depth}"
-checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", _sft_output_dirname)
-
-# Auto-detect resume step
-if args.resume_from_step == -1:
-    args.resume_from_step = find_safe_resume_step(checkpoint_dir, ddp_world_size)
-    if args.resume_from_step >= 0:
-        print0(f"Resuming SFT from step {args.resume_from_step} (auto-detected)")
-
-# Config-mismatch guard: refuse to resume if key training dimensions changed
-if args.resume_from_step > 0:
-    _, _, _saved_meta = load_checkpoint(checkpoint_dir, args.resume_from_step, device, load_optimizer=False)
-    _guard_keys = ["device_batch_size", "max_seq_len", "total_batch_size", "num_iterations"]
-    for _k in _guard_keys:
-        _saved_val = _saved_meta.get(_k)
-        _cur_val = getattr(args, _k.replace("-", "_"), None)
-        if _saved_val is not None and _cur_val is not None and _saved_val != _cur_val:
-            raise ValueError(
-                f"Cannot resume SFT: '{_k}' changed from {_saved_val} (saved) to {_cur_val} (current). "
-                "Use FORCE_STAGES=chat_sft to restart from scratch."
-            )
-    _sft_resume_loader_state = SftLoaderState.from_dict(
-        _saved_meta.get("dataloader_state_dict") or {}, ddp_rank
-    )
-    _sft_resume_loop_state = _saved_meta.get("loop_state") or {}
-    del _saved, _saved_meta
-else:
-    _sft_resume_loader_state = None
-    _sft_resume_loop_state = {}
+# Override the initial learning rate as a fraction of the base learning rate.
+# Skipped on resume: the restored optimizer already carries its scheduled LRs (no cumulative decay).
+if args.resume_from_step > 0 and args.init_lr_frac != 1.0:
+    print0(f"NOTE: --init-lr-frac={args.init_lr_frac} ignored on resume; "
+           f"optimizer LRs are restored from the step {args.resume_from_step} checkpoint "
+           f"(pass FORCE_STAGES=chat_sft to restart from step 0 with the new LR scale).")
+if args.resume_from_step <= 0:
+    for group in optimizer.param_groups:
+        group["lr"] = group["lr"] * args.init_lr_frac
+        group["initial_lr"] = group["lr"]
 
 # SFT data mixture and DataLoader
 train_tasks = [
@@ -514,6 +524,7 @@ while True:
                 "max_seq_len": args.max_seq_len,
                 "total_batch_size": args.total_batch_size,
                 "num_iterations": args.num_iterations,
+                "world_size": ddp_world_size,
                 "dataloader_state_dict": sft_loader_state.to_dict(),
                 "loop_state": {
                     "min_val_bpb": min_val_bpb,
