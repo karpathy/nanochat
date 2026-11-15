@@ -201,6 +201,24 @@ def should_save_checkpoint(step: int, resume_from_step: int, time_due: bool,
     return time_due or step_due
 
 
+# Shared guard-key lists so the two training scripts stay in sync.
+# Scripts import these instead of maintaining their own copies.
+BASE_TRAIN_RESUME_KEYS: list[str] = [
+    "device_batch_size",
+    "max_seq_len",
+    "total_batch_size",
+    "num_iterations",
+    "world_size",
+]
+SFT_RESUME_KEYS: list[str] = [
+    "device_batch_size",
+    "max_seq_len",
+    "total_batch_size",
+    "num_iterations",
+    "world_size",
+]
+
+
 def assert_resume_config_matches(
     saved_meta: dict,
     current: dict,

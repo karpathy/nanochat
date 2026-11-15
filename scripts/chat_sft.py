@@ -21,6 +21,7 @@ import torch.distributed as dist
 import wandb
 
 from nanochat.checkpoint_manager import (
+    SFT_RESUME_KEYS,
     apply_sft_resume_state,
     assert_resume_config_matches,
     find_safe_resume_step,
@@ -33,9 +34,10 @@ from nanochat.checkpoint_manager import (
 from nanochat.common import (
     COMPUTE_DTYPE,
     COMPUTE_DTYPE_REASON,
+    IGNORE_INDEX,
     DummyWandb,
     autodetect_device_type,
-    check_finite_loss,
+    collective_check_finite_loss,
     compute_cleanup,
     compute_eta_str,
     compute_init,
@@ -202,20 +204,23 @@ optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_
 
 # Checkpoint directory for mid-training saves (and auto-resume) is defined above with depth.
 
+# FIX 3b: record world_size in user_config so the resume guard can verify it.
+user_config["world_size"] = ddp_world_size
+
 # Use pre-detected resume step (banner already printed above if resuming)
 if args.resume_from_step == -1:
     args.resume_from_step = _auto_detect_resume_step
 
 # Resume: read the SFT model + optimizer this rank saved, and the loader position.
 # Config-mismatch guard: refuse to resume if key training dimensions changed.
-_guard_keys = ["device_batch_size", "max_seq_len", "total_batch_size", "num_iterations", "world_size"]
+# FIX 3c: guard key list lives in checkpoint_manager (single owner).
 if args.resume_from_step > 0:
     _sft_resume_model_data, _sft_resume_optim_data, _saved_meta = load_checkpoint(
         checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)
     assert_resume_config_matches(
         _saved_meta.get("user_config", _saved_meta),
-        {**{k: getattr(args, k) for k in _guard_keys[:-1]}, "world_size": ddp_world_size},
-        _guard_keys, stage="SFT", hint="Use FORCE_STAGES=chat_sft to restart from scratch",
+        {**{k: getattr(args, k) for k in SFT_RESUME_KEYS[:-1]}, "world_size": ddp_world_size},
+        SFT_RESUME_KEYS, stage="SFT", hint="Use FORCE_STAGES=chat_sft to restart from scratch",
     )
     _sft_resume_loader_state = SftLoaderState.from_dict(
         _saved_meta.get("dataloader_state_dict") or {}, ddp_rank, ddp_world_size
@@ -579,9 +584,15 @@ while True:
     if step == 0:
         print0(f"Step {step:05d} | training forward/backward ({grad_accum_steps} micro-steps)...")
     for micro_step in range(grad_accum_steps):
+        # FIX 4: warn on a micro-batch where every target is masked (fully-masked SFT batch).
+        n_valid = int((y != IGNORE_INDEX).sum())
+        if n_valid == 0:
+            print0(
+                f"WARNING: step {step}, micro-step {micro_step}: all targets are masked "
+                f"(IGNORE_INDEX={IGNORE_INDEX}); loss will be 0.0 and gradients will be zero."
+            )
         loss = model(x, y)
         train_loss = loss.detach() # for logging
-        check_finite_loss(train_loss, step, y)  # fail fast before EMA can absorb NaN
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         if scaler is not None:
             scaler.scale(loss).backward()
@@ -589,6 +600,11 @@ while True:
             loss.backward()
         x, y, sft_loader_state = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
         progress = max(progress, approx_progress) # only increase progress monotonically
+    # FIX 2: collective non-finite check — once per outer step, all ranks agree before raising.
+    # Avoids the DDP hang caused by a single rank raising inside the micro-step loop while
+    # the other ranks continue into the next all-reduce.
+    # y here is the prefetched next-step y; fine for the unmasked-count in any error message.
+    collective_check_finite_loss(train_loss, step, y)
     # step the optimizer
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
