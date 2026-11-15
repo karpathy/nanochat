@@ -39,7 +39,7 @@ You do not need a local GPU or the training dependencies. Modal builds them into
 | Train timeout | 12 h (billed by actual run time) | 4 h |
 | Prefetched data shards | 8 | 170 |
 
-The container sets `SKIP_SETUP=1`, so it uses the prebuilt `.venv` and does not reinstall. It also sets `NANOCHAT_BASE_DIR=/data/nanochat-modal` and `HF_HOME` on the shared Volume, and runs `runs/modal_hook.sh` after each stage.
+The container sets `SKIP_SETUP=1`, so it uses the prebuilt `.venv` and does not reinstall. It also sets `NANOCHAT_BASE_DIR=/data/nanochat-modal/<mode>` and `HF_HOME` (inside that folder) on the shared Volume, and runs `runs/modal_hook.sh` after each stage.
 
 ### Hyperparameters
 
@@ -143,7 +143,7 @@ Keep your terminal visible (or use `tmux attach`). Key signals to look for in th
 
 | Signal | What it means |
 |--------|--------------|
-| `NANOCHAT_BASE_DIR=/data/nanochat-modal` | Volume path is set correctly in the container |
+| `NANOCHAT_BASE_DIR=/data/nanochat-modal/<mode>` | Volume path is set correctly in the container |
 | `OMP_NUM_THREADS=<N>` | Actual core count the container received; confirms the CPU spec was accepted |
 | Per-step loss lines from `base_train` | Training is progressing |
 | `.train_ok` written | Base train finished and saved its marker; eval stage can start |
@@ -216,10 +216,10 @@ modal volume get nanochat-modal /gpu/tokenizer ~/.cache/nanochat-modal/gpu/token
 modal volume get nanochat-modal /gpu/chatsft_checkpoints ~/.cache/nanochat-modal/gpu/chatsft_checkpoints --force
 ```
 
-- `nanochat-modal` is the Volume name. `/tokenizer` and `/chatsft_checkpoints` are paths on the Volume.
+- `nanochat-modal` is the Volume name. `/<mode>/tokenizer` and `/<mode>/chatsft_checkpoints` are paths on the Volume (`<mode>` is `cpu` or `gpu`).
 - The last argument is the local folder.
 - `--force` overwrites files already on your laptop.
-- To check what is on the Volume first: `modal volume ls nanochat-modal` (or `modal volume ls nanochat-modal base_checkpoints/d6`).
+- To check what is on the Volume first: `modal volume ls nanochat-modal` (or `modal volume ls nanochat-modal cpu/base_checkpoints/d6`).
 - **Verify the result.** On 2026-11-15, `modal volume get` on a folder wrote a single zip-format file at the destination, not a folder of files. Check that the expected files are inside the folder: `find ~/.cache/nanochat-modal/cpu -type f`. You should see `tokenizer.pkl`, `token_bytes.pt`, and `model_*.pt` / `meta_*.json` under `chatsft_checkpoints/d<depth>/`. If you see one file named after the folder, delete it and pull again, or pull the files one at a time.
 - Add `--profile <name>` or `-e <env>` if your Modal CLI uses a non-default profile or environment.
 - Read-only: `modal volume get` only copies. It never changes the Volume.
@@ -237,7 +237,7 @@ Once `ALL DONE` appears in the terminal:
    bash runs/modal_peek.sh pull            # copy run record to ~/.cache/nanochat-modal/runs/
    bash runs/modal_peek.sh cost            # billing summary for this month
    ```
-4. **Re-download** (if the auto-download step failed): run `bash runs/runmodal.sh finish <run-id>`, which downloads the run's artifacts after the Modal run has stopped. If that also fails, see "Pull the models from the Volume by hand" above.
+4. **Re-download** (if the auto-download step failed): run `bash runs/runmodal.sh finish <run-id>`, which downloads the run's artifacts after the Modal run has stopped. It needs the app id that launch saves, which only runs started from commit `948714f` or later have; older runs need the manual commands. If that also fails, see "Pull the models from the Volume by hand" above.
 5. **Evaluate the chat model** (optional):
    ```bash
    NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_eval -i sft -x 50
@@ -291,12 +291,12 @@ Where artifacts live:
 
 | Artifact | Location | Size |
 |----------|----------|------|
-| ClimbMix shards (pretraining data) | Modal Volume `/data/nanochat-modal/base_data_climbmix/` | ~17 GB |
-| Tokenizer | Modal Volume `/data/nanochat-modal/tokenizer/` | ~100 MB |
-| Base checkpoints (intermediate) | Modal Volume `/data/nanochat-modal/base_checkpoints/` | ~2–3 GB |
-| SFT checkpoints (final model) | Modal Volume `/data/nanochat-modal/chatsft_checkpoints/` | ~3–5 GB |
+| ClimbMix shards (pretraining data) | Modal Volume `/data/nanochat-modal/<mode>/base_data_climbmix/` | ~17 GB |
+| Tokenizer | Modal Volume `/data/nanochat-modal/<mode>/tokenizer/` | ~100 MB |
+| Base checkpoints (intermediate) | Modal Volume `/data/nanochat-modal/<mode>/base_checkpoints/` | ~2–3 GB |
+| SFT checkpoints (final model) | Modal Volume `/data/nanochat-modal/<mode>/chatsft_checkpoints/` | ~3–5 GB |
 | Local chat copy (after download) | `~/.cache/nanochat-modal/<mode>/tokenizer/` + `/chatsft_checkpoints/` | ~3–5 GB |
-| HF caches (transformers, tokenizers) | Modal Volume `/data/nanochat-modal/hf_home/` | ~2 GB |
+| HF caches (transformers, tokenizers) | Modal Volume `/data/nanochat-modal/<mode>/hf_home/` | ~2 GB |
 | Run record & artifacts | Modal Volume `/data/nanochat-modal/runs/<run-id>/` | ~10 MB; contains `run.json`, `events.jsonl`, `manifest.json`, `artifacts/` |
 
 The Volume persists across runs, so stages can skip if their marker exists. Your laptop's `~/.cache/nanochat-modal/<mode>/` is populated only after a successful full run.
