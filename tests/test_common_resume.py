@@ -7,9 +7,11 @@ Scope: Test compute_eta_str helper, get_base_dir require_explicit, and resume ba
 """
 
 import os
-import pytest
 import tempfile
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import pytest
+
 from nanochat.common import compute_eta_str, get_base_dir
 
 
@@ -40,8 +42,7 @@ class TestComputeEtaStr:
         # Then: Should correctly round and format
         eta = compute_eta_str(total_training_time=600, steps_done=10, num_iterations=100)
         # Should compute average: 600/10=60s per step, remaining ~80 steps, so ~4800s = 1h 20m
-        assert "eta:" in eta
-        assert "m" in eta
+        assert eta == " | eta: 1h 20m 0s"
 
     def test_eta_str_near_end(self):
         # Scenario: Training nearly complete
@@ -49,8 +50,8 @@ class TestComputeEtaStr:
         # When: We compute ETA
         # Then: Should handle gracefully (return empty if remaining_steps <= 0)
         eta = compute_eta_str(total_training_time=100, steps_done=90, num_iterations=100)
-        # steps_done - 10 = 80, remaining = 100 - 80 - 10 = 10, should not be empty
-        assert "eta:" in eta or eta == ""
+        # remaining = 100 - 90 - 10 = 0, so no ETA is shown
+        assert eta == ""
 
 
 class TestGetBaseDirRequireExplicit:
@@ -89,5 +90,4 @@ class TestGetBaseDirRequireExplicit:
                 del os.environ["NANOCHAT_BASE_DIR"]
             with patch("os.makedirs"):
                 result = get_base_dir(require_explicit=False)
-                assert "nanochat" in result
-                assert ".cache" in result or result.endswith("nanochat")
+                assert result == os.path.expanduser("~/.cache/nanochat")

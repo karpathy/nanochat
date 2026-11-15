@@ -295,7 +295,7 @@ def _run_training(script: str, extra_env: dict[str, str], commit_every_secs: flo
     stop_event = threading.Event()
     daemon_thread = threading.Thread(
         target=_commit_daemon,
-        args=(vol, BASE_DIR, commit_every_secs, stop_event),
+        args=(vol, base_dir_with_mode, commit_every_secs, stop_event),
         daemon=True,
     )
     daemon_thread.start()
@@ -332,7 +332,7 @@ def _run_training(script: str, extra_env: dict[str, str], commit_every_secs: flo
     # Clean up hook files BEFORE final commit
     for marker in [".modal_commit_request", ".modal_commit_failed", ".modal_commit_heartbeat"]:
         try:
-            os.remove(os.path.join(BASE_DIR, marker))
+            os.remove(os.path.join(base_dir_with_mode, marker))
         except FileNotFoundError:
             pass
 
@@ -371,7 +371,7 @@ def _sha256(path: str) -> str:
     return digest.hexdigest()
 
 
-def _archive_artifacts(run_id: str) -> None:
+def _archive_artifacts(run_id: str, mode: str) -> None:
     """Copy this run's outputs into runs/<run-id>/artifacts and write a manifest with checksums.
 
     Without this, the next run overwrites checkpoints, metrics and stage markers on the Volume.
@@ -380,7 +380,7 @@ def _archive_artifacts(run_id: str) -> None:
     os.makedirs(artifacts_dir, exist_ok=True)
     manifest = []
     for item in ARCHIVE_ITEMS:
-        src = os.path.join(BASE_DIR, item)
+        src = os.path.join(BASE_DIR, mode, item)
         if not os.path.exists(src):
             continue
         dst = os.path.join(artifacts_dir, item)
@@ -463,7 +463,7 @@ def train_cpu(
             commit_every_secs,
         )
     finally:
-        _archive_artifacts(run_id)
+        _archive_artifacts(run_id, "cpu")
         _report_run(started, cores, CPU_TRAIN_TIMEOUT, run_id)
 
 

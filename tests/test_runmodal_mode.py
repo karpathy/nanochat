@@ -217,3 +217,37 @@ def test_guard_warns_and_proceeds_when_modal_unavailable(
     assert record.exists()
 
 
+@pytest.fixture
+def fake_modal_app_id(tmp_path: Path) -> Path:
+    """Fake `modal`: `app list` returns no apps; `run` prints the app id then 200 lines, like a real detached run."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "modal"
+    script.write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = "app" ]; then echo "[]"; exit 0; fi\n'
+        'echo "Modal app id: ap-abc123XYZ"\n'
+        'for i in $(seq 1 200); do echo "line $i"; done\n'
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return bin_dir
+
+
+def test_detached_launch_succeeds_and_records_app_id(fake_modal_app_id: Path) -> None:
+    """
+    Scenario: a detached launch prints the app id then keeps logging; the launcher must not fail.
+    Slice: stopping the reader early (SIGPIPE) turned a successful launch into exit 141 and cut the log.
+    ### Given: fake modal that prints the app id and 200 more lines
+    ### When: runmodal.sh runs detached (default)
+    ### Then: exit 0, app.id records the app and mode, PENDING_DOWNLOAD is set, full run.log kept
+    """
+    result = _run(fake_modal_app_id, None)
+
+    assert result.returncode == 0, result.stderr
+    run_dirs = list((fake_modal_app_id.parent / "archive").iterdir())
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    assert (run_dir / "app.id").read_text().strip() == "ap-abc123XYZ cpu"
+    assert (run_dir / "PENDING_DOWNLOAD").exists()
+    assert "line 200" in (run_dir / "run.log").read_text()
+

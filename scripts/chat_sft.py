@@ -128,20 +128,6 @@ wandb_run = make_run_logger(DummyWandb() if use_dummy_wandb else wandb.init(proj
 if not HAS_FA3:
     print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback. Training will be less efficient.")
 
-# Auto-detect resume step first (to print banner before model load)
-_auto_detect_resume_step = args.resume_from_step
-if _auto_detect_resume_step == -1:
-    base_dir = get_base_dir()
-    _sft_output_dirname = args.model_tag if args.model_tag else "d12"
-    checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", _sft_output_dirname)
-    _auto_detect_resume_step = find_safe_resume_step(checkpoint_dir, ddp_world_size)
-
-# Print resume banner if resuming
-if _auto_detect_resume_step > 0:
-    print0("=" * 60)
-    print0(f"Resuming SFT from step {_auto_detect_resume_step}")
-    print0("=" * 60)
-
 # Load the model and tokenizer
 empty_device_cache(device) # hand the weights a clean allocator; MPS OOMs on the load itself otherwise
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=args.model_tag, step=args.model_step)
@@ -186,6 +172,17 @@ orig_model = model
 # MPS: Inductor has no backend — maybe_torch_compile leaves the model eager (and echoes once).
 model = maybe_torch_compile(model, device_type, dynamic=False)
 depth = model.config.n_layer
+
+base_dir = get_base_dir()
+_sft_output_dirname = args.model_tag if args.model_tag else f"d{depth}"
+checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", _sft_output_dirname)
+_auto_detect_resume_step = args.resume_from_step
+if _auto_detect_resume_step == -1:
+    _auto_detect_resume_step = find_safe_resume_step(checkpoint_dir, ddp_world_size)
+if _auto_detect_resume_step > 0:
+    print0("=" * 60)
+    print0(f"Resuming SFT from step {_auto_detect_resume_step}")
+    print0("=" * 60)
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
 world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
@@ -200,9 +197,7 @@ token_bytes = get_token_bytes(device=device)
 # Note that pretraining ramps weight_decay to zero by end of pretraining, so SFT continues with zero
 optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_lr=args.embedding_lr, matrix_lr=args.matrix_lr, weight_decay=0.0)
 
-# Checkpoint directory for mid-training saves (and auto-resume)
-_sft_output_dirname = args.model_tag if args.model_tag else f"d{depth}"
-checkpoint_dir = os.path.join(base_dir, "chatsft_checkpoints", _sft_output_dirname)
+# Checkpoint directory for mid-training saves (and auto-resume) is defined above with depth.
 
 # Use pre-detected resume step (banner already printed above if resuming)
 if args.resume_from_step == -1:

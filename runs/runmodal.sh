@@ -133,27 +133,31 @@ else
 fi
 
 # Launch with mode prefix
+RUN_LOG="$ARCHIVE_DIR/run.log"
+set +e
 NANOCHAT_MODAL_MODE="$MODE" NANOCHAT_MODAL_VOLUME="$NANOCHAT_MODAL_VOLUME" modal run \
     runs/modal_run.py --mode "$MODE" --run-id "$RUN_ID" --code-rev "$CODE_REV" \
-    $DETACH_FLAG 2>&1 | tee "$ARCHIVE_DIR/run.log" | {
-    if [ -n "$DETACH_FLAG" ]; then
-        # Detached: extract app ID and save it
-        while IFS= read -r line; do
-            echo "$line"
-            if [[ "$line" =~ Modal\ app\ id:\ (ap-[a-zA-Z0-9]+) ]]; then
-                APP_ID="${BASH_REMATCH[1]}"
-                echo "$APP_ID $MODE" > "$ARCHIVE_DIR/app.id"
-                echo "" >&2
-                echo "App ID saved to: $ARCHIVE_DIR/app.id" >&2
-                break
-            fi
-        done
-        # Mark for later download
-        touch "$ARCHIVE_DIR/PENDING_DOWNLOAD"
-        echo "To download artifacts: bash runs/runmodal.sh finish $RUN_ID" >&2
-    else
-        # Attached: run finish automatically when done
-        cat
-        bash "$SCRIPTDIR/modal_peek.sh" finish-download "$RUN_ID"
-    fi
-}
+    $DETACH_FLAG 2>&1 | tee "$RUN_LOG"
+MODAL_STATUS=${PIPESTATUS[0]}
+set -e
+
+APP_ID="$(sed -n 's/.*Modal app id: \(ap-[A-Za-z0-9]*\).*/\1/p' "$RUN_LOG" | sed -n 1p)"
+if [ -n "$APP_ID" ]; then
+    echo "$APP_ID $MODE" > "$ARCHIVE_DIR/app.id"
+    echo "App ID saved to: $ARCHIVE_DIR/app.id" >&2
+else
+    echo "WARNING: could not find the Modal app id in $RUN_LOG." >&2
+    echo "  Find it with: bash runs/modal_peek.sh status" >&2
+fi
+
+if [ "$MODAL_STATUS" -ne 0 ]; then
+    echo "modal run exited with status $MODAL_STATUS. See $RUN_LOG" >&2
+    exit "$MODAL_STATUS"
+fi
+
+if [ -n "$DETACH_FLAG" ]; then
+    touch "$ARCHIVE_DIR/PENDING_DOWNLOAD"
+    echo "To download artifacts: bash runs/runmodal.sh finish $RUN_ID" >&2
+else
+    bash "$SCRIPTDIR/modal_peek.sh" finish-download "$RUN_ID"
+fi
