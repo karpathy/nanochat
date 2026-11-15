@@ -19,6 +19,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from nanochat.common import IGNORE_INDEX
+
 from nanochat.common import get_dist_info, print0, COMPUTE_DTYPE
 from nanochat.defaults import DEFAULT_SEQ_LEN, LOGIT_SOFTCAP, VOCAB_SIZE
 from nanochat.optim import MuonAdamW
@@ -539,16 +541,17 @@ class GPT(nn.Module):
             flat_logits = logits.view(-1, logits.size(-1))
             flat_targets = targets.view(-1)
             if loss_reduction == 'mean':
-                # Guard: a micro-batch where every target is masked (ignore_index=-1) would
-                # make F.cross_entropy divide 0/0 and return NaN. Instead return a zero
-                # loss that is still part of the computation graph (zero gradient).
-                n_valid = (flat_targets != -1).sum()
-                if n_valid == 0:
-                    loss = (flat_logits * 0).sum()
-                else:
-                    loss = F.cross_entropy(flat_logits, flat_targets, ignore_index=-1, reduction='sum') / n_valid
+                # Branch-free guard: when every target is masked (IGNORE_INDEX) n_valid==0
+                # so clamp(min=1) makes the denominator 1 and sum==0, giving loss==0.0.
+                # This is numerically identical to the original for batches with valid targets.
+                # Avoid a Python `if` on a tensor value here — that would break torch.compile.
+                n_valid = (flat_targets != IGNORE_INDEX).sum()
+                loss = (
+                    F.cross_entropy(flat_logits, flat_targets, ignore_index=IGNORE_INDEX, reduction='sum')
+                    / n_valid.clamp(min=1)
+                )
             else:
-                loss = F.cross_entropy(flat_logits, flat_targets, ignore_index=-1, reduction=loss_reduction)
+                loss = F.cross_entropy(flat_logits, flat_targets, ignore_index=IGNORE_INDEX, reduction=loss_reduction)
             return loss
         else:
             # inference: just return the logits directly
