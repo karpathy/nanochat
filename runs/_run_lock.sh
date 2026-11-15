@@ -8,8 +8,8 @@
 # The lock is released automatically via EXIT/INT/TERM trap.
 #
 # Reclaiming a dead holder's lock is gated by a second mkdir (<lock>.reclaim).
-# Only the process holding that gate may re-check the PID and replace the lock,
-# so two processes can never both end up holding it.
+# Only the process holding that gate may re-check the PID and replace the lock.
+# A missing PID file is treated as "live-unknown" (holder mid-acquire) and refused.
 
 set -euo pipefail
 
@@ -57,9 +57,15 @@ _acquire_run_lock() {
     fi
 
     # Lock directory exists: is the holder still alive?
+    # Treat a missing or empty PID file as "live-unknown" (holder mid-acquire, not yet written PID).
     local held_pid
     held_pid="$(_read_pid_file "${_LOCK_PID_FILE}")"
-    if [ -n "${held_pid}" ] && kill -0 "${held_pid}" 2>/dev/null; then
+    if [ -z "${held_pid}" ]; then
+        echo "ERROR: lock dir exists but no PID recorded (holder may be mid-acquire). Try again in a moment." >&2
+        echo "  If no run is active, remove it with: rm -rf \"${_LOCK_DIR}\"" >&2
+        exit 1
+    fi
+    if kill -0 "${held_pid}" 2>/dev/null; then
         echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (PID ${held_pid})." >&2
         echo "  If that run has ended, remove the stale lock with:" >&2
         echo "    rm -rf \"${_LOCK_DIR}\"" >&2
@@ -73,12 +79,20 @@ _acquire_run_lock() {
         exit 1
     fi
     _RECLAIM_HELD=1
-    # Install the EXIT trap now so a failure below still releases the gate.
+    # Install EXIT/INT/TERM traps now so any failure below still releases the gate.
     trap '_release_run_lock' EXIT
+    trap '_release_run_lock; exit 130' INT
+    trap '_release_run_lock; exit 143' TERM
 
     # Re-check under the gate: the PID may have been rewritten since we first read it.
+    # Also re-apply the live-unknown guard: a new holder may have written its PID while we
+    # were taking the reclaim gate.
     held_pid="$(_read_pid_file "${_LOCK_PID_FILE}")"
-    if [ -n "${held_pid}" ] && kill -0 "${held_pid}" 2>/dev/null; then
+    if [ -z "${held_pid}" ]; then
+        echo "ERROR: lock dir exists but no PID recorded after taking reclaim gate. Try again in a moment." >&2
+        exit 1
+    fi
+    if kill -0 "${held_pid}" 2>/dev/null; then
         echo "ERROR: another run is already active on ${NANOCHAT_BASE_DIR} (PID ${held_pid})." >&2
         exit 1
     fi

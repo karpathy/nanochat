@@ -95,21 +95,22 @@ class TestRunLock:
         assert r.returncode == 0
         assert not lock_dir.exists()
 
-    def test_missing_pid_file_treated_as_stale(self, tmp_path):
+    def test_missing_pid_file_treated_as_live_unknown(self, tmp_path):
         """
-        Scenario: Lock dir exists but pid file is absent (crash with no pid write); reclaim it.
+        Scenario: Lock dir exists but pid file is absent; treated as live-unknown to close the
+        mid-acquire window (holder may have done mkdir but not yet written PID).
         Slice: _acquire_run_lock edge-case: empty lock dir
-        ### Given: .run.lock/ exists but is empty
+        ### Given: .run.lock/ exists but contains no pid file
         ### When: acquire runs
-        ### Then: exits 0 (reclaims the orphaned dir)
+        ### Then: exits 1 with a message indicating the PID is not yet recorded
         """
         lock_dir = tmp_path / ".run.lock"
         lock_dir.mkdir()
         # no pid file written
 
         r = _run(_run_lock_script(str(tmp_path)))
-        assert r.returncode == 0, r.stderr
-        assert "ACQUIRED" in r.stdout
+        assert r.returncode == 1
+        assert "no PID recorded" in r.stderr
 
 
 class TestRunLockReclaimAndSafety:

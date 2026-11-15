@@ -168,6 +168,16 @@ def get_dist_info():
     else:
         return False, 0, 0, 1
 
+
+def ddp_rank_position(saved: int, world_size: int, rank: int) -> int:
+    """Re-derive this rank's stream position from rank-0's saved value.
+
+    Only rank 0 writes checkpoints. The stride block containing `saved` is
+    `[k*world_size, (k+1)*world_size)` where k = saved // world_size; rank r's
+    slot in that block is k*world_size + r.  For world_size=1 this is a no-op.
+    """
+    return (saved // world_size) * world_size + rank
+
 def autodetect_device_type():
     # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
     if torch.cuda.is_available():

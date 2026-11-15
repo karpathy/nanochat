@@ -1,6 +1,8 @@
 """Serialisable state for the SFT data generator."""
 from dataclasses import dataclass
 
+from nanochat.common import ddp_rank_position
+
 
 @dataclass
 class SftLoaderState:
@@ -26,17 +28,16 @@ class SftLoaderState:
         return cls(cursor=ddp_rank, consumed=ddp_rank, epoch=1, it=0, conv_buffer=[])
 
     @classmethod
-    def from_dict(cls, d, ddp_rank, ddp_world_size: int = 1):
-        # Re-derive each rank's cursor/consumed from rank-0's saved value, mirroring
-        # dataloader._start_position so DDP ranks don't all resume on rank-0's stream.
+    def from_dict(cls, d, ddp_rank: int, ddp_world_size: int):
+        # Re-derive each rank's cursor/consumed from rank-0's saved value via
+        # ddp_rank_position (the single SSOT for DDP stride-block arithmetic).
         # Only applies when the key was actually saved; defaults are already rank-specific.
-        ws = ddp_world_size
         if "cursor" in d:
-            cursor = (d["cursor"] // ws) * ws + ddp_rank
+            cursor = ddp_rank_position(d["cursor"], ddp_world_size, ddp_rank)
         else:
             cursor = ddp_rank
         if "consumed" in d:
-            consumed = (d["consumed"] // ws) * ws + ddp_rank
+            consumed = ddp_rank_position(d["consumed"], ddp_world_size, ddp_rank)
         else:
             consumed = ddp_rank
         return cls(

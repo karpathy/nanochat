@@ -13,6 +13,7 @@ import pytest
 
 from nanochat.checkpoint_manager import (
     assert_resume_config_matches,
+    apply_sft_resume_state,
     should_save_checkpoint,
 )
 from nanochat.sft_loader import SftLoaderState
@@ -136,7 +137,7 @@ class TestSftLoaderStateRoundTrip:
         # When: serialised to dict and back
         # Then: all fields are preserved
         s = SftLoaderState(cursor=10, consumed=8, epoch=2, it=5, conv_buffer=[])
-        s2 = SftLoaderState.from_dict(s.to_dict(), ddp_rank=0)
+        s2 = SftLoaderState.from_dict(s.to_dict(), ddp_rank=0, ddp_world_size=1)
         assert s2.cursor == 10
         assert s2.consumed == 8
         assert s2.epoch == 2
@@ -150,14 +151,14 @@ class TestSftLoaderStateRoundTrip:
         buf = [[[1, 2, 3], [1, 1, 0]], [[4, 5], [0, 1]]]
         s = SftLoaderState(cursor=3, consumed=1, epoch=1, it=1, conv_buffer=buf)
         d = s.to_dict()
-        s2 = SftLoaderState.from_dict(d, ddp_rank=0)
+        s2 = SftLoaderState.from_dict(d, ddp_rank=0, ddp_world_size=1)
         assert s2.conv_buffer == buf
 
     def test_from_dict_missing_keys_use_defaults(self):
         # Given: an empty dict (e.g., fresh start, no saved state)
         # When: from_dict is called with ddp_rank=1
         # Then: defaults mirror initial() for that rank
-        s = SftLoaderState.from_dict({}, ddp_rank=1)
+        s = SftLoaderState.from_dict({}, ddp_rank=1, ddp_world_size=4)
         assert s.cursor == 1
         assert s.consumed == 1
         assert s.epoch == 1
@@ -416,3 +417,84 @@ class TestShellHelpers:
         )
         assert r.returncode == 0
         assert "--resume-from-step" not in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# B2 coverage — apply_sft_resume_state applies checkpoint to model and optimizer
+# ---------------------------------------------------------------------------
+
+class TestApplySftResumeState:
+    """
+    Scenario: chat_sft resume path restores SFT checkpoint weights into model and optimizer.
+    Slice: nanochat/checkpoint_manager.py apply_sft_resume_state
+    """
+
+    def test_model_state_dict_is_loaded(self):
+        """
+        Scenario: apply_sft_resume_state calls load_state_dict on the model with checkpoint data.
+        Slice: apply_sft_resume_state — model side
+        ### Given: a model mock and a state dict
+        ### When: apply_sft_resume_state is called
+        ### Then: model.load_state_dict is called with the given model data
+        """
+        ### Given
+        loaded = []
+        class FakeModel:
+            def load_state_dict(self, d): loaded.append(('model', d))
+        class FakeOpt:
+            def load_state_dict(self, d): loaded.append(('opt', d))
+        model_data = {"weight": [1.0, 2.0]}
+        optim_data = {"state": {}}
+
+        ### When
+        apply_sft_resume_state(FakeModel(), FakeOpt(), model_data, optim_data)
+
+        ### Then
+        assert loaded[0] == ('model', model_data), "model.load_state_dict must be called with checkpoint data"
+
+    def test_optimizer_state_dict_is_loaded(self):
+        """
+        Scenario: apply_sft_resume_state calls load_state_dict on the optimizer with checkpoint data.
+        Slice: apply_sft_resume_state — optimizer side
+        ### Given: a model mock and an optimizer mock
+        ### When: apply_sft_resume_state is called
+        ### Then: optimizer.load_state_dict is called with the given optimizer data
+        """
+        ### Given
+        loaded = []
+        class FakeModel:
+            def load_state_dict(self, d): loaded.append(('model', d))
+        class FakeOpt:
+            def load_state_dict(self, d): loaded.append(('opt', d))
+        model_data = {"weight": [1.0]}
+        optim_data = {"state": {"lr": 1e-4}}
+
+        ### When
+        apply_sft_resume_state(FakeModel(), FakeOpt(), model_data, optim_data)
+
+        ### Then
+        assert loaded[1] == ('opt', optim_data), "optimizer.load_state_dict must be called with checkpoint data"
+
+    def test_deleting_function_breaks_these_tests(self):
+        """
+        Scenario: falsification — if apply_sft_resume_state is a no-op, tests fail.
+        Slice: apply_sft_resume_state — falsifiability proof
+        ### Given: a model that records whether load_state_dict was called
+        ### When: apply_sft_resume_state is called
+        ### Then: both model and optimizer recorded exactly one load_state_dict call
+        """
+        ### Given
+        model_calls, opt_calls = [], []
+        class FakeModel:
+            def load_state_dict(self, d): model_calls.append(d)
+        class FakeOpt:
+            def load_state_dict(self, d): opt_calls.append(d)
+        model_data = {"w": 42}
+        optim_data = {"s": 99}
+
+        ### When
+        apply_sft_resume_state(FakeModel(), FakeOpt(), model_data, optim_data)
+
+        ### Then
+        assert len(model_calls) == 1 and model_calls[0] is model_data
+        assert len(opt_calls) == 1 and opt_calls[0] is optim_data

@@ -19,7 +19,7 @@ https://github.com/karpathy/nanochat/blob/3c3a3d7/nanochat/dataloader.py#L78-L11
 import torch
 import pyarrow.parquet as pq
 
-from nanochat.common import get_dist_info
+from nanochat.common import get_dist_info, ddp_rank_position
 from nanochat.dataset import list_parquet_files
 
 def _start_position(resume_state_dict):
@@ -29,7 +29,7 @@ def _start_position(resume_state_dict):
     _, ddp_rank, _, ddp_world_size = get_dist_info()
     state = resume_state_dict or {}
     saved_rg = state.get("rg_idx", ddp_rank)
-    rg_idx = (saved_rg // ddp_world_size) * ddp_world_size + ddp_rank
+    rg_idx = ddp_rank_position(saved_rg, ddp_world_size, ddp_rank)
     doc_offset = state.get("doc_offset", 0) if ddp_rank == 0 else 0
     return (state.get("pq_idx", 0), rg_idx, doc_offset, state.get("epoch", 1))
 
