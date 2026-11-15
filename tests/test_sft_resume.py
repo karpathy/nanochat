@@ -688,3 +688,41 @@ class TestBaseTrainResumeGuard:
                 current,
                 BASE_TRAIN_RESUME_KEYS,
             )
+
+    def test_legacy_minus_one_batch_size_does_not_refuse(self) -> None:
+        """
+        Scenario: S3 — checkpoint written before FIX 3a stored the resolved batch size.
+                  The old code saved total_batch_size=-1 (auto-compute sentinel).
+                  Resuming with the now-resolved concrete value must NOT be refused.
+        Slice: assert_resume_config_matches legacy -1 sentinel path
+
+        Given: an old checkpoint whose user_config has total_batch_size=-1 (the
+               auto-compute sentinel that the pre-FIX 3a code never replaced),
+        When: the current run supplies the resolved value (524288),
+        Then: no exception is raised (saved -1 is treated as "unknown / not yet resolved").
+
+        Contrast: if the saved value were any concrete non-negative number *different*
+        from the current value, the guard would refuse (see test_mismatch_raises_naming_the_key).
+        """
+        ### Given: legacy checkpoint with unresolved sentinel
+        saved = {**_BASE_TRAIN_SAVED, "total_batch_size": -1}
+        current = {**_BASE_TRAIN_SAVED, "total_batch_size": 524288}
+        ### When / Then (no exception)
+        assert_resume_config_matches(saved, current, BASE_TRAIN_RESUME_KEYS)
+
+    def test_changed_concrete_batch_size_still_refuses(self) -> None:
+        """
+        Scenario: S3 counterpart — if the SAVED batch size is a concrete value that
+                  differs from the current one, the guard must still refuse.
+        Slice: assert_resume_config_matches concrete mismatch path
+
+        Given: saved total_batch_size=524288, current=1048576,
+        When: guard runs,
+        Then: ValueError names total_batch_size.
+        """
+        ### Given
+        saved = {**_BASE_TRAIN_SAVED, "total_batch_size": 524288}
+        current = {**_BASE_TRAIN_SAVED, "total_batch_size": 1048576}
+        ### When / Then
+        with pytest.raises(ValueError, match="total_batch_size"):
+            assert_resume_config_matches(saved, current, BASE_TRAIN_RESUME_KEYS)
