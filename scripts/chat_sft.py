@@ -35,6 +35,7 @@ from nanochat.common import (
     COMPUTE_DTYPE_REASON,
     DummyWandb,
     autodetect_device_type,
+    check_finite_loss,
     compute_cleanup,
     compute_eta_str,
     compute_init,
@@ -582,6 +583,7 @@ while True:
     for micro_step in range(grad_accum_steps):
         loss = model(x, y)
         train_loss = loss.detach() # for logging
+        check_finite_loss(train_loss, step, y)  # fail fast before EMA can absorb NaN
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         if scaler is not None:
             scaler.scale(loss).backward()
