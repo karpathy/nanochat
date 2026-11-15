@@ -47,6 +47,8 @@ Delivery ledger for `docs/plan/` slices (non-nWave TRAIL adaptation).
 | 2026-11-15 | docs-sync-audit | AGENTS.md and CLAUDE.md treated as not applicable | Neither file exists in this repo. The global rule that imports `@AGENTS.md` does not apply here |
 | 2026-11-15 | backlog | Order: B1 test, then B3 heartbeat lock, then reconcile, then Could items (rank 4–7), then GPU last. B2 parked | User asked to stall B2 until a GPU run is near; GPU is blocked on payment; B1 and B3 are the Modal safety items before the next run |
 | 2026-11-15 | modal-gpu-phase | No GPU run until B2 lands and the user gives an explicit go-ahead | Blocked on payment method; B2 can silently skip a wrong checkpoint |
+| 2026-11-15 | backlog | Audit follow-ups added as ranks 8–10: CPU timing docs (blocked on a finished run), pipeline diagram (Could, on confirmation), AGENTS.md decision (Could, default is to skip) | Each follows from an audit row; ranked after the Modal safety items (B1, B3) and the Could items, because none of them block a run |
+| 2026-11-15 | backlog | Run-record replay stays at rank 4 (no duplicate row) | Already tracked in TRAIL; only its start was undone (branch deleted, no edits) |
 ## Slice states
 
 | slice_id | state | evidence |
