@@ -39,7 +39,8 @@ app = modal.App(name="nanochat-speedrun")
 
 # Shared Volume: mounted at BASE_DIR (= NANOCHAT_BASE_DIR on Modal)
 BASE_DIR = "/data/nanochat-modal"
-vol = modal.Volume.from_name("nanochat-modal", create_if_missing=True)
+NANOCHAT_MODAL_VOLUME = os.environ.get("NANOCHAT_MODAL_VOLUME", "nanochat-modal")
+vol = modal.Volume.from_name(NANOCHAT_MODAL_VOLUME, create_if_missing=True)
 
 PREFETCH_TIMEOUT = 2 * 60 * 60
 PREFETCH_SHARDS_GPU = 170  # speedrun.sh needs ~170 shards
@@ -242,7 +243,9 @@ def _commit_daemon(
 
 def _run_prefetch(shards: int) -> None:
     """Download ClimbMix shards into the Volume (skip-if-exist), then commit."""
-    modal_env = _modal_env(BASE_DIR)
+    mode = os.environ.get("NANOCHAT_MODAL_MODE", "cpu")
+    base_dir_with_mode = f"{BASE_DIR}/{mode}"
+    modal_env = _modal_env(base_dir_with_mode)
 
     print(f"[prefetch] Starting dataset prefetch ({shards} shards)...")
     result = subprocess.run(
@@ -281,8 +284,10 @@ def _run_training(script: str, extra_env: dict[str, str], commit_every_secs: flo
     """Run one stage script with the commit daemon, marker cleanup and final commit."""
     os.chdir("/root/nanochat")
 
-    # Set environment: Modal hooks and stage markers go in Volume
-    modal_env = {**_modal_env(BASE_DIR), **extra_env}
+    # Set environment: Modal hooks and stage markers go in Volume, with mode prefix
+    mode = os.environ.get("NANOCHAT_MODAL_MODE", "cpu")
+    base_dir_with_mode = f"{BASE_DIR}/{mode}"
+    modal_env = {**_modal_env(base_dir_with_mode), **extra_env}
     for key, value in modal_env.items():
         os.environ[key] = value
 
@@ -490,19 +495,30 @@ MODES = ("cpu", "gpu")
 
 
 def _download_artifacts(mode: str) -> None:
-    """Pull tokenizer and chat checkpoints from the Volume into ~/.cache/nanochat-modal/<mode>."""
+    """Pull tokenizer and chat checkpoints from the Volume into ~/.cache/nanochat-modal/<mode>.
+
+    Uses mode-prefixed paths on the Volume (/<mode>/tokenizer, /<mode>/chatsft_checkpoints).
+    Model files are one level down: chatsft_checkpoints/d<depth>/*.pt
+    """
     cache_dir = os.path.expanduser(f"~/.cache/nanochat-modal/{mode}")
     os.makedirs(cache_dir, exist_ok=True)
-    for remote, local in [("/tokenizer", f"{cache_dir}/tokenizer"), ("/chatsft_checkpoints", f"{cache_dir}/chatsft_checkpoints")]:
+    vol_name = os.environ.get("NANOCHAT_MODAL_VOLUME", "nanochat-modal")
+    for remote, local in [(f"/{mode}/tokenizer", f"{cache_dir}/tokenizer"),
+                          (f"/{mode}/chatsft_checkpoints", f"{cache_dir}/chatsft_checkpoints")]:
         print(f"  → {remote} → {local}")
-        if subprocess.run(["modal", "volume", "get", "nanochat-modal", remote, local, "--force"], check=False).returncode:
+        if subprocess.run(["modal", "volume", "get", vol_name, remote, local, "--force"], check=False).returncode:
             raise RuntimeError(f"volume get failed for {remote}")
     tokenizer_path, checkpoints_path = f"{cache_dir}/tokenizer", f"{cache_dir}/chatsft_checkpoints"
-    if not os.path.exists(tokenizer_path) or not os.path.exists(checkpoints_path):
-        raise RuntimeError("SFT incomplete: missing tokenizer or checkpoints")
-    model_files = [f for f in os.listdir(checkpoints_path) if f.startswith("model_") and f.endswith(".pt")]
+    if not os.path.exists(tokenizer_path):
+        raise RuntimeError("SFT incomplete: missing tokenizer")
+    if not os.path.exists(checkpoints_path):
+        raise RuntimeError("SFT incomplete: missing chatsft_checkpoints")
+
+    model_files = []
+    for root, dirs, files in os.walk(checkpoints_path):
+        model_files.extend([f for f in files if f.startswith("model_") and f.endswith(".pt")])
     if not model_files:
-        raise RuntimeError("SFT incomplete: no model checkpoints")
+        raise RuntimeError("SFT incomplete: no model checkpoints found under chatsft_checkpoints/")
     print(f"[local] Found {len(model_files)} checkpoint(s)\n" + "═" * 80)
 
 
@@ -530,12 +546,12 @@ def main(mode: str = "cpu", run_id: str = "", code_rev: str = "unknown") -> None
     prefetch_fn.remote()
     print(f"[local] Step 2: train ({mode})...")
     train_call(*train_args)
-    print("\n[local] Step 3: Downloading chat artifacts...")
-    _download_artifacts(mode)
-    print("SUCCESS: training complete and artifacts downloaded.")
+    print("\nSUCCESS: training complete.")
     print("═" * 80)
-    print("\nTo chat locally, run:")
-    print(f"  NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/{mode} python3 -m scripts.chat_cli -p \"Why is the sky blue?\"")
+    print("\nArtifacts are on the Volume. To download to your laptop, run:")
+    print("  bash runs/runmodal.sh finish <run-id>")
+    print("\nThen chat locally with:")
+    print(f"  NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/{mode} python3 -m scripts.chat_cli")
     print("\nSee docs/MODAL.md for details.")
 
 

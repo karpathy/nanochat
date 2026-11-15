@@ -3,12 +3,38 @@
 # Modal nanochat runner. Two modes, picked with MODE (default: cpu):
 #   MODE=cpu  runs/runcpu.sh on a heavy CPU machine (64 cores target, no GPU, no GPU payment gate)
 #   MODE=gpu  runs/speedrun.sh on 8×H100 (needs a GPU payment method and entitlement)
+# Runs detached by default (ATTACHED=1 to stream here).
 # One command: bash runs/runmodal.sh          (CPU)
 #              MODE=gpu bash runs/runmodal.sh (GPU, later)
+#              bash runs/runmodal.sh finish <run-id>  (download artifacts after run stops)
 # Prerequisites: Modal account, `modal setup`, local `modal` CLI.
 # Skip the prompt with RUNMODAL_YES=1.
 
 set -euo pipefail
+
+# Source Modal config (NANOCHAT_MODAL_VOLUME)
+SCRIPTDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPTDIR/_modal_config.sh"
+
+cmd="${1:-launch}"
+case "$cmd" in
+    finish)
+        # Download artifacts after a run stops
+        RUN_ID="${2:-}"
+        if [ -z "$RUN_ID" ]; then
+            echo "ERROR: usage: bash runs/runmodal.sh finish <run-id>" >&2
+            exit 1
+        fi
+        exec bash "$SCRIPTDIR/modal_peek.sh" finish-download "$RUN_ID"
+        ;;
+    launch)
+        # Fall through to main launch logic below
+        ;;
+    *)
+        echo "ERROR: unknown command: $cmd" >&2
+        exit 1
+        ;;
+esac
 
 MODE="${MODE:-cpu}"
 case "$MODE" in
@@ -50,10 +76,10 @@ if [ "$MODE" = "cpu" ]; then
  Machine: heavy CPU container, up to 64 cores / 128 GiB, no GPU
  Cost:    scales with cores. Check Modal's current CPU price before running.
           The first run measures real time; the cost is printed there too.
- Time:    unmeasured. Keep laptop awake; use screen/tmux (see docs/RUNNING.md)
+ Time:    unmeasured. Run detached. Use screen/tmux to keep terminal alive.
 
- On completion: tokenizer + chat checkpoint downloaded to ~/.cache/nanochat-modal/cpu
-   NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_cli
+ On completion: artifacts on Volume. Download with: bash runs/runmodal.sh finish <run-id>
+   Then chat: NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_cli
 ============================================================================
 EOF
 else
@@ -62,10 +88,10 @@ else
  nanochat on Modal — GPU mode (speedrun profile, 8×H100)
 
  Cost: ~$40–60 (~$3/GPU/hr × 8 GPUs × ~1.5–2h). First run higher (image bake).
- Time: ~1.5–2h training + prefetch + image build. Keep laptop awake.
+ Time: ~1.5–2h training + prefetch + image build. Run detached.
 
- On completion: tokenizer + chat checkpoint downloaded to ~/.cache/nanochat-modal/gpu
-   NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/gpu python3 -m scripts.chat_cli
+ On completion: artifacts on Volume. Download with: bash runs/runmodal.sh finish <run-id>
+   Then chat: NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/gpu python3 -m scripts.chat_cli
 ============================================================================
 EOF
 fi
@@ -93,5 +119,41 @@ ARCHIVE_DIR="$ARCHIVE_ROOT/$RUN_ID"
 mkdir -p "$ARCHIVE_DIR"
 echo "Run id: $RUN_ID (code $CODE_REV). Local log: $ARCHIVE_DIR/run.log"
 echo ""
-NANOCHAT_MODAL_MODE="$MODE" modal run runs/modal_run.py --mode "$MODE" \
-    --run-id "$RUN_ID" --code-rev "$CODE_REV" 2>&1 | tee "$ARCHIVE_DIR/run.log"
+
+# Detached launch (unless ATTACHED=1)
+DETACH_FLAG="--detach"
+if [ -z "${ATTACHED:-}" ]; then
+    echo "Running detached: the run continues if this terminal disconnects."
+    echo "Use ATTACHED=1 to stream here, or run: bash runs/modal_peek.sh logs"
+    echo ""
+else
+    DETACH_FLAG=""
+    echo "Running attached: logs stream here until the run finishes or is cancelled."
+    echo ""
+fi
+
+# Launch with mode prefix
+NANOCHAT_MODAL_MODE="$MODE" NANOCHAT_MODAL_VOLUME="$NANOCHAT_MODAL_VOLUME" modal run \
+    runs/modal_run.py --mode "$MODE" --run-id "$RUN_ID" --code-rev "$CODE_REV" \
+    $DETACH_FLAG 2>&1 | tee "$ARCHIVE_DIR/run.log" | {
+    if [ -n "$DETACH_FLAG" ]; then
+        # Detached: extract app ID and save it
+        while IFS= read -r line; do
+            echo "$line"
+            if [[ "$line" =~ Modal\ app\ id:\ (ap-[a-zA-Z0-9]+) ]]; then
+                APP_ID="${BASH_REMATCH[1]}"
+                echo "$APP_ID $MODE" > "$ARCHIVE_DIR/app.id"
+                echo "" >&2
+                echo "App ID saved to: $ARCHIVE_DIR/app.id" >&2
+                break
+            fi
+        done
+        # Mark for later download
+        touch "$ARCHIVE_DIR/PENDING_DOWNLOAD"
+        echo "To download artifacts: bash runs/runmodal.sh finish $RUN_ID" >&2
+    else
+        # Attached: run finish automatically when done
+        cat
+        bash "$SCRIPTDIR/modal_peek.sh" finish-download "$RUN_ID"
+    fi
+}

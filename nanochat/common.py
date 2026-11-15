@@ -68,14 +68,20 @@ def setup_default_logging():
 setup_default_logging()
 logger = logging.getLogger(__name__)
 
-def get_base_dir():
+def get_base_dir(require_explicit: bool = False):
     # co-locate nanochat intermediates with other cached data in ~/.cache (by default)
     if os.environ.get("NANOCHAT_BASE_DIR"):
         nanochat_dir = os.environ.get("NANOCHAT_BASE_DIR")
     else:
         home_dir = os.path.expanduser("~")
         cache_dir = os.path.join(home_dir, ".cache")
-        nanochat_dir = os.path.join(cache_dir, "nanochat")
+        default_path = os.path.join(cache_dir, "nanochat")
+        if require_explicit:
+            raise RuntimeError(
+                f"NANOCHAT_BASE_DIR not set. Set it to choose model location, e.g.:\n"
+                f"  NANOCHAT_BASE_DIR={default_path} python3 -m scripts.chat_cli"
+            )
+        nanochat_dir = default_path
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
 
