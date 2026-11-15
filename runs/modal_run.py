@@ -489,9 +489,9 @@ if MODAL_MODE == "gpu":
 MODES = ("cpu", "gpu")
 
 
-def _download_artifacts() -> None:
-    """Pull tokenizer and chat checkpoints from the Volume into ~/.cache/nanochat-modal."""
-    cache_dir = os.path.expanduser("~/.cache/nanochat-modal")
+def _download_artifacts(mode: str) -> None:
+    """Pull tokenizer and chat checkpoints from the Volume into ~/.cache/nanochat-modal/<mode>."""
+    cache_dir = os.path.expanduser(f"~/.cache/nanochat-modal/{mode}")
     os.makedirs(cache_dir, exist_ok=True)
     for remote, local in [("/tokenizer", f"{cache_dir}/tokenizer"), ("/chatsft_checkpoints", f"{cache_dir}/chatsft_checkpoints")]:
         print(f"  → {remote} → {local}")
@@ -531,11 +531,11 @@ def main(mode: str = "cpu", run_id: str = "", code_rev: str = "unknown") -> None
     print(f"[local] Step 2: train ({mode})...")
     train_call(*train_args)
     print("\n[local] Step 3: Downloading chat artifacts...")
-    _download_artifacts()
+    _download_artifacts(mode)
     print("SUCCESS: training complete and artifacts downloaded.")
     print("═" * 80)
     print("\nTo chat locally, run:")
-    print("  NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python3 -m scripts.chat_cli -p \"Why is the sky blue?\"")
+    print(f"  NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/{mode} python3 -m scripts.chat_cli -p \"Why is the sky blue?\"")
     print("\nSee docs/MODAL.md for details.")
 
 
