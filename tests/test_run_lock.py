@@ -531,3 +531,32 @@ class TestRunLockMissingHeartbeatFallback:
         assert r2.returncode == 1, (
             "Expected fresh empty lock dir to be refused; rc={r2.returncode}, stderr={r2.stderr}"
         )
+
+
+class TestRunLockStatHelper:
+    """
+    Scenario: _dir_mtime_epoch must return a bare integer on the current platform
+              (macOS uses stat -f %m; Linux uses stat -c %Y).
+    Slice: runs/_run_lock.sh — _dir_mtime_epoch portability (FIX 1)
+    """
+
+    def test_dir_mtime_epoch_returns_integer(self, tmp_path):
+        """
+        Scenario: _dir_mtime_epoch called on a real directory returns a numeric epoch.
+        Slice: stat portability — bare integer, no extra text
+        ### Given: a real directory path
+        ### When: _dir_mtime_epoch is called in a bash subshell
+        ### Then: stdout is a non-empty string of digits only
+        """
+        script = f"""#!/usr/bin/env bash
+set -euo pipefail
+export NANOCHAT_BASE_DIR="{tmp_path}"
+source "{RUN_LOCK}"
+_dir_mtime_epoch "{tmp_path}"
+"""
+        r = _run(script)
+        assert r.returncode == 0, f"_dir_mtime_epoch failed: {r.stderr}"
+        val = r.stdout.strip()
+        assert val.isdigit() and int(val) > 0, (
+            f"_dir_mtime_epoch returned non-integer: {val!r}"
+        )

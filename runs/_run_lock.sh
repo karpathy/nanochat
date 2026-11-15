@@ -41,8 +41,11 @@ _read_run_id() {
 }
 
 _dir_mtime_epoch() {
-    # Portable: stat -f %m (macOS/BSD) with fallback to stat -c %Y (Linux/GNU).
-    stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+    # Linux/GNU stat (-c %Y) first; BSD/macOS stat (-f %m) as fallback.
+    # Order matches runs/modal_hook.sh (Modal runtime is Linux).
+    # Redirect each loser's stdout to /dev/null — GNU stat prints a filesystem
+    # dump to stdout before exiting 1, which would corrupt the captured value.
+    stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
 }
 
 _is_lock_stale() {
