@@ -13,6 +13,7 @@ Set NANOCHAT_BASE_DIR in environment before any python -m calls.
 import hashlib
 import json
 import os
+import re
 import resource
 import shutil
 import signal
@@ -500,32 +501,97 @@ if MODAL_MODE == "gpu":
 MODES = ("cpu", "gpu")
 
 
-def _download_artifacts(mode: str) -> None:
-    """Pull tokenizer and chat checkpoints from the Volume into ~/.cache/nanochat-modal/<mode>.
+def _select_chat_files(sizes: dict[str, int], mode: str) -> list[str]:
+    """Pick what chat needs from a Volume listing: tokenizer files, the SFT marker,
+    and per depth folder the newest complete model_<step>.pt + meta_<step>.json.
 
-    Uses mode-prefixed paths on the Volume (/<mode>/tokenizer, /<mode>/chatsft_checkpoints).
-    Model files are one level down: chatsft_checkpoints/d<depth>/*.pt
+    Older checkpoints are skipped: each model file is ~300 MB and chat loads only the newest.
+    """
+    picked = [p for p in sizes if p.startswith(f"{mode}/tokenizer/") or p == f"{mode}/chatsft_checkpoints/.train_ok"]
+    kinds_by_depth: dict[str, dict[int, set[str]]] = {}
+    for path in sizes:
+        match = re.fullmatch(rf"{re.escape(mode)}/chatsft_checkpoints/(d\d+)/(model|meta)_(\d+)\.(?:pt|json)", path)
+        if match:
+            depth, kind, step = match.group(1), match.group(2), int(match.group(3))
+            kinds_by_depth.setdefault(depth, {}).setdefault(step, set()).add(kind)
+    if not kinds_by_depth:
+        raise RuntimeError(f"no model checkpoints under /{mode}/chatsft_checkpoints on the Volume")
+    for depth, kinds_by_step in kinds_by_depth.items():
+        complete = [step for step, kinds in kinds_by_step.items() if kinds == {"model", "meta"}]
+        if not complete:
+            raise RuntimeError(f"no complete model+meta pair in /{mode}/chatsft_checkpoints/{depth}")
+        newest = max(complete)
+        if newest != max(kinds_by_step):
+            print(f"WARNING: newest step in {depth} has no complete model+meta pair; using step {newest}", flush=True)
+        picked.append(f"{mode}/chatsft_checkpoints/{depth}/model_{newest:06d}.pt")
+        picked.append(f"{mode}/chatsft_checkpoints/{depth}/meta_{newest:06d}.json")
+    return sorted(picked)
+
+
+def _fetch_file(volume: modal.Volume, remote: str, size: int, local: str) -> bool:
+    """Copy one Volume file to local. Returns False when a same-size copy already exists.
+
+    Writes to <local>.part and renames only after the size matches, so a dropped
+    transfer never leaves a file that looks complete.
+    """
+    if os.path.isdir(local):
+        raise RuntimeError(f"{local} is a folder where a file is expected; move it aside and retry")
+    if os.path.isfile(local) and os.path.getsize(local) == size:
+        return False
+    os.makedirs(os.path.dirname(local), exist_ok=True)
+    part = f"{local}.part"
+    with open(part, "wb") as out:
+        for chunk in volume.read_file(remote):
+            out.write(chunk)
+    if os.path.getsize(part) != size:
+        os.remove(part)
+        raise RuntimeError(f"size mismatch for {remote}: expected {size} bytes")
+    os.replace(part, local)
+    return True
+
+
+def _verify_chat_files(targets: dict[str, str], sizes: dict[str, int]) -> None:
+    """Check every selected file exists locally at its Volume size. targets maps remote path -> local path."""
+    bad = [
+        remote for remote, local in targets.items()
+        if not os.path.isfile(local) or os.path.getsize(local) != sizes[remote]
+    ]
+    if bad:
+        raise RuntimeError("chat files missing or incomplete locally: " + ", ".join(bad))
+
+
+def _download_artifacts(mode: str) -> None:
+    """Pull what chat needs for <mode> from the Volume into ~/.cache/nanochat-modal/<mode>.
+
+    Layout matches NANOCHAT_BASE_DIR: tokenizer/ and chatsft_checkpoints/d<depth>/.
     """
     cache_dir = os.path.expanduser(f"~/.cache/nanochat-modal/{mode}")
-    os.makedirs(cache_dir, exist_ok=True)
-    vol_name = os.environ.get("NANOCHAT_MODAL_VOLUME", "nanochat-modal")
-    for remote, local in [(f"/{mode}/tokenizer", f"{cache_dir}/tokenizer"),
-                          (f"/{mode}/chatsft_checkpoints", f"{cache_dir}/chatsft_checkpoints")]:
-        print(f"  → {remote} → {local}")
-        if subprocess.run(["modal", "volume", "get", vol_name, remote, local, "--force"], check=False).returncode:
-            raise RuntimeError(f"volume get failed for {remote}")
-    tokenizer_path, checkpoints_path = f"{cache_dir}/tokenizer", f"{cache_dir}/chatsft_checkpoints"
-    if not os.path.exists(tokenizer_path):
-        raise RuntimeError("SFT incomplete: missing tokenizer")
-    if not os.path.exists(checkpoints_path):
-        raise RuntimeError("SFT incomplete: missing chatsft_checkpoints")
-
-    model_files = []
-    for root, dirs, files in os.walk(checkpoints_path):
-        model_files.extend([f for f in files if f.startswith("model_") and f.endswith(".pt")])
-    if not model_files:
-        raise RuntimeError("SFT incomplete: no model checkpoints found under chatsft_checkpoints/")
-    print(f"[local] Found {len(model_files)} checkpoint(s)\n" + "═" * 80)
+    volume = modal.Volume.from_name(os.environ.get("NANOCHAT_MODAL_VOLUME", "nanochat-modal"))
+    sizes = {
+        e.path: e.size for e in volume.listdir(mode, recursive=True)
+        if e.type == modal.volume.FileEntryType.FILE
+    }
+    wanted = _select_chat_files(sizes, mode)
+    total_bytes = sum(sizes[p] for p in wanted)
+    print(f"  → {len(wanted)} files, {total_bytes / 1e6:.0f} MB → {cache_dir}", flush=True)
+    copied_bytes, started = 0, time.monotonic()
+    targets = {remote: os.path.join(cache_dir, remote[len(mode) + 1:]) for remote in wanted}
+    for index, remote in enumerate(wanted, 1):
+        fetched = _fetch_file(volume, remote, sizes[remote], targets[remote])
+        if fetched:
+            copied_bytes += sizes[remote]
+        elapsed = time.monotonic() - started
+        rate = copied_bytes / elapsed if elapsed > 0 else 0
+        remaining = total_bytes - sum(sizes[p] for p in wanted[:index])
+        eta = remaining / rate if rate > 0 else 0
+        status = "copied" if fetched else "already have"
+        print(
+            f"    [{index}/{len(wanted)}] {status} {remote} ({sizes[remote] / 1e6:.1f} MB) | "
+            f"elapsed {elapsed:.0f}s | ETA {eta:.0f}s",
+            flush=True,
+        )
+    _verify_chat_files(targets, sizes)
+    print(f"[local] chat files verified in {cache_dir}", flush=True)
 
 
 @app.local_entrypoint()
@@ -557,7 +623,7 @@ def main(mode: str = "cpu", run_id: str = "", code_rev: str = "unknown") -> None
     print("\nArtifacts are on the Volume. To download to your laptop, run:")
     print("  bash runs/runmodal.sh finish <run-id>")
     print("\nThen chat locally with:")
-    print(f"  NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/{mode} python3 -m scripts.chat_cli")
+    print(f"  NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/{mode} uv run python -m scripts.chat_cli")
     print("\nSee docs/MODAL.md for details.")
 
 

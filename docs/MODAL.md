@@ -22,7 +22,7 @@ You do not need a local GPU to run training on Modal, but you do need enough loc
 ### Your machine (where you run `runmodal.sh`)
 
 - **Python 3.11 or newer** for the local `modal` CLI. Modal's CLI printed this during our pytest run: `Python 3.10 is EOL and Modal will not support it in version 1.7.0`.
-- **`bash`, `git`, and the `modal` CLI** on `PATH`. The script stops if `modal` is missing.
+- `**bash`, `git`, and the `modal` CLI** on `PATH`. The script stops if `modal` is missing.
 - **Network access** during the run. Runs are detached by default, so the job keeps going if this terminal disconnects. `ATTACHED=1` streams output here instead; then keep the laptop awake and use `screen` or `tmux`.
 - **Disk:** room under `~/.cache/nanochat-modal/<mode>` for the downloaded tokenizer and chat checkpoint.
 
@@ -89,14 +89,16 @@ The runner sets the rest (`SKIP_SETUP`, `NANOCHAT_BASE_DIR`, `NANOCHAT_RUNCPU_*`
 **CPU mode (`MODE=cpu`):** cost scales with cores. Check Modal's current CPU price with `modal billing rates` before the first run. Time and cost are not measured yet; the first run records both in its run record.
 
 **GPU mode (`MODE=gpu`):**
+
 - **Cost:** ~$40–60 for a full run (~$3/GPU/hr × 8 GPUs × ~1.5–2h training)
   - First run is higher: Modal builds a Docker image and compiles PyTorch, adding ~0.5–1h and proportional cost
   - Later runs reuse the image and cost less
 - **Wall-clock time:** ~1.5–2h training, plus ~30 min prefetch (CPU) and ~15 min image build (first run only)
 
 For both modes:
-  - Runs are detached by default, so the job keeps going if this terminal disconnects. With `ATTACHED=1`, keep your laptop awake
-  - Use `screen` or `tmux` if you expect network drops (see [RUNNING.md](RUNNING.md) for tmux tips)
+
+- Runs are detached by default, so the job keeps going if this terminal disconnects. With `ATTACHED=1`, keep your laptop awake
+- Use `screen` or `tmux` if you expect network drops (see [RUNNING.md](RUNNING.md) for tmux tips)
 
 The script shows cost and time estimates before charging anything and asks for confirmation.
 
@@ -122,6 +124,7 @@ MODE=gpu bash runs/runmodal.sh        # GPU mode
 ```
 
 The script:
+
 1. Checks that `modal` is installed and configured
 2. Shows a mode banner with cost and time estimates and asks `Proceed? [y/N]`
 3. Runs the pipeline on Modal:
@@ -131,6 +134,7 @@ The script:
    - **Print local chat tip**: shows the command to chat with your model locally
 
 For scripted/automated runs, skip the confirmation with:
+
 ```bash
 RUNMODAL_YES=1 bash runs/runmodal.sh
 ```
@@ -175,18 +179,35 @@ Each stage's marker file lives on the Volume, so a re-run of `runmodal.sh` skips
 
 After a successful run, your trained model is on your laptop under `~/.cache/nanochat-modal/<mode>/` (`cpu` or `gpu`). Each mode has its own folder, kept separate from the local `~/.cache/nanochat` used by `runcpu.sh` and `speedrun.sh`.
 
+### What the placeholders mean
+
+| Placeholder | What it is | Example |
+|-------------|------------|---------|
+| `<mode>` | Which run you trained: `cpu` (small demo) or `gpu` (full 8×H100) | `cpu` |
+| `<depth>` | Model size, set by the training run; it is the folder name under `chatsft_checkpoints/` | `d6` (a depth-6 model) |
+| `<step>` | Training step of the saved checkpoint, zero-padded to 6 digits; the largest number is the latest | `001499` |
+| `<run-id>` | Id of one Modal run, `<UTC time>-<mode>`, shown when you launch it | `20261114-125440-cpu` |
+| `<profile>` / `<env>` | Optional Modal CLI profile or environment name, only if you use one | `default` |
+
+To find the real `<depth>` and `<step>` values, list the Volume (see below): `modal volume ls nanochat-modal cpu/chatsft_checkpoints`. Then pick the highest `model_<step>.pt`.
+
 ### Prerequisites for chatting
-- Local Python environment with PyTorch: run `uv sync --extra cpu` in the repo (same as for `runcpu.sh`)
-- Downloaded model: `tokenizer/` and `chatsft_checkpoints/` (the script downloads these automatically on success)
-- ~8 GB of free disk space and ~4 GB of free RAM (to load the checkpoint)
+
+- Local Python environment: run `uv sync --extra cpu` once in the repo root (same as for `runcpu.sh`).
+- Model files under `~/.cache/nanochat-modal/<mode>/`:
+  - `tokenizer/tokenizer.pkl` and `tokenizer/token_bytes.pt`
+  - `chatsft_checkpoints/d<depth>/model_<step>.pt` and `meta_<step>.json`
+- ~8 GB of free disk space and ~4 GB of free RAM (to load the checkpoint).
+
+Check for these files with `find ~/.cache/nanochat-modal/<mode> -type f`. If any are missing, follow [Pull the models from the Volume by hand](#pull-the-models-from-the-volume-by-hand). Auto-download on success is not yet reliable, so do not assume it ran.
 
 ### CPU mode (depth 6, demo)
 
 The CPU run trains a tiny depth-6 model — it exercises the full pipeline but produces a very small model. Expect simple, often nonsensical responses. It is a proof-of-concept, not a capable chatbot.
 
 ```bash
-NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_cli -p "What is the capital of France?"
-NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_cli   # interactive
+NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu uv run python -m scripts.chat_cli -p "What is the capital of France?"
+NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu uv run python -m scripts.chat_cli   # interactive
 ```
 
 ### GPU mode (depth 24, GPT-2-grade)
@@ -202,7 +223,7 @@ If the training failed and the model files are missing, the script exits with an
 
 ### Pull the models from the Volume by hand
 
-> **Auto-download may still fail (fix in code, not yet tested end to end).** The auto-downloader now searches `chatsft_checkpoints/` recursively, so it finds models in `chatsft_checkpoints/d<depth>/` (`runs/modal_run.py:503-524`, commit `829d5f7`). No automated test covers it yet. If the download step reports "SFT incomplete: no model checkpoints", use the manual commands below instead. A re-download with `--force` can also nest folders as `chatsft_checkpoints/chatsft_checkpoints/`; delete the nested copy first if that happens.
+> **Status:** `bash runs/modal_peek.sh pull` was verified end to end on 2026-11-16: it copied the newest chat pair, passed the size check, and `chat_cli` answered. The finish path (`runmodal.sh finish`) uses the same downloader but has not been run end to end yet. The downloader copies only what chat needs (the tokenizer and the newest model+meta pair), so a re-download is quick. If it reports `chat files missing or incomplete locally`, run the download again: finished files are skipped and partial ones are redone.
 
 Attached runs (`ATTACHED=1`) download the models when they finish. Detached runs do not: after the app stops, run `bash runs/runmodal.sh finish <run-id>`. Use these manual commands only if that also fails, or to refresh a copy:
 
@@ -294,7 +315,7 @@ The training stages and their skip markers are diagrammed in [DIAGRAMS.md](DIAGR
 | `bash runs/modal_peek.sh past` | maintenance | List archived runs, both local and on the Volume |
 | `bash runs/modal_peek.sh report [run-id]` | maintenance | Show one run's config, resources, and status |
 | `bash runs/modal_peek.sh compare` | maintenance | One table of every run on the Volume |
-| `bash runs/modal_peek.sh pull [run-id]` | maintenance | Copy a run's config, report, and manifest to your laptop |
+| `bash runs/modal_peek.sh pull [run-id]` | maintenance | Copy a run's record to your laptop, then its model files to `~/.cache/nanochat-modal/<mode>/`. Mode comes from the run id (`…-cpu` or `…-gpu`). Defaults to the latest run. |
 | `bash runs/modal_peek.sh info [app-id]` | maintenance | Show an app's lifecycle, functions, and state |
 | `bash runs/modal_peek.sh logs [app-id] [N] [-f]` | maintenance | Show the last N log lines of an app; `-f` streams |
 | `bash runs/modal_peek.sh container [ta-id] [N] [-f]` | maintenance | Show the last N log lines of one container; `-f` streams |
@@ -310,17 +331,18 @@ Once `ALL DONE` appears in the terminal:
 2. **Chat** — see [Chat locally](#chat-locally) above.
 3. **Check the run record**:
    ```bash
-   bash runs/modal_peek.sh report          # config, resources, stage times for the latest run
-   bash runs/modal_peek.sh compare         # one table across all runs on the Volume
-   bash runs/modal_peek.sh pull            # copy run record to ~/.cache/nanochat-modal/runs/
-   bash runs/modal_peek.sh cost            # billing summary for this month
+    bash runs/modal_peek.sh report          # config, resources, stage times for the latest run
+    bash runs/modal_peek.sh compare         # one table across all runs on the Volume
+    bash runs/modal_peek.sh pull            # copy run record and model files (latest run)
+    bash runs/modal_peek.sh cost            # billing summary for this month
    ```
 4. **Re-download** (if the auto-download step failed): run `bash runs/runmodal.sh finish <run-id>`, which downloads the run's artifacts after the Modal run has stopped. It needs the app id that launch saves, which only runs started from commit `948714f` or later have; older runs need the manual commands. If that also fails, see "Pull the models from the Volume by hand" above.
 5. **Evaluate the chat model** (optional):
    ```bash
-   NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_eval -i sft -x 50
+    NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_eval -i sft -x 50
    ```
-   Remove `-x 50` to run the full eval set.
+
+    Remove `-x 50` to run the full eval set.
 
 ## Switching CPU ↔ GPU
 
@@ -339,6 +361,7 @@ You can safely re-run `bash runs/runmodal.sh` multiple times:
 - **Data caches do not collide** — Modal stores artifacts on the Volume; your laptop uses `~/.cache/nanochat-modal/<mode>/`, separate from the local `~/.cache/nanochat` (if you run `runcpu.sh` or `speedrun.sh` locally)
 
 To force a stage to rerun (useful if you made code changes):
+
 ```bash
 FORCE_STAGES=base_train,base_eval bash runs/runmodal.sh
 ```
@@ -394,10 +417,12 @@ In the `runs/` directory:
 ## How Modal optionality works
 
 When you run locally (without Modal env vars set):
+
 - `bash runs/runcpu.sh` — uses `~/.cache/nanochat`, full CPU/MPS bootstrap, no Modal
 - `bash runs/speedrun.sh` — uses `~/.cache/nanochat`, full GPU bootstrap, no Modal
 
 When Modal runs `runcpu.sh` or `speedrun.sh` internally:
+
 - Modal sets env vars (`NANOCHAT_BASE_DIR`, `SKIP_SETUP`, `NANOCHAT_POST_STAGE_HOOK`, and `NANOCHAT_RUN_ID` / `NANOCHAT_RUN_DIR` for the run record)
 - Same script reuses the volume path and skips venv setup (the image has deps pre-installed)
 - CPU-only tuning (`NANOCHAT_RUNCPU_*`) applies to CPU mode and does not reach the GPU job
@@ -408,25 +433,31 @@ Your local runs are never affected by Modal's env vars, and Modal artifacts neve
 ## Troubleshooting
 
 **"Modal not found on PATH"**
+
 - Run `pip install modal` or `uv tool install modal`, then `modal setup`
 - Verify with `modal --version`
 
 **"No 8×H100 entitlement"**
+
 - Contact Modal support or check your account dashboard; new accounts may need an upgrade
 
 **"Job timed out / killed"**
+
 - Modal has default timeouts for long-running jobs. The script sets explicit timeouts for prefetch (2h) and GPU train (4h), so this should not happen unless there is a network issue
 - Re-run; skipped stages cost nothing, and only the killed stage reruns
 
 **"Download failed"**
+
 - If `modal volume get` fails partway through, run `bash runs/runmodal.sh finish <run-id>` again. Do not re-run the whole job just to download
 
 **"Missing tokenizer or chatsft_checkpoints after a 'successful' run"**
+
 - The training job failed partway through, and the script correctly did not print a success tip
 - Check the job logs: `bash runs/modal_peek.sh logs` or `modal app logs <app-id>`
 - Fix the issue and re-run with the relevant `FORCE_STAGES=…` if needed
 
-**"another run is already active … (run &lt;id&gt;)" (stale run lock)**
+**"another run is already active … (run ****)" (stale run lock)**
+
 - The lock uses a run ID and a heartbeat file; a lock is considered stale when the heartbeat has not been refreshed for more than 600 seconds. A background refresher keeps the heartbeat fresh while a run is alive, so a stale lock means the run has genuinely ended.
 - Confirm no run is actually live: `bash runs/modal_peek.sh status`
 - A stale lock (no heartbeat for more than 10 minutes) is reclaimed automatically on the next run, so usually you only need to re-run.
