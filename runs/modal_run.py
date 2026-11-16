@@ -692,6 +692,30 @@ def _download_artifacts(mode: str) -> None:
 LOCK_STALE_SECS = 600
 
 
+def _lock_is_fresh(lock_mtime: float | None, now: float, stale_secs: float) -> bool:
+    return lock_mtime is not None and now - lock_mtime < stale_secs
+
+
+LOCK_REFUSAL = (
+    "another CPU run is in progress (its heartbeat is fresh). Wait for it to finish, or if its "
+    "container is gone, the heartbeat expires on its own; to clear it now run: "
+    "modal volume rm -r nanochat-modal cpu/.run.lock"
+)
+
+
+def check_forced_cpu_run_id(
+    run_id: str, suffix: str, done_ids: set[str], lock_mtime: float | None, now: float, stale_secs: float,
+) -> str:
+    """Validate an explicitly named run before resuming it: same depth, not already finished, and no live run."""
+    if not run_id.endswith(suffix):
+        raise SystemExit(f"{run_id} is not a CPU run of this depth (expected an id ending in '{suffix}'); refusing to resume it")
+    if run_id in done_ids:
+        raise SystemExit(f"{run_id} already finished (it has a .done marker); it is never resumed")
+    if _lock_is_fresh(lock_mtime, now, stale_secs):
+        raise SystemExit(LOCK_REFUSAL)
+    return run_id
+
+
 def resolve_cpu_run_id(
     run_ids: list[str], done_ids: set[str], lock_mtime: float | None, now: float, suffix: str,
     stale_secs: float = LOCK_STALE_SECS,
@@ -702,8 +726,8 @@ def resolve_cpu_run_id(
     this suffix (e.g. -cpu-d6), and only if it has no .done marker (interrupted or stopped). Older
     unfinished runs are never resumed automatically: name one explicitly with NANOCHAT_RESUME_RUN_ID.
     """
-    if lock_mtime is not None and now - lock_mtime < stale_secs:
-        raise SystemExit("another CPU run is in progress (its heartbeat is fresh); wait for it or stop it, then relaunch")
+    if _lock_is_fresh(lock_mtime, now, stale_secs):
+        raise SystemExit(LOCK_REFUSAL)
     newest = next(iter(sorted((r for r in run_ids if r.endswith(suffix)), reverse=True)), None)
     if newest is None or newest in done_ids:
         return None
@@ -711,31 +735,37 @@ def resolve_cpu_run_id(
 
 
 @app.local_entrypoint()
-def resolve_run(mode: str = "cpu", depth: int = 6) -> None:
-    """Print RUN_ID=<id> for runs/runmodal.sh: the interrupted CPU run of this depth to continue, else a new id."""
+def resolve_run(mode: str = "cpu", depth: int = 6, resume: str = "") -> None:
+    """Print RUN_ID=<id> for runs/runmodal.sh (CPU only).
+
+    Without --resume: the most recent interrupted CPU run of this depth, else a new id.
+    With --resume <id>: that run, after the same depth and liveness checks.
+    """
+    if mode != "cpu":
+        raise SystemExit("resolve_run is for CPU runs only")
     now = time.time()
     suffix = f"-cpu-d{depth}"
-    if mode != "cpu":
-        run_id = None
+    try:
+        run_entries = vol.listdir("runs")
+    except modal.exception.NotFoundError:
+        run_entries = []
+    run_ids = [e.path.split("/")[-1] for e in run_entries if e.type == modal.volume.FileEntryType.DIRECTORY]
+    done_ids = {
+        r for r in run_ids
+        if r.endswith(suffix) and any(e.path.endswith(f"runs/{r}/.done") for e in vol.listdir(f"runs/{r}"))
+    }
+    try:
+        lock_entries = vol.listdir("cpu/.run.lock")
+    except modal.exception.NotFoundError:
+        lock_entries = []
+    lock_mtime = next((e.mtime for e in lock_entries if e.path.endswith("/heartbeat")), None)
+    stale_secs = float(os.environ.get("NANOCHAT_LOCK_STALE_SECS", LOCK_STALE_SECS))
+    if resume:
+        run_id = check_forced_cpu_run_id(resume, suffix, done_ids, lock_mtime, now, stale_secs)
     else:
-        try:
-            run_entries = vol.listdir("runs")
-        except modal.exception.NotFoundError:
-            run_entries = []
-        run_ids = [e.path.split("/")[-1] for e in run_entries if e.type == modal.volume.FileEntryType.DIRECTORY]
-        done_ids = {
-            r for r in run_ids
-            if r.endswith(suffix) and any(e.path.endswith(f"runs/{r}/.done") for e in vol.listdir(f"runs/{r}"))
-        }
-        try:
-            lock_entries = vol.listdir(f"{mode}/.run.lock")
-        except modal.exception.NotFoundError:
-            lock_entries = []
-        lock_mtime = next((e.mtime for e in lock_entries if e.path.endswith("/heartbeat")), None)
-        stale_secs = float(os.environ.get("NANOCHAT_LOCK_STALE_SECS", LOCK_STALE_SECS))
         run_id = resolve_cpu_run_id(run_ids, done_ids, lock_mtime, now, suffix, stale_secs)
     if run_id is None:
-        run_id = time.strftime("%Y%m%d-%H%M%S", time.gmtime(now)) + (suffix if mode == "cpu" else f"-{mode}")
+        run_id = time.strftime("%Y%m%d-%H%M%S", time.gmtime(now)) + suffix
     print(f"RUN_ID={run_id}")
 
 

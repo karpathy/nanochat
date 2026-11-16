@@ -255,3 +255,76 @@ def test_detached_launch_succeeds_and_records_app_id(fake_modal_app_id: Path) ->
     assert (run_dir / "PENDING_DOWNLOAD").exists()
     assert "line 200" in (run_dir / "run.log").read_text()
 
+
+
+def _fake_modal_with_resolver(tmp_path: Path, resolve_body: str) -> tuple[Path, Path, Path]:
+    """Fake `modal`: `run ...::resolve_run` runs resolve_body; other `run` calls record argv to launch_record.
+
+    Returns (bin_dir, launch_record, resolve_record).
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    launch_record = tmp_path / "launch.txt"
+    resolve_record = tmp_path / "resolve.txt"
+    script = bin_dir / "modal"
+    script.write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = "app" ]; then echo "[]"; exit 0; fi\n'
+        'if [[ "$*" == *resolve_run* ]]; then\n'
+        f'    echo "$@" > "{resolve_record}"\n'
+        f'    {resolve_body}\n'
+        'fi\n'
+        f'if [[ "$*" != *resolve_run* ]]; then echo "$@" > "{launch_record}"; fi\n'
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return bin_dir, launch_record, resolve_record
+
+
+def test_cpu_launch_uses_the_run_id_the_resolver_chose(tmp_path: Path) -> None:
+    """
+    Scenario: the resolver answers with an interrupted run id; the launch must use exactly that id.
+    Slice: relaunch continues the resolver's run id (not a fresh timestamp).
+    """
+    # ### Given a resolver that continues run 20261116-114442-cpu-d6
+    fake_bin, launch_record, _ = _fake_modal_with_resolver(
+        tmp_path, 'echo RUN_ID=20261116-114442-cpu-d6; exit 0',
+    )
+    # ### When runmodal.sh launches CPU mode
+    result = _run(fake_bin, None)
+    # ### Then the launch receives that exact id
+    assert result.returncode == 0, result.stderr
+    assert "--run-id 20261116-114442-cpu-d6" in launch_record.read_text()
+
+
+def test_resolver_refusal_launches_nothing(tmp_path: Path) -> None:
+    """
+    Scenario: the resolver refuses (another run holds a fresh lock). runmodal.sh must exit 1 and
+    must not start a Modal run.
+    Slice: a refused relaunch never bills a second container.
+    """
+    # ### Given a resolver that exits non-zero
+    fake_bin, launch_record, _ = _fake_modal_with_resolver(
+        tmp_path, 'echo "another CPU run is in progress" >&2; exit 1',
+    )
+    # ### When runmodal.sh launches CPU mode
+    result = _run(fake_bin, None)
+    # ### Then it exits 1 and the launch command was never run
+    assert result.returncode != 0
+    assert not launch_record.exists()
+
+
+def test_forced_resume_id_is_sent_to_the_resolver(tmp_path: Path) -> None:
+    """
+    Scenario: the user names a run explicitly. The id must reach the resolver so its depth and
+    liveness checks apply, rather than skipping the resolver.
+    Slice: explicit resume goes through the same guards.
+    """
+    # ### Given a resolver that accepts whatever it is given
+    fake_bin, _, resolve_record = _fake_modal_with_resolver(
+        tmp_path, 'echo RUN_ID=named-run-cpu-d6; exit 0',
+    )
+    # ### When the run is forced to a named id
+    result = _run(fake_bin, None, extra_env={"NANOCHAT_RESUME_RUN_ID": "named-run-cpu-d6"})
+    # ### Then the resolver receives --resume with that id
+    assert result.returncode == 0, result.stderr
+    assert "--resume named-run-cpu-d6" in resolve_record.read_text()

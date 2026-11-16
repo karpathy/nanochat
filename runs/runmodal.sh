@@ -124,14 +124,16 @@ echo ""
 # copy (runs/<run-id>/run.json and events.jsonl). The code revision ties results to the code.
 # CPU relaunch continues the interrupted run (its checkpoints and markers are reused), unless
 # another CPU run is in progress (refused). NANOCHAT_RESUME_RUN_ID forces a specific id.
-RUN_ID="${NANOCHAT_RESUME_RUN_ID:-}"
-if [ -z "$RUN_ID" ] && [ "$MODE" = "cpu" ]; then
+RUN_ID=""
+if [ "$MODE" = "cpu" ]; then
     set +e
     # Same depth runcpu.sh uses: profiles.sh is generated from nanochat/defaults.py (single source).
     source "$SCRIPTDIR/profiles.sh"
     CPU_DEPTH="$RUNCPU_DEPTH"
+    # Every CPU launch goes through the resolver, so a forced id gets the same depth and liveness checks.
     RESOLVE_OUT="$(NANOCHAT_MODAL_MODE="$MODE" NANOCHAT_MODAL_VOLUME="$NANOCHAT_MODAL_VOLUME" \
-        modal run runs/modal_run.py::resolve_run --mode "$MODE" --depth "$CPU_DEPTH" 2>&1)"
+        modal run runs/modal_run.py::resolve_run --mode "$MODE" --depth "$CPU_DEPTH" \
+        --resume "${NANOCHAT_RESUME_RUN_ID:-}" 2>&1)"
     RESOLVE_STATUS=$?
     set -e
     if [ "$RESOLVE_STATUS" -ne 0 ]; then

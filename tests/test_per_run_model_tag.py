@@ -234,3 +234,28 @@ def test_done_marker_written_where_modal_resolver_looks(tmp_path: Path, monkeypa
     assert (run_dir / ".done").is_file()
     assert modal_run._run_dir(run_id) == str(run_dir)
     assert f"runs/{run_id}/.done" == os.path.relpath(run_dir / ".done", volume).replace(os.sep, "/")
+
+
+# Scenario: a named run is resumed only if it is this depth, not finished, and no other run is live.
+def test_forced_resume_refuses_other_depth():
+    with pytest.raises(SystemExit):
+        modal_run.check_forced_cpu_run_id("20261116-000000-cpu-d12", "-cpu-d6", set(), None, 1.0, 600.0)
+
+
+def test_forced_resume_refuses_finished_run():
+    with pytest.raises(SystemExit):
+        modal_run.check_forced_cpu_run_id(
+            "20261116-000000-cpu-d6", "-cpu-d6", {"20261116-000000-cpu-d6"}, None, 1.0, 600.0,
+        )
+
+
+def test_forced_resume_refuses_while_lock_is_fresh():
+    with pytest.raises(SystemExit):
+        modal_run.check_forced_cpu_run_id("20261116-000000-cpu-d6", "-cpu-d6", set(), 999_940.0, 1_000_000.0, 600.0)
+
+
+def test_forced_resume_accepts_interrupted_same_depth_run_of_any_age():
+    # Given an old interrupted run of this depth and no live lock
+    picked = modal_run.check_forced_cpu_run_id("20260101-000000-cpu-d6", "-cpu-d6", set(), None, 1_000_000.0, 600.0)
+    # Then it is accepted, however old it is
+    assert picked == "20260101-000000-cpu-d6"
