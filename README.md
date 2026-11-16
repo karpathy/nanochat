@@ -139,7 +139,8 @@ The script [runs/runcpu.sh](runs/runcpu.sh) shows a very simple example of runni
 
 On a Mac (or any CPU/MPS machine) use `bash runs/runcpu.sh`. Do not run `runs/speedrun.sh` here — it is for an 8XH100 CUDA node and **exits with ERROR** if no CUDA is found.
 
-- Re-runs are safe: finished stages print `SKIP` and cost nothing (train needs a profile+depth-tagged marker such as `.stage_base_train_runcpu_d6`, not only `model_*.pt`; the marker is written automatically on a clean finish).
+- Re-runs are safe: finished stages print `SKIP` and cost nothing (train needs a profile+depth-tagged marker such as `.stage_base_train_runcpu_d6` in the run's folder, not only `model_*.pt`; the marker is written automatically on a clean finish).
+- An interrupted run is continued automatically on the next run of the same depth; a finished run is never reused. See [docs/RUNNING.md §4](docs/RUNNING.md#4-what-a-re-run-keeps-and-skips).
 - The script stops at the first failing stage. Fix the cause, then re-run the same command.
 - On MPS, training stays **eager** (`torch.compile` / Inductor is skipped); auto-fit may shrink `device_batch_size`. Knobs live in `nanochat/defaults.py` + `runs/profiles.sh`.
 - Stage markers, `FORCE_STAGES`, log legend, memory/OOM, NaN, RoPE, and torch 2.2.2 notes: [docs/RUNNING.md](docs/RUNNING.md).

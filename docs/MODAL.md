@@ -175,6 +175,8 @@ The job is split into stages, each marked in a persistent Modal Volume so re-run
 
 Each stage's marker file lives on the Volume, so a re-run of `runmodal.sh` skips finished stages and only redoes stages that failed or were forced (`FORCE_STAGES=stage_name`).
 
+To resume an interrupted CPU run, relaunch with `bash runs/runmodal.sh` as usual: it continues only the most recent CPU run of the same depth, and only if that run has no `.done` marker. It refuses while another CPU run is in progress (fresh heartbeat). To continue an older run, name it explicitly: `bash runs/runmodal.sh resume <run-id>` (any age).
+
 ## Chat on Modal
 
 After training, you can ask the model a question directly on Modal — **no download needed**. The model loads from the Volume and the answer streams back to your terminal.
@@ -242,7 +244,7 @@ This copies the tokenizer and the newest chat checkpoint to `~/.cache/nanochat-m
 - Local Python environment: run `uv sync --extra cpu` once in the repo root (same as for `runcpu.sh`).
 - Model files under `~/.cache/nanochat-modal/<mode>/`:
   - `tokenizer/tokenizer.pkl` and `tokenizer/token_bytes.pt`
-  - `chatsft_checkpoints/d<depth>/model_<step>.pt` and `meta_<step>.json`
+  - `chatsft_checkpoints/<run-id>/model_<step>.pt` and `meta_<step>.json` (the newest run's folder)
 - ~8 GB of free disk space and ~4 GB of free RAM (to load the checkpoint).
 
 Check for these files with `find ~/.cache/nanochat-modal/<mode> -type f`. If any are missing, follow [Pull the models from the Volume by hand](#pull-the-models-from-the-volume-by-hand). Auto-download on success is not yet reliable, so do not assume it ran.
@@ -286,8 +288,8 @@ modal volume get nanochat-modal /gpu/chatsft_checkpoints ~/.cache/nanochat-modal
 - `nanochat-modal` is the Volume name. `/<mode>/tokenizer` and `/<mode>/chatsft_checkpoints` are paths on the Volume (`<mode>` is `cpu` or `gpu`).
 - The last argument is the local folder.
 - `--force` overwrites files already on your laptop.
-- To check what is on the Volume first: `modal volume ls nanochat-modal` (or `modal volume ls nanochat-modal cpu/base_checkpoints/d6`).
-- **Verify the result.** On 2026-11-15, `modal volume get` on a folder wrote a single zip-format file at the destination, not a folder of files. Check that the expected files are inside the folder: `find ~/.cache/nanochat-modal/cpu -type f`. You should see `tokenizer.pkl`, `token_bytes.pt`, and `model_*.pt` / `meta_*.json` under `chatsft_checkpoints/d<depth>/`. If you see one file named after the folder, delete it and pull again, or pull the files one at a time.
+- To check what is on the Volume first: `modal volume ls nanochat-modal` (or `modal volume ls nanochat-modal cpu/base_checkpoints`, which lists one folder per run).
+- **Verify the result.** On 2026-11-15, `modal volume get` on a folder wrote a single zip-format file at the destination, not a folder of files. Check that the expected files are inside the folder: `find ~/.cache/nanochat-modal/cpu -type f`. You should see `tokenizer.pkl`, `token_bytes.pt`, and `model_*.pt` / `meta_*.json` under `chatsft_checkpoints/<run-id>/`. If you see one file named after the folder, delete it and pull again, or pull the files one at a time.
 - Add `--profile <name>` or `-e <env>` if your Modal CLI uses a non-default profile or environment.
 - Read-only: `modal volume get` only copies. It never changes the Volume.
 
