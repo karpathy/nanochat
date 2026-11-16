@@ -19,6 +19,7 @@ from nanochat.glossary import emit_define
 from nanochat.term_style import paint
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
+from nanochat.last_run import resolve_chat_model_tag
 
 from tasks.humaneval import HumanEval
 from tasks.mmlu import MMLU
@@ -199,7 +200,9 @@ if __name__ == "__main__":
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 
-    model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
+    # Same tag rule as chat_cli: the most recent completed run when no -g is given.
+    model_tag = resolve_chat_model_tag(get_base_dir(), args.source, args.model_tag)
+    model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=model_tag, step=args.step)
     engine = Engine(model, tokenizer)
 
     # Get the tasks to evaluate on

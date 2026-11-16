@@ -50,6 +50,7 @@ def fake_modal_stopped_app(tmp_path: Path) -> tuple[Path, Path]:
         f'if [ "$1" = "app" ] && [ "$2" = "list" ]; then\n'
         f'    echo \'{stopped_json}\'\n'
         f'elif [ "$1" = "run" ]; then\n'
+        f'    if [[ "$*" == *resolve_run* ]]; then echo RUN_ID=test-run-cpu; exit 0; fi\n'
         f'    echo "$@" > "{record}"\n'
         f'fi\n'
     )
@@ -73,6 +74,7 @@ def fake_modal_different_description(tmp_path: Path) -> tuple[Path, Path]:
         f'if [ "$1" = "app" ] && [ "$2" = "list" ]; then\n'
         f'    echo \'{different_json}\'\n'
         f'elif [ "$1" = "run" ]; then\n'
+        f'    if [[ "$*" == *resolve_run* ]]; then echo RUN_ID=test-run-cpu; exit 0; fi\n'
         f'    echo "$@" > "{record}"\n'
         f'fi\n'
     )
@@ -95,6 +97,7 @@ def fake_modal_invalid_json(tmp_path: Path) -> tuple[Path, Path]:
         f'if [ "$1" = "app" ] && [ "$2" = "list" ]; then\n'
         f'    echo "{{invalid json"\n'
         f'elif [ "$1" = "run" ]; then\n'
+        f'    if [[ "$*" == *resolve_run* ]]; then echo RUN_ID=test-run-cpu; exit 0; fi\n'
         f'    echo "$@" > "{record}"\n'
         f'fi\n'
     )
@@ -122,6 +125,7 @@ def fake_modal_multiple_apps(tmp_path: Path) -> tuple[Path, Path]:
         f'if [ "$1" = "app" ] && [ "$2" = "list" ]; then\n'
         f'    echo \'{multiple_json}\'\n'
         f'elif [ "$1" = "run" ]; then\n'
+        f'    if [[ "$*" == *resolve_run* ]]; then echo RUN_ID=test-run-cpu; exit 0; fi\n'
         f'    echo "$@" > "{record}"\n'
         f'fi\n'
     )

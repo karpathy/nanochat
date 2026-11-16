@@ -43,6 +43,47 @@ record_span() {  # stage status dur_s hook_s start_epoch  (one span per stage; t
     python3 -m nanochat.run_record span "$NANOCHAT_RUN_DIR" "$@" || echo "WARN: run span not recorded" >&2
 }
 
+# Per-run model tag = run id. Resumes ONLY the most recent run for this profile suffix (e.g. cpu-d6)
+# when it has no .done marker (an interrupted or stopped run). Older unfinished runs are never resumed
+# automatically; to continue one, set NANOCHAT_RUN_ID explicitly. Otherwise prints a new run id.
+pick_run_id() {  # profile_suffix
+    local suffix="$1" runs_root="$NANOCHAT_BASE_DIR/runs" id
+    if [ -d "$runs_root" ]; then
+        # Newest entry that is a run folder (plain files with the same suffix are skipped).
+        while IFS= read -r id; do
+            [ -d "$runs_root/$id" ] || continue
+            if [ ! -f "$runs_root/$id/.done" ]; then
+                echo "$id"
+                return 0
+            fi
+            break
+        done < <(ls -1 "$runs_root" | grep -E -- "-${suffix}\$" | sort -r)
+    fi
+    echo "$(date -u +%Y%m%d-%H%M%S)-${suffix}"
+}
+
+# Record a finished run so pick_run_id never resumes it. Args: run_dir.
+mark_run_done() {
+    mkdir -p "$1" && touch "$1/.done"
+}
+
+# Keep the checkpoints of the newest KEEP finished runs for this profile suffix; delete older ones.
+# Unfinished runs are never touched (they may still be resumed). Args: run_root suffix keep.
+# run_root is the folder holding one subfolder per run (local: $NANOCHAT_BASE_DIR/runs; Modal: the Volume runs/).
+prune_old_runs() {
+    local runs_root="$1" suffix="$2" keep="$3" id n=0
+    [ -d "$runs_root" ] || return 0
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        [ -d "$runs_root/$id" ] && [ -f "$runs_root/$id/.done" ] || continue
+        n=$((n + 1))
+        if [ "$n" -gt "$keep" ]; then
+            rm -rf "$NANOCHAT_BASE_DIR/base_checkpoints/$id" "$NANOCHAT_BASE_DIR/chatsft_checkpoints/$id"
+            log "pruned checkpoints of old run $id (keeping last $keep)"
+        fi
+    done < <(ls -1 "$runs_root" | grep -E -- "-${suffix}\$" | sort -r)
+}
+
 log() {
     echo "[$(date '+%H:%M:%S')] $*"
 }
@@ -124,7 +165,10 @@ clear_stage_markers() {
     [ -f "$tok_eval_marker" ] && rm -f "$tok_eval_marker" && removed=$((removed + 1))
     for dir in "$NANOCHAT_BASE_DIR/base_checkpoints" "$NANOCHAT_BASE_DIR/chatsft_checkpoints"; do
         [ -d "$dir" ] || continue
-        for f in "$dir"/.stage_*; do
+        # Top-level (shared) markers, plus this run's own tag folder only: other runs keep theirs.
+        local scoped="$dir"
+        [ -n "${NANOCHAT_MODEL_TAG:-}" ] && scoped="$dir/$NANOCHAT_MODEL_TAG"
+        for f in "$dir"/.stage_* "$scoped"/.stage_*; do
             [ -f "$f" ] && rm -f "$f" && removed=$((removed + 1))
         done
     done
@@ -157,6 +201,8 @@ _stage_marker_path() {
         chat_sft|chat_eval)   dir="$NANOCHAT_BASE_DIR/chatsft_checkpoints" ;;
         *) echo ""; return 0 ;;
     esac
+    # NANOCHAT_MODEL_TAG (= run id) scopes markers per run; unset keeps the shared folder (speedrun.sh).
+    dir="${dir}${NANOCHAT_MODEL_TAG:+/$NANOCHAT_MODEL_TAG}"
     : "${DEPTH:?_stage_lib.sh requires DEPTH to be set for depth-sensitive stages (base_train/base_eval/chat_sft/chat_eval)}"
     echo "$dir/.stage_${stage}_${PROFILE}_d${DEPTH}"
 }
@@ -255,12 +301,13 @@ print_knob_diff() {
     return 0
 }
 
-# Persist knobs after successful ALL DONE. Args: profile depth batch seq.
+# Persist knobs after successful ALL DONE. Args: profile depth batch seq [model_tag].
 write_last_run_json() {
     python3 -m nanochat.last_run write \
         --path "$NANOCHAT_BASE_DIR/last_run.json" \
         --profile "$1" --depth "$2" \
-        --device-batch-size "$3" --max-seq-len "$4" 2>/dev/null || true
+        --device-batch-size "$3" --max-seq-len "$4" \
+        --model-tag "${5:-}" 2>/dev/null || true
     return 0
 }
 

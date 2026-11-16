@@ -18,6 +18,8 @@ if str(RUNS_DIR) not in sys.path:
     sys.path.insert(0, str(RUNS_DIR))
 
 RUNMODAL = Path(__file__).resolve().parents[1] / "runs" / "runmodal.sh"
+# Fake answer for the relaunch resolver (runs/modal_run.py::resolve_run), which prints RUN_ID=<id>.
+RESOLVE_LINE = 'if [[ "$*" == *resolve_run* ]]; then echo RUN_ID=test-run-cpu; exit 0; fi'
 
 
 @pytest.fixture
@@ -27,7 +29,7 @@ def fake_modal(tmp_path: Path) -> tuple[Path, Path]:
     bin_dir.mkdir()
     record = tmp_path / "argv.txt"
     script = bin_dir / "modal"
-    script.write_text(f'#!/bin/bash\necho "$@" > "{record}"\n')
+    script.write_text(f'#!/bin/bash\n{RESOLVE_LINE}\necho "$@" > "{record}"\n')
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     return bin_dir, record
 
@@ -125,6 +127,7 @@ def fake_modal_running_app(tmp_path: Path) -> tuple[Path, Path]:
         f'if [ "$1" = "app" ] && [ "$2" = "list" ]; then\n'
         f'    echo \'{running_json}\'\n'
         f'elif [ "$1" = "run" ]; then\n'
+        f'    {RESOLVE_LINE}\n'
         f'    echo "$@" > "{record}"\n'
         f'fi\n'
     )
@@ -147,6 +150,7 @@ def fake_modal_unavailable(tmp_path: Path) -> tuple[Path, Path]:
         f'if [ "$1" = "app" ] && [ "$2" = "list" ]; then\n'
         f'    exit 1\n'
         f'elif [ "$1" = "run" ]; then\n'
+        f'    {RESOLVE_LINE}\n'
         f'    echo "$@" > "{record}"\n'
         f'fi\n'
     )
@@ -224,7 +228,7 @@ def fake_modal_app_id(tmp_path: Path) -> Path:
     bin_dir.mkdir()
     script = bin_dir / "modal"
     script.write_text(
-        "#!/bin/bash\n"
+        "#!/bin/bash\n" + RESOLVE_LINE + "\n"
         'if [ "$1" = "app" ]; then echo "[]"; exit 0; fi\n'
         'echo "Initialized. View run at https://modal.com/apps/neomatrix369/main/ap-abc123XYZ"\n'
         'for i in $(seq 1 200); do echo "line $i"; done\n'

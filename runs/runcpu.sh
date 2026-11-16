@@ -41,7 +41,10 @@ if [ -z "${SKIP_SETUP:-}" ]; then
 fi
 set +u; source .venv/bin/activate; set -u
 # Run record: one folder per run (run.json, milestone events, spans). Modal sets these itself.
-export NANOCHAT_RUN_ID="${NANOCHAT_RUN_ID:-$(date -u +%Y%m%d-%H%M%S)-cpu}"
+export NANOCHAT_RUN_ID="${NANOCHAT_RUN_ID:-$(pick_run_id "cpu-d${RUNCPU_DEPTH}")}"
+# Per-run model tag: checkpoints and stage markers live under this id, so a rerun resumes
+# only its own unfinished run and a finished run (.done) is never picked up again.
+export NANOCHAT_MODEL_TAG="$NANOCHAT_RUN_ID"
 export NANOCHAT_RUN_cpu="${NANOCHAT_RUN_cpu:-local-cpu}"
 export NANOCHAT_RUN_DIR="${NANOCHAT_RUN_DIR:-$NANOCHAT_BASE_DIR/runs/$NANOCHAT_RUN_ID}"
 python3 -m nanochat.run_record start "$NANOCHAT_RUN_DIR" --mode "$NANOCHAT_RUN_cpu" || echo "WARN: run record not started" >&2
@@ -65,7 +68,7 @@ run_stage tok_eval "" "base_train (or SKIP if checkpoints exist)" -- \
 # I tuned this run to complete in about 30 minutes on my MacBook Pro M3 Max.
 # To get better results, try increasing num_iterations, or get other ideas from your favorite LLM.
 _SAVE_EVERY_SECS="${NANOCHAT_SAVE_EVERY_SECS:-300}"
-_RESUME_FLAG="$(resume_flag base_train "${NANOCHAT_BASE_DIR}/base_checkpoints/d${RUNCPU_DEPTH}")"
+_RESUME_FLAG="$(resume_flag base_train "${NANOCHAT_BASE_DIR}/base_checkpoints/${NANOCHAT_MODEL_TAG}")"
 run_stage base_train "depth=$RUNCPU_DEPTH device_batch_size=$RUNCPU_DEVICE_BATCH_SIZE" "base_eval (or SKIP if .eval_ok)" -- \
     python -m scripts.base_train \
     --depth="$RUNCPU_DEPTH" \
@@ -80,12 +83,13 @@ run_stage base_train "depth=$RUNCPU_DEPTH device_batch_size=$RUNCPU_DEVICE_BATCH
     --sample-every="$RUNCPU_SAMPLE_EVERY" \
     --num-iterations="$RUNCPU_NUM_ITERATIONS" \
     --save-every-secs="$_SAVE_EVERY_SECS" \
+    --model-tag="$NANOCHAT_MODEL_TAG" \
     $_RESUME_FLAG \
     --run=$WANDB_RUN
 run_stage base_eval "device_batch_size=$RUNCPU_EVAL_DEVICE_BATCH_SIZE" "chat_sft (or SKIP if checkpoints exist)" -- \
-    python -m scripts.base_eval --device-batch-size="$RUNCPU_EVAL_DEVICE_BATCH_SIZE" --split-tokens=16384 --max-per-task=16
+    python -m scripts.base_eval --model-tag="$NANOCHAT_MODEL_TAG" --device-batch-size="$RUNCPU_EVAL_DEVICE_BATCH_SIZE" --split-tokens=16384 --max-per-task=16
 
-_SFT_RESUME_FLAG="$(resume_flag chat_sft "${NANOCHAT_BASE_DIR}/chatsft_checkpoints/d${RUNCPU_DEPTH}")"
+_SFT_RESUME_FLAG="$(resume_flag chat_sft "${NANOCHAT_BASE_DIR}/chatsft_checkpoints/${NANOCHAT_MODEL_TAG}")"
 # SFT (~10 minutes on my MacBook Pro M3 Max)
 run_stage chat_sft "" "chat with your model (python -m scripts.chat_cli)" -- \
     python -m scripts.chat_sft \
@@ -93,12 +97,16 @@ run_stage chat_sft "" "chat with your model (python -m scripts.chat_cli)" -- \
     --eval-tokens=524288 \
     --num-iterations=1500 \
     --save-every-secs="$_SAVE_EVERY_SECS" \
+    --model-tag="$NANOCHAT_MODEL_TAG" \
     $_SFT_RESUME_FLAG \
     --run=$WANDB_RUN
 
 log "ALL DONE cumulative=$(fmt_dur "$SECONDS")"
 clear_stage_markers
-write_last_run_json "$PROFILE" "$RUNCPU_DEPTH" "$RUNCPU_DEVICE_BATCH_SIZE" "$RUNCPU_MAX_SEQ_LEN"
+# Same run folder the run record uses (local: runs/<id>; Modal: the Volume runs/<id>), so this run is never resumed again.
+mark_run_done "$NANOCHAT_RUN_DIR"
+prune_old_runs "$(dirname "$NANOCHAT_RUN_DIR")" "cpu-d${RUNCPU_DEPTH}" 3
+write_last_run_json "$PROFILE" "$RUNCPU_DEPTH" "$RUNCPU_DEVICE_BATCH_SIZE" "$RUNCPU_MAX_SEQ_LEN" "$NANOCHAT_MODEL_TAG"
 echo '  try: python -m scripts.chat_cli -p "What is the capital of France?"'
 
 # Chat with the model over CLI

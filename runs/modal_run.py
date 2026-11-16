@@ -365,7 +365,11 @@ def _run_dir(run_id: str) -> str:
 
 
 # Everything a run leaves on the Volume that the next run would overwrite.
-ARCHIVE_ITEMS = ("tokenizer", "base_checkpoints", "chatsft_checkpoints", "last_metrics.json", ".stage_elapsed")
+ARCHIVE_ITEMS = ("tokenizer", "base_checkpoints", "chatsft_checkpoints", "last_metrics.json", "last_run.json", ".stage_elapsed")
+# Per-run checkpoint folders (CPU): only this run's folder is archived, not every past run's.
+PER_RUN_ITEMS = ("base_checkpoints", "chatsft_checkpoints")
+# A run-id model tag: a sortable timestamp prefix, e.g. 20261116-114442-cpu-d6.
+RUN_ID_TAG = re.compile(r"^\d{8}-\d{6}-")
 
 
 def _sha256(path: str) -> str:
@@ -385,10 +389,13 @@ def _archive_artifacts(run_id: str, mode: str) -> None:
     os.makedirs(artifacts_dir, exist_ok=True)
     manifest = []
     for item in ARCHIVE_ITEMS:
-        src = os.path.join(BASE_DIR, mode, item)
+        # CPU runs use the run id as their model tag, so archive just that folder.
+        rel = os.path.join(item, run_id) if mode == "cpu" and item in PER_RUN_ITEMS else item
+        src = os.path.join(BASE_DIR, mode, rel)
         if not os.path.exists(src):
             continue
-        dst = os.path.join(artifacts_dir, item)
+        dst = os.path.join(artifacts_dir, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
         if os.path.isdir(src):
             shutil.copytree(src, dst, dirs_exist_ok=True)
             files = [os.path.join(root, name) for root, _, names in os.walk(dst) for name in names]
@@ -589,25 +596,30 @@ def _select_chat_files(sizes: dict[str, int], mode: str) -> list[str]:
     and per depth folder the newest complete model_<step>.pt + meta_<step>.json.
 
     Older checkpoints are skipped: each model file is ~300 MB and chat loads only the newest.
+    When run-id tag folders exist (timestamp-prefixed), only the newest run's folder is kept.
     """
-    picked = [p for p in sizes if p.startswith(f"{mode}/tokenizer/") or p == f"{mode}/chatsft_checkpoints/.train_ok"]
-    kinds_by_depth: dict[str, dict[int, set[str]]] = {}
+    picked = [p for p in sizes if p.startswith(f"{mode}/tokenizer/") or p in (f"{mode}/chatsft_checkpoints/.train_ok", f"{mode}/last_run.json")]
+    kinds_by_tag: dict[str, dict[int, set[str]]] = {}
     for path in sizes:
-        match = re.fullmatch(rf"{re.escape(mode)}/chatsft_checkpoints/(d\d+)/(model|meta)_(\d+)\.(?:pt|json)", path)
+        match = re.fullmatch(rf"{re.escape(mode)}/chatsft_checkpoints/([^/]+)/(model|meta)_(\d+)\.(?:pt|json)", path)
         if match:
-            depth, kind, step = match.group(1), match.group(2), int(match.group(3))
-            kinds_by_depth.setdefault(depth, {}).setdefault(step, set()).add(kind)
-    if not kinds_by_depth:
+            tag, kind, step = match.group(1), match.group(2), int(match.group(3))
+            kinds_by_tag.setdefault(tag, {}).setdefault(step, set()).add(kind)
+    if not kinds_by_tag:
         raise RuntimeError(f"no model checkpoints under /{mode}/chatsft_checkpoints on the Volume")
-    for depth, kinds_by_step in kinds_by_depth.items():
+    # Run ids start with a sortable timestamp, so the newest run is the largest such name.
+    run_tags = [tag for tag in kinds_by_tag if RUN_ID_TAG.match(tag)]
+    if run_tags:
+        kinds_by_tag = {max(run_tags): kinds_by_tag[max(run_tags)]}
+    for tag, kinds_by_step in kinds_by_tag.items():
         complete = [step for step, kinds in kinds_by_step.items() if kinds == {"model", "meta"}]
         if not complete:
-            raise RuntimeError(f"no complete model+meta pair in /{mode}/chatsft_checkpoints/{depth}")
+            raise RuntimeError(f"no complete model+meta pair in /{mode}/chatsft_checkpoints/{tag}")
         newest = max(complete)
         if newest != max(kinds_by_step):
-            print(f"WARNING: newest step in {depth} has no complete model+meta pair; using step {newest}", flush=True)
-        picked.append(f"{mode}/chatsft_checkpoints/{depth}/model_{newest:06d}.pt")
-        picked.append(f"{mode}/chatsft_checkpoints/{depth}/meta_{newest:06d}.json")
+            print(f"WARNING: newest step in {tag} has no complete model+meta pair; using step {newest}", flush=True)
+        picked.append(f"{mode}/chatsft_checkpoints/{tag}/model_{newest:06d}.pt")
+        picked.append(f"{mode}/chatsft_checkpoints/{tag}/meta_{newest:06d}.json")
     return sorted(picked)
 
 
@@ -646,7 +658,7 @@ def _verify_chat_files(targets: dict[str, str], sizes: dict[str, int]) -> None:
 def _download_artifacts(mode: str) -> None:
     """Pull what chat needs for <mode> from the Volume into ~/.cache/nanochat-modal/<mode>.
 
-    Layout matches NANOCHAT_BASE_DIR: tokenizer/ and chatsft_checkpoints/d<depth>/.
+    Layout matches NANOCHAT_BASE_DIR: tokenizer/ and chatsft_checkpoints/<model-tag>/ (runcpu: the run id; speedrun: d<depth>).
     """
     cache_dir = os.path.expanduser(f"~/.cache/nanochat-modal/{mode}")
     volume = modal.Volume.from_name(os.environ.get("NANOCHAT_MODAL_VOLUME", "nanochat-modal"))
@@ -675,6 +687,57 @@ def _download_artifacts(mode: str) -> None:
         )
     _verify_chat_files(targets, sizes)
     print(f"[local] chat files verified in {cache_dir}", flush=True)
+
+
+# Default staleness threshold; runs/_run_lock.sh reads the same NANOCHAT_LOCK_STALE_SECS override.
+LOCK_STALE_SECS = 600
+
+
+def resolve_cpu_run_id(
+    run_ids: list[str], done_ids: set[str], lock_mtime: float | None, now: float, suffix: str,
+    stale_secs: float = LOCK_STALE_SECS,
+) -> str | None:
+    """Run id a CPU relaunch should continue, or None to start a new run.
+
+    Refuses while another run holds a fresh lock. Otherwise continues ONLY the most recent run with
+    this suffix (e.g. -cpu-d6), and only if it has no .done marker (interrupted or stopped). Older
+    unfinished runs are never resumed automatically: name one explicitly with NANOCHAT_RESUME_RUN_ID.
+    """
+    if lock_mtime is not None and now - lock_mtime < stale_secs:
+        raise SystemExit("another CPU run is in progress (its heartbeat is fresh); wait for it or stop it, then relaunch")
+    newest = next(iter(sorted((r for r in run_ids if r.endswith(suffix)), reverse=True)), None)
+    if newest is None or newest in done_ids:
+        return None
+    return newest
+
+
+@app.local_entrypoint()
+def resolve_run(mode: str = "cpu", depth: int = 6) -> None:
+    """Print RUN_ID=<id> for runs/runmodal.sh: the interrupted CPU run of this depth to continue, else a new id."""
+    now = time.time()
+    suffix = f"-cpu-d{depth}"
+    if mode != "cpu":
+        run_id = None
+    else:
+        try:
+            run_entries = vol.listdir("runs")
+        except modal.exception.NotFoundError:
+            run_entries = []
+        run_ids = [e.path.split("/")[-1] for e in run_entries if e.type == modal.volume.FileEntryType.DIRECTORY]
+        done_ids = {
+            r for r in run_ids
+            if r.endswith(suffix) and any(e.path.endswith(f"runs/{r}/.done") for e in vol.listdir(f"runs/{r}"))
+        }
+        try:
+            lock_entries = vol.listdir(f"{mode}/.run.lock")
+        except modal.exception.NotFoundError:
+            lock_entries = []
+        lock_mtime = next((e.mtime for e in lock_entries if e.path.endswith("/heartbeat")), None)
+        stale_secs = float(os.environ.get("NANOCHAT_LOCK_STALE_SECS", LOCK_STALE_SECS))
+        run_id = resolve_cpu_run_id(run_ids, done_ids, lock_mtime, now, suffix, stale_secs)
+    if run_id is None:
+        run_id = time.strftime("%Y%m%d-%H%M%S", time.gmtime(now)) + (suffix if mode == "cpu" else f"-{mode}")
+    print(f"RUN_ID={run_id}")
 
 
 @app.local_entrypoint()

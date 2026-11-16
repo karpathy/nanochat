@@ -7,7 +7,8 @@ python -m scripts.chat_cli
 import argparse
 
 from nanochat.checkpoint_manager import load_model
-from nanochat.common import autodetect_device_type, compute_init
+from nanochat.common import autodetect_device_type, compute_init, get_base_dir
+from nanochat.last_run import resolve_chat_model_tag
 from nanochat.engine import Engine
 from nanochat.stage_art import render_plaque
 from nanochat.term_style import paint
@@ -26,6 +27,8 @@ args = parser.parse_args()
 
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
+# No -g given: use the newest completed run's tag, so an old d<depth> folder is not picked.
+args.model_tag = resolve_chat_model_tag(get_base_dir(), args.source, args.model_tag)
 model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
 
 # Special tokens for the chat state machine

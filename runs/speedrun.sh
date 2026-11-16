@@ -44,6 +44,8 @@ fi
 # activate venv (always happens; .venv must exist)
 set +u; source .venv/bin/activate; set -u
 # Run record: one folder per run (run.json, milestone events, spans). Modal sets these itself.
+# The per-run tag is runcpu-only; never inherit one from the environment.
+unset NANOCHAT_MODEL_TAG
 export NANOCHAT_RUN_ID="${NANOCHAT_RUN_ID:-$(date -u +%Y%m%d-%H%M%S)-gpu}"
 export NANOCHAT_RUN_gpu="${NANOCHAT_RUN_gpu:-local-gpu}"
 export NANOCHAT_RUN_DIR="${NANOCHAT_RUN_DIR:-$NANOCHAT_BASE_DIR/runs/$NANOCHAT_RUN_ID}"
