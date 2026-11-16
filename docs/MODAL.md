@@ -180,13 +180,25 @@ Each stage's marker file lives on the Volume, so a re-run of `runmodal.sh` skips
 After training, you can ask the model a question directly on Modal — **no download needed**. The model loads from the Volume and the answer streams back to your terminal.
 
 ```bash
+# Basic usage
 modal run runs/modal_run.py::chat --prompt "What is the capital of France?"
+
+# GPU mode (requires a completed GPU run on the Volume)
 modal run runs/modal_run.py::chat --mode gpu --prompt "Why is the sky blue?"
-modal run runs/modal_run.py::chat --temperature 0.1 --prompt "..."   # reduce repetition on CPU
+
+# Tune response quality — always pass --temperature on CPU runs
+modal run runs/modal_run.py::chat --temperature 0.1 --prompt "What is the capital of France?"
 ```
 
 > **Note:** `--mode cpu` is the default. Use `--mode gpu` only if you have a completed GPU run on the Volume.
-> **CPU repetition:** the default temperature is 0.3 (lower than the interactive default of 0.6) to reduce repetition loops on CPU. If the response still repeats, try `--temperature 0.1`.
+
+**Always use `--temperature` on CPU runs.** The Modal container runs on CPU, which produces slightly different floating-point results than the MPS hardware the model was trained on. Without a low temperature the model can fall into a repetition loop and fill the response with repeated phrases. The default is already `0.3` (vs `0.6` for interactive chat), but `0.1` gives cleaner results:
+
+| `--temperature` | Effect |
+|---|---|
+| `0.6` (interactive default) | More varied — repetition loops likely on CPU |
+| `0.3` (Modal default) | Balanced — good starting point |
+| `0.1` | Focused — cleanest output on CPU; recommended |
 
 **How it differs from chatting locally:**
 
