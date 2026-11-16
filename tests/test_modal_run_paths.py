@@ -78,39 +78,122 @@ def test_training_commit_daemon_watches_the_mode_folder(volume: Path, monkeypatc
     assert started["args"][1] == f"{volume}/cpu"
 
 
-def test_download_artifacts_finds_nested_checkpoints(
+class FakeVolume:
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.files = files
+
+    def listdir(self, path: str, *, recursive: bool = False) -> list[SimpleNamespace]:
+        return [
+            SimpleNamespace(path=p, size=len(b), type=modal_run.modal.volume.FileEntryType.FILE)
+            for p, b in self.files.items()
+            if p.startswith(f"{path}/")
+        ]
+
+    def read_file(self, path: str):
+        yield self.files[path]
+
+
+def _chat_volume_files() -> dict[str, bytes]:
+    return {
+        "cpu/tokenizer/tokenizer.pkl": b"tok",
+        "cpu/tokenizer/token_bytes.pt": b"bytes",
+        "cpu/chatsft_checkpoints/.train_ok": b"",
+        "cpu/chatsft_checkpoints/d6/model_000100.pt": b"old-weights",
+        "cpu/chatsft_checkpoints/d6/meta_000100.json": b"{}",
+        "cpu/chatsft_checkpoints/d6/model_001499.pt": b"new-weights",
+        "cpu/chatsft_checkpoints/d6/meta_001499.json": b'{"step": 1499}',
+        "cpu/chatsft_checkpoints/d6/optim_001499_rank0.pt": b"optimizer",
+    }
+
+
+def test_download_artifacts_copies_only_newest_chat_pair(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
-    Scenario: Checkpoints are saved under chatsft_checkpoints/d<depth>/, not at the top
-              level. _download_artifacts() must walk recursively and find them.
-    Slice: _download_artifacts() recursive os.walk (commit 829d5f7).
-    ### Given: a fake cache dir with tokenizer/ and chatsft_checkpoints/d6/model_000100.pt
-    ### When: _download_artifacts("cpu") is called with mocked modal volume get
-    ### Then: no exception; stdout contains "Found 1 checkpoint"
+    Scenario: The Volume holds every saved checkpoint. Chat needs the tokenizer and the newest model.
+    Slice: _download_artifacts() selects files instead of copying whole folders.
+    ### Given: a Volume with two checkpoints and an optim_* file for the newest step
+    ### When: _download_artifacts("cpu") runs
+    ### Then: the newest model and meta are copied; the old checkpoint and optim_* are not
     """
     # ### Given
-    # Redirect HOME so cache_dir lands in tmp_path instead of the real ~/.cache
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(modal_run.modal.Volume, "from_name", lambda name: FakeVolume(_chat_volume_files()))
     cache_dir = tmp_path / ".cache" / "nanochat-modal" / "cpu"
 
-    # Create the directory layout that `modal volume get --force` would produce.
-    # Tokenizer at the top level; checkpoint one level down (d6/).
-    (cache_dir / "tokenizer").mkdir(parents=True)
-    nested = cache_dir / "chatsft_checkpoints" / "d6"
-    nested.mkdir(parents=True)
-    (nested / "model_000100.pt").write_bytes(b"fake-weights")
+    # ### When
+    modal_run._download_artifacts("cpu")
 
-    # Mock subprocess.run so no real `modal` binary is invoked.
-    monkeypatch.setattr(
-        modal_run.subprocess,
-        "run",
-        lambda *a, **k: SimpleNamespace(returncode=0),
-    )
+    # ### Then
+    assert (cache_dir / "tokenizer" / "tokenizer.pkl").read_bytes() == b"tok"
+    assert (cache_dir / "chatsft_checkpoints" / "d6" / "model_001499.pt").read_bytes() == b"new-weights"
+    assert (cache_dir / "chatsft_checkpoints" / "d6" / "meta_001499.json").exists()
+    assert not (cache_dir / "chatsft_checkpoints" / "d6" / "model_000100.pt").exists()
+    assert not (cache_dir / "chatsft_checkpoints" / "d6" / "optim_001499_rank0.pt").exists()
+
+
+def test_fetch_file_skips_a_same_size_copy(tmp_path: Path) -> None:
+    # ### Given: a local file already present with the expected size
+    local = tmp_path / "model_001499.pt"
+    local.write_bytes(b"abcd")
+    volume = FakeVolume({"cpu/x/model_001499.pt": b"WXYZ"})
+
+    # ### When / Then: nothing is re-copied
+    assert modal_run._fetch_file(volume, "cpu/x/model_001499.pt", 4, str(local)) is False
+    assert local.read_bytes() == b"abcd"
+
+
+def test_fetch_file_size_mismatch_leaves_no_partial_file(tmp_path: Path) -> None:
+    # ### Given: the Volume reports 10 bytes but the content is 3
+    local = tmp_path / "model_001499.pt"
+    volume = FakeVolume({"cpu/x/model_001499.pt": b"abc"})
+
+    # ### When / Then: the copy fails and no file is left behind to look complete
+    with pytest.raises(RuntimeError, match="size mismatch"):
+        modal_run._fetch_file(volume, "cpu/x/model_001499.pt", 10, str(local))
+    assert not local.exists()
+    assert not (tmp_path / "model_001499.pt.part").exists()
+
+
+def test_fetch_file_refuses_a_folder_where_a_file_belongs(tmp_path: Path) -> None:
+    # ### Given: a folder sits where the file should go (the cause of the Errno 21 failure)
+    local = tmp_path / "chatsft_checkpoints"
+    local.mkdir()
+
+    # ### When / Then: a clear error instead of a confusing OS error
+    with pytest.raises(RuntimeError, match="is a folder where a file is expected"):
+        modal_run._fetch_file(FakeVolume({}), "cpu/chatsft_checkpoints", 1, str(local))
+
+
+def test_download_artifacts_falls_back_to_newest_complete_pair_with_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # ### Given: the newest model (1499) has no meta file on the Volume
+    files = _chat_volume_files()
+    del files["cpu/chatsft_checkpoints/d6/meta_001499.json"]
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(modal_run.modal.Volume, "from_name", lambda name: FakeVolume(files))
+    cache_dir = tmp_path / ".cache" / "nanochat-modal" / "cpu"
 
     # ### When
-    modal_run._download_artifacts("cpu")  # must not raise
+    modal_run._download_artifacts("cpu")
 
-    # ### Then (output captured via capsys is not needed; absence of exception is the oracle)
-    # The function only raises RuntimeError when no model_*.pt files are found,
-    # so reaching here proves the recursive walk located the nested checkpoint.
+    # ### Then: the older complete pair is used, and the operator is told
+    assert (cache_dir / "chatsft_checkpoints" / "d6" / "model_000100.pt").exists()
+    assert "WARNING: newest step in d6" in capsys.readouterr().out
+
+
+def test_download_artifacts_fails_when_no_pair_is_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ### Given: the only checkpoint has a model but no meta
+    files = {
+        "cpu/tokenizer/tokenizer.pkl": b"tok",
+        "cpu/chatsft_checkpoints/d6/model_000100.pt": b"weights",
+    }
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(modal_run.modal.Volume, "from_name", lambda name: FakeVolume(files))
+
+    # ### When / Then
+    with pytest.raises(RuntimeError, match="no complete model\\+meta pair"):
+        modal_run._download_artifacts("cpu")

@@ -17,7 +17,7 @@
 #   bash runs/modal_peek.sh past                      archived runs: local folders and Volume runs
 #   bash runs/modal_peek.sh report [run-id]           run record of a run: config, resources, status (default: latest)
 #   bash runs/modal_peek.sh compare                   one table of every run on the Volume
-#   bash runs/modal_peek.sh pull [run-id]             copy a run's config, report, manifest locally
+#   bash runs/modal_peek.sh pull [run-id]             copy a run's record, and its model files, locally
 #   bash runs/modal_peek.sh info [app-id]             lifecycle, functions, state of an app
 #   bash runs/modal_peek.sh logs [app-id] [N] [-f]    last N log lines of an app (default 100); -f streams
 #   bash runs/modal_peek.sh container [ta-id] [N] [-f]  last N log lines of a container; -f streams
@@ -73,7 +73,24 @@ latest_run() {
 
 # Fetch one file of a run from the Volume to stdout.
 volume_file() {
-    modal volume get "$VOLUME" "runs/$1/$2" -
+    # The CLI prints its "Finished downloading" line to stdout, so copy to a temp file and read that.
+    local tmp status=0
+    tmp=$(mktemp)
+    modal volume get "$VOLUME" "runs/$1/$2" "$tmp" --force >/dev/null || status=$?
+    [ "$status" -eq 0 ] && cat "$tmp"
+    rm -f "$tmp"
+    return $status
+}
+
+# Copy tokenizer and chat checkpoints for MODE (cpu|gpu) from the Volume to ~/.cache/nanochat-modal/MODE.
+download_models() {
+    local mode="$1"
+    echo "Downloading model files for mode $mode from Volume $VOLUME..."
+    (cd "$(dirname "$SCRIPTDIR")" && NANOCHAT_MODAL_VOLUME="$VOLUME" \
+        uv run --frozen python -c "
+from runs.modal_run import _download_artifacts
+_download_artifacts('$mode')
+")
 }
 
 # Print "<app-id>\t<state>\t<created_at>" for the current nanochat run. Exit 1 if none.
@@ -180,14 +197,7 @@ except:
             exit 1
         fi
 
-        # Download artifacts (uv run so modal is on the Python path regardless of active venv)
-        echo "Downloading artifacts from Volume $VOLUME, mode $MODE..."
-        if ! (cd "$(dirname "$SCRIPTDIR")" && NANOCHAT_MODAL_VOLUME="$VOLUME" \
-              uv run --frozen python -c "
-import sys, os
-from runs.modal_run import _download_artifacts
-_download_artifacts('$MODE')
-"); then
+        if ! download_models "$MODE"; then
             echo "ERROR: download failed" >&2
             exit 1
         fi
@@ -255,8 +265,25 @@ _download_artifacts('$MODE')
         for f in run.json events.jsonl manifest.json; do
             volume_file "$run" "$f" > "$dest/$f" 2>/dev/null || rm -f "$dest/$f"
         done
-        echo "Pulled $run into $dest (run record, events, manifest). Checkpoints stay on the Volume."
+        echo "Pulled $run into $dest (run record, events, manifest)."
         ls -1 "$dest"
+        # Mode: from the run id suffix (<time>-cpu), else from the run record's "mode" field (e.g. "local-cpu").
+        mode=""
+        case "$run" in *-cpu|*-gpu) mode="${run##*-}" ;; esac
+        if [ -z "$mode" ]; then
+            case "$(grep -o '"mode": *"[^"]*"' "$dest/run.json" 2>/dev/null || true)" in
+                *gpu*) mode=gpu ;;
+                *cpu*) mode=cpu ;;
+            esac
+        fi
+        if [ -z "$mode" ]; then
+            echo "ERROR: cannot tell cpu or gpu for run '$run'; models not downloaded." >&2
+            exit 1
+        fi
+        if ! download_models "$mode"; then
+            echo "ERROR: model download failed for $mode" >&2
+            exit 1
+        fi
         ;;
     info)
         app=$(resolve_app "${1:-}")
