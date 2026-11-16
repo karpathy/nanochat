@@ -175,7 +175,7 @@ The job is split into stages, each marked in a persistent Modal Volume so re-run
 
 Each stage's marker file lives on the Volume, so a re-run of `runmodal.sh` skips finished stages and only redoes stages that failed or were forced (`FORCE_STAGES=stage_name`).
 
-To resume an interrupted CPU run, relaunch with `bash runs/runmodal.sh` as usual: it continues only the most recent CPU run of the same depth, and only if that run has no `.done` marker. It refuses while another CPU run is in progress (fresh heartbeat). To continue an older run, name it explicitly: `bash runs/runmodal.sh resume <run-id>` (any age).
+To resume an interrupted CPU run, relaunch with `bash runs/runmodal.sh` as usual: it continues only the most recent CPU run of the same depth, and only if that run has no `.done` marker. It refuses while another CPU run is in progress (fresh heartbeat). To continue an older run, name it explicitly: `bash runs/runmodal.sh resume <run-id>` (any age, but only a CPU run of the current depth that is not finished; GPU is not supported).
 
 ## Chat on Modal
 
@@ -225,7 +225,7 @@ After a successful run, your trained model is on your laptop under `~/.cache/nan
 | `<mode>` | Which run you trained: `cpu` (small demo) or `gpu` (full 8×H100) | `cpu` |
 | `<depth>` | Model size, set by the training run. For GPU (speedrun) it is the folder name under `chatsft_checkpoints/`; for CPU the folder is the run id, and the depth is in the id (`…-cpu-d6`) | `d6` (a depth-6 model) |
 | `<step>` | Training step of the saved checkpoint, zero-padded to 6 digits; the largest number is the latest | `001499` |
-| `<run-id>` | Id of one Modal run, `<UTC time>-<mode>`, shown when you launch it | `20261114-125440-cpu` |
+| `<run-id>` | Id of one Modal run: CPU runs are `<UTC time>-cpu-d<depth>`, GPU runs are `<UTC time>-gpu`; shown when you launch it | `20261114-125440-cpu-d6` |
 | `<profile>` / `<env>` | Optional Modal CLI profile or environment name, only if you use one | `default` |
 
 To find the real `<depth>` and `<step>` values, list the Volume (see below): `modal volume ls nanochat-modal cpu/chatsft_checkpoints`. Then pick the highest `model_<step>.pt`.
@@ -365,7 +365,7 @@ The training stages and their skip markers are diagrammed in [DIAGRAMS.md](DIAGR
 | `bash runs/modal_peek.sh past` | maintenance | List archived runs, both local and on the Volume |
 | `bash runs/modal_peek.sh report [run-id]` | maintenance | Show one run's config, resources, and status |
 | `bash runs/modal_peek.sh compare` | maintenance | One table of every run on the Volume |
-| `bash runs/modal_peek.sh pull [run-id]` | maintenance | Copy a run's record to your laptop, then its model files to `~/.cache/nanochat-modal/<mode>/`. Mode comes from the run id (`…-cpu` or `…-gpu`). Defaults to the latest run. |
+| `bash runs/modal_peek.sh pull [run-id]` | maintenance | Copy a run's record to your laptop, then its model files to `~/.cache/nanochat-modal/<mode>/`. Mode comes from the run id (`…-cpu-d<depth>` or `…-gpu`). Defaults to the latest run. |
 | `bash runs/modal_peek.sh info [app-id]` | maintenance | Show an app's lifecycle, functions, and state |
 | `bash runs/modal_peek.sh logs [app-id] [N] [-f]` | maintenance | Show the last N log lines of an app; `-f` streams |
 | `bash runs/modal_peek.sh container [ta-id] [N] [-f]` | maintenance | Show the last N log lines of one container; `-f` streams |
