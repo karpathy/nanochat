@@ -394,6 +394,38 @@ class TestRunLockSelfReclaim:
         assert r.returncode == 0, r.stderr
         assert "ACQUIRED" in r.stdout
 
+    def test_same_run_id_live_holder_is_refused_after_wait(self, tmp_path):
+        """
+        Scenario: A live instance with the same run id keeps its heartbeat refreshed; a restart
+                  that waits must still be REFUSED when the wait runs out.
+        Slice: same-run-ID restart wait must never steal a live lock
+        ### Given: a background holder of the lock with run_id="my-run" refreshing every 1 s
+        ### When: a second instance with run_id="my-run" waits 3 s
+        ### Then: exits 1 with the still-fresh error; the holder keeps the lock
+        """
+        base = str(tmp_path)
+        holder_env = {"NANOCHAT_RUN_ID": "my-run", "NANOCHAT_LOCK_HB_INTERVAL": "1"}
+        holder_script = _run_lock_script(base, extra_env=holder_env) + "\nsleep 30\n"
+        holder = subprocess.Popen(["bash", "-c", holder_script],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            lock_dir = tmp_path / ".run.lock"
+            for _ in range(50):  # wait for the holder to claim the lock
+                if (lock_dir / "heartbeat").exists():
+                    break
+                time.sleep(0.1)
+            r = _run(_run_lock_script(base, extra_env={
+                "NANOCHAT_RUN_ID": "my-run",
+                "NANOCHAT_LOCK_HB_INTERVAL": "1",
+                "NANOCHAT_LOCK_SAME_ID_WAIT_SECS": "3",
+            }), timeout=15)
+            assert r.returncode == 1, r.stdout + r.stderr
+            assert "heartbeat still fresh" in r.stderr
+            assert lock_dir.is_dir()
+        finally:
+            holder.kill()
+            holder.wait()
+
     def test_different_run_id_fresh_heartbeat_still_refused(self, tmp_path):
         """
         Scenario: Lock is held with a fresh heartbeat by a DIFFERENT run ID; must be refused.
