@@ -60,7 +60,7 @@ from nanochat.memory import (
 )
 from nanochat.run_record import make_run_logger
 from nanochat.term_style import paint
-from nanochat.sft_loader import SftLoaderState
+from nanochat.sft_loader import SftLoaderState, ZERO_TOKEN_STREAK_LIMIT, is_packable, next_zero_token_streak
 from nanochat.tokenizer import get_token_bytes
 from scripts.chat_eval import run_chat_eval
 from tasks.common import TaskMixture
@@ -204,6 +204,8 @@ optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_
 
 # Checkpoint directory for mid-training saves (and auto-resume) is defined above with depth.
 
+# Record the resolved (inherited) values too: the resume guard skips None, so without this a resume compares nothing.
+user_config.update({k: getattr(args, k) for k in SFT_RESUME_KEYS[:-1]})
 # FIX 3b: record world_size in user_config so the resume guard can verify it.
 user_config["world_size"] = ddp_world_size
 
@@ -324,12 +326,19 @@ def sft_data_generator_bos_bestfit(split, buffer_size=100, resume_state=None):
         epoch = 1
         it = 0
 
+    oversize_skipped = 0  # conversations longer than one row: counted and skipped, never packed
+
     def refill_buffer():
-        nonlocal cursor, epoch
+        nonlocal cursor, epoch, oversize_skipped
         while len(conv_buffer) < buffer_size:
             conversation = dataset[cursor]
             ids, mask = tokenizer.render_conversation(conversation)
-            conv_buffer.append((ids, mask))
+            if is_packable(ids, row_capacity):
+                conv_buffer.append((ids, mask))
+            else:
+                oversize_skipped += 1
+                if oversize_skipped == 1 or oversize_skipped % 1000 == 0:
+                    print0(f"WARNING: skipped {oversize_skipped} conversation(s) longer than one row ({row_capacity} tokens)")
             cursor += ddp_world_size
             if cursor >= dataset_size:
                 cursor = cursor % dataset_size
@@ -460,6 +469,7 @@ smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
 step = max(0, args.resume_from_step)
+zero_token_streak = 0  # consecutive optimizer steps with no supervised tokens
 last_save_time = time.monotonic()
 
 # Restore loop state when resuming
@@ -589,9 +599,11 @@ while True:
     # so the error message reports the right unmasked-token count.
     nan_flag = False
     nan_targets = None  # targets from the micro-batch that produced the first NaN
+    step_supervised = 0  # supervised (unmasked) targets across this step's micro-batches
     for micro_step in range(grad_accum_steps):
         # Warn on a micro-batch where every target is masked (fully-masked SFT batch).
         n_valid = int((y != IGNORE_INDEX).sum())
+        step_supervised += n_valid
         if n_valid == 0:
             print0(
                 f"WARNING: step {step}, micro-step {micro_step}: all targets are masked "
@@ -617,6 +629,12 @@ while True:
         nan_targets if nan_flag else y,
         nan_flag=nan_flag,
     )
+    zero_token_streak = next_zero_token_streak(zero_token_streak, step_supervised)
+    if zero_token_streak >= ZERO_TOKEN_STREAK_LIMIT:
+        raise RuntimeError(
+            f"Step {step}: {zero_token_streak} optimizer steps in a row had no supervised tokens "
+            f"(skipped oversize conversations so far: {oversize_skipped}). Halting: the data loader is stalled."
+        )
     # step the optimizer
     lrm = get_lr_multiplier(progress)
     muon_momentum = get_muon_momentum(step)
