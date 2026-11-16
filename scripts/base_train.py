@@ -222,7 +222,7 @@ def build_model_meta(depth):
 
 # If we are resuming, check before building the model
 base_dir = get_base_dir()
-output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
+output_dirname = args.model_tag or f"d{args.depth}" # e.g. d12
 checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
 resuming = args.resume_from_step != -1
 
@@ -268,12 +268,12 @@ if args.fp8:
                 return False
             if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
                 return False
-            return not min(mod.in_features, mod.out_features) < 128
+            return min(mod.in_features, mod.out_features) >= 128
 
         fp8_config = Float8LinearConfig.from_recipe_name(args.fp8_recipe)
-        num_linear = sum(1 for m in model.modules() if isinstance(m, nn.Linear))
+        num_linear = sum(isinstance(m, nn.Linear) for m in model.modules())
         convert_to_float8_training(model, config=fp8_config, module_filter_fn=fp8_module_filter)
-        num_fp8 = sum(1 for m in model.modules() if 'Float8' in type(m).__name__)
+        num_fp8 = sum('Float8' in type(m).__name__ for m in model.modules())
         num_skipped = num_linear - num_fp8
         print0(f"✓ FP8 training enabled ({args.fp8_recipe} scaling) - converted {num_fp8}/{num_linear} linear layers, skipped {num_skipped} (too small)")
 
@@ -350,8 +350,7 @@ print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 def get_scaling_params(m):
     # As for which params to use exactly, transformer matrices + lm_head gives cleanest scaling laws (see dev/LOG.md Jan 27, 2026)
     params_counts = m.num_scaling_params()
-    scaling_params = params_counts['transformer_matrices'] + params_counts['lm_head']
-    return scaling_params
+    return params_counts['transformer_matrices'] + params_counts['lm_head']
 num_scaling_params = get_scaling_params(model)
 target_tokens = int(args.target_param_data_ratio * num_scaling_params) # optimal tokens for the model we are about to train
 
@@ -441,7 +440,7 @@ if scaler is not None:
 
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
-dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
+dataloader_resume_state_dict = meta_data["dataloader_state_dict"] if resuming else None
 # Built through a function because an OOM re-halve has to rebuild it at the smaller batch size
 print0("Building train dataloader...")
 build_train_loader = lambda resume_state_dict: tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=resume_state_dict)
