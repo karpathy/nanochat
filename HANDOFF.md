@@ -1,5 +1,7 @@
 # HANDOFF — modal-nanochat-minimum
 
+> **STALE (2026-11-15).** This handoff is from before PR #14–#45. The current backlog is `docs/plan/TRAIL.md`; the current plan is `docs/plan/2026-11-15-eval-resume-and-tracker-cleanup.md`. Do not follow the steps below without checking TRAIL first.
+
 Branch: `feat/modal-nanochat-minimum` (pushed, head `3c6ba61`)
 Plan (SSOT): `docs/plan/2026-11-14-modal-nanochat-minimum.md` (§1a = CPU phase)
 Tracker: `docs/plan/PROGRESS.md` and `docs/plan/TRAIL.md`
