@@ -47,6 +47,15 @@ export NANOCHAT_RUN_ID="${NANOCHAT_RUN_ID:-$(pick_run_id "cpu-d${RUNCPU_DEPTH}")
 export NANOCHAT_MODEL_TAG="$NANOCHAT_RUN_ID"
 export NANOCHAT_RUN_cpu="${NANOCHAT_RUN_cpu:-local-cpu}"
 export NANOCHAT_RUN_DIR="${NANOCHAT_RUN_DIR:-$NANOCHAT_BASE_DIR/runs/$NANOCHAT_RUN_ID}"
+# An explicitly named run must be this depth and not finished; finished runs are never retrained over.
+case "$NANOCHAT_RUN_ID" in
+    *-cpu-d"${RUNCPU_DEPTH}") ;;
+    *) echo "ERROR: run $NANOCHAT_RUN_ID is not a cpu-d${RUNCPU_DEPTH} run; refusing to resume it." >&2; exit 1 ;;
+esac
+if [ -f "$NANOCHAT_RUN_DIR/.done" ]; then
+    echo "ERROR: run $NANOCHAT_RUN_ID already finished (.done); it is never resumed. Unset NANOCHAT_RUN_ID for a new run." >&2
+    exit 1
+fi
 python3 -m nanochat.run_record start "$NANOCHAT_RUN_DIR" --mode "$NANOCHAT_RUN_cpu" || echo "WARN: run record not started" >&2
 if [ -z "${WANDB_RUN:-}" ]; then
     WANDB_RUN=dummy

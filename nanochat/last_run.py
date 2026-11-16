@@ -158,10 +158,6 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 def resolve_chat_model_tag(base_dir: str | Path, source: str, requested: str | None) -> str | None:
     """Tag chat should load: the one asked for, else the newest completed run's when its folder exists.
 
@@ -173,3 +169,7 @@ def resolve_chat_model_tag(base_dir: str | Path, source: str, requested: str | N
     if recorded and (Path(base_dir) / "chatsft_checkpoints" / recorded).is_dir():
         return recorded
     return None
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

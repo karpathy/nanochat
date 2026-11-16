@@ -269,7 +269,7 @@ except:
         ls -1 "$dest"
         # Mode: from the run id suffix (<time>-cpu), else from the run record's "mode" field (e.g. "local-cpu").
         mode=""
-        case "$run" in *-cpu|*-gpu) mode="${run##*-}" ;; esac
+        case "$run" in *-cpu|*-cpu-d*) mode=cpu ;; *-gpu) mode=gpu ;; esac
         if [ -z "$mode" ]; then
             case "$(grep -o '"mode": *"[^"]*"' "$dest/run.json" 2>/dev/null || true)" in
                 *gpu*) mode=gpu ;;
