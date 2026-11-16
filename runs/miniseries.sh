@@ -6,8 +6,8 @@
 # Default series name is today's date (e.g., jan11)
 
 export OMP_NUM_THREADS=1
-export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
-mkdir -p $NANOCHAT_BASE_DIR
+export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
+mkdir -p "$NANOCHAT_BASE_DIR"
 
 # Setup (skip with SKIP_SETUP=1)
 if [ -z "$SKIP_SETUP" ]; then
@@ -15,15 +15,16 @@ if [ -z "$SKIP_SETUP" ]; then
     command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
     [ -d ".venv" ] || uv venv
     uv sync --extra gpu
+    # activate venv before running python3 commands
     source .venv/bin/activate
 
     # Tokenizer, download 1000 shards for pretraining
     # (probably this can be reduced but it's tricky to determine the exact right number, TODO).
-    python -m nanochat.dataset -n 1000
-    python -m scripts.tok_train --max-chars=2000000000 --vocab-size=32768
-else
-    source .venv/bin/activate
+    python3 -m nanochat.dataset -n 1000
+    python3 -m scripts.tok_train --max-chars=2000000000 --vocab-size=32768
 fi
+# activate venv (always happens; .venv must exist in SKIP_SETUP mode)
+source .venv/bin/activate
 
 # Series name: from arg, env var, or default to today's date (e.g., jan11)
 SERIES_NAME="${1:-${SERIES_NAME:-$(date +%b%d | tr '[:upper:]' '[:lower:]')}}"
@@ -86,7 +87,7 @@ for d in "${DEPTHS[@]}"; do
     NUM_SCALING_PARAMS=$(grep "Number of parameters:" "$LOG_FILE" | tail -1 | grep -oP 'scaling: [\d,]+' | grep -oP '[\d,]+' | tr -d ',')
     NUM_ITERS=$(grep "Calculated number of iterations" "$LOG_FILE" | tail -1 | sed 's/.*: //' | tr -d ',')
     TOKENS_TRAINED=$((NUM_ITERS * 524288))
-    PARAM_DATA_RATIO=$(python -c "print(f'{$TOKENS_TRAINED / $NUM_SCALING_PARAMS:.2f}')")
+    PARAM_DATA_RATIO=$(python3 -c "print(f'{$TOKENS_TRAINED / $NUM_SCALING_PARAMS:.2f}')")
     MODEL_DIM=$((d * 64))
     VAL_BPB=$(grep "Validation bpb:" "$LOG_FILE" | tail -1 | grep -oP '[\d.]+$')
     CORE_SCORE=$(grep "CORE metric:" "$LOG_FILE" | tail -1 | awk '{print $NF}')

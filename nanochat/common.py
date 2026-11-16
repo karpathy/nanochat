@@ -2,10 +2,11 @@
 Common utilities for nanochat.
 """
 
+import logging
 import os
 import re
-import logging
 import urllib.request
+
 import torch
 import torch.distributed as dist
 from filelock import FileLock
@@ -115,9 +116,28 @@ def download_file_with_lock(url, filename, postprocess_fn=None):
 
     return file_path
 
+def format_duration(seconds: float) -> str:
+    """Format a duration as 'Hh Mm Ss' for logs, e.g. 3725 -> '1h 2m 5s'."""
+    total = max(0, round(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}h {minutes}m {secs}s"
+
+def compute_eta_str(total_training_time: float, steps_done: int, num_iterations: int) -> str:
+    """Compute ETA string from total training time and step counts. Returns empty string if not ready."""
+    if steps_done <= 0:
+        return ""
+    avg_time_per_step = total_training_time / steps_done
+    remaining_steps = num_iterations - steps_done - 10  # offset for first 10 steps
+    if remaining_steps <= 0:
+        return ""
+    eta_seconds = remaining_steps * avg_time_per_step
+    return f" | eta: {format_duration(eta_seconds)}"
+
 def print0(s="",**kwargs):
     ddp_rank = int(os.environ.get('RANK', 0))
     if ddp_rank == 0:
+        kwargs.setdefault("flush", True)  # long silent stretches (val eval, first batch) must appear immediately
         print(s, **kwargs)
 
 def print_banner():
@@ -160,6 +180,16 @@ def get_dist_info():
     else:
         return False, 0, 0, 1
 
+
+def ddp_rank_position(saved: int, world_size: int, rank: int) -> int:
+    """Re-derive this rank's stream position from rank-0's saved value.
+
+    Only rank 0 writes checkpoints. The stride block containing `saved` is
+    `[k*world_size, (k+1)*world_size)` where k = saved // world_size; rank r's
+    slot in that block is k*world_size + r.  For world_size=1 this is a no-op.
+    """
+    return (saved // world_size) * world_size + rank
+
 def autodetect_device_type():
     # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
     if torch.cuda.is_available():
@@ -170,6 +200,23 @@ def autodetect_device_type():
         device_type = "cpu"
     print0(f"Autodetected device type: {device_type}")
     return device_type
+
+def inductor_supports_device(device_type):
+    """
+    TorchInductor (default torch.compile backend) codegens for cuda/cpu only.
+    On mps, compile raises: AssertionError: Device mps not supported.
+    """
+    return device_type != "mps"
+
+
+def maybe_torch_compile(module, device_type, **compile_kwargs):
+    """Compile when Inductor can target this device; otherwise return the module unchanged (eager)."""
+    if not inductor_supports_device(device_type):
+        # One contract-shaped line (same original→adjusted form as [norm] / [auto-fit]).
+        print0("[compile] original=torch.compile → adjusted=eager (reason: Inductor has no MPS backend)")
+        return module
+    return torch.compile(module, **compile_kwargs)
+
 
 def compute_init(device_type="cuda"): # cuda|cpu|mps
     """Basic initialization that we keep doing over and over, so make common."""
@@ -326,3 +373,105 @@ def get_peak_bandwidth(device_name: str) -> float:
     # Unknown GPU - return inf so MBU shows as 0% rather than a wrong guess
     logger.warning(f"Peak bandwidth undefined for: {device_name}, MBU will show as 0%")
     return float('inf')
+
+
+# Sentinel value used to mark ignored/masked target positions (e.g. in SFT loss).
+# Single source of truth: imported in gpt.py, chat_sft.py, and test code.
+IGNORE_INDEX: int = -1
+
+
+def check_finite_loss(loss: "torch.Tensor", step: int, targets: "torch.Tensor") -> None:
+    """Raise RuntimeError immediately if *loss* is not finite (NaN or inf).
+
+    Calling this inside the micro-step loop, before the EMA update, prevents a
+    single bad batch from corrupting the smooth-loss tracker for the entire run.
+
+    Args:
+        loss:    scalar loss tensor (detached is fine).
+        step:    current outer optimiser step (for the error message).
+        targets: target tensor for the same micro-batch, used to count unmasked
+                 tokens (targets != IGNORE_INDEX) so the error message is actionable.
+
+    Raises:
+        RuntimeError: if loss is NaN or inf.
+    """
+    if not torch.isfinite(loss):
+        n_unmasked = int((targets != IGNORE_INDEX).sum().item())
+        raise RuntimeError(
+            f"Non-finite loss ({loss.item()}) at step {step}. "
+            f"Unmasked token count in last micro-batch: {n_unmasked}. "
+            f"Halting to prevent EMA corruption."
+        )
+
+
+def collective_check_finite_loss(
+    loss: "torch.Tensor",
+    step: int,
+    targets: "torch.Tensor",
+    *,
+    nan_flag: "bool | None" = None,
+) -> None:
+    """Collectively decide whether any micro-step had a non-finite loss; raise on all ranks.
+
+    Call this ONCE per outer optimiser step, AFTER the full micro-step loop, passing a
+    pre-accumulated flag so that a NaN in micro-step 0 of N is not silently swallowed
+    when micro-step N-1 happens to be finite.
+
+    ``nan_flag`` usage:
+        - ``None`` (default): compute the flag from ``loss`` directly (backward-compatible
+          single-call path; fine when grad_accum_steps == 1).
+        - ``True / False``: use the caller-accumulated flag.  ``True`` means at least one
+          micro-step on this rank had a non-finite loss.  When ``True``, ``loss`` is used
+          only for its device attribute and the error message value; it need not be the
+          non-finite loss itself.
+
+    ``targets`` must be from the micro-batch that **produced** the non-finite loss (clone
+    ``y`` before the prefetch that overwrites the persistent buffer), not from the
+    prefetched next batch.  Used only to count unmasked tokens in the error message.
+
+    Single-process path: when dist is not initialised the flag is evaluated locally without
+    any collective.  Multi-rank path: a dist.all_reduce MAX ensures every rank raises
+    together, preventing NCCL hangs.
+
+    Args:
+        loss:     scalar loss tensor (from the NaN micro-batch, or last micro-batch when
+                  no NaN occurred).  Used for ``.device`` and the error-message value.
+        step:     current outer optimiser step (for the error message).
+        targets:  target tensor from the micro-batch that produced the flag (used to count
+                  unmasked tokens).  Must be from that micro-batch, not the prefetched one.
+        nan_flag: pre-computed per-rank non-finite indicator, or None to auto-derive from
+                  ``loss``.
+
+    Raises:
+        RuntimeError: on ALL ranks if any rank's accumulated flag was non-finite.
+    """
+    # Resolve this rank's flag: use the caller-provided value when given.
+    if nan_flag is None:
+        this_rank_has_nan = not torch.isfinite(loss)
+    else:
+        this_rank_has_nan = nan_flag
+
+    if not is_ddp_initialized():
+        if this_rank_has_nan:
+            n_unmasked = int((targets != IGNORE_INDEX).sum().item())
+            raise RuntimeError(
+                f"Non-finite loss ({loss.item()}) at step {step}. "
+                f"Unmasked token count in micro-batch that caused it: {n_unmasked}. "
+                f"Halting to prevent EMA corruption."
+            )
+        return
+
+    # Build a per-rank flag; all-reduce (MAX) so every rank knows if any rank
+    # detected a non-finite loss across its micro-steps.
+    flag = torch.zeros(1, device=loss.device, dtype=torch.float32)
+    if this_rank_has_nan:
+        flag.fill_(1.0)
+    dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+
+    if flag.item() > 0:
+        n_unmasked = int((targets != IGNORE_INDEX).sum().item())
+        raise RuntimeError(
+            f"Non-finite loss ({loss.item()}) at step {step}. "
+            f"Unmasked token count in micro-batch that caused it: {n_unmasked}. "
+            f"Halting to prevent EMA corruption."
+        )

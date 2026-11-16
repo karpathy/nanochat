@@ -5,10 +5,12 @@ Intended to be run single GPU only atm:
 python -m scripts.chat_cli
 """
 import argparse
-import torch
-from nanochat.common import compute_init, autodetect_device_type
-from nanochat.engine import Engine
+
 from nanochat.checkpoint_manager import load_model
+from nanochat.common import autodetect_device_type, compute_init
+from nanochat.engine import Engine
+from nanochat.stage_art import render_plaque
+from nanochat.term_style import paint
 
 parser = argparse.ArgumentParser(description='Chat with the model')
 parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|rl")
@@ -34,11 +36,10 @@ assistant_start, assistant_end = tokenizer.encode_special("<|assistant_start|>")
 # Create Engine for efficient generation
 engine = Engine(model, tokenizer)
 
-print("\nNanoChat Interactive Mode")
-print("-" * 50)
-print("Type 'quit' or 'exit' to end the conversation")
-print("Type 'clear' to start a new conversation")
-print("-" * 50)
+if not args.prompt:
+    if _plaque := render_plaque("chat_cli", "start", "Interactive chat mode"):
+        print(_plaque)
+    print("Type 'quit' or 'exit' to end | 'clear' to reset")
 
 conversation_tokens = [bos]
 
@@ -50,23 +51,24 @@ while True:
     else:
         # Get the prompt interactively from the console
         try:
-            user_input = input("\nUser: ").strip()
+            user_input = input(f"\n{paint('start', 'User')}: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye!")
             break
 
-    # Handle special commands
-    if user_input.lower() in ['quit', 'exit']:
-        print("Goodbye!")
-        break
+    # Handle special commands (interactive mode only)
+    if not args.prompt:
+        if user_input.lower() in ['quit', 'exit']:
+            print("Goodbye!")
+            break
 
-    if user_input.lower() == 'clear':
-        conversation_tokens = [bos]
-        print("Conversation cleared.")
-        continue
+        if user_input.lower() == 'clear':
+            conversation_tokens = [bos]
+            print("Conversation cleared.")
+            continue
 
-    if not user_input:
-        continue
+        if not user_input:
+            continue
 
     # Add User message to the conversation
     conversation_tokens.append(user_start)
@@ -82,7 +84,8 @@ while True:
         "top_k": args.top_k,
     }
     response_tokens = []
-    print("\nAssistant: ", end="", flush=True)
+    if not args.prompt:
+        print(f"\n{paint('done', 'Assistant')}: ", end="", flush=True)
     for token_column, token_masks in engine.generate(conversation_tokens, **generate_kwargs):
         token = token_column[0] # pop the batch dimension (num_samples=1)
         response_tokens.append(token)

@@ -3,7 +3,7 @@ name = "nanochat"
 version = "0.1.0"
 description = "the minimal full-stack ChatGPT clone"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "filelock>=3.19.0",
     "kernels>=0.11.7",
@@ -12,7 +12,10 @@ dependencies = [
     "pyarrow>=21.0.0",
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
-    "torch==2.9.1",
+    # Original: torch==2.9.1. macOS x86_64 wheels stopped after 2.2.2 (Intel Mac
+    # or Rosetta Python). Native Apple Silicon arm64 keeps 2.9.1.
+    "torch==2.9.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "torch==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "wandb>=0.21.3",
 ]
 
@@ -20,24 +23,29 @@ dependencies = [
 dev = [
     "ipykernel>=7.1.0",
     "matplotlib>=3.10.8",
+    "modal>=1.6.4",
     "pytest>=8.0.0",
+    "pytest-cov>=7.1.0",
     "python-dotenv>=1.2.1",
+    "ruff>=0.17.5",
 ]
 
 [tool.pytest.ini_options]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
+pythonpath = ["."]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-# target torch to cuda 12.8 or CPU
+# Linux/Windows: pytorch-cpu (cpu) / pytorch-cu128 (gpu). macOS: PyPI (MPS /
+# last x86_64 wheel). cu128 has no macOS wheels — keep it Linux-only.
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cpu", extra = "cpu" },
-    { index = "pytorch-cu128", extra = "gpu" },
+    { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform != 'darwin'" },
+    { index = "pytorch-cu128", extra = "gpu", marker = "sys_platform == 'linux'" },
 ]
 
 [[tool.uv.index]]
@@ -53,10 +61,12 @@ explicit = true
 [project.optional-dependencies]
 cpu = [
     "setuptools>=65.0.0",
-    "torch==2.9.1",
+    "torch==2.9.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "torch==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 gpu = [
-    "torch==2.9.1",
+    "torch==2.9.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "torch==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
 [tool.uv]

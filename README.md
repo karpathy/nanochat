@@ -37,6 +37,19 @@ uv sync --extra cpu    # (or) Use for CPU-only / MPS
 source .venv/bin/activate
 ```
 
+Torch is selected automatically from your OS and Python architecture (no extra flags):
+
+| Platform | Torch | Wheel source |
+|----------|-------|--------------|
+| Linux CUDA (`--extra gpu`) | 2.9.1 | pytorch cu128 index |
+| Linux / Windows CPU | 2.9.1 | pytorch cpu index |
+| macOS Apple Silicon (native `arm64` Python) | 2.9.1 | PyPI (MPS) |
+| macOS `x86_64` (Intel Mac **or** Rosetta Python) | 2.2.2 | PyPI (last supported) |
+
+On Mac prefer `uv sync --extra cpu` (MPS). `--extra gpu` is the CUDA/Linux path; markers keep it from pulling the cu128 index on darwin.
+
+Same commands work everywhere; markers in `pyproject.toml` apply the right pin and index. If you are on Apple Silicon but `python -c "import platform; print(platform.machine())"` prints `x86_64`, recreate the venv with a native arm64 Python to get torch 2.9.1 instead of the x86_64 fallback. On a Mac or CPU box, see [Running on CPU / MPS](#running-on-cpu--mps) next.
+
 For development (adds pytest, matplotlib, ipykernel, transformers, etc.):
 
 ```bash
@@ -76,10 +89,23 @@ Get it to write stories or poems. Ask it to tell you who you are to see a halluc
 > Where every hue seems to sing a story.<br>
 > ...
 
+## Training methods
+
+| Method | Command | Hardware | Time | Cost |
+|--------|---------|----------|------|------|
+| **Local CPU/MPS** | `bash runs/runcpu.sh` | Mac or CPU machine | ~1 hour | Free |
+| **Local GPU** | `bash runs/speedrun.sh` | 8×H100 bare metal | ~1.5–2 hours | $40–60 (yours) |
+| **Cloud CPU (Modal)** | `bash runs/runmodal.sh` (default `MODE=cpu`) | Modal, up to 64 cores / 128 GiB, no GPU | Unmeasured (first run measures it) | Scales with cores; check `modal billing rates` |
+| **Cloud GPU (Modal)** | `MODE=gpu bash runs/runmodal.sh` | Modal 8×H100 | ~1.5–2 hours | ~$40–60 (first run higher) |
+| **Modal: download a finished run** | `bash runs/runmodal.sh finish <run-id>` (or `bash runs/modal_peek.sh pull` for the latest run) | Your laptop | Minutes | Copies the run record and the newest chat model to `~/.cache/nanochat-modal/<mode>/`; see [docs/MODAL.md](docs/MODAL.md) |
+
+The **Cloud** options train on Modal without requiring local hardware. `MODE=cpu` runs the small `runcpu` profile on a heavy CPU machine, with no GPU payment gate. `MODE=gpu` runs the GPT-2-grade `speedrun` profile on 8×H100 and needs a Modal payment method and an 8×H100 entitlement. For details, prerequisites, and how to use the trained model locally afterward, see [docs/MODAL.md](docs/MODAL.md). All project diagrams (training pipeline, Modal data flow, skip rules) are in [docs/DIAGRAMS.md](docs/DIAGRAMS.md).
+
 A few more notes:
 
 - The code will run just fine on the Ampere 8XA100 GPU node as well, but a bit slower.
 - All code will run just fine on even a single GPU by omitting `torchrun`, and will produce ~identical results (code will automatically switch to gradient accumulation), but you'll have to wait 8 times longer.
+- Note: `base_train` in `speedrun.sh` respects the GPU count variable, but `base_eval`, `chat_sft`, and `chat_eval` hardcode 8 GPUs. To use fewer than 8, edit those `--nproc_per_node=8` lines in [runs/speedrun.sh](runs/speedrun.sh) or reduce `--device-batch-size` to fit in memory.
 - If your GPU(s) have less than 80GB, you'll have to tune some of the hyperparameters or you will OOM / run out of VRAM. Look for `--device-batch-size` in the scripts and reduce it until things fit. E.g. from 32 (default) to 16, 8, 4, 2, or even 1. Less than that you'll have to know a bit more what you're doing and get more creative.
 - Most of the code is fairly vanilla PyTorch so it should run on anything that supports that - xpu, mps, or etc, but I haven't personally exercised all of these code paths so there might be sharp edges.
 
@@ -110,6 +136,15 @@ The important thing to note is that nanochat is written and configured around on
 ## Running on CPU / MPS
 
 The script [runs/runcpu.sh](runs/runcpu.sh) shows a very simple example of running on CPU or Apple Silicon. It dramatically shrinks the LLM that is being trained to make things fit into a reasonable time interval of a few ten minutes of training. You will not get strong results in this way.
+
+On a Mac (or any CPU/MPS machine) use `bash runs/runcpu.sh`. Do not run `runs/speedrun.sh` here — it is for an 8XH100 CUDA node and **exits with ERROR** if no CUDA is found.
+
+- Re-runs are safe: finished stages print `SKIP` and cost nothing (train needs a profile+depth-tagged marker such as `.stage_base_train_runcpu_d6`, not only `model_*.pt`; the marker is written automatically on a clean finish).
+- The script stops at the first failing stage. Fix the cause, then re-run the same command.
+- On MPS, training stays **eager** (`torch.compile` / Inductor is skipped); auto-fit may shrink `device_batch_size`. Knobs live in `nanochat/defaults.py` + `runs/profiles.sh`.
+- Stage markers, `FORCE_STAGES`, log legend, memory/OOM, NaN, RoPE, and torch 2.2.2 notes: [docs/RUNNING.md](docs/RUNNING.md).
+- Console legends and stage terms: [docs/RUNNING.md §5–§6b](docs/RUNNING.md#5-reading-the-logs-echo-legend).
+- What to do after training finishes (chat, eval, results location, stale lock): [docs/RUNNING.md §13](docs/RUNNING.md#13-after-all-done). The same guide covers `speedrun.sh` failure shapes; link it from your GPU node too.
 
 ## Precision / dtype
 

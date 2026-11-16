@@ -12,29 +12,84 @@ python -m scripts.base_train --depth=4 --max-seq-len=512 --device-batch-size=1 -
 """
 
 import os
+import sys
+
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+import argparse
 import gc
 import json
-import time
 import math
-import argparse
-from dataclasses import asdict
+import time
 from contextlib import contextmanager
+from dataclasses import asdict
 
-import wandb
 import torch
 import torch.distributed as dist
+import wandb
 
-from nanochat.gpt import GPT, GPTConfig, Linear
-from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
-from nanochat.tokenizer import get_tokenizer, get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
-from nanochat.loss_eval import evaluate_bpb
+from nanochat.checkpoint_manager import (
+    BASE_TRAIN_RESUME_KEYS,
+    assert_resume_config_matches,
+    load_checkpoint,
+    remove_stale_tmp,
+    save_checkpoint,
+    should_save_checkpoint,
+)
+from nanochat.common import (
+    COMPUTE_DTYPE,
+    COMPUTE_DTYPE_REASON,
+    IGNORE_INDEX,
+    DummyWandb,
+    autodetect_device_type,
+    collective_check_finite_loss,
+    compute_cleanup,
+    compute_eta_str,
+    compute_init,
+    format_duration,
+    get_base_dir,
+    get_peak_flops,
+    is_ddp_initialized,
+    maybe_torch_compile,
+    print0,
+    print_banner,
+)
+from nanochat.dataloader import (
+    tokenizing_distributed_data_loader_bos_bestfit,
+    tokenizing_distributed_data_loader_with_state_bos_bestfit,
+)
+from nanochat.defaults import DEFAULT_DEPTH, DEFAULT_DEVICE_BATCH_SIZE, DEFAULT_SEQ_LEN
 from nanochat.engine import Engine
 from nanochat.flash_attention import HAS_FA3
+from nanochat.glossary import emit_define
+from nanochat.gpt import GPT, GPTConfig, Linear
+from nanochat.loss_eval import evaluate_bpb
+from nanochat.memory import (
+    auto_fit_echo_lines,
+    auto_fit_enabled,
+    empty_device_cache,
+    fit_device_batch_size,
+    format_oom_retry_line,
+    is_out_of_memory_error,
+    oom_after_rehalve_error,
+    oom_rehalve_once,
+    training_module_after_oom_rehalve,
+)
+from nanochat.metrics_trend import emit_metric_trend
+from nanochat.run_record import make_run_logger
+from nanochat.term_style import paint
+from nanochat.tokenizer import get_token_bytes, get_tokenizer
 from scripts.base_eval import evaluate_core
+
 print_banner()
+
+
+def _make_colored_print_fn(role: str):
+    """Return a print function that colorizes the output using paint(role, ...)."""
+    def colored_print(text: str) -> None:
+        colored_text = paint(role, text)
+        print0(colored_text)
+    return colored_print
+
 
 # -----------------------------------------------------------------------------
 # CLI arguments
@@ -47,17 +102,18 @@ parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (e
 parser.add_argument("--fp8", action="store_true", help="enable FP8 training (requires H100+ GPU)")
 parser.add_argument("--fp8-recipe", type=str, default="tensorwise", choices=["rowwise", "tensorwise"], help="FP8 scaling recipe: tensorwise (faster, recommended) or rowwise (more accurate but slower)")
 # Model architecture
-parser.add_argument("--depth", type=int, default=20, help="depth of the Transformer model")
+parser.add_argument("--depth", type=int, default=DEFAULT_DEPTH, help="depth of the Transformer model")
 parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
-parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
+parser.add_argument("--max-seq-len", type=int, default=DEFAULT_SEQ_LEN, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
 parser.add_argument("--target-param-data-ratio", type=float, default=12, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
 # Optimization
-parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size. good number to reduce to 16,8,4,... if you OOM on VRAM.")
+parser.add_argument("--device-batch-size", type=int, default=DEFAULT_DEVICE_BATCH_SIZE, help="per-device batch size. good number to reduce to 16,8,4,... if you OOM on VRAM.")
+parser.add_argument("--auto-fit-batch", action=argparse.BooleanOptionalAction, default=None, help="shrink --device-batch-size until the estimated peak fits device memory (default: on for mps, off for cuda/cpu)")
 parser.add_argument("--total-batch-size", type=int, default=-1, help="total batch size in tokens. decent numbers are e.g. 524288. (-1 = auto-compute optimal)")
 parser.add_argument("--embedding-lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
 parser.add_argument("--unembedding-lr", type=float, default=0.008, help="learning rate for unembedding parameters (Adam)")
@@ -75,6 +131,7 @@ parser.add_argument("--core-metric-every", type=int, default=2000, help="evaluat
 parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
+parser.add_argument("--save-every-secs", type=float, default=-1, help="save checkpoints every N seconds, decided by rank 0 (-1 = disabled)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
@@ -94,13 +151,34 @@ if device_type == "cuda":
 else:
     gpu_peak_flops = float('inf')  # MFU not meaningful for CPU/MPS
 print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
+_dev_name = torch.cuda.get_device_name(0) if device_type == "cuda" else ("Apple Silicon GPU (MPS)" if device_type == "mps" else "CPU")
+_base_dir = get_base_dir()
+print0(f"torch {torch.__version__} | device: {device_type} ({_dev_name}) | world size: {ddp_world_size}")
+print0(f"NANOCHAT_BASE_DIR: {os.environ.get('NANOCHAT_BASE_DIR', '(unset)')} | base_dir: {_base_dir}")
+print0(f"load/save roots: {os.path.join(_base_dir, 'base_checkpoints')} | tokenizer: {os.path.join(_base_dir, 'tokenizer')}")
+
+# -----------------------------------------------------------------------------
+# Memory preflight: settle the device batch size while nothing large is allocated yet
+empty_device_cache(device)
+if auto_fit_enabled(args.auto_fit_batch, device_type):
+    fitted_batch_size, fit_report = fit_device_batch_size(
+        args.device_batch_size, depth=args.depth, seq_len=args.max_seq_len, device_type=device_type,
+    )
+    for line in auto_fit_echo_lines(fit_report, [
+        ("CLI_default", DEFAULT_DEVICE_BATCH_SIZE),
+        ("profile", args.device_batch_size),
+        ("fitted", fitted_batch_size),
+    ]):
+        print0(line)
+    args.device_batch_size = fitted_batch_size
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
+wandb_run = make_run_logger(DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config), config=user_config)
 
 # Flash Attention status
 from nanochat.flash_attention import USE_FA3
+
 using_fa3 = USE_FA3
 if using_fa3:
     print0("✓ Using Flash Attention 3: efficient, new and awesome.")
@@ -142,6 +220,18 @@ def build_model_meta(depth):
         model_meta = GPT(config)
     return model_meta
 
+# If we are resuming, check before building the model
+base_dir = get_base_dir()
+output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
+checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
+resuming = args.resume_from_step != -1
+
+# Print resume banner before model build
+if resuming:
+    print0("=" * 60)
+    print0(f"Resuming optimization from step {args.resume_from_step}")
+    print0("=" * 60)
+
 # Build the model, move to device, init the weights
 model = build_model_meta(args.depth) # 1) Build on meta device (only shapes/dtypes, no data)
 model_config = model.config
@@ -151,12 +241,9 @@ model.to_empty(device=device) # 2) All tensors get storage on target device but 
 model.init_weights() # 3) All tensors get initialized
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
-base_dir = get_base_dir()
-output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
-checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
-resuming = args.resume_from_step != -1
+if master_process:
+    remove_stale_tmp(checkpoint_dir)
 if resuming:
-    print0(f"Resuming optimization from step {args.resume_from_step}")
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)
     model.load_state_dict(model_data, strict=True, assign=True)
     del model_data # free up this memory after the copy
@@ -170,9 +257,10 @@ if args.fp8:
         print0("Warning: FP8 training requires CUDA, ignoring --fp8 flag")
     else:
         # our custom fp8 is simpler than torchao, written for exact API compatibility
-        from nanochat.fp8 import Float8LinearConfig, convert_to_float8_training
         # from torchao.float8 import Float8LinearConfig, convert_to_float8_training
-        import torch.nn as nn
+        from torch import nn
+
+        from nanochat.fp8 import Float8LinearConfig, convert_to_float8_training
 
         # Filter: dims must be divisible by 16 (FP8 hardware requirement) large enough
         def fp8_module_filter(mod: nn.Module, fqn: str) -> bool:
@@ -180,9 +268,7 @@ if args.fp8:
                 return False
             if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
                 return False
-            if min(mod.in_features, mod.out_features) < 128:
-                return False
-            return True
+            return not min(mod.in_features, mod.out_features) < 128
 
         fp8_config = Float8LinearConfig.from_recipe_name(args.fp8_recipe)
         num_linear = sum(1 for m in model.modules() if isinstance(m, nn.Linear))
@@ -199,7 +285,6 @@ def disable_fp8(model):
     CastConfig is a frozen dataclass, so we can't mutate scaling_type. Instead,
     we swap out Float8Linear modules entirely and restore them after.
     """
-    import torch.nn as nn
 
     # Find all Float8Linear modules and their locations
     fp8_locations = []  # list of (parent_module, attr_name, fp8_module)
@@ -243,14 +328,16 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+# dynamic=False is safe while batch shape is fixed; an OOM rehalve falls back to orig_model.
+# MPS: Inductor has no backend — maybe_torch_compile leaves the model eager (and echoes once).
+model = maybe_torch_compile(model, device_type, dynamic=False)
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
 
 # Get the parameter counts of our model
 param_counts = model.num_scaling_params()
-print0(f"Parameter counts:")
+print0("Parameter counts:")
 for key, value in param_counts.items():
     print0(f"{key:24s}: {value:,}")
 num_params = param_counts['total']
@@ -283,6 +370,29 @@ if total_batch_size == -1:
     total_batch_size = 2 ** round(math.log2(predicted_batch_size)) # clamp to nearest power of 2 for efficiency
     print0(f"Auto-computed optimal batch size: {total_batch_size:,} tokens")
 
+# FIX 3a: overwrite the raw CLI value (-1 when auto) with the resolved batch size so the
+# checkpoint stores the value actually used, not the sentinel that triggers auto-compute.
+user_config["total_batch_size"] = total_batch_size
+# FIX 3b: record world_size in user_config so the resume guard can verify it.
+user_config["world_size"] = ddp_world_size
+
+# Resume config guard: refuse to resume if key training dimensions changed since the checkpoint.
+# FIX 3c: guard key list lives in checkpoint_manager (single owner).
+if resuming:
+    assert_resume_config_matches(
+        meta_data.get("user_config", meta_data),
+        {
+            "device_batch_size": args.device_batch_size,
+            "max_seq_len": args.max_seq_len,
+            "total_batch_size": total_batch_size,
+            "num_iterations": args.num_iterations,
+            "world_size": ddp_world_size,
+        },
+        BASE_TRAIN_RESUME_KEYS,
+        stage="base_train",
+        hint="use FORCE_STAGES=base_train to restart from scratch",
+    )
+
 # 3) Knowing the batch size, we can now calculate a learning rate correction (bigger batch size allows higher learning rates)
 batch_lr_scale = 1.0
 batch_ratio = total_batch_size / B_REF # B/B_ref
@@ -305,6 +415,7 @@ if weight_decay_scaled != args.weight_decay:
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
+print0("Building optimizer (MuonAdamW)...")
 optimizer = model.setup_optimizer(
     # AdamW hyperparameters
     unembedding_lr=args.unembedding_lr * batch_lr_scale,
@@ -314,10 +425,13 @@ optimizer = model.setup_optimizer(
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,
 )
+print0("Optimizer ready")
 
 if resuming:
+    print0("Loading optimizer state from checkpoint...")
     optimizer.load_state_dict(optimizer_data)
     del optimizer_data
+    print0("Optimizer state loaded")
 
 # -----------------------------------------------------------------------------
 # GradScaler for fp16 training (bf16/fp32 don't need it — bf16 has the same exponent range as fp32)
@@ -328,9 +442,14 @@ if scaler is not None:
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders for train/val
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
+# Built through a function because an OOM re-halve has to rebuild it at the smaller batch size
+print0("Building train dataloader...")
+build_train_loader = lambda resume_state_dict: tokenizing_distributed_data_loader_with_state_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="train", device=device, resume_state_dict=resume_state_dict)
+train_loader = build_train_loader(dataloader_resume_state_dict)
 build_val_loader = lambda: tokenizing_distributed_data_loader_bos_bestfit(tokenizer, args.device_batch_size, args.max_seq_len, split="val", device=device)
+print0("Fetching first train batch (tokenization / disk I/O can take a while)...")
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
+print0(f"First train batch ready: x.shape={tuple(x.shape)}")
 
 # -----------------------------------------------------------------------------
 # Calculate the number of iterations we will train for and set up the various schedulers
@@ -389,6 +508,11 @@ def get_weight_decay(it):
 # Training loop
 
 # Loop state (variables updated by the training loop)
+nan_steps = 0 # consecutive NaN-loss steps
+MAX_NAN_STEPS = 5 # abort after this many consecutive NaN losses
+# The run gets one OOM re-halve, and only when it owns the whole step: ranks OOM independently,
+# so re-halving on one of them would leave the others waiting on a batch shape that never comes.
+oom_retry_spent = ddp_world_size > 1
 if not resuming:
     step = 0
     val_bpb = None # will be set if eval_every > 0
@@ -404,15 +528,86 @@ else:
     total_training_time = loop_state["total_training_time"]
 
 # Figure out the needed gradient accumulation micro-steps to reach the desired total batch size per step
+def resolve_grad_accum_steps():
+    """Micro-steps per optimizer step at the current device batch size (an OOM re-halve doubles them)."""
+    world_tokens = args.device_batch_size * args.max_seq_len * ddp_world_size
+    assert total_batch_size % world_tokens == 0, f"total_batch_size ({total_batch_size}) must be a multiple of {world_tokens}."
+    return total_batch_size // world_tokens
+
 tokens_per_fwdbwd = args.device_batch_size * args.max_seq_len # tokens per iteration for a single rank
 world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size # total tokens per iteration for all ranks
-assert total_batch_size % world_tokens_per_fwdbwd == 0, f"total_batch_size ({total_batch_size}) must be a multiple of {world_tokens_per_fwdbwd}."
-grad_accum_steps = total_batch_size // world_tokens_per_fwdbwd
+grad_accum_steps = resolve_grad_accum_steps()
 print0(f"Tokens / micro-batch / rank: {args.device_batch_size} x {args.max_seq_len} = {tokens_per_fwdbwd:,}")
 print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 
+def accumulate_gradients(x, y):
+    """
+    One optimizer step's worth of forward/backward, prefetching the next batch as it goes.
+    Returns the detached loss plus the batch the next step starts from.
+
+    Reads train_loader and grad_accum_steps at call time, so a retry after an OOM re-halve
+    runs on the rebuilt loader and the doubled micro-step count.
+    """
+    # S1: accumulate a non-finite flag across ALL micro-steps so a NaN in micro-step 0
+    # of N is not silently swallowed when micro-step N-1 happens to be finite.
+    # S2: clone y from the NaN micro-batch before next(train_loader) overwrites the
+    # persistent buffer, so the error message reports the right unmasked-token count.
+    nan_flag = False
+    nan_targets = None  # targets from the micro-batch that produced the first NaN
+    for micro_step in range(grad_accum_steps):
+        # Warn on a micro-batch where every target is masked (SFT-style masking; rare in pretraining).
+        n_valid = int((y != IGNORE_INDEX).sum())
+        if n_valid == 0:
+            print0(
+                f"WARNING: step {step}, micro-step {micro_step}: all targets are masked "
+                f"(IGNORE_INDEX={IGNORE_INDEX}); loss will be 0.0 and gradients will be zero."
+            )
+        loss = model(x, y)
+        train_loss = loss.detach() # for logging
+        # Accumulate flag; clone targets before the prefetch below overwrites the persistent buffer.
+        if not nan_flag and not torch.isfinite(train_loss):
+            nan_flag = True
+            nan_targets = y.clone()
+        loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
+        if scaler is not None:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
+        x, y, next_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+    # Single collective check after all micro-steps: covers every micro-batch (S1) and
+    # reports unmasked tokens from the batch that caused the NaN, not the prefetched one (S2).
+    collective_check_finite_loss(
+        train_loss, step,
+        nan_targets if nan_flag else y,
+        nan_flag=nan_flag,
+    )
+    return train_loss, x, y, next_state_dict
+
+def rehalve_after_oom():
+    """
+    Spend the one OOM retry the run gets: drop the dead gradients, free cached blocks, halve
+    the batch and rebuild the loader around it. Falls back to orig_model so torch.compile's
+    fixed-shape invariant is not violated. Raises at batch 1, where nothing is left to halve.
+    """
+    global grad_accum_steps, train_loader, model
+    model.zero_grad(set_to_none=True) # the failed step's partial gradients are worthless
+    rehalved_batch_size = oom_rehalve_once(args.device_batch_size, device_type)
+    print0(format_oom_retry_line(args.device_batch_size, rehalved_batch_size))
+    args.device_batch_size = rehalved_batch_size
+    grad_accum_steps = resolve_grad_accum_steps()
+    train_loader = build_train_loader(dataloader_state_dict)
+    model = training_module_after_oom_rehalve(orig_model)  # eager: batch shape just changed
+    return next(train_loader)
+
 # Go!
+# Define the terms that will appear in this stage (once per process when unbriefed).
+emit_define("MFU", print_fn=print0)
+emit_define("Muon", print_fn=print0)
+emit_define("BPB", print_fn=print0)
+emit_define("CORE", print_fn=print0)
+
+last_save_time = time.monotonic()
 while True:
     last_step = step == num_iterations # loop runs num_iterations+1 times so that we can eval/save at the end
     flops_so_far = num_flops_per_token * total_batch_size * step
@@ -422,11 +617,20 @@ while True:
         model.eval()
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
+        print0(f"Step {step:05d} | starting validation bpb ({eval_steps} steps, ~{args.eval_tokens:,} tokens)...")
         with disable_fp8(model):
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.6f}")
-        if val_bpb < min_val_bpb:
-            min_val_bpb = val_bpb
+        validation_line = f"Step {step:05d} | Validation bpb: {val_bpb:.6f}"
+        print0(paint("done", validation_line))
+        if master_process:
+            emit_metric_trend(
+                os.path.join(get_base_dir(), "last_metrics.json"),
+                "val_bpb",
+                float(val_bpb),
+                lower_is_better=True,
+                print_fn=_make_colored_print_fn("done"),
+            )
+        min_val_bpb = min(min_val_bpb, val_bpb)
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -443,7 +647,16 @@ while True:
         model.eval()
         with disable_fp8(orig_model):
             results = evaluate_core(orig_model, tokenizer, device, max_per_task=args.core_metric_max_per_task)
-        print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
+        core_line = f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}"
+        print0(paint("done", core_line))
+        if master_process:
+            emit_metric_trend(
+                os.path.join(get_base_dir(), "last_metrics.json"),
+                "CORE",
+                float(results["core_metric"]),
+                lower_is_better=False,
+                print_fn=_make_colored_print_fn("done"),
+            )
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -473,8 +686,16 @@ while True:
             print0(tokenizer.decode(sample[0]))
         model.train()
 
-    # save checkpoint: at the end of the run, or every save_every steps, except at the first step or the resume step
-    if last_step or (step > 0 and step != args.resume_from_step and args.save_every > 0 and step % args.save_every == 0):
+    # save checkpoint: at the end of the run, every save_every steps, or every save_every_secs (rank 0 decides, all ranks follow), except at the first step or the resume step
+    elapsed = time.monotonic() - last_save_time
+    # Rank 0 decides if time is due; broadcast so all ranks agree before saving.
+    time_due: bool = args.save_every_secs > 0 and elapsed >= args.save_every_secs
+    if ddp and args.save_every_secs > 0:
+        due_flag = torch.tensor([int(master_process and time_due)], device=device)
+        dist.broadcast(due_flag, src=0)
+        time_due = bool(due_flag.item())
+    if should_save_checkpoint(step, args.resume_from_step, time_due,
+                              args.save_every, last_step):
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -497,6 +718,7 @@ while True:
             },
             rank=ddp_rank,
         )
+        last_save_time = time.monotonic()
 
     # termination conditions (TODO: possibly also add loss explosions etc.)
     if last_step:
@@ -507,15 +729,22 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
-    for micro_step in range(grad_accum_steps):
-        loss = model(x, y)
-        train_loss = loss.detach() # for logging
-        loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
-        if scaler is not None:
-            scaler.scale(loss).backward()
-        else:
-            loss.backward()
-        x, y, dataloader_state_dict = next(train_loader) # prefetch the next batch while the GPU is busy with forward/backward
+    # Announce once before the first (often longest) step — not every non-CUDA step (echo firehose).
+    if step == 0:
+        print0(f"Step {step:05d} | training forward/backward ({grad_accum_steps} micro-steps)...")
+    try:
+        train_loss, x, y, dataloader_state_dict = accumulate_gradients(x, y)
+    except (RuntimeError, MemoryError) as step_error:
+        if oom_retry_spent or not is_out_of_memory_error(step_error):
+            raise
+        oom_retry_spent = True
+        x, y, dataloader_state_dict = rehalve_after_oom()
+        try:
+            train_loss, x, y, dataloader_state_dict = accumulate_gradients(x, y)
+        except (RuntimeError, MemoryError) as retry_error:
+            if is_out_of_memory_error(retry_error):
+                raise oom_after_rehalve_error(args.device_batch_size) from retry_error
+            raise
     # step the optimizer
     lrm = get_lr_multiplier(step)
     muon_momentum = get_muon_momentum(step)
@@ -539,6 +768,15 @@ while True:
         optimizer.step()
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
+    if math.isnan(train_loss_f):
+        nan_steps += 1
+        if nan_steps == 1:
+            print0(f"WARNING: loss is NaN at step {step} (numerical instability, NOT a memory problem). Check lr / dtype / data; aborting after {MAX_NAN_STEPS} consecutive NaN steps.")
+        if nan_steps >= MAX_NAN_STEPS:
+            print0(f"ERROR: {MAX_NAN_STEPS} consecutive NaN losses (step {step}). Aborting. See docs/RUNNING.md for troubleshooting.")
+            sys.exit(1)
+    else:
+        nan_steps = 0
     synchronize()
     t1 = time.time()
     dt = t1 - t0
@@ -554,17 +792,11 @@ while True:
     mfu = 100 * flops_per_sec / (gpu_peak_flops * ddp_world_size)
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
-    # Calculate ETA based on average time per step (excluding first 10 steps)
     steps_done = step - 10
-    if steps_done > 0:
-        avg_time_per_step = total_training_time / steps_done
-        remaining_steps = num_iterations - step
-        eta_seconds = remaining_steps * avg_time_per_step
-        eta_str = f" | eta: {eta_seconds/60:.1f}m"
-    else:
-        eta_str = ""
+    eta_str = compute_eta_str(total_training_time, steps_done, num_iterations)
     epoch = f"{dataloader_state_dict['epoch']} pq: {dataloader_state_dict['pq_idx']} rg: {dataloader_state_dict['rg_idx']}"
-    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
+    mfu_field = paint("done", f"bf16_mfu: {mfu:.2f}")
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | {mfu_field} | epoch: {epoch} | total time: {format_duration(total_training_time)}{eta_str}")
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -595,10 +827,15 @@ while True:
 
 # print a few more stats
 print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
-print0(f"Total training time: {total_training_time/60:.2f}m")
+print0(f"Total training time: {format_duration(total_training_time)}")
 if val_bpb is not None:
     print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
 
 # cleanup
 wandb_run.finish() # wandb run finish
 compute_cleanup()
+if master_process:  # marker: last action of a successful run (shell SKIP gate; see runs/_stage_lib.sh)
+    marker_dir = os.path.join(get_base_dir(), "base_checkpoints")
+    os.makedirs(marker_dir, exist_ok=True)
+    open(os.path.join(marker_dir, ".train_ok"), "w").close()
+    print0(f"Wrote completion marker: {os.path.join(marker_dir, '.train_ok')}")

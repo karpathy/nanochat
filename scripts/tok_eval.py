@@ -2,8 +2,11 @@
 Evaluate compression ratio of the tokenizer.
 """
 
+import os
+from nanochat.common import get_base_dir
 from nanochat.tokenizer import get_tokenizer, RustBPETokenizer
 from nanochat.dataset import parquets_iter_batched
+from nanochat.glossary import emit_define
 
 # Random text I got from a random website this morning
 news_text = r"""
@@ -160,6 +163,8 @@ all_text = [
 if val_text:
     all_text.append(("climbmix-val", val_text))
 
+emit_define("compression ratio")
+
 # Try out current default compared to GPT-2 and GPT-4 tokenizers
 tokenizer_results = {}
 vocab_sizes = {}
@@ -241,3 +246,8 @@ def print_comparison(baseline_name, baseline_results, ours_results, all_text):
 # Print comparisons
 print_comparison("GPT-2", tokenizer_results['gpt2'], tokenizer_results['ours'], all_text)
 print_comparison("GPT-4", tokenizer_results['gpt4'], tokenizer_results['ours'], all_text)
+
+# marker: last action of a successful run
+_tok_dir = os.path.join(get_base_dir(), "tokenizer")
+os.makedirs(_tok_dir, exist_ok=True)
+open(os.path.join(_tok_dir, ".tok_eval_ok"), "w").close()
