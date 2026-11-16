@@ -406,19 +406,18 @@ def _archive_artifacts(run_id: str, mode: str) -> None:
     vol.commit()
 
 
-def _report_run(started: float, cores: int, timeout_s: int, run_id: str) -> None:
+def _report_run(started: float, timeout_s: int, run_id: str) -> None:
     """Print and store what the run used vs what was configured, so sizing can be tuned."""
     children = os.times()
     report = summarize_run(
         wall_s=time.time() - started,
         child_cpu_s=children.children_user + children.children_system,
-        cores_requested=cores,
+        cores_configured=CPU_CORES,
         peak_rss_kb=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
-        memory_limit_bytes=_read_memory_limit(),
+        cgroup_memory_limit_bytes=_read_memory_limit(),
+        configured_memory_bytes=CPU_MEMORY_MIB * 1024 * 1024,
         timeout_s=timeout_s,
     )
-    report["cores_configured"] = CPU_CORES
-    report["memory_configured_gib"] = CPU_MEMORY_MIB / 1024
     print("[report] " + json.dumps(report, indent=2))
     _record(run_id, resources=report)
     vol.commit()
@@ -468,7 +467,7 @@ def train_cpu(
         )
     finally:
         _archive_artifacts(run_id, "cpu")
-        _report_run(started, cores, CPU_TRAIN_TIMEOUT, run_id)
+        _report_run(started, CPU_TRAIN_TIMEOUT, run_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
