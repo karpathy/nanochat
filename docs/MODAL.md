@@ -358,6 +358,7 @@ The training stages and their skip markers are diagrammed in [DIAGRAMS.md](DIAGR
 |---|---|---|
 | `bash runs/runmodal.sh` | regular | Launch a run (`MODE=cpu` default, or `MODE=gpu`) |
 | `modal run runs/modal_run.py::chat --prompt "..."` | regular | Ask the trained model a question on Modal (no download; `--mode cpu`, `--temperature 0.3` defaults) |
+| `bash runs/runmodal.sh resume <run-id>` | maintenance | Continue one named run of the same depth (any age). Refused if it is finished or another CPU run holds the lock. Plain `runmodal.sh` only continues the most recent unfinished run. |
 | `bash runs/runmodal.sh finish <run-id>` | maintenance | Download a finished run's models to your laptop |
 | `bash runs/modal_peek.sh status` | maintenance | Show running apps and active containers (read-only) |
 | `bash runs/modal_peek.sh apps [N]` | maintenance | List the last N Modal apps, including stopped ones |
