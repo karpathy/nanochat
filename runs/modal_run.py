@@ -496,6 +496,52 @@ if MODAL_MODE == "gpu":
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Modal chat: one-shot prompt against the trained model on the Volume (no download)
+
+CHAT_TIMEOUT = 10 * 60  # model load + single-prompt generation
+
+
+@app.function(
+    image=image_cpu,
+    timeout=CHAT_TIMEOUT,
+    volumes={BASE_DIR: vol},
+)
+def chat_on_modal(mode: str, prompt: str, temperature: float = 0.3, top_k: int = 50) -> str:
+    """Run chat_cli -p on the trained model on the Volume. Returns the response text."""
+    if mode not in MODES:
+        raise ValueError(f"Unknown mode {mode!r}: use one of {MODES}")
+    base_dir = f"{BASE_DIR}/{mode}"
+    env = {
+        **os.environ,
+        **_modal_env(base_dir),
+        "PATH": "/root/nanochat/.venv/bin:/usr/local/bin:/usr/bin:/bin",
+    }
+    result = subprocess.run(
+        ["python", "-m", "scripts.chat_cli", "-p", prompt, "-t", str(temperature), "-k", str(top_k)],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+        cwd="/root/nanochat",
+    )
+    if result.returncode != 0:
+        stdout_tail = result.stdout[-500:].strip() if result.stdout else "(empty)"
+        raise RuntimeError(
+            f"chat_cli failed (exit {result.returncode}).\n"
+            f"stderr: {result.stderr.strip() or '(empty)'}\n"
+            f"stdout tail: {stdout_tail}\n"
+            "Hint: ensure the model is trained and the Volume is populated "
+            f"(`modal run runs/modal_run.py --mode {mode}`)."
+        )
+    if not result.stdout.strip():
+        raise RuntimeError(
+            f"chat_cli exited 0 but produced no output (mode={mode!r}).\n"
+            "Hint: check that the Volume contains a trained model for this mode."
+        )
+    return result.stdout
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Local entrypoint: prefetch → train → download → tip
 
 MODES = ("cpu", "gpu")
@@ -625,6 +671,28 @@ def main(mode: str = "cpu", run_id: str = "", code_rev: str = "unknown") -> None
     print("\nThen chat locally with:")
     print(f"  NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/{mode} uv run python -m scripts.chat_cli")
     print("\nSee docs/MODAL.md for details.")
+
+
+@app.local_entrypoint()
+def chat(mode: str = "cpu", prompt: str = "", temperature: float = 0.3, top_k: int = 50) -> None:
+    """Ask the trained model a question on Modal. The model runs on Modal; nothing is downloaded.
+
+    Usage:
+        modal run runs/modal_run.py::chat --prompt "What is the capital of France?"
+        modal run runs/modal_run.py::chat --mode gpu --prompt "Why is the sky blue?"
+        modal run runs/modal_run.py::chat --temperature 0.1 --prompt "..."
+    """
+    if not prompt.strip():
+        raise SystemExit("Pass --prompt (e.g. --prompt 'What is the capital of France?')")
+    if mode not in MODES:
+        raise SystemExit(f"Unknown mode {mode!r}: use --mode cpu or --mode gpu")
+    if temperature < 0:
+        raise SystemExit(f"--temperature must be >= 0 (got {temperature})")
+    if top_k < 1:
+        raise SystemExit(f"--top-k must be >= 1 (got {top_k})")
+    print(f"[local] Running chat on Modal (mode={mode}, temperature={temperature}). No download needed.")
+    response = chat_on_modal.remote(mode, prompt, temperature, top_k)
+    print(response, end="")
 
 
 if __name__ == "__main__":
