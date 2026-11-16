@@ -139,7 +139,7 @@ For scripted/automated runs, skip the confirmation with:
 RUNMODAL_YES=1 bash runs/runmodal.sh
 ```
 
-Each run gets an id (`<UTC time>-<mode>`). Its archive and run record are on the Volume under `runs/<run-id>/`. To check a run from the terminal without changing it, use `bash runs/modal_peek.sh` (commands are listed in the script's header: `status`, `apps`, `past`, `report`, `compare`, `pull`, `info`, `logs`, `container`, `cost`).
+Each run gets an id: CPU runs are `<UTC time>-cpu-d<depth>`, GPU runs are `<UTC time>-gpu`. Its archive and run record are on the Volume under `runs/<run-id>/`. To check a run from the terminal without changing it, use `bash runs/modal_peek.sh` (commands are listed in the script's header: `status`, `apps`, `past`, `report`, `compare`, `pull`, `info`, `logs`, `container`, `cost`).
 
 ## Watching the run
 
@@ -223,7 +223,7 @@ After a successful run, your trained model is on your laptop under `~/.cache/nan
 | Placeholder | What it is | Example |
 |-------------|------------|---------|
 | `<mode>` | Which run you trained: `cpu` (small demo) or `gpu` (full 8×H100) | `cpu` |
-| `<depth>` | Model size, set by the training run; it is the folder name under `chatsft_checkpoints/` | `d6` (a depth-6 model) |
+| `<depth>` | Model size, set by the training run. For GPU (speedrun) it is the folder name under `chatsft_checkpoints/`; for CPU the folder is the run id, and the depth is in the id (`…-cpu-d6`) | `d6` (a depth-6 model) |
 | `<step>` | Training step of the saved checkpoint, zero-padded to 6 digits; the largest number is the latest | `001499` |
 | `<run-id>` | Id of one Modal run, `<UTC time>-<mode>`, shown when you launch it | `20261114-125440-cpu` |
 | `<profile>` / `<env>` | Optional Modal CLI profile or environment name, only if you use one | `default` |
@@ -432,7 +432,7 @@ Run `bash runs/modal_peek.sh status` to check whether the remote job is still li
 bash runs/modal_peek.sh logs -f          # stream logs from the current app
 ```
 
-When it finishes, run `bash runs/runmodal.sh finish <run-id>` to download the models. Re-running `bash runs/runmodal.sh` starts a new run with a new run id and new Modal billing, so do not use it just to download.
+When it finishes, run `bash runs/runmodal.sh finish <run-id>` to download the models. Re-running `bash runs/runmodal.sh` is **not** a download. For CPU it continues the most recent interrupted run of the same depth (no new run is started if that run is unfinished) and it bills Modal compute again, so use `finish` to download.
 
 ## Storage map
 

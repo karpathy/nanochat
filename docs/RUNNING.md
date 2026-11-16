@@ -56,7 +56,7 @@ The flow of stages and the skip rule are diagrammed in [DIAGRAMS.md](DIAGRAMS.md
 
 Where `<model-tag>` is the run id for `runs/runcpu.sh` (one folder per run) and `d<DEPTH>` for `runs/speedrun.sh` (shared, as before).
 
-**Resume (runcpu):** a re-run continues only the most recent run of the same depth, and only if that run has no `.done` file (it was interrupted or stopped). Older unfinished runs are never resumed automatically; to continue one, set `NANOCHAT_RUN_ID=<run-id>` for a local run, or use `bash runs/runmodal.sh resume <run-id>` on Modal. A finished run gets `.done` and is never reused. Only the 3 newest finished runs keep their checkpoints; older ones are deleted when a run finishes.
+**Resume (runcpu):** a re-run continues only the most recent run of the same depth, and only if that run has no `.done` file (it was interrupted or stopped). Older unfinished runs are never resumed automatically; to continue one, set `NANOCHAT_RUN_ID=<run-id>` for a local run, or use `bash runs/runmodal.sh resume <run-id>` on Modal. A finished run gets `.done` and is never reused. Only the 3 newest finished runs keep their working checkpoints (`base_checkpoints/<run-id>/`, `chatsft_checkpoints/<run-id>/`); older ones are deleted when a run finishes. On Modal, each run's archive copy under `runs/<run-id>/artifacts/` is kept.
 
 Notes:
 
