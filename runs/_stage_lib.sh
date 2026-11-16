@@ -46,8 +46,8 @@ record_span() {  # stage status dur_s hook_s start_epoch  (one span per stage; t
 # Per-run model tag = run id. Resumes ONLY the most recent run for this profile suffix (e.g. cpu-d6)
 # when it has no .done marker (an interrupted or stopped run). Older unfinished runs are never resumed
 # automatically; to continue one, set NANOCHAT_RUN_ID explicitly. Otherwise prints a new run id.
-pick_run_id() {  # profile_suffix
-    local suffix="$1" runs_root="$NANOCHAT_BASE_DIR/runs" id
+pick_run_id() {  # profile_suffix [runs_root]
+    local suffix="$1" runs_root="${2:-$NANOCHAT_BASE_DIR/runs}" id
     if [ -d "$runs_root" ]; then
         # Newest entry that is a run folder (plain files with the same suffix are skipped).
         while IFS= read -r id; do

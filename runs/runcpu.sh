@@ -41,7 +41,9 @@ if [ -z "${SKIP_SETUP:-}" ]; then
 fi
 set +u; source .venv/bin/activate; set -u
 # Run record: one folder per run (run.json, milestone events, spans). Modal sets these itself.
-export NANOCHAT_RUN_ID="${NANOCHAT_RUN_ID:-$(pick_run_id "cpu-d${RUNCPU_DEPTH}")}"
+# Search the same run root the done marker and pruning use (the parent of NANOCHAT_RUN_DIR when it is set).
+_RUN_ROOT="$(dirname "${NANOCHAT_RUN_DIR:-$NANOCHAT_BASE_DIR/runs/x}")"
+export NANOCHAT_RUN_ID="${NANOCHAT_RUN_ID:-$(pick_run_id "cpu-d${RUNCPU_DEPTH}" "$_RUN_ROOT")}"
 # Per-run model tag: checkpoints and stage markers live under this id, so a rerun resumes
 # only its own unfinished run and a finished run (.done) is never picked up again.
 export NANOCHAT_MODEL_TAG="$NANOCHAT_RUN_ID"

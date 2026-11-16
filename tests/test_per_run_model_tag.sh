@@ -63,4 +63,9 @@ case "$got" in
 esac
 rm -rf "$R/mytest-cpu-d6"
 
+# The picker searches the root it is given (the same root the done marker is written to).
+ALT="$TMP/alt-runs"; mkdir -p "$ALT/20270101-000000-cpu-d6"
+got="$(pick_run_id "cpu-d6" "$ALT")"
+[ "$got" = "20270101-000000-cpu-d6" ] || { echo "FAIL: custom run root not honoured, got '$got'" >&2; exit 1; }
+
 echo "ok: per-run model tag"
