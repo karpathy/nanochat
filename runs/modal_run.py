@@ -407,6 +407,41 @@ def _archive_artifacts(run_id: str, mode: str) -> None:
     vol.commit()
 
 
+def _clear_stage_markers(mode: str) -> None:
+    """Remove stage-completion markers from the Volume working directories after a successful run.
+
+    Prevents the next run from skipping every stage because the markers from this run are
+    still present. Called only on success (after the try/finally in train_cpu/train) so that
+    a failed or preempted run still resumes correctly from where it stopped.
+
+    Does NOT remove tokenizer.pkl — tok_train is deterministic and expensive; it stays skipped.
+    """
+    base = os.path.join(BASE_DIR, mode)
+    removed = 0
+    # Depth-independent: tok_eval marker
+    tok_eval_marker = os.path.join(base, "tokenizer", ".tok_eval_ok")
+    try:
+        os.remove(tok_eval_marker)
+        removed += 1
+    except FileNotFoundError:
+        pass
+    # Depth-sensitive: all .stage_* files in base_checkpoints and chatsft_checkpoints
+    for subdir in ("base_checkpoints", "chatsft_checkpoints"):
+        d = os.path.join(base, subdir)
+        if not os.path.isdir(d):
+            continue
+        for name in os.listdir(d):
+            if name.startswith(".stage_"):
+                try:
+                    os.remove(os.path.join(d, name))
+                    removed += 1
+                except FileNotFoundError:
+                    pass
+    if removed:
+        vol.commit()
+    print(f"[archive] {removed} stage marker(s) cleared from {mode}/ — next run will start fresh.")
+
+
 def _report_run(started: float, timeout_s: int, run_id: str) -> None:
     """Print and store what the run used vs what was configured, so sizing can be tuned."""
     children = os.times()
@@ -469,6 +504,7 @@ def train_cpu(
     finally:
         _archive_artifacts(run_id, "cpu")
         _report_run(started, CPU_TRAIN_TIMEOUT, run_id)
+    _clear_stage_markers("cpu")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -493,6 +529,7 @@ if MODAL_MODE == "gpu":
             _run_training("runs/speedrun.sh", _run_record_env(run_id, "modal-gpu", code_rev))
         finally:
             _archive_artifacts(run_id, "gpu")
+        _clear_stage_markers("gpu")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

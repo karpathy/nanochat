@@ -114,6 +114,23 @@ stage_path() {
     esac
 }
 
+clear_stage_markers() {
+    # Remove all stage-completion markers so the next run starts fresh.
+    # Call at the end of a pipeline script (after all stages succeed) so that a
+    # failed or preempted run keeps its markers intact and can still resume.
+    # Leaves tokenizer.pkl in place — tok_train is deterministic and expensive.
+    local removed=0 f
+    local tok_eval_marker="$NANOCHAT_BASE_DIR/tokenizer/.tok_eval_ok"
+    [ -f "$tok_eval_marker" ] && rm -f "$tok_eval_marker" && removed=$((removed + 1))
+    for dir in "$NANOCHAT_BASE_DIR/base_checkpoints" "$NANOCHAT_BASE_DIR/chatsft_checkpoints"; do
+        [ -d "$dir" ] || continue
+        for f in "$dir"/.stage_*; do
+            [ -f "$f" ] && rm -f "$f" && removed=$((removed + 1))
+        done
+    done
+    log "stage markers cleared ($removed removed) — next run will start fresh"
+}
+
 stage_done() {
     local stage="$1" marker_path
     marker_path="$(_stage_marker_path "$stage")"

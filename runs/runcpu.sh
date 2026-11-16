@@ -97,6 +97,7 @@ run_stage chat_sft "" "chat with your model (python -m scripts.chat_cli)" -- \
     --run=$WANDB_RUN
 
 log "ALL DONE cumulative=$(fmt_dur "$SECONDS")"
+clear_stage_markers
 write_last_run_json "$PROFILE" "$RUNCPU_DEPTH" "$RUNCPU_DEVICE_BATCH_SIZE" "$RUNCPU_MAX_SEQ_LEN"
 echo '  try: python -m scripts.chat_cli -p "What is the capital of France?"'
 
