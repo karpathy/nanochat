@@ -56,18 +56,19 @@ while True:
             print("\nGoodbye!")
             break
 
-    # Handle special commands
-    if user_input.lower() in ['quit', 'exit']:
-        print("Goodbye!")
-        break
+    # Handle special commands (interactive mode only)
+    if not args.prompt:
+        if user_input.lower() in ['quit', 'exit']:
+            print("Goodbye!")
+            break
 
-    if user_input.lower() == 'clear':
-        conversation_tokens = [bos]
-        print("Conversation cleared.")
-        continue
+        if user_input.lower() == 'clear':
+            conversation_tokens = [bos]
+            print("Conversation cleared.")
+            continue
 
-    if not user_input:
-        continue
+        if not user_input:
+            continue
 
     # Add User message to the conversation
     conversation_tokens.append(user_start)
@@ -83,7 +84,8 @@ while True:
         "top_k": args.top_k,
     }
     response_tokens = []
-    print(f"\n{paint('done', 'Assistant')}: ", end="", flush=True)
+    if not args.prompt:
+        print(f"\n{paint('done', 'Assistant')}: ", end="", flush=True)
     for token_column, token_masks in engine.generate(conversation_tokens, **generate_kwargs):
         token = token_column[0] # pop the batch dimension (num_samples=1)
         response_tokens.append(token)
