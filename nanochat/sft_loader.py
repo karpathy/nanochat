@@ -3,6 +3,20 @@ from dataclasses import dataclass
 
 from nanochat.common import ddp_rank_position
 
+# A batch with no supervised tokens gives loss 0.0 and zero gradients. Halt after this many
+# optimizer steps in a row with none, so a stalled data loader cannot burn compute silently.
+ZERO_TOKEN_STREAK_LIMIT = 10
+
+
+def is_packable(ids: list[int], row_capacity: int) -> bool:
+    """True when a conversation fits in one packed row. Longer ones can never be placed."""
+    return len(ids) <= row_capacity
+
+
+def next_zero_token_streak(streak: int, supervised_tokens: int) -> int:
+    """Count consecutive optimizer steps with no supervised tokens; any token resets the count."""
+    return streak + 1 if supervised_tokens == 0 else 0
+
 
 @dataclass
 class SftLoaderState:
