@@ -636,8 +636,7 @@ def _fetch_file(volume: modal.Volume, remote: str, size: int, local: str) -> boo
     os.makedirs(os.path.dirname(local), exist_ok=True)
     part = f"{local}.part"
     with open(part, "wb") as out:
-        for chunk in volume.read_file(remote):
-            out.write(chunk)
+        out.writelines(volume.read_file(remote))
     if os.path.getsize(part) != size:
         os.remove(part)
         raise RuntimeError(f"size mismatch for {remote}: expected {size} bytes")

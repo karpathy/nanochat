@@ -17,13 +17,22 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
 """
 
 import argparse
-import os
 import itertools
-import wandb
+import os
+
 import torch
 import torch.distributed as dist
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type
-from nanochat.checkpoint_manager import save_checkpoint, load_model
+import wandb
+
+from nanochat.checkpoint_manager import load_model, save_checkpoint
+from nanochat.common import (
+    DummyWandb,
+    autodetect_device_type,
+    compute_cleanup,
+    compute_init,
+    get_base_dir,
+    print0,
+)
 from nanochat.engine import Engine
 from nanochat.last_run import resolve_chat_model_tag
 from tasks.gsm8k import GSM8K

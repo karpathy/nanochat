@@ -8,8 +8,8 @@ import argparse
 
 from nanochat.checkpoint_manager import load_model
 from nanochat.common import autodetect_device_type, compute_init, get_base_dir
-from nanochat.last_run import resolve_chat_model_tag
 from nanochat.engine import Engine
+from nanochat.last_run import resolve_chat_model_tag
 from nanochat.stage_art import render_plaque
 from nanochat.term_style import paint
 

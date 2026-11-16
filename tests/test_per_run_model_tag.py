@@ -8,9 +8,9 @@ Scope: a run's model tag is its run id; the Modal chat picker accepts run-id fol
 import json
 import os
 import subprocess
-from unittest.mock import MagicMock
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,6 +20,7 @@ if str(RUNS_DIR) not in sys.path:
     sys.path.insert(0, str(RUNS_DIR))
 
 import modal_run
+
 from nanochat.last_run import last_run_model_tag, resolve_chat_model_tag
 
 
