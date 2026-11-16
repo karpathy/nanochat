@@ -123,6 +123,7 @@ run_stage chat_eval "" "chat with your model (python3 -m scripts.chat_cli)" -- \
     torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 
 log "ALL DONE cumulative=$(fmt_dur "$SECONDS")"
+clear_stage_markers
 write_last_run_json "$PROFILE" "$SPEEDRUN_DEPTH" "$SPEEDRUN_DEVICE_BATCH_SIZE" "$SPEEDRUN_MAX_SEQ_LEN"
 echo '  try: python3 -m scripts.chat_cli -p "Why is the sky blue?"'
 
