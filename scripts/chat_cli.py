@@ -36,10 +36,10 @@ assistant_start, assistant_end = tokenizer.encode_special("<|assistant_start|>")
 # Create Engine for efficient generation
 engine = Engine(model, tokenizer)
 
-_plaque = render_plaque("chat_cli", "start", "Interactive chat mode")
-if _plaque:
-    print(_plaque)
-print("Type 'quit' or 'exit' to end | 'clear' to reset")
+if not args.prompt:
+    if _plaque := render_plaque("chat_cli", "start", "Interactive chat mode"):
+        print(_plaque)
+    print("Type 'quit' or 'exit' to end | 'clear' to reset")
 
 conversation_tokens = [bos]
 
