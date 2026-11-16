@@ -84,7 +84,8 @@ def test_defaults_to_cpu_mode(fake_modal: tuple[Path, Path]) -> None:
     assert result.returncode == 0, result.stderr
     argv = record.read_text().split()
     # --detach must come before the script path, or modal passes it to the entrypoint and rejects it.
-    assert argv[:5] == ["run", "--detach", "runs/modal_run.py", "--mode", "cpu"]
+    # The explicit ::main entrypoint is required: modal_run.py has several local entrypoints (main, chat).
+    assert argv[:5] == ["run", "--detach", "runs/modal_run.py::main", "--mode", "cpu"]
     assert "--run-id" in argv and "--code-rev" in argv
     assert "CPU mode" in result.stdout
 
@@ -103,7 +104,7 @@ def test_gpu_mode_passes_gpu_and_shows_gpu_cost(fake_modal: tuple[Path, Path]) -
     # ### Then
     assert result.returncode == 0, result.stderr
     argv = record.read_text().split()
-    assert argv[:5] == ["run", "--detach", "runs/modal_run.py", "--mode", "gpu"]
+    assert argv[:5] == ["run", "--detach", "runs/modal_run.py::main", "--mode", "gpu"]
     assert "GPU mode" in result.stdout
     assert "8×H100" in result.stdout
 
