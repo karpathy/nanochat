@@ -62,6 +62,12 @@ S0 → S1 → S2. Each slice is its own branch and PR, and nothing is committed 
 - `uvx ruff check runs/ tests/` and `nanochat/` / `scripts/` as touched.
 - Docs changed in the same PR as the code they describe.
 
+## Follow-ups added 2026-11-16
+
+- **Ruff on master (not gated, not tracked before this plan):** 25 errors, all in `tests/`: 15 × I001 (unsorted imports), 6 × C408, 1 × F541, 1 × F401, 1 × PLR0402, 1 × PLW1510. Fix with `uvx ruff check tests/ --fix` (18 auto-fixable), then review the rest by hand. Separate PR.
+- **SFT stale `.tmp` cleanup:** `remove_stale_tmp` is called only from `scripts/base_train.py:245`, not from `scripts/chat_sft.py`. Add the same call to `chat_sft` with a test.
+- **B1 live check failed (2026-11-16):** `_download_artifacts` fetches `cpu/tokenizer` correctly, but `modal volume get` on `cpu/chatsft_checkpoints` fails with `Is a directory`, even into an empty folder. Fetching `cpu/chatsft_checkpoints/d6` alone writes a single 545 MB file named `d6`. The recursive walk (commit `829d5f7`) is necessary but not sufficient, because the download step fails first on the nested layout. Fix: list files on the Volume and fetch each one to its relative local path, then re-run the live check. Needs Modal Volume access, and the check should run after the current run finishes, so the Volume is not being written.
+
 ## Open decisions
 
 1. **Eval resume granularity:** per task (recommended) or per problem (finer, more code)?
