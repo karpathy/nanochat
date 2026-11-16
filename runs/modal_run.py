@@ -496,6 +496,40 @@ if MODAL_MODE == "gpu":
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Modal chat: one-shot prompt against the trained model on the Volume (no download)
+
+CHAT_TIMEOUT = 10 * 60  # model load + single-prompt generation
+
+
+@app.function(
+    image=image_cpu,
+    timeout=CHAT_TIMEOUT,
+    volumes={BASE_DIR: vol},
+)
+def chat_on_modal(mode: str, prompt: str) -> str:
+    """Run chat_cli -p on the trained model on the Volume. Returns the model's response."""
+    base_dir = f"{BASE_DIR}/{mode}"
+    env = {
+        **os.environ,
+        "NANOCHAT_BASE_DIR": base_dir,
+        "PYTHONPATH": "/root/nanochat",
+        "PATH": "/root/nanochat/.venv/bin:/usr/local/bin:/usr/bin:/bin",
+        "NO_COLOR": "1",
+    }
+    result = subprocess.run(
+        ["python", "-m", "scripts.chat_cli", "-p", prompt],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+        cwd="/root/nanochat",
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"chat_cli failed:\n{result.stderr}")
+    return result.stdout
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Local entrypoint: prefetch → train → download → tip
 
 MODES = ("cpu", "gpu")
@@ -625,6 +659,23 @@ def main(mode: str = "cpu", run_id: str = "", code_rev: str = "unknown") -> None
     print("\nThen chat locally with:")
     print(f"  NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/{mode} uv run python -m scripts.chat_cli")
     print("\nSee docs/MODAL.md for details.")
+
+
+@app.local_entrypoint()
+def chat(mode: str = "cpu", prompt: str = "") -> None:
+    """Ask the trained model a question on Modal. The model runs on Modal; nothing is downloaded.
+
+    Usage:
+        modal run runs/modal_run.py::chat --prompt "What is the capital of France?"
+        modal run runs/modal_run.py::chat --mode gpu --prompt "Why is the sky blue?"
+    """
+    if not prompt:
+        raise SystemExit("Pass --prompt (e.g. --prompt 'What is the capital of France?')")
+    if mode not in MODES:
+        raise SystemExit(f"Unknown mode {mode!r}: use --mode cpu or --mode gpu")
+    print(f"[local] Running chat on Modal (mode={mode}). No download needed.")
+    response = chat_on_modal.remote(mode, prompt)
+    print(response, end="")
 
 
 if __name__ == "__main__":

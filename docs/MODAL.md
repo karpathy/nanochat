@@ -175,6 +175,29 @@ The job is split into stages, each marked in a persistent Modal Volume so re-run
 
 Each stage's marker file lives on the Volume, so a re-run of `runmodal.sh` skips finished stages and only redoes stages that failed or were forced (`FORCE_STAGES=stage_name`).
 
+## Chat on Modal
+
+After training, you can ask the model a question directly on Modal — **no download needed**. The model loads from the Volume and the answer streams back to your terminal.
+
+```bash
+modal run runs/modal_run.py::chat --prompt "What is the capital of France?"
+modal run runs/modal_run.py::chat --mode gpu --prompt "Why is the sky blue?"
+```
+
+> **Note:** `--mode cpu` is the default. Use `--mode gpu` only if you have a completed GPU run on the Volume.
+
+**How it differs from chatting locally:**
+
+| | Chat on Modal | Chat locally |
+|---|---|---|
+| Needs a download? | No — reads directly from the Volume | Yes — model must be on your laptop |
+| Device | CPU (container) | CPU / MPS (your Mac) |
+| Speed | Slower — container cold start + CPU inference | Faster on Apple Silicon (MPS) |
+| Cost | Billed for container time (a few seconds) | Free |
+| Interactive mode | Not supported — one-shot `-p` only | Supported |
+
+For quick one-off questions right after a run, `Chat on Modal` is the fastest path. For repeated conversation, download once and use [Chat locally](#chat-locally).
+
 ## Chat locally
 
 After a successful run, your trained model is on your laptop under `~/.cache/nanochat-modal/<mode>/` (`cpu` or `gpu`). Each mode has its own folder, kept separate from the local `~/.cache/nanochat` used by `runcpu.sh` and `speedrun.sh`.
@@ -318,6 +341,7 @@ The training stages and their skip markers are diagrammed in [DIAGRAMS.md](DIAGR
 | Command | Category | What it does |
 |---|---|---|
 | `bash runs/runmodal.sh` | regular | Launch a run (`MODE=cpu` default, or `MODE=gpu`) |
+| `modal run runs/modal_run.py::chat --prompt "..."` | chat | Ask the trained model a question on Modal (no download; `--mode cpu` default) |
 | `bash runs/runmodal.sh finish <run-id>` | maintenance | Download a finished run's models to your laptop |
 | `bash runs/modal_peek.sh status` | maintenance | Show running apps and active containers (read-only) |
 | `bash runs/modal_peek.sh apps [N]` | maintenance | List the last N Modal apps, including stopped ones |
@@ -337,7 +361,7 @@ Every `modal_peek.sh` command is read-only. Stop an app by hand with `modal app 
 Once `ALL DONE` appears in the terminal:
 
 1. **Activate the venv** (if not already): `source .venv/bin/activate`
-2. **Chat** — see [Chat locally](#chat-locally) above.
+2. **Chat** — no download needed: `modal run runs/modal_run.py::chat --prompt "..."` (see [Chat on Modal](#chat-on-modal)), or download first and use [Chat locally](#chat-locally).
 3. **Check the run record**:
    ```bash
     bash runs/modal_peek.sh report          # config, resources, stage times for the latest run
