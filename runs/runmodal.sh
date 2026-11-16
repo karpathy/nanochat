@@ -7,6 +7,7 @@
 # One command: bash runs/runmodal.sh          (CPU)
 #              MODE=gpu bash runs/runmodal.sh (GPU, later)
 #              bash runs/runmodal.sh finish <run-id>  (download artifacts after run stops)
+#              bash runs/runmodal.sh resume <run-id>  (continue one named run, any age)
 # Prerequisites: Modal account, `modal setup`, local `modal` CLI.
 # Skip the prompt with RUNMODAL_YES=1.
 
@@ -29,6 +30,19 @@ case "$cmd" in
         ;;
     launch)
         # Fall through to main launch logic below
+        ;;
+    resume)
+        # Explicit switch: continue one named run (any age, any depth). Plain launch never does this.
+        RESUME_ID="${2:-}"
+        if [ -z "$RESUME_ID" ]; then
+            echo "ERROR: usage: bash runs/runmodal.sh resume <run-id>" >&2
+            exit 1
+        fi
+        if [ "${MODE:-cpu}" != "cpu" ]; then
+            echo "ERROR: resume is CPU-only (MODE=${MODE:-cpu}); nothing was launched." >&2
+            exit 1
+        fi
+        export NANOCHAT_RESUME_RUN_ID="$RESUME_ID"
         ;;
     *)
         echo "ERROR: unknown command: $cmd" >&2
@@ -56,7 +70,12 @@ print("\n".join(a["app_id"] for a in json.load(sys.stdin) if a.get("description"
 if _APP_JSON=$(modal app list --json 2>/dev/null) && _RUNNING_APP=$(printf '%s' "$_APP_JSON" | python3 -c "$_LIVE_CHECK"); then
     :
 else
-    echo "WARNING: could not check for running Modal apps; proceeding without the concurrency guard." >&2
+    if [ "${NANOCHAT_ALLOW_UNCHECKED_LAUNCH:-}" != "1" ]; then
+        echo "ERROR: could not check for running Modal apps, so refusing to launch (a second container could start)." >&2
+        echo "Fix the Modal CLI, or set NANOCHAT_ALLOW_UNCHECKED_LAUNCH=1 to launch without the check." >&2
+        exit 1
+    fi
+    echo "WARNING: could not check for running Modal apps; launching without the concurrency guard (NANOCHAT_ALLOW_UNCHECKED_LAUNCH=1)." >&2
     _RUNNING_APP=""
 fi
 if [ -n "$_RUNNING_APP" ] && [ "${RUNMODAL_ALLOW_CONCURRENT:-}" != "1" ]; then
@@ -112,7 +131,34 @@ echo "Starting Modal run (runs/modal_run.py, mode=$MODE)..."
 echo ""
 # Every run gets an id and an archive folder: the full log is kept locally next to the Volume
 # copy (runs/<run-id>/run.json and events.jsonl). The code revision ties results to the code.
-RUN_ID="$(date -u +%Y%m%d-%H%M%S)-$MODE"
+# CPU relaunch continues the interrupted run (its checkpoints and markers are reused), unless
+# another CPU run is in progress (refused). NANOCHAT_RESUME_RUN_ID forces a specific id.
+RUN_ID=""
+if [ "$MODE" = "cpu" ]; then
+    set +e
+    # Same depth runcpu.sh uses: profiles.sh is generated from nanochat/defaults.py (single source).
+    source "$SCRIPTDIR/profiles.sh"
+    CPU_DEPTH="$RUNCPU_DEPTH"
+    # Every CPU launch goes through the resolver, so a forced id gets the same depth and liveness checks.
+    RESOLVE_OUT="$(NANOCHAT_MODAL_MODE="$MODE" NANOCHAT_MODAL_VOLUME="$NANOCHAT_MODAL_VOLUME" \
+        modal run runs/modal_run.py::resolve_run --mode "$MODE" --depth "$CPU_DEPTH" \
+        --resume "${NANOCHAT_RESUME_RUN_ID:-}" 2>&1)"
+    RESOLVE_STATUS=$?
+    set -e
+    if [ "$RESOLVE_STATUS" -ne 0 ]; then
+        echo "$RESOLVE_OUT" >&2
+        echo "ERROR: could not choose a run id (see above). Nothing was launched." >&2
+        exit 1
+    fi
+    RUN_ID="$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^RUN_ID=//p' | tail -n 1)"
+    if [ -z "$RUN_ID" ]; then
+        echo "$RESOLVE_OUT" >&2
+        echo "ERROR: no RUN_ID returned by resolve_run. Nothing was launched." >&2
+        exit 1
+    fi
+    echo "CPU run id for this launch: $RUN_ID (the most recent run is continued if it was interrupted; otherwise it is new)."
+fi
+RUN_ID="${RUN_ID:-$(date -u +%Y%m%d-%H%M%S)-$MODE}"
 CODE_REV="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 ARCHIVE_ROOT="${NANOCHAT_MODAL_ARCHIVE:-$HOME/.cache/nanochat-modal/runs}"
 ARCHIVE_DIR="$ARCHIVE_ROOT/$RUN_ID"

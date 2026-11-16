@@ -68,6 +68,13 @@ def format_knob_diff(current: dict, previous: dict | None) -> str | None:
     return "; ".join(pieces)
 
 
+def last_run_model_tag(path: str | Path) -> str | None:
+    """Model tag (= run id) of the newest completed run, or None when not recorded."""
+    data = load_last_run(path)
+    tag = data.get("model_tag") if data else None
+    return tag or None
+
+
 def write_last_run(path: str | Path, data: dict) -> None:
     """Write last_run.json (creates parent dirs). Adds git_sha + ts if absent."""
     p = Path(path)
@@ -131,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
 
     write_p = sub.add_parser("write", help="Write last_run.json with git_sha + ts")
     _add_knob_args(write_p)
+    write_p.add_argument("--model-tag", default="", dest="model_tag", help="Run id used as the model tag")
 
     args = parser.parse_args(argv)
     current = _knobs_from_args(args)
@@ -142,10 +150,25 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "write":
+        if args.model_tag:
+            current["model_tag"] = args.model_tag
         write_last_run(args.path, current)
         return 0
 
     return 2
+
+
+def resolve_chat_model_tag(base_dir: str | Path, source: str, requested: str | None) -> str | None:
+    """Tag chat should load: the one asked for, else the newest completed run's when its folder exists.
+
+    None means "let the loader choose" (legacy d<depth> folders). Only the sft source has run tags.
+    """
+    if requested is not None or source != "sft":
+        return requested
+    recorded = last_run_model_tag(Path(base_dir) / "last_run.json")
+    if recorded and (Path(base_dir) / "chatsft_checkpoints" / recorded).is_dir():
+        return recorded
+    return None
 
 
 if __name__ == "__main__":

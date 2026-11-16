@@ -44,8 +44,10 @@ A stray `model_*.pt` from a probe or an interrupted run does not count as finish
 
 A checkpoint is a set of files written during a long stage. It is not a stage marker. Two stages save checkpoints:
 
-- **base_train:** `base_checkpoints/d<depth>/`
-- **chat_sft:** `chatsft_checkpoints/d<depth>/`
+- **base_train:** `base_checkpoints/<model-tag>/`
+- **chat_sft:** `chatsft_checkpoints/<model-tag>/`
+
+For `runs/runcpu.sh` the model tag is the run id (one folder per run, e.g. `…-cpu-d6`). For `runs/speedrun.sh` it is the shared `d<depth>` folder.
 
 ### When a checkpoint is saved, and when it counts
 
@@ -86,4 +88,4 @@ flowchart TD
 Known gaps:
 
 - **DDP data position:** rank 0 is restored exactly. Ranks 1 and up snap to the nearest stride, so they may re-read or skip a few samples (see [RUNNING.md](RUNNING.md) §4).
-- **Stage markers** are separate from checkpoints and are profile+depth-scoped (e.g. `.stage_base_train_runcpu_d6`). A marker mismatch causes the stage to rerun.
+- **Stage markers** are separate from checkpoints and are profile+depth-scoped (e.g. `.stage_base_train_runcpu_d6`), stored in the run's own folder for runcpu. A marker mismatch causes the stage to rerun.

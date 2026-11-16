@@ -8,22 +8,30 @@ python -m scripts.chat_eval -i sft -a ARC-Easy
 torchrun --nproc_per_node=8 -m scripts.chat_eval -- -i sft -a ARC-Easy
 """
 
-import os
 import argparse
+import os
 from functools import partial
+
 import torch
 import torch.distributed as dist
 
-from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0, autodetect_device_type, get_base_dir
-from nanochat.glossary import emit_define
-from nanochat.term_style import paint
 from nanochat.checkpoint_manager import load_model
+from nanochat.common import (
+    autodetect_device_type,
+    compute_cleanup,
+    compute_init,
+    get_base_dir,
+    get_dist_info,
+    print0,
+)
 from nanochat.engine import Engine
-
-from tasks.humaneval import HumanEval
-from tasks.mmlu import MMLU
+from nanochat.glossary import emit_define
+from nanochat.last_run import resolve_chat_model_tag
+from nanochat.term_style import paint
 from tasks.arc import ARC
 from tasks.gsm8k import GSM8K
+from tasks.humaneval import HumanEval
+from tasks.mmlu import MMLU
 
 # -----------------------------------------------------------------------------
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
@@ -199,7 +207,9 @@ if __name__ == "__main__":
     device_type = autodetect_device_type() if args.device_type == "" else args.device_type
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 
-    model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
+    # Same tag rule as chat_cli: the most recent completed run when no -g is given.
+    model_tag = resolve_chat_model_tag(get_base_dir(), args.source, args.model_tag)
+    model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=model_tag, step=args.step)
     engine = Engine(model, tokenizer)
 
     # Get the tasks to evaluate on

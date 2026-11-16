@@ -18,6 +18,8 @@ if str(RUNS_DIR) not in sys.path:
     sys.path.insert(0, str(RUNS_DIR))
 
 RUNMODAL = Path(__file__).resolve().parents[1] / "runs" / "runmodal.sh"
+# Fake answer for the relaunch resolver (runs/modal_run.py::resolve_run), which prints RUN_ID=<id>.
+RESOLVE_LINE = 'if [[ "$*" == *resolve_run* ]]; then echo RUN_ID=test-run-cpu; exit 0; fi'
 
 
 @pytest.fixture
@@ -27,7 +29,7 @@ def fake_modal(tmp_path: Path) -> tuple[Path, Path]:
     bin_dir.mkdir()
     record = tmp_path / "argv.txt"
     script = bin_dir / "modal"
-    script.write_text(f'#!/bin/bash\necho "$@" > "{record}"\n')
+    script.write_text(f'#!/bin/bash\nif [ "$1" = "app" ]; then echo "[]"; exit 0; fi\n{RESOLVE_LINE}\necho "$@" > "{record}"\n')
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     return bin_dir, record
 
@@ -125,6 +127,7 @@ def fake_modal_running_app(tmp_path: Path) -> tuple[Path, Path]:
         f'if [ "$1" = "app" ] && [ "$2" = "list" ]; then\n'
         f'    echo \'{running_json}\'\n'
         f'elif [ "$1" = "run" ]; then\n'
+        f'    {RESOLVE_LINE}\n'
         f'    echo "$@" > "{record}"\n'
         f'fi\n'
     )
@@ -147,6 +150,7 @@ def fake_modal_unavailable(tmp_path: Path) -> tuple[Path, Path]:
         f'if [ "$1" = "app" ] && [ "$2" = "list" ]; then\n'
         f'    exit 1\n'
         f'elif [ "$1" = "run" ]; then\n'
+        f'    {RESOLVE_LINE}\n'
         f'    echo "$@" > "{record}"\n'
         f'fi\n'
     )
@@ -194,15 +198,16 @@ def test_guard_bypassed_with_allow_concurrent(fake_modal_running_app: tuple[Path
     assert record.exists()
 
 
-def test_guard_warns_and_proceeds_when_modal_unavailable(
+def test_guard_refuses_when_modal_unavailable(
     fake_modal_unavailable: tuple[Path, Path],
 ) -> None:
     """
-    Scenario: modal app list fails (CLI not configured); runmodal.sh warns and proceeds.
-    Slice: guard fallback / WARNING path in runmodal.sh.
+    Scenario: modal app list fails (CLI not configured or down). Without the check a second container
+    could start, so runmodal.sh must refuse to launch.
+    Slice: fail-closed concurrency guard in runmodal.sh.
     ### Given: fake modal exits 1 for app list --json
     ### When: runmodal.sh is invoked
-    ### Then: exits 0, prints WARNING in stderr, modal run is still called
+    ### Then: exits 1, prints ERROR, modal run is never called
     """
     # ### Given
     fake_bin, record = fake_modal_unavailable
@@ -211,9 +216,24 @@ def test_guard_warns_and_proceeds_when_modal_unavailable(
     result = _run(fake_bin, None)
 
     # ### Then
+    assert result.returncode == 1
+    assert "refusing to launch" in result.stderr
+    assert not record.exists()
+
+
+def test_guard_can_be_bypassed_explicitly_when_modal_unavailable(
+    fake_modal_unavailable: tuple[Path, Path],
+) -> None:
+    """
+    Scenario: the operator knows the check is broken and opts out with NANOCHAT_ALLOW_UNCHECKED_LAUNCH=1.
+    ### Given: fake modal exits 1 for app list --json and the opt-out is set
+    ### When: runmodal.sh is invoked
+    ### Then: exits 0 with a WARNING, and modal run is called
+    """
+    fake_bin, record = fake_modal_unavailable
+    result = _run(fake_bin, None, extra_env={"NANOCHAT_ALLOW_UNCHECKED_LAUNCH": "1"})
     assert result.returncode == 0, result.stderr
     assert "WARNING" in result.stderr
-    assert "concurrency guard" in result.stderr
     assert record.exists()
 
 
@@ -224,7 +244,7 @@ def fake_modal_app_id(tmp_path: Path) -> Path:
     bin_dir.mkdir()
     script = bin_dir / "modal"
     script.write_text(
-        "#!/bin/bash\n"
+        "#!/bin/bash\n" + RESOLVE_LINE + "\n"
         'if [ "$1" = "app" ]; then echo "[]"; exit 0; fi\n'
         'echo "Initialized. View run at https://modal.com/apps/neomatrix369/main/ap-abc123XYZ"\n'
         'for i in $(seq 1 200); do echo "line $i"; done\n'
@@ -251,3 +271,102 @@ def test_detached_launch_succeeds_and_records_app_id(fake_modal_app_id: Path) ->
     assert (run_dir / "PENDING_DOWNLOAD").exists()
     assert "line 200" in (run_dir / "run.log").read_text()
 
+
+
+def _fake_modal_with_resolver(tmp_path: Path, resolve_body: str) -> tuple[Path, Path, Path]:
+    """Fake `modal`: `run ...::resolve_run` runs resolve_body; other `run` calls record argv to launch_record.
+
+    Returns (bin_dir, launch_record, resolve_record).
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    launch_record = tmp_path / "launch.txt"
+    resolve_record = tmp_path / "resolve.txt"
+    script = bin_dir / "modal"
+    script.write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = "app" ]; then echo "[]"; exit 0; fi\n'
+        'if [[ "$*" == *resolve_run* ]]; then\n'
+        f'    echo "$@" > "{resolve_record}"\n'
+        f'    {resolve_body}\n'
+        'fi\n'
+        f'if [[ "$*" != *resolve_run* ]]; then echo "$@" > "{launch_record}"; fi\n'
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return bin_dir, launch_record, resolve_record
+
+
+def test_cpu_launch_uses_the_run_id_the_resolver_chose(tmp_path: Path) -> None:
+    """
+    Scenario: the resolver answers with an interrupted run id; the launch must use exactly that id.
+    Slice: relaunch continues the resolver's run id (not a fresh timestamp).
+    """
+    # ### Given a resolver that continues run 20261116-114442-cpu-d6
+    fake_bin, launch_record, _ = _fake_modal_with_resolver(
+        tmp_path, 'echo RUN_ID=20261116-114442-cpu-d6; exit 0',
+    )
+    # ### When runmodal.sh launches CPU mode
+    result = _run(fake_bin, None)
+    # ### Then the launch receives that exact id
+    assert result.returncode == 0, result.stderr
+    assert "--run-id 20261116-114442-cpu-d6" in launch_record.read_text()
+
+
+def test_resolver_refusal_launches_nothing(tmp_path: Path) -> None:
+    """
+    Scenario: the resolver refuses (another run holds a fresh lock). runmodal.sh must exit 1 and
+    must not start a Modal run.
+    Slice: a refused relaunch never bills a second container.
+    """
+    # ### Given a resolver that exits non-zero
+    fake_bin, launch_record, _ = _fake_modal_with_resolver(
+        tmp_path, 'echo "another CPU run is in progress" >&2; exit 1',
+    )
+    # ### When runmodal.sh launches CPU mode
+    result = _run(fake_bin, None)
+    # ### Then it exits 1 and the launch command was never run
+    assert result.returncode != 0
+    assert not launch_record.exists()
+
+
+def test_forced_resume_id_is_sent_to_the_resolver(tmp_path: Path) -> None:
+    """
+    Scenario: the user names a run explicitly. The id must reach the resolver so its depth and
+    liveness checks apply, rather than skipping the resolver.
+    Slice: explicit resume goes through the same guards.
+    """
+    # ### Given a resolver that accepts whatever it is given
+    fake_bin, _, resolve_record = _fake_modal_with_resolver(
+        tmp_path, 'echo RUN_ID=named-run-cpu-d6; exit 0',
+    )
+    # ### When the run is forced to a named id
+    result = _run(fake_bin, None, extra_env={"NANOCHAT_RESUME_RUN_ID": "named-run-cpu-d6"})
+    # ### Then the resolver receives --resume with that id
+    assert result.returncode == 0, result.stderr
+    assert "--resume named-run-cpu-d6" in resolve_record.read_text()
+
+
+def test_resume_is_refused_in_gpu_mode_and_launches_nothing(tmp_path: Path) -> None:
+    """
+    Scenario: `runmodal.sh resume <id>` with MODE=gpu. resume is CPU-only, so it must exit 1 and
+    must never start a (billed) GPU run under a new id.
+    Slice: explicit resume cannot silently turn into a fresh GPU launch.
+    """
+    # ### Given a fake modal that would accept a launch
+    fake_bin, launch_record, _ = _fake_modal_with_resolver(tmp_path, 'echo RUN_ID=unused; exit 0')
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "RUNMODAL_YES": "1",
+        "NANOCHAT_MODAL_ARCHIVE": str(tmp_path / "archive"),
+        "MODE": "gpu",
+    }
+    # ### When the resume command is used with MODE=gpu
+    result = subprocess.run(
+        ["bash", str(RUNMODAL), "resume", "20260101-000000-cpu-d6"],
+        env=env, capture_output=True, text=True, check=False,
+    )
+    # ### Then it is refused and nothing was launched
+    assert result.returncode != 0
+    assert "CPU-only" in result.stderr
+    assert not launch_record.exists()

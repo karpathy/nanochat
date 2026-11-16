@@ -47,18 +47,22 @@ A stage is skipped when its artifact already exists. Paths are relative to `$NAN
 |-------|--------------------------|------------|
 | `tok_train` | `tokenizer/tokenizer.pkl` | `scripts/tok_train.py` |
 | `tok_eval` | `tokenizer/.tok_eval_ok` | end of `scripts/tok_eval.py` (and touched by the shell on success) |
-| `base_train` | `base_checkpoints/.stage_base_train_<PROFILE>_d<DEPTH>` | end of `scripts/base_train.py` (rank 0) |
-| `base_eval` | `base_checkpoints/.stage_base_eval_<PROFILE>_d<DEPTH>` | end of `scripts/base_eval.py` |
-| `chat_sft` | `chatsft_checkpoints/.stage_chat_sft_<PROFILE>_d<DEPTH>` | end of `scripts/chat_sft.py` (rank 0) |
-| `chat_eval` (speedrun only) | `chatsft_checkpoints/.stage_chat_eval_<PROFILE>_d<DEPTH>` | end of `scripts/chat_eval.py` |
+| `base_train` | `base_checkpoints/<model-tag>/.stage_base_train_<PROFILE>_d<DEPTH>` | end of `scripts/base_train.py` (rank 0) |
+| `base_eval` | `base_checkpoints/<model-tag>/.stage_base_eval_<PROFILE>_d<DEPTH>` | end of `scripts/base_eval.py` |
+| `chat_sft` | `chatsft_checkpoints/<model-tag>/.stage_chat_sft_<PROFILE>_d<DEPTH>` | end of `scripts/chat_sft.py` (rank 0) |
+| `chat_eval` (speedrun only) | `chatsft_checkpoints/<model-tag>/.stage_chat_eval_<PROFILE>_d<DEPTH>` | end of `scripts/chat_eval.py` |
 
 The flow of stages and the skip rule are diagrammed in [DIAGRAMS.md](DIAGRAMS.md#training-pipeline) and [DIAGRAMS.md](DIAGRAMS.md#skip-decision).
+
+Where `<model-tag>` is the run id for `runs/runcpu.sh` (one folder per run) and `d<DEPTH>` for `runs/speedrun.sh` (shared, as before).
+
+**Resume (runcpu):** a re-run continues only the most recent run of the same depth, and only if that run has no `.done` file (it was interrupted or stopped). Older unfinished runs are never resumed automatically; to continue one, set `NANOCHAT_RUN_ID=<run-id>` for a local run, or use `bash runs/runmodal.sh resume <run-id>` on Modal. The named run must be of the current depth and not finished; this applies to local runs as well. A finished run gets `.done` and is never reused. Only the 3 newest finished runs keep their working checkpoints (`base_checkpoints/<run-id>/`, `chatsft_checkpoints/<run-id>/`); older ones are deleted when a run finishes. On Modal, each run's archive copy under `runs/<run-id>/artifacts/` is kept.
 
 Notes:
 
 - Checkpoints, the resume rules, and their known gaps are diagrammed in [DIAGRAMS.md](DIAGRAMS.md#checkpoint-and-resume).
 - Markers are written **last**, after a clean finish. A crashed train/eval leaves no marker (or the shell clears it at the next `START`), so the stage re-runs. A stray `model_*.pt` from a probe or interrupt is **not** enough to SKIP.
-- Stage markers are profile+depth-tagged (e.g. `.stage_base_train_runcpu_d6`). A marker is written automatically after a successful stage finish. An old generic `.train_ok` marker or one from a different profile/depth is treated as a mismatch and causes the stage to rerun. Do not create markers by hand; to skip a stage the marker must come from a successful run. To force a stage to rerun, use `FORCE_STAGES`.
+- Stage markers are profile+depth-tagged (e.g. `.stage_base_train_runcpu_d6`) and, for `runcpu.sh`, live in the run's own folder. A marker is written automatically after a successful stage finish. An old generic `.train_ok` marker or one from a different profile/depth is treated as a mismatch and causes the stage to rerun. Do not create markers by hand; to skip a stage the marker must come from a successful run. To force a stage to rerun, use `FORCE_STAGES`.
 - **Mid-stage resume (`base_train`):** if `base_train` is interrupted, a re-run continues from its last complete checkpoint. The script saves one every `NANOCHAT_SAVE_EVERY_SECS` seconds (default 300). A checkpoint counts only when its model, meta and optimizer files are all present. `FORCE_STAGES=base_train` starts from step 0 instead. The checkpoint check is unit-tested. Local kill and SIGTERM checks on CPU/MPS resume from the last complete checkpoint, and the model, optimizer and learning-rate schedule come back from it. Data order matches too. A kill after the step-7 checkpoint, then a resume, reproduced steps 7-199 of an uninterrupted 200-step run: same row group and pq, loss within 1e-6 (logged precision). Evidence: `docs/evidence/resume-step-a-pass-2026-11-15/`. The Modal preemption path is not covered.
 - **`chat_sft` resumes mid-stage (implemented, not yet verified end to end).** `--resume-from-step` is auto-detected from the last complete checkpoint. The SFT model and optimizer state that run saved are restored. A resume refuses to run if `device_batch_size`, `max_seq_len`, `total_batch_size`, `num_iterations`, or `world_size` changed; use `FORCE_STAGES=chat_sft` to start over. Data order after resume is not yet verified, as for `base_train`. **DDP note:** rank 0's data position is restored exactly; ranks 1+ are snapped to the nearest stride boundary (may re-read or skip a few samples from their last saved group). Exact per-rank resume requires per-rank loader state files, which are not yet implemented.
 - `nanochat.dataset -n 8` runs every time; it only downloads missing shards.
@@ -118,7 +122,7 @@ One extra line at most per event. These are hints, not part of the strict contra
 | `skip-saved:` | After `SKIP` | Time saved, from the last recorded run of that stage; `unknown` if there is no timing yet. |
 | `root_stage=` | After `FAIL` | The stage that actually broke. `cascade_suppressed=yes` means later stages were not run. |
 | `device:` line | Python startup | Torch version, device and world size, plus the base dir, e.g. `torch 2.2.2 \| device: mps (…) \| world size: 1`. |
-| `wrote:` | After `tok_train` / `base_train` / `chat_sft` `DONE` | Artifact path and approximate disk size, e.g. `wrote: ~/.cache/nanochat/base_checkpoints/d6 (1.2GiB)`. |
+| `wrote:` | After `tok_train` / `base_train` / `chat_sft` `DONE` | Artifact path and approximate disk size, e.g. `wrote: ~/.cache/nanochat/base_checkpoints/<run-id> (1.2GiB)`. |
 | `mem:` | After `DONE` | Best-effort free/available memory snapshot (macOS `vm_stat` or Linux `MemAvailable`). |
 | `memory:` | After auto-fit | Plain-language fit, e.g. `memory: aiming to use ≤60% of ~18GiB; batch 8→2 so logits fit`. Complements the `[auto-fit]` contract line; does not replace it. |
 | `trend:` | After a new `val_bpb` / CORE metric | Compares this run’s metric to the prior value in `$NANOCHAT_BASE_DIR/last_metrics.json` (global last-seen keys — mid-train eval can update before `base_eval`). Printed only when a prior exists. Fail-soft: never aborts train/eval. Example: `trend: val_bpb 7.47 → better than prior 8.1`. |
@@ -279,8 +283,8 @@ python -m scripts.chat_eval -i sft          # full eval
 **Where results live**
 All artifacts are under `$NANOCHAT_BASE_DIR` (default `~/.cache/nanochat`):
 - `tokenizer/tokenizer.pkl` — trained BPE tokenizer
-- `base_checkpoints/d<depth>/` — pretrained model
-- `chatsft_checkpoints/d<depth>/` — SFT chat model
+- `base_checkpoints/<model-tag>/` — pretrained model (runcpu: the run id; speedrun: `d<depth>`)
+- `chatsft_checkpoints/<model-tag>/` — SFT chat model (same tag as its base model)
 - `last_metrics.json` — latest val_bpb / CORE metric
 - `last_run.json` — knob snapshot from the last successful full run
 

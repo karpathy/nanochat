@@ -139,7 +139,7 @@ For scripted/automated runs, skip the confirmation with:
 RUNMODAL_YES=1 bash runs/runmodal.sh
 ```
 
-Each run gets an id (`<UTC time>-<mode>`). Its archive and run record are on the Volume under `runs/<run-id>/`. To check a run from the terminal without changing it, use `bash runs/modal_peek.sh` (commands are listed in the script's header: `status`, `apps`, `past`, `report`, `compare`, `pull`, `info`, `logs`, `container`, `cost`).
+Each run gets an id: CPU runs are `<UTC time>-cpu-d<depth>`, GPU runs are `<UTC time>-gpu`. Its archive and run record are on the Volume under `runs/<run-id>/`. To check a run from the terminal without changing it, use `bash runs/modal_peek.sh` (commands are listed in the script's header: `status`, `apps`, `past`, `report`, `compare`, `pull`, `info`, `logs`, `container`, `cost`).
 
 ## Watching the run
 
@@ -174,6 +174,10 @@ The job is split into stages, each marked in a persistent Modal Volume so re-run
 | Chat eval | Evaluate on MMLU/GSM8K (~10 min, optional) | Stage marker `.stage_chat_eval_<profile>_d<depth>` |
 
 Each stage's marker file lives on the Volume, so a re-run of `runmodal.sh` skips finished stages and only redoes stages that failed or were forced (`FORCE_STAGES=stage_name`).
+
+If Modal's status check fails (for example the CLI is not logged in), `runmodal.sh` refuses to launch rather than risk a second container. Fix the CLI and retry, or set `NANOCHAT_ALLOW_UNCHECKED_LAUNCH=1` to launch without the check.
+
+To resume an interrupted CPU run, relaunch with `bash runs/runmodal.sh` as usual: it continues only the most recent CPU run of the same depth, and only if that run has no `.done` marker. It refuses while another CPU run is in progress (fresh heartbeat). To continue an older run, name it explicitly: `bash runs/runmodal.sh resume <run-id>` (any age, but only a CPU run of the current depth that is not finished; GPU is not supported).
 
 ## Chat on Modal
 
@@ -221,9 +225,9 @@ After a successful run, your trained model is on your laptop under `~/.cache/nan
 | Placeholder | What it is | Example |
 |-------------|------------|---------|
 | `<mode>` | Which run you trained: `cpu` (small demo) or `gpu` (full 8×H100) | `cpu` |
-| `<depth>` | Model size, set by the training run; it is the folder name under `chatsft_checkpoints/` | `d6` (a depth-6 model) |
+| `<depth>` | Model size, set by the training run. For GPU (speedrun) it is the folder name under `chatsft_checkpoints/`; for CPU the folder is the run id, and the depth is in the id (`…-cpu-d6`) | `d6` (a depth-6 model) |
 | `<step>` | Training step of the saved checkpoint, zero-padded to 6 digits; the largest number is the latest | `001499` |
-| `<run-id>` | Id of one Modal run, `<UTC time>-<mode>`, shown when you launch it | `20261114-125440-cpu` |
+| `<run-id>` | Id of one Modal run: CPU runs are `<UTC time>-cpu-d<depth>`, GPU runs are `<UTC time>-gpu`; shown when you launch it | `20261114-125440-cpu-d6` |
 | `<profile>` / `<env>` | Optional Modal CLI profile or environment name, only if you use one | `default` |
 
 To find the real `<depth>` and `<step>` values, list the Volume (see below): `modal volume ls nanochat-modal cpu/chatsft_checkpoints`. Then pick the highest `model_<step>.pt`.
@@ -242,7 +246,7 @@ This copies the tokenizer and the newest chat checkpoint to `~/.cache/nanochat-m
 - Local Python environment: run `uv sync --extra cpu` once in the repo root (same as for `runcpu.sh`).
 - Model files under `~/.cache/nanochat-modal/<mode>/`:
   - `tokenizer/tokenizer.pkl` and `tokenizer/token_bytes.pt`
-  - `chatsft_checkpoints/d<depth>/model_<step>.pt` and `meta_<step>.json`
+  - `chatsft_checkpoints/<run-id>/model_<step>.pt` and `meta_<step>.json` (the newest run's folder)
 - ~8 GB of free disk space and ~4 GB of free RAM (to load the checkpoint).
 
 Check for these files with `find ~/.cache/nanochat-modal/<mode> -type f`. If any are missing, follow [Pull the models from the Volume by hand](#pull-the-models-from-the-volume-by-hand). Auto-download on success is not yet reliable, so do not assume it ran.
@@ -286,8 +290,8 @@ modal volume get nanochat-modal /gpu/chatsft_checkpoints ~/.cache/nanochat-modal
 - `nanochat-modal` is the Volume name. `/<mode>/tokenizer` and `/<mode>/chatsft_checkpoints` are paths on the Volume (`<mode>` is `cpu` or `gpu`).
 - The last argument is the local folder.
 - `--force` overwrites files already on your laptop.
-- To check what is on the Volume first: `modal volume ls nanochat-modal` (or `modal volume ls nanochat-modal cpu/base_checkpoints/d6`).
-- **Verify the result.** On 2026-11-15, `modal volume get` on a folder wrote a single zip-format file at the destination, not a folder of files. Check that the expected files are inside the folder: `find ~/.cache/nanochat-modal/cpu -type f`. You should see `tokenizer.pkl`, `token_bytes.pt`, and `model_*.pt` / `meta_*.json` under `chatsft_checkpoints/d<depth>/`. If you see one file named after the folder, delete it and pull again, or pull the files one at a time.
+- To check what is on the Volume first: `modal volume ls nanochat-modal` (or `modal volume ls nanochat-modal cpu/base_checkpoints`, which lists one folder per run).
+- **Verify the result.** On 2026-11-15, `modal volume get` on a folder wrote a single zip-format file at the destination, not a folder of files. Check that the expected files are inside the folder: `find ~/.cache/nanochat-modal/cpu -type f`. You should see `tokenizer.pkl`, `token_bytes.pt`, and `model_*.pt` / `meta_*.json` under `chatsft_checkpoints/<run-id>/`. If you see one file named after the folder, delete it and pull again, or pull the files one at a time.
 - Add `--profile <name>` or `-e <env>` if your Modal CLI uses a non-default profile or environment.
 - Read-only: `modal volume get` only copies. It never changes the Volume.
 
@@ -356,13 +360,14 @@ The training stages and their skip markers are diagrammed in [DIAGRAMS.md](DIAGR
 |---|---|---|
 | `bash runs/runmodal.sh` | regular | Launch a run (`MODE=cpu` default, or `MODE=gpu`) |
 | `modal run runs/modal_run.py::chat --prompt "..."` | regular | Ask the trained model a question on Modal (no download; `--mode cpu`, `--temperature 0.3` defaults) |
+| `bash runs/runmodal.sh resume <run-id>` | maintenance | Continue one named run of the same depth (any age). Refused if it is finished or another CPU run holds the lock. Plain `runmodal.sh` only continues the most recent unfinished run. |
 | `bash runs/runmodal.sh finish <run-id>` | maintenance | Download a finished run's models to your laptop |
 | `bash runs/modal_peek.sh status` | maintenance | Show running apps and active containers (read-only) |
 | `bash runs/modal_peek.sh apps [N]` | maintenance | List the last N Modal apps, including stopped ones |
 | `bash runs/modal_peek.sh past` | maintenance | List archived runs, both local and on the Volume |
 | `bash runs/modal_peek.sh report [run-id]` | maintenance | Show one run's config, resources, and status |
 | `bash runs/modal_peek.sh compare` | maintenance | One table of every run on the Volume |
-| `bash runs/modal_peek.sh pull [run-id]` | maintenance | Copy a run's record to your laptop, then its model files to `~/.cache/nanochat-modal/<mode>/`. Mode comes from the run id (`…-cpu` or `…-gpu`). Defaults to the latest run. |
+| `bash runs/modal_peek.sh pull [run-id]` | maintenance | Copy a run's record to your laptop, then its model files to `~/.cache/nanochat-modal/<mode>/`. Mode comes from the run id (`…-cpu-d<depth>` or `…-gpu`). Defaults to the latest run. |
 | `bash runs/modal_peek.sh info [app-id]` | maintenance | Show an app's lifecycle, functions, and state |
 | `bash runs/modal_peek.sh logs [app-id] [N] [-f]` | maintenance | Show the last N log lines of an app; `-f` streams |
 | `bash runs/modal_peek.sh container [ta-id] [N] [-f]` | maintenance | Show the last N log lines of one container; `-f` streams |
@@ -430,7 +435,7 @@ Run `bash runs/modal_peek.sh status` to check whether the remote job is still li
 bash runs/modal_peek.sh logs -f          # stream logs from the current app
 ```
 
-When it finishes, run `bash runs/runmodal.sh finish <run-id>` to download the models. Re-running `bash runs/runmodal.sh` starts a new run with a new run id and new Modal billing, so do not use it just to download.
+When it finishes, run `bash runs/runmodal.sh finish <run-id>` to download the models. Re-running `bash runs/runmodal.sh` is **not** a download. For CPU it continues the most recent interrupted run of the same depth (no new run is started if that run is unfinished) and it bills Modal compute again, so use `finish` to download.
 
 ## Storage map
 

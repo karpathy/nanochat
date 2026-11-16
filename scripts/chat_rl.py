@@ -17,14 +17,24 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
 """
 
 import argparse
-import os
 import itertools
-import wandb
+import os
+
 import torch
 import torch.distributed as dist
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type
-from nanochat.checkpoint_manager import save_checkpoint, load_model
+import wandb
+
+from nanochat.checkpoint_manager import load_model, save_checkpoint
+from nanochat.common import (
+    DummyWandb,
+    autodetect_device_type,
+    compute_cleanup,
+    compute_init,
+    get_base_dir,
+    print0,
+)
 from nanochat.engine import Engine
+from nanochat.last_run import resolve_chat_model_tag
 from tasks.gsm8k import GSM8K
 
 # -----------------------------------------------------------------------------
@@ -71,7 +81,9 @@ use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl", name=args.run, config=user_config)
 
 # Init model and tokenizer
-model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
+# Same tag rule as chat_cli: the most recent completed run when no -g is given.
+sft_tag = resolve_chat_model_tag(get_base_dir(), "sft", args.model_tag)
+model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=sft_tag, step=args.model_step)
 engine = Engine(model, tokenizer) # for sampling rollouts
 
 # -----------------------------------------------------------------------------
@@ -308,7 +320,7 @@ for step in range(num_steps):
     if master_process and ((step > 0 and step % args.save_every == 0) or step == num_steps - 1):
         base_dir = get_base_dir()
         depth = model.config.n_layer
-        output_dirname = args.model_tag if args.model_tag else f"d{depth}" # base the model tag on the depth of the base model
+        output_dirname = sft_tag if sft_tag else f"d{depth}" # same run tag as the SFT model it started from
         checkpoint_dir = os.path.join(base_dir, "chatrl_checkpoints", output_dirname)
         model_config_kwargs = model.config.__dict__ # slightly naughty, abusing the simplicity of GPTConfig, TODO nicer
         save_checkpoint(

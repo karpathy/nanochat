@@ -97,6 +97,7 @@ Get it to write stories or poems. Ask it to tell you who you are to see a halluc
 | **Local GPU** | `bash runs/speedrun.sh` | 8×H100 bare metal | ~1.5–2 hours | $40–60 (yours) |
 | **Cloud CPU (Modal)** | `bash runs/runmodal.sh` (default `MODE=cpu`) | Modal, up to 64 cores / 128 GiB, no GPU | Unmeasured (first run measures it) | Scales with cores; check `modal billing rates` |
 | **Cloud GPU (Modal)** | `MODE=gpu bash runs/runmodal.sh` | Modal 8×H100 | ~1.5–2 hours | ~$40–60 (first run higher) |
+| **Modal: continue an interrupted run** | `bash runs/runmodal.sh` (relaunch: continues the most recent unfinished CPU run of the same depth) or `bash runs/runmodal.sh resume <run-id>` (a named CPU run of the current depth that is not finished) | Modal | Remaining time only | Compute is billed again while it runs; see [docs/MODAL.md](docs/MODAL.md#command-quick-reference-modal) |
 | **Modal: download a finished run** | `bash runs/runmodal.sh finish <run-id>` (or `bash runs/modal_peek.sh pull` for the latest run) | Your laptop | Minutes | Copies the run record and the newest chat model to `~/.cache/nanochat-modal/<mode>/`; see [docs/MODAL.md](docs/MODAL.md) |
 
 The **Cloud** options train on Modal without requiring local hardware. `MODE=cpu` runs the small `runcpu` profile on a heavy CPU machine, with no GPU payment gate. `MODE=gpu` runs the GPT-2-grade `speedrun` profile on 8×H100 and needs a Modal payment method and an 8×H100 entitlement. For details, prerequisites, and how to use the trained model locally afterward, see [docs/MODAL.md](docs/MODAL.md). All project diagrams (training pipeline, Modal data flow, skip rules) are in [docs/DIAGRAMS.md](docs/DIAGRAMS.md).
@@ -139,7 +140,8 @@ The script [runs/runcpu.sh](runs/runcpu.sh) shows a very simple example of runni
 
 On a Mac (or any CPU/MPS machine) use `bash runs/runcpu.sh`. Do not run `runs/speedrun.sh` here — it is for an 8XH100 CUDA node and **exits with ERROR** if no CUDA is found.
 
-- Re-runs are safe: finished stages print `SKIP` and cost nothing (train needs a profile+depth-tagged marker such as `.stage_base_train_runcpu_d6`, not only `model_*.pt`; the marker is written automatically on a clean finish).
+- Re-runs are safe: finished stages print `SKIP` and cost nothing (train needs a profile+depth-tagged marker such as `.stage_base_train_runcpu_d6` in the run's folder, not only `model_*.pt`; the marker is written automatically on a clean finish).
+- An interrupted run is continued automatically on the next run of the same depth; a finished run is never reused. See [docs/RUNNING.md §4](docs/RUNNING.md#4-what-a-re-run-keeps-and-skips).
 - The script stops at the first failing stage. Fix the cause, then re-run the same command.
 - On MPS, training stays **eager** (`torch.compile` / Inductor is skipped); auto-fit may shrink `device_batch_size`. Knobs live in `nanochat/defaults.py` + `runs/profiles.sh`.
 - Stage markers, `FORCE_STAGES`, log legend, memory/OOM, NaN, RoPE, and torch 2.2.2 notes: [docs/RUNNING.md](docs/RUNNING.md).
