@@ -704,11 +704,14 @@ LOCK_REFUSAL = (
 
 
 def check_forced_cpu_run_id(
-    run_id: str, suffix: str, done_ids: set[str], lock_mtime: float | None, now: float, stale_secs: float,
+    run_id: str, suffix: str, run_ids: list[str], done_ids: set[str], lock_mtime: float | None, now: float, stale_secs: float,
 ) -> str:
-    """Validate an explicitly named run before resuming it: same depth, not already finished, and no live run."""
-    if not run_id.endswith(suffix):
-        raise SystemExit(f"{run_id} is not a CPU run of this depth (expected an id ending in '{suffix}'); refusing to resume it")
+    """Validate an explicitly named run before resuming it: a timestamped id of this depth that exists,
+    is not already finished, and has no live run holding the lock."""
+    if not (RUN_ID_TAG.match(run_id) and run_id.endswith(suffix)):
+        raise SystemExit(f"{run_id} is not a CPU run id of this depth (expected <timestamp>{suffix}); refusing to resume it")
+    if run_id not in run_ids:
+        raise SystemExit(f"no run folder named {run_id} on the Volume; check the id (see runs/ on the Volume)")
     if run_id in done_ids:
         raise SystemExit(f"{run_id} already finished (it has a .done marker); it is never resumed")
     if _lock_is_fresh(lock_mtime, now, stale_secs):
@@ -728,7 +731,7 @@ def resolve_cpu_run_id(
     """
     if _lock_is_fresh(lock_mtime, now, stale_secs):
         raise SystemExit(LOCK_REFUSAL)
-    newest = next(iter(sorted((r for r in run_ids if r.endswith(suffix)), reverse=True)), None)
+    newest = next(iter(sorted((r for r in run_ids if RUN_ID_TAG.match(r) and r.endswith(suffix)), reverse=True)), None)
     if newest is None or newest in done_ids:
         return None
     return newest
@@ -761,7 +764,7 @@ def resolve_run(mode: str = "cpu", depth: int = 6, resume: str = "") -> None:
     lock_mtime = next((e.mtime for e in lock_entries if e.path.endswith("/heartbeat")), None)
     stale_secs = float(os.environ.get("NANOCHAT_LOCK_STALE_SECS", LOCK_STALE_SECS))
     if resume:
-        run_id = check_forced_cpu_run_id(resume, suffix, done_ids, lock_mtime, now, stale_secs)
+        run_id = check_forced_cpu_run_id(resume, suffix, run_ids, done_ids, lock_mtime, now, stale_secs)
     else:
         run_id = resolve_cpu_run_id(run_ids, done_ids, lock_mtime, now, suffix, stale_secs)
     if run_id is None:

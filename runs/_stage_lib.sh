@@ -57,7 +57,7 @@ pick_run_id() {  # profile_suffix
                 return 0
             fi
             break
-        done < <(ls -1 "$runs_root" | grep -E -- "-${suffix}\$" | sort -r)
+        done < <(ls -1 "$runs_root" | grep -E -- "^[0-9]{8}-[0-9]{6}-${suffix}\$" | sort -r)
     fi
     echo "$(date -u +%Y%m%d-%H%M%S)-${suffix}"
 }
@@ -81,7 +81,7 @@ prune_old_runs() {
             rm -rf "$NANOCHAT_BASE_DIR/base_checkpoints/$id" "$NANOCHAT_BASE_DIR/chatsft_checkpoints/$id"
             log "pruned checkpoints of old run $id (keeping last $keep)"
         fi
-    done < <(ls -1 "$runs_root" | grep -E -- "-${suffix}\$" | sort -r)
+    done < <(ls -1 "$runs_root" | grep -E -- "^[0-9]{8}-[0-9]{6}-${suffix}\$" | sort -r)
 }
 
 log() {

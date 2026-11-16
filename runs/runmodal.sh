@@ -38,6 +38,10 @@ case "$cmd" in
             echo "ERROR: usage: bash runs/runmodal.sh resume <run-id>" >&2
             exit 1
         fi
+        if [ "${MODE:-cpu}" != "cpu" ]; then
+            echo "ERROR: resume is CPU-only (MODE=${MODE:-cpu}); nothing was launched." >&2
+            exit 1
+        fi
         export NANOCHAT_RESUME_RUN_ID="$RESUME_ID"
         ;;
     *)

@@ -54,4 +54,13 @@ shared="$(_stage_marker_path base_train)"
 [ "$shared" = "$TMP/base_checkpoints/.stage_base_train_runcpu_d6" ] \
     || { echo "FAIL: shared marker path '$shared'" >&2; exit 1; }
 
+# An alphabetic folder with the suffix must never be picked as "most recent" (it would shadow every run).
+mkdir -p "$R/mytest-cpu-d6"
+got="$(pick_run_id "cpu-d6")"
+case "$got" in
+    *-cpu-d6) [ "$got" != "mytest-cpu-d6" ] || { echo "FAIL: alphabetic folder picked" >&2; exit 1; } ;;
+    *) echo "FAIL: unexpected pick '$got'" >&2; exit 1 ;;
+esac
+rm -rf "$R/mytest-cpu-d6"
+
 echo "ok: per-run model tag"

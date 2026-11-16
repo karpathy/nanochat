@@ -236,26 +236,48 @@ def test_done_marker_written_where_modal_resolver_looks(tmp_path: Path, monkeypa
     assert f"runs/{run_id}/.done" == os.path.relpath(run_dir / ".done", volume).replace(os.sep, "/")
 
 
-# Scenario: a named run is resumed only if it is this depth, not finished, and no other run is live.
+# Scenario: a named run is resumed only if it is a timestamped id of this depth, exists, is not
+# finished, and no other run is live.
 def test_forced_resume_refuses_other_depth():
     with pytest.raises(SystemExit):
-        modal_run.check_forced_cpu_run_id("20261116-000000-cpu-d12", "-cpu-d6", set(), None, 1.0, 600.0)
-
-
-def test_forced_resume_refuses_finished_run():
-    with pytest.raises(SystemExit):
         modal_run.check_forced_cpu_run_id(
-            "20261116-000000-cpu-d6", "-cpu-d6", {"20261116-000000-cpu-d6"}, None, 1.0, 600.0,
+            "20261116-000000-cpu-d12", "-cpu-d6", ["20261116-000000-cpu-d12"], set(), None, 1.0, 600.0,
         )
 
 
-def test_forced_resume_refuses_while_lock_is_fresh():
+def test_forced_resume_refuses_finished_run():
+    rid = "20261116-000000-cpu-d6"
     with pytest.raises(SystemExit):
-        modal_run.check_forced_cpu_run_id("20261116-000000-cpu-d6", "-cpu-d6", set(), 999_940.0, 1_000_000.0, 600.0)
+        modal_run.check_forced_cpu_run_id(rid, "-cpu-d6", [rid], {rid}, None, 1.0, 600.0)
+
+
+def test_forced_resume_refuses_while_lock_is_fresh():
+    rid = "20261116-000000-cpu-d6"
+    with pytest.raises(SystemExit):
+        modal_run.check_forced_cpu_run_id(rid, "-cpu-d6", [rid], set(), 999_940.0, 1_000_000.0, 600.0)
+
+
+def test_forced_resume_refuses_id_with_no_folder():
+    # A typo'd id must not start a paid run that quietly trains from step 0.
+    with pytest.raises(SystemExit):
+        modal_run.check_forced_cpu_run_id("20261116-14442-cpu-d6", "-cpu-d6", ["20261116-114442-cpu-d6"], set(), None, 1.0, 600.0)
+
+
+def test_forced_resume_refuses_name_that_is_not_a_timestamp():
+    rid = "mytest-cpu-d6"
+    with pytest.raises(SystemExit):
+        modal_run.check_forced_cpu_run_id(rid, "-cpu-d6", [rid], set(), None, 1.0, 600.0)
 
 
 def test_forced_resume_accepts_interrupted_same_depth_run_of_any_age():
-    # Given an old interrupted run of this depth and no live lock
-    picked = modal_run.check_forced_cpu_run_id("20260101-000000-cpu-d6", "-cpu-d6", set(), None, 1_000_000.0, 600.0)
-    # Then it is accepted, however old it is
-    assert picked == "20260101-000000-cpu-d6"
+    rid = "20260101-000000-cpu-d6"
+    picked = modal_run.check_forced_cpu_run_id(rid, "-cpu-d6", [rid], set(), None, 1_000_000.0, 600.0)
+    assert picked == rid
+
+
+# Scenario: an alphabetic folder must never be treated as the "most recent" run.
+def test_alphabetic_run_name_does_not_shadow_timestamped_runs():
+    picked = modal_run.resolve_cpu_run_id(
+        ["mytest-cpu-d6", "20261116-114442-cpu-d6"], set(), None, 1_000_000.0, "-cpu-d6",
+    )
+    assert picked == "20261116-114442-cpu-d6"

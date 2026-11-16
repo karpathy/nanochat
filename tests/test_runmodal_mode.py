@@ -328,3 +328,29 @@ def test_forced_resume_id_is_sent_to_the_resolver(tmp_path: Path) -> None:
     # ### Then the resolver receives --resume with that id
     assert result.returncode == 0, result.stderr
     assert "--resume named-run-cpu-d6" in resolve_record.read_text()
+
+
+def test_resume_is_refused_in_gpu_mode_and_launches_nothing(tmp_path: Path) -> None:
+    """
+    Scenario: `runmodal.sh resume <id>` with MODE=gpu. resume is CPU-only, so it must exit 1 and
+    must never start a (billed) GPU run under a new id.
+    Slice: explicit resume cannot silently turn into a fresh GPU launch.
+    """
+    # ### Given a fake modal that would accept a launch
+    fake_bin, launch_record, _ = _fake_modal_with_resolver(tmp_path, 'echo RUN_ID=unused; exit 0')
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "RUNMODAL_YES": "1",
+        "NANOCHAT_MODAL_ARCHIVE": str(tmp_path / "archive"),
+        "MODE": "gpu",
+    }
+    # ### When the resume command is used with MODE=gpu
+    result = subprocess.run(
+        ["bash", str(RUNMODAL), "resume", "20260101-000000-cpu-d6"],
+        env=env, capture_output=True, text=True, check=False,
+    )
+    # ### Then it is refused and nothing was launched
+    assert result.returncode != 0
+    assert "CPU-only" in result.stderr
+    assert not launch_record.exists()
