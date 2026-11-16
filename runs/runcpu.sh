@@ -102,9 +102,10 @@ run_stage chat_sft "" "chat with your model (python -m scripts.chat_cli)" -- \
     --run=$WANDB_RUN
 
 log "ALL DONE cumulative=$(fmt_dur "$SECONDS")"
-clear_stage_markers
-# Same run folder the run record uses (local: runs/<id>; Modal: the Volume runs/<id>), so this run is never resumed again.
+# Mark done FIRST: if the process dies after this, the run is finished and is never resumed.
+# Same run folder the run record uses (local: runs/<id>; Modal: the Volume runs/<id>).
 mark_run_done "$NANOCHAT_RUN_DIR"
+clear_stage_markers
 prune_old_runs "$(dirname "$NANOCHAT_RUN_DIR")" "cpu-d${RUNCPU_DEPTH}" 3
 write_last_run_json "$PROFILE" "$RUNCPU_DEPTH" "$RUNCPU_DEVICE_BATCH_SIZE" "$RUNCPU_MAX_SEQ_LEN" "$NANOCHAT_MODEL_TAG"
 echo '  try: python -m scripts.chat_cli -p "What is the capital of France?"'

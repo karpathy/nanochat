@@ -13,7 +13,7 @@ source "$ROOT/runs/_stage_lib.sh"
 
 R="$NANOCHAT_BASE_DIR/runs"
 mkdir -p "$R/20260101-000000-cpu-d6" "$R/20260102-000000-cpu-d6" "$R/20260103-000000-cpu-d12"
-touch "$R/plainfile-cpu-d6"
+touch "$R/zz-stray-cpu-d6"
 touch "$R/20260102-000000-cpu-d6/.done"
 
 # Most recent depth-6 run is 0102 and it is finished: a new id is issued. The older unfinished
