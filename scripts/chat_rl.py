@@ -25,6 +25,7 @@ import torch.distributed as dist
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb, autodetect_device_type
 from nanochat.checkpoint_manager import save_checkpoint, load_model
 from nanochat.engine import Engine
+from nanochat.last_run import resolve_chat_model_tag
 from tasks.gsm8k import GSM8K
 
 # -----------------------------------------------------------------------------
@@ -71,7 +72,9 @@ use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl", name=args.run, config=user_config)
 
 # Init model and tokenizer
-model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
+# Same tag rule as chat_cli: the most recent completed run when no -g is given.
+sft_tag = resolve_chat_model_tag(get_base_dir(), "sft", args.model_tag)
+model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=sft_tag, step=args.model_step)
 engine = Engine(model, tokenizer) # for sampling rollouts
 
 # -----------------------------------------------------------------------------
