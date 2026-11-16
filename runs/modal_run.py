@@ -511,7 +511,6 @@ def train_cpu(
     finally:
         _archive_artifacts(run_id, "cpu")
         _report_run(started, CPU_TRAIN_TIMEOUT, run_id)
-    _clear_stage_markers("cpu")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
