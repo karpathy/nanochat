@@ -193,6 +193,15 @@ To find the real `<depth>` and `<step>` values, list the Volume (see below): `mo
 
 ### Prerequisites for chatting
 
+**To download the model files after a run, run:**
+
+```bash
+bash runs/modal_peek.sh pull            # latest run; prints progress and ETA
+bash runs/modal_peek.sh pull <run-id>   # a specific run
+```
+
+This copies the tokenizer and the newest chat checkpoint to `~/.cache/nanochat-modal/<mode>/`. If it fails, use the manual steps below.
+
 - Local Python environment: run `uv sync --extra cpu` once in the repo root (same as for `runcpu.sh`).
 - Model files under `~/.cache/nanochat-modal/<mode>/`:
   - `tokenizer/tokenizer.pkl` and `tokenizer/token_bytes.pt`
