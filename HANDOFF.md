@@ -1,54 +1,53 @@
-# HANDOFF — nanochat SFT stall fix and Modal CPU run
+# HANDOFF — modal-nanochat-minimum
 
-Written: 2026-11-16. Replaces the STALE 2026-11-15 handoff.
+> **STALE (2026-11-15).** This handoff is from before PR #14–#45. The current backlog is `docs/plan/TRAIL.md`; the current plan is `docs/plan/2026-11-15-eval-resume-and-tracker-cleanup.md`. Do not follow the steps below without checking TRAIL first.
 
-## Where things stand
+Branch: `feat/modal-nanochat-minimum` (pushed, head `3c6ba61`)
+Plan (SSOT): `docs/plan/2026-11-14-modal-nanochat-minimum.md` (§1a = CPU phase)
+Tracker: `docs/plan/PROGRESS.md` and `docs/plan/TRAIL.md`
 
-- Branch: `fix/sft-stall-resume-guard` (pushed, head `bd065a8`, in sync with remote, clean tree).
-- PR #47 (open, ready, not draft): https://github.com/neomatrix369/nanochat/pull/47
-  - Body updated 2026-11-16: Verification section now reports the finished run. Title, Test Results, Quality Gates unchanged.
-- PR #46 (tracker cleanup, branch `docs/tracker-cleanup-2026-11-15`): open.
-- Modal app for run `20261116-003831-cpu` is completed. Nothing billable is running.
-- Local run logs: `~/.cache/nanochat-modal/runs/20261116-003831-cpu/run.log`.
+## Phase goal (current): full pipeline on Modal CPU
 
-## What was found and fixed
+GPU is blocked: Modal needs a payment method before any H100 function starts. This phase runs the whole `runcpu` pipeline (tokenizer → base train → base eval → SFT → chat) on a heavy CPU machine. GPU comes later.
 
-- Root cause of the SFT stall: conversations longer than one packed row (513 tokens) could never be placed. The buffer filled with them, the loader stopped advancing, and every later batch was padding (loss 0.0, zero gradients). The NaN guard does not catch 0.0, so the run looked alive.
-- The step-572 checkpoint held 100 buffered conversations, minimum 517 tokens, none packable.
-- All SFT checkpoints from the broken run (steps 40–967) had NaN EMA and a stuck cursor. They were deleted from the Volume. Restart point: base checkpoint `cpu/base_checkpoints/d6` step 5000.
-- Fix in `bd065a8`:
-  - `is_packable` skips oversize conversations (counted, logged every 1000).
-  - `next_zero_token_streak` halts after `ZERO_TOKEN_STREAK_LIMIT` (10) empty steps.
-  - `user_config` now saves the resolved batch and sequence settings, so the resume guard compares real values.
-  - Tests: `tests/test_sft_loader_guards.py`. Suite: 379 passed, 15 skipped, 76.3% coverage.
+## What is done
 
-## Result of the rerun (`20261116-003831-cpu`, code `bd065a8`)
+- `9eed864` image fix: `.env()` before the local-source layer (Modal rejects build steps after local files).
+- `31974eb` `runs/runcpu.sh` honours `NANOCHAT_BASE_DIR` and `SKIP_SETUP`. Unset = local behaviour.
+- `3c6ba61` Modal CPU mode:
+  - `runs/modal_run.py --mode cpu|gpu` (default cpu). CPU: `prefetch_cpu` (8 shards) + `train_cpu` (`runcpu.sh`, 64 cores, 128 GiB, `OMP_NUM_THREADS` = cores the container gets).
+  - `runs/runmodal.sh` takes `MODE=cpu|gpu`, prints a mode banner, then runs `modal run runs/modal_run.py --mode $MODE`.
+  - `tests/test_runmodal_mode.py` (3 tests, fake `modal` on PATH, no Modal calls).
+- Local checks: 143 passed / 18 skipped. Ruff clean. `bash -n` and `py_compile` clean. `modal run runs/modal_run.py --help` loads and shows `--mode`. `uv export --extra cpu` resolves Linux torch to `2.9.1+cpu`.
+- Plan updated (§1a, goals, FAQ, verification 16–20). Earlier history: `PROGRESS.md` says "MERGED — live run pending".
 
-- Completed 1500 of 1500 steps, exit 0, about 2h 10m training (3h 50m stage).
-- No NaN or inf losses. No zero-token halt. No all-masked warnings.
-- Oversize skips: 2000+ conversations skipped over the run.
-- Checkpoint written: `cpu/chatsft_checkpoints/d6` (2.0 GiB) on the Modal Volume.
+## Not verified yet (needs one billable run)
 
-## NOT resolved (start here)
+- The CPU image builds on Modal (`uv sync --extra cpu --frozen` remote).
+- Real core cap for `cpu=64` and `memory=131072` on this account. Modal may reject it. If so, lower and re-run.
+- Per-step time and total time of `runcpu` on that machine (plan §1a step 5). If total > 3 h, the 3 h timeout kills it.
+- `modal volume get` pulls the chat checkpoint; chat tip gives a non-empty answer.
+- `modal app stop` ends billing (Ctrl-C only stops the local client).
 
-1. **Loss did not clearly drop.** About 1.77 at step 1, about 1.96 at step 1500, per-step range 1.77–3.31. Find out whether this is data (large skip count), learning rate, or the base checkpoint.
-2. **Chat quality is very low.** ChatCORE 0.009, HumanEval 0%. Do not trust this checkpoint for quality until (1) is explained.
-3. **B1 live download is broken.** `modal volume get` fails on nested folders ("Is a directory"). Planned fix: fetch files individually. Verify with a real download after the run.
-4. **Trackers are behind.** `docs/plan/TRAIL.md`, `docs/plan/PROGRESS.md`, and `docs/plan/2026-11-15-eval-resume-and-tracker-cleanup.md` do not yet record the NaN and stall findings, the fix, or the rerun.
-5. **Backup branch.** `backup/modal-pre-rebase` (2 commits, local only). Recommended: delete, do not PR (a PR would revert about 82 files of newer master work).
-6. **Remaining plan items:** S1 per-task eval results (needs a test interview first), S2 eval marker only on full runs, `chat_sft` stale-`.tmp` cleanup, ruff errors in `tests/`, duplicate eval on resume (nit).
-7. **Checkpoint not on your laptop.** Download it only after (1) is answered.
+## Next steps, in order
 
-## Rules to keep
+1. **Get explicit go-ahead for a CPU run.** Cost scales with cores; check Modal's current CPU price first. Nothing billable runs without it.
+2. **Run:** `RUNMODAL_YES=1 MODE=cpu bash runs/runmodal.sh` (or drop `RUNMODAL_YES` to confirm interactively). Keep the laptop awake; use screen/tmux.
+3. **Watch the log for:** `NANOCHAT_BASE_DIR=/data/nanochat-modal`, `OMP_NUM_THREADS` set to the core count, per-step timing from `base_train`, and `.train_ok` on the Volume after base train.
+4. **If the machine is rejected or too slow:** lower `CPU_CORES` / `CPU_MEMORY_MIB` / timeout in `runs/modal_run.py`, re-run.
+5. **Check billing stops:** `modal app list`, then `modal app stop <app>` after any early stop. Record the result in `docs/MODAL.md`.
+6. **Chat tip on the Mac:** `NANOCHAT_BASE_DIR=~/.cache/nanochat-modal python3 -m scripts.chat_cli -p "What is the capital of France?"` returns a non-empty answer (quality is not a gate).
+7. **Second run:** `modal volume get --force` refreshes the chat dir; shards and finished stages SKIP.
+8. **Update trackers** with real numbers (`PROGRESS.md`, `TRAIL.md`), then open a PR from this branch. Do not commit to `master`.
+9. **Review:** nWave reviewers have not seen `03d0c4d`, `9eed864`, `31974eb`, `3c6ba61`. Ask for a review.
 
-- Never commit to `main` or `master`. PRs target `neomatrix369/nanochat`, not karpathy.
-- No attribution lines in commits or PR bodies (no Co-authored-by, no "Generated with").
-- Get explicit OK before any billable Modal run or any remote mutation (push, PR edit, branch delete).
-- Modal stop: `modal app stop <app-id> --yes`. Ctrl-C only stops the local client.
+## Later (GPU phase)
 
-## Useful commands
+- Add a payment method at Modal (Settings → Billing) for the `neomatrix369` workspace.
+- Re-run `MODE=gpu bash runs/runmodal.sh` after an explicit go-ahead (~$40–60, ~2 h). Prefetch 170 shards is CPU but still billable.
 
-- `modal app list` / `modal app logs <app-id>`
-- `modal volume ls nanochat-modal cpu/` (inspect the Volume)
-- `NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_cli -p "What is the capital of France?"` (chat check on the Mac, after download)
-- Tests: `uv run python3 -m pytest`; lint: `uvx ruff check runs/ tests/`
+## Known gaps (not blockers)
+
+- Docs not yet updated for the CPU mode: `docs/MODAL.md`, `README` Modal pointer. The runmodal banner is the source of truth until then.
+- Run pytest as `uv run python3 -m pytest`. Ruff: `uvx ruff check runs/ tests/`.
+- Sourcery suggests `contextlib.suppress` in `modal_run.py` (cosmetic).
