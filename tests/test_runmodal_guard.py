@@ -165,22 +165,21 @@ def test_guard_allows_live_app_with_different_description(fake_modal_different_d
     assert record.exists()
 
 
-def test_guard_warns_and_proceeds_on_invalid_json(fake_modal_invalid_json: tuple[Path, Path]) -> None:
+def test_guard_refuses_on_invalid_json(fake_modal_invalid_json: tuple[Path, Path]) -> None:
     """
     Scenario: modal app list returns invalid JSON; guard treats this as unavailable modal.
     Slice: Python JSON parse error handling in runmodal.sh.
     ### Given: fake modal returns malformed JSON from app list
     ### When: runmodal.sh is invoked
-    ### Then: exits 0, prints WARNING, modal run is still called
+    ### Then: exits 1, refuses to launch, modal run is never called
     """
     fake_bin, record = fake_modal_invalid_json
 
     result = _run(fake_bin, None)
 
-    assert result.returncode == 0, result.stderr
-    assert "WARNING" in result.stderr
-    assert "concurrency guard" in result.stderr
-    assert record.exists()
+    assert result.returncode == 1
+    assert "refusing to launch" in result.stderr
+    assert not record.exists()
 
 
 def test_guard_refuses_multiple_apps_with_one_live_matching(fake_modal_multiple_apps: tuple[Path, Path]) -> None:

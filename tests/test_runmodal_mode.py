@@ -29,7 +29,7 @@ def fake_modal(tmp_path: Path) -> tuple[Path, Path]:
     bin_dir.mkdir()
     record = tmp_path / "argv.txt"
     script = bin_dir / "modal"
-    script.write_text(f'#!/bin/bash\n{RESOLVE_LINE}\necho "$@" > "{record}"\n')
+    script.write_text(f'#!/bin/bash\nif [ "$1" = "app" ]; then echo "[]"; exit 0; fi\n{RESOLVE_LINE}\necho "$@" > "{record}"\n')
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     return bin_dir, record
 
@@ -198,15 +198,16 @@ def test_guard_bypassed_with_allow_concurrent(fake_modal_running_app: tuple[Path
     assert record.exists()
 
 
-def test_guard_warns_and_proceeds_when_modal_unavailable(
+def test_guard_refuses_when_modal_unavailable(
     fake_modal_unavailable: tuple[Path, Path],
 ) -> None:
     """
-    Scenario: modal app list fails (CLI not configured); runmodal.sh warns and proceeds.
-    Slice: guard fallback / WARNING path in runmodal.sh.
+    Scenario: modal app list fails (CLI not configured or down). Without the check a second container
+    could start, so runmodal.sh must refuse to launch.
+    Slice: fail-closed concurrency guard in runmodal.sh.
     ### Given: fake modal exits 1 for app list --json
     ### When: runmodal.sh is invoked
-    ### Then: exits 0, prints WARNING in stderr, modal run is still called
+    ### Then: exits 1, prints ERROR, modal run is never called
     """
     # ### Given
     fake_bin, record = fake_modal_unavailable
@@ -215,9 +216,24 @@ def test_guard_warns_and_proceeds_when_modal_unavailable(
     result = _run(fake_bin, None)
 
     # ### Then
+    assert result.returncode == 1
+    assert "refusing to launch" in result.stderr
+    assert not record.exists()
+
+
+def test_guard_can_be_bypassed_explicitly_when_modal_unavailable(
+    fake_modal_unavailable: tuple[Path, Path],
+) -> None:
+    """
+    Scenario: the operator knows the check is broken and opts out with NANOCHAT_ALLOW_UNCHECKED_LAUNCH=1.
+    ### Given: fake modal exits 1 for app list --json and the opt-out is set
+    ### When: runmodal.sh is invoked
+    ### Then: exits 0 with a WARNING, and modal run is called
+    """
+    fake_bin, record = fake_modal_unavailable
+    result = _run(fake_bin, None, extra_env={"NANOCHAT_ALLOW_UNCHECKED_LAUNCH": "1"})
     assert result.returncode == 0, result.stderr
     assert "WARNING" in result.stderr
-    assert "concurrency guard" in result.stderr
     assert record.exists()
 
 

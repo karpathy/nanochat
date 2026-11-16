@@ -175,6 +175,8 @@ The job is split into stages, each marked in a persistent Modal Volume so re-run
 
 Each stage's marker file lives on the Volume, so a re-run of `runmodal.sh` skips finished stages and only redoes stages that failed or were forced (`FORCE_STAGES=stage_name`).
 
+If Modal's status check fails (for example the CLI is not logged in), `runmodal.sh` refuses to launch rather than risk a second container. Fix the CLI and retry, or set `NANOCHAT_ALLOW_UNCHECKED_LAUNCH=1` to launch without the check.
+
 To resume an interrupted CPU run, relaunch with `bash runs/runmodal.sh` as usual: it continues only the most recent CPU run of the same depth, and only if that run has no `.done` marker. It refuses while another CPU run is in progress (fresh heartbeat). To continue an older run, name it explicitly: `bash runs/runmodal.sh resume <run-id>` (any age, but only a CPU run of the current depth that is not finished; GPU is not supported).
 
 ## Chat on Modal

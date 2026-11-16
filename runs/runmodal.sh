@@ -70,7 +70,12 @@ print("\n".join(a["app_id"] for a in json.load(sys.stdin) if a.get("description"
 if _APP_JSON=$(modal app list --json 2>/dev/null) && _RUNNING_APP=$(printf '%s' "$_APP_JSON" | python3 -c "$_LIVE_CHECK"); then
     :
 else
-    echo "WARNING: could not check for running Modal apps; proceeding without the concurrency guard." >&2
+    if [ "${NANOCHAT_ALLOW_UNCHECKED_LAUNCH:-}" != "1" ]; then
+        echo "ERROR: could not check for running Modal apps, so refusing to launch (a second container could start)." >&2
+        echo "Fix the Modal CLI, or set NANOCHAT_ALLOW_UNCHECKED_LAUNCH=1 to launch without the check." >&2
+        exit 1
+    fi
+    echo "WARNING: could not check for running Modal apps; launching without the concurrency guard (NANOCHAT_ALLOW_UNCHECKED_LAUNCH=1)." >&2
     _RUNNING_APP=""
 fi
 if [ -n "$_RUNNING_APP" ] && [ "${RUNMODAL_ALLOW_CONCURRENT:-}" != "1" ]; then
