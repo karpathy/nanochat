@@ -6,6 +6,7 @@ Scope: a run's model tag is its run id; the Modal chat picker accepts run-id fol
 """
 
 import json
+import os
 import subprocess
 from unittest.mock import MagicMock
 import sys
@@ -205,3 +206,30 @@ def test_relaunch_honours_configured_stale_threshold():
     )
     # Then the interrupted run is continued (the lock is considered dead)
     assert picked == "20261116-114442-cpu-d6"
+
+
+# Scenario: on Modal, runcpu.sh writes .done into the Volume run folder that resolve_run probes.
+# Both sides must agree, or a finished run looks interrupted and is resumed forever.
+def test_done_marker_written_where_modal_resolver_looks(tmp_path: Path, monkeypatch):
+    # Given the Modal layout: the Volume root, the CPU base dir under it, and the run record folder
+    volume = tmp_path / "volume"
+    run_id = "20261116-114442-cpu-d6"
+    run_dir = volume / "runs" / run_id
+    monkeypatch.setattr(modal_run, "BASE_DIR", str(volume))
+    # When runcpu's end-of-run marking runs with those environment values
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "NANOCHAT_BASE_DIR": str(volume / "cpu"),
+        "NANOCHAT_RUN_DIR": str(run_dir),
+        "NANOCHAT_RUN_ID": run_id,
+        "PROFILE": "runcpu",
+        "DEPTH": "6",
+    }
+    subprocess.run(
+        ["bash", "-c", f'source "{ROOT}/runs/_stage_lib.sh"; mark_run_done "$NANOCHAT_RUN_DIR"'],
+        check=True, env=env, cwd=ROOT,
+    )
+    # Then the marker is at runs/<id>/.done on the Volume, which is the path resolve_run checks
+    assert (run_dir / ".done").is_file()
+    assert modal_run._run_dir(run_id) == str(run_dir)
+    assert f"runs/{run_id}/.done" == os.path.relpath(run_dir / ".done", volume).replace(os.sep, "/")
