@@ -182,9 +182,11 @@ After training, you can ask the model a question directly on Modal — **no down
 ```bash
 modal run runs/modal_run.py::chat --prompt "What is the capital of France?"
 modal run runs/modal_run.py::chat --mode gpu --prompt "Why is the sky blue?"
+modal run runs/modal_run.py::chat --temperature 0.1 --prompt "..."   # reduce repetition on CPU
 ```
 
 > **Note:** `--mode cpu` is the default. Use `--mode gpu` only if you have a completed GPU run on the Volume.
+> **CPU repetition:** the default temperature is 0.3 (lower than the interactive default of 0.6) to reduce repetition loops on CPU. If the response still repeats, try `--temperature 0.1`.
 
 **How it differs from chatting locally:**
 
@@ -341,7 +343,7 @@ The training stages and their skip markers are diagrammed in [DIAGRAMS.md](DIAGR
 | Command | Category | What it does |
 |---|---|---|
 | `bash runs/runmodal.sh` | regular | Launch a run (`MODE=cpu` default, or `MODE=gpu`) |
-| `modal run runs/modal_run.py::chat --prompt "..."` | chat | Ask the trained model a question on Modal (no download; `--mode cpu` default) |
+| `modal run runs/modal_run.py::chat --prompt "..."` | regular | Ask the trained model a question on Modal (no download; `--mode cpu`, `--temperature 0.3` defaults) |
 | `bash runs/runmodal.sh finish <run-id>` | maintenance | Download a finished run's models to your laptop |
 | `bash runs/modal_peek.sh status` | maintenance | Show running apps and active containers (read-only) |
 | `bash runs/modal_peek.sh apps [N]` | maintenance | List the last N Modal apps, including stopped ones |
