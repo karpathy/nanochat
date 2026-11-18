@@ -78,6 +78,19 @@ def use_calculator(expr):
     # Evaluate with timeout
     return eval_with_timeout(expr)
 
+def format_calculator_result(result):
+    """
+    Render a calculator result the same way it appears in training data.
+    GSM8K writes whole-number results as integers (e.g. "10", not "10.0"), but
+    eval returns a float for division and many products (0.2*50 -> 10.0). Without
+    this, the engine would inject "10.0" at inference while the model was trained
+    on "10", a train/inference mismatch on the tool-output tokens. Fractional
+    results are left unchanged.
+    """
+    if isinstance(result, float) and result.is_integer():
+        return str(int(result))
+    return str(result)
+
 # -----------------------------------------------------------------------------
 class KVCache:
     """
@@ -258,7 +271,7 @@ class Engine:
                         expr = self.tokenizer.decode(state.python_expr_tokens)
                         result = use_calculator(expr)
                         if result is not None:
-                            result_tokens = self.tokenizer.encode(str(result))
+                            result_tokens = self.tokenizer.encode(format_calculator_result(result))
                             state.forced_tokens.append(output_start)
                             state.forced_tokens.extend(result_tokens)
                             state.forced_tokens.append(output_end)
