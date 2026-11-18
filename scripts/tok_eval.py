@@ -155,10 +155,10 @@ all_text = [
     ("code", code_text),
     ("math", math_text),
     ("science", science_text),
-    ("fwe-train", train_text),
+    ("climbmix-train", train_text),
 ]
 if val_text:
-    all_text.append(("fwe-val", val_text))
+    all_text.append(("climbmix-val", val_text))
 
 # Try out current default compared to GPT-2 and GPT-4 tokenizers
 tokenizer_results = {}
@@ -241,25 +241,3 @@ def print_comparison(baseline_name, baseline_results, ours_results, all_text):
 # Print comparisons
 print_comparison("GPT-2", tokenizer_results['gpt2'], tokenizer_results['ours'], all_text)
 print_comparison("GPT-4", tokenizer_results['gpt4'], tokenizer_results['ours'], all_text)
-
-# Log to report
-from nanochat.report import get_report
-lines = []
-for baseline_name in ["GPT-2", "GPT-4"]:
-    baseline_key = baseline_name.lower().replace('-', '')
-    baseline_results = tokenizer_results[baseline_key]
-    ours_results = tokenizer_results['ours']
-    lines.append(f"### Comparison with {baseline_name}")
-    lines.append("")
-    lines.append("| Text Type | Bytes | " + baseline_name + " Tokens | " + baseline_name + " Ratio | Ours Tokens | Ours Ratio | Relative Diff % |")
-    lines.append("|-----------|-------|--------------|--------------|-------------|------------|-----------------|")
-    for name, text in all_text:
-        baseline_data = baseline_results[name]
-        ours_data = ours_results[name]
-        relative_diff = ((baseline_data['tokens'] - ours_data['tokens']) / baseline_data['tokens']) * 100
-        lines.append(f"| {name} | {baseline_data['bytes']} | {baseline_data['tokens']} | {baseline_data['ratio']:.2f} | {ours_data['tokens']} | {ours_data['ratio']:.2f} | {relative_diff:+.1f}% |")
-    lines.append("")
-report_markdown = "\n".join(lines)
-get_report().log(section="Tokenizer evaluation", data=[
-    report_markdown,
-])
