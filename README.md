@@ -95,7 +95,7 @@ Get it to write stories or poems. Ask it to tell you who you are to see a halluc
 |--------|---------|----------|------|------|
 | **Local CPU/MPS** | `bash runs/runcpu.sh` | Mac or CPU machine | ~1 hour | Free |
 | **Local GPU** | `bash runs/speedrun.sh` | 8×H100 bare metal | ~1.5–2 hours | $40–60 (yours) |
-| **Cloud CPU (Modal)** | `bash runs/runmodal.sh` (default `MODE=cpu`) | Modal, up to 64 cores / 128 GiB, no GPU | Unmeasured (first run measures it) | Scales with cores; check `modal billing rates` |
+| **Cloud CPU (Modal)** | `bash runs/runmodal.sh` (default `MODE=cpu`) | Modal, up to 64 cores / 128 GiB, no GPU | ~1h46m (first measured run; per-stage breakdown in TRAIL rank 8) | Scales with cores; check `modal billing rates` |
 | **Cloud GPU (Modal)** | `MODE=gpu bash runs/runmodal.sh` | Modal 8×H100 | ~1.5–2 hours | ~$40–60 (first run higher) |
 | **Modal: continue an interrupted run** | `bash runs/runmodal.sh` (relaunch: continues the most recent unfinished CPU run of the same depth) or `bash runs/runmodal.sh resume <run-id>` (a named CPU run of the current depth that is not finished) | Modal | Remaining time only | Compute is billed again while it runs; see [docs/MODAL.md](docs/MODAL.md#command-quick-reference-modal) |
 | **Modal: download a finished run** | `bash runs/runmodal.sh finish <run-id>` (or `bash runs/modal_peek.sh pull` for the latest run) | Your laptop | Minutes | Copies the run record and the newest chat model to `~/.cache/nanochat-modal/<mode>/`; see [docs/MODAL.md](docs/MODAL.md) |
