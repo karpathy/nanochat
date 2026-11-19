@@ -180,6 +180,9 @@ fi
 
 # Launch with mode prefix
 RUN_LOG="$ARCHIVE_DIR/run.log"
+# One launch, one app: a resumed run must not keep the app id of its first launch (finish would
+# look for an app that is already gone). The id is recorded from this launch's own output.
+rm -f "$ARCHIVE_DIR/app.id"
 set +e
 # $DETACH_FLAG must sit before the script path: modal forwards anything after it to the entrypoint.
 NANOCHAT_MODAL_MODE="$MODE" NANOCHAT_MODAL_VOLUME="$NANOCHAT_MODAL_VOLUME" modal run \
