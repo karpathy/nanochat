@@ -364,11 +364,67 @@ class TestRunLockSelfReclaim:
         lock_dir = tmp_path / ".run.lock"
         _write_fresh_lock(lock_dir, run_id="my-run")
 
-        r = _run(_run_lock_script(str(tmp_path), extra_env={"NANOCHAT_RUN_ID": "my-run"}))
+        r = _run(_run_lock_script(str(tmp_path), extra_env={
+            "NANOCHAT_RUN_ID": "my-run",
+            "NANOCHAT_LOCK_SAME_ID_WAIT_SECS": "2",
+        }))
         assert r.returncode == 1, (
             "fresh-heartbeat same-ID lock must be REFUSED (BLOCKER 2 fix)"
         )
         assert "ERROR" in r.stderr
+
+    def test_same_run_id_heartbeat_going_stale_during_wait_is_reclaimed(self, tmp_path):
+        """
+        Scenario: A preempted instance's heartbeat is still fresh when the restart begins,
+                  and goes stale within the wait window; the restart must reclaim the lock.
+        Slice: same-run-ID restart wait (fix for the preempted-container restart race)
+        ### Given: .run.lock/ with run_id="my-run" and a heartbeat 1 s short of the 120 s threshold
+        ### When: _run_lock.sh is sourced with NANOCHAT_RUN_ID="my-run" and a 10 s wait allowance
+        ### Then: acquires the lock (exit 0, ACQUIRED)
+        """
+        lock_dir = tmp_path / ".run.lock"
+        lock_dir.mkdir()
+        (lock_dir / "run_id").write_text("my-run")
+        (lock_dir / "heartbeat").write_text(str(int(time.time()) - 119))
+
+        r = _run(_run_lock_script(str(tmp_path), extra_env={
+            "NANOCHAT_RUN_ID": "my-run",
+            "NANOCHAT_LOCK_SAME_ID_WAIT_SECS": "10",
+        }))
+        assert r.returncode == 0, r.stderr
+        assert "ACQUIRED" in r.stdout
+
+    def test_same_run_id_live_holder_is_refused_after_wait(self, tmp_path):
+        """
+        Scenario: A live instance with the same run id keeps its heartbeat refreshed; a restart
+                  that waits must still be REFUSED when the wait runs out.
+        Slice: same-run-ID restart wait must never steal a live lock
+        ### Given: a background holder of the lock with run_id="my-run" refreshing every 1 s
+        ### When: a second instance with run_id="my-run" waits 3 s
+        ### Then: exits 1 with the still-fresh error; the holder keeps the lock
+        """
+        base = str(tmp_path)
+        holder_env = {"NANOCHAT_RUN_ID": "my-run", "NANOCHAT_LOCK_HB_INTERVAL": "1"}
+        holder_script = _run_lock_script(base, extra_env=holder_env) + "\nsleep 30\n"
+        holder = subprocess.Popen(["bash", "-c", holder_script],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            lock_dir = tmp_path / ".run.lock"
+            for _ in range(50):  # wait for the holder to claim the lock
+                if (lock_dir / "heartbeat").exists():
+                    break
+                time.sleep(0.1)
+            r = _run(_run_lock_script(base, extra_env={
+                "NANOCHAT_RUN_ID": "my-run",
+                "NANOCHAT_LOCK_HB_INTERVAL": "1",
+                "NANOCHAT_LOCK_SAME_ID_WAIT_SECS": "3",
+            }), timeout=15)
+            assert r.returncode == 1, r.stdout + r.stderr
+            assert "heartbeat still fresh" in r.stderr
+            assert lock_dir.is_dir()
+        finally:
+            holder.kill()
+            holder.wait()
 
     def test_different_run_id_fresh_heartbeat_still_refused(self, tmp_path):
         """

@@ -184,8 +184,25 @@ _acquire_run_lock() {
     local held_run_id
     held_run_id="$(_read_run_id "${_LOCK_RUN_ID_FILE}")"
     if [ "${held_run_id:-}" = "${_LOCK_RUN_ID}" ]; then
+        # A restarted container can start before the preempted instance's heartbeat goes stale
+        # (about 2 intervals). Wait for that, bounded. A live holder keeps refreshing, so it is
+        # still refused once the wait runs out.
+        local waited=0
+        local wait_max="${NANOCHAT_LOCK_SAME_ID_WAIT_SECS:-$(( _HB_REFRESH_INTERVAL * 2 + 30 ))}"
+        case "${wait_max}" in
+            ''|*[!0-9]*)
+                echo "ERROR: NANOCHAT_LOCK_SAME_ID_WAIT_SECS must be a whole number of seconds (got '${wait_max}')." >&2
+                exit 1 ;;
+        esac
+        if ! _is_same_id_stale && [ "${wait_max}" -gt 0 ]; then
+            echo "Run ${_LOCK_RUN_ID} already holds a fresh lock; waiting up to ${wait_max}s for the previous instance's heartbeat to expire." >&2
+        fi
+        while [ "${waited}" -lt "${wait_max}" ] && ! _is_same_id_stale; do
+            sleep 1
+            waited=$((waited + 1))
+        done
         if ! _is_same_id_stale; then
-            echo "ERROR: same run ID ${_LOCK_RUN_ID} is already active on ${NANOCHAT_BASE_DIR} (heartbeat is fresh — previous instance still running)." >&2
+            echo "ERROR: same run ID ${_LOCK_RUN_ID} is already active on ${NANOCHAT_BASE_DIR} (heartbeat still fresh after ${wait_max}s — previous instance still running)." >&2
             exit 1
         fi
         # Previous instance looks dead: reclaim via the standard gate.
@@ -198,6 +215,11 @@ _acquire_run_lock() {
         trap '_release_run_lock' EXIT
         trap '_release_run_lock; exit 130' INT
         trap '_release_run_lock; exit 143' TERM
+        # Re-check under the gate: a live holder may have refreshed while we waited for the gate.
+        if ! _is_same_id_stale; then
+            echo "ERROR: same run ID ${_LOCK_RUN_ID} is already active on ${NANOCHAT_BASE_DIR} (heartbeat refreshed while reclaiming)." >&2
+            exit 1
+        fi
         local own_tmp="${_LOCK_DIR}.stale.$$"
         if mv "${_LOCK_DIR}" "${own_tmp}" 2>/dev/null; then
             rm -rf "${own_tmp}"
