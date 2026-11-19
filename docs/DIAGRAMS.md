@@ -83,7 +83,7 @@ flowchart TD
 | Config check before resume | Refuses if `device_batch_size`, `max_seq_len`, `total_batch_size`, `num_iterations`, or `world_size` changed (`assert_resume_config_matches`, shared key list in `nanochat/checkpoint_manager.py`) | Same check; same shared key list |
 | Restores | Model, optimizer, data position | Model, optimizer, data position, loop state |
 | Local status | Kill and SIGTERM verified on CPU/MPS (Step A) | Implemented; not verified end to end |
-| Modal status | Not verified. Run `20261114-125440-cpu` restarted at step 0 after preemption | Not verified |
+| Modal status | PARTIAL: manual stop+resume verified 2026-11-17 on run `20261117-181526-cpu-d6` — log showed `Resuming optimization from step 39`. True Modal-initiated preemption (container suspended by scheduler) not yet verified. | Not verified |
 
 Known gaps:
 

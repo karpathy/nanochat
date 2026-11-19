@@ -24,3 +24,8 @@ gate-evidence/
 .coverage
 .reports/
 .claude/
+
+scratchpad/
+# Added by code-review-graph
+.code-review-graph/
+.mcp.json
