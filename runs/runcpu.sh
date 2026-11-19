@@ -28,6 +28,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/profiles.sh"
 # keeps the profile values above, so local runs are unchanged.
 RUNCPU_DEVICE_BATCH_SIZE="${NANOCHAT_RUNCPU_DEVICE_BATCH_SIZE:-$RUNCPU_DEVICE_BATCH_SIZE}"
 RUNCPU_NUM_ITERATIONS="${NANOCHAT_RUNCPU_NUM_ITERATIONS:-$RUNCPU_NUM_ITERATIONS}"
+# -1 = full ChatCORE categorical sets (local default). Modal CPU caps it; see CPU_CHATCORE_MAX_CAT.
+RUNCPU_CHATCORE_MAX_CAT="${NANOCHAT_RUNCPU_CHATCORE_MAX_CAT:--1}"
 RUNCPU_EVAL_DEVICE_BATCH_SIZE="${NANOCHAT_RUNCPU_EVAL_DEVICE_BATCH_SIZE:-$RUNCPU_EVAL_DEVICE_BATCH_SIZE}"
 # B2 fix: export DEPTH so _stage_lib.sh can embed it in stage markers (profile+depth scoping).
 # Value comes from nanochat/defaults.py → profiles.sh (SSOT: RUNCPU_DEPTH).
@@ -105,6 +107,7 @@ _SFT_RESUME_FLAG="$(resume_flag chat_sft "${NANOCHAT_BASE_DIR}/chatsft_checkpoin
 run_stage chat_sft "" "chat with your model (python -m scripts.chat_cli)" -- \
     python -m scripts.chat_sft \
     --eval-every=200 \
+    --chatcore-max-cat="$RUNCPU_CHATCORE_MAX_CAT" \
     --eval-tokens=524288 \
     --num-iterations=1500 \
     --save-every-secs="$_SAVE_EVERY_SECS" \

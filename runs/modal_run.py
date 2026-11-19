@@ -52,6 +52,9 @@ CPU_TRAIN_TIMEOUT = 12 * 60 * 60  # worst-case bound; billing follows actual run
 # total batch in one pass: 16384 / (32 * 512) = 1, so no grad accumulation.
 CPU_DEVICE_BATCH_SIZE = 32
 CPU_EVAL_DEVICE_BATCH_SIZE = 16
+# ChatCORE samples per categorical task (ARC, MMLU) during SFT. Full sets (-1) take hours on CPU;
+# 500 keeps each eval block to minutes. The local default stays -1 (full set) in runcpu.sh.
+CPU_CHATCORE_MAX_CAT = 500
 CPU_NUM_ITERATIONS = 5000  # profile default; kept for model quality (timeout is set to fit it)
 CPU_CORES = 64  # heavy machine: CPU mode is meant to use every core the account allows
 CPU_MEMORY_MIB = 131072  # 128 GiB
@@ -476,6 +479,22 @@ def prefetch_cpu() -> None:
     _run_prefetch(PREFETCH_SHARDS_CPU)
 
 
+def _cpu_train_env(
+    cores: int, run_id: str, code_rev: str, num_iterations: int, save_every_secs: float
+) -> dict[str, str]:
+    """Env for runs/runcpu.sh on the Modal CPU container (pure: no I/O, easy to test)."""
+    return {
+        "OMP_NUM_THREADS": str(cores),
+        "MKL_NUM_THREADS": str(cores),
+        "NANOCHAT_RUNCPU_DEVICE_BATCH_SIZE": str(CPU_DEVICE_BATCH_SIZE),
+        "NANOCHAT_RUNCPU_EVAL_DEVICE_BATCH_SIZE": str(CPU_EVAL_DEVICE_BATCH_SIZE),
+        "NANOCHAT_RUNCPU_NUM_ITERATIONS": str(num_iterations),
+        "NANOCHAT_RUNCPU_CHATCORE_MAX_CAT": str(CPU_CHATCORE_MAX_CAT),
+        "NANOCHAT_SAVE_EVERY_SECS": str(save_every_secs),
+        **_run_record_env(run_id, "modal-cpu", code_rev),
+    }
+
+
 @app.function(
     image=image_cpu,
     cpu=CPU_CORES,
@@ -497,15 +516,7 @@ def train_cpu(
     try:
         _run_training(
             "runs/runcpu.sh",
-            {
-                "OMP_NUM_THREADS": str(cores),
-                "MKL_NUM_THREADS": str(cores),
-                "NANOCHAT_RUNCPU_DEVICE_BATCH_SIZE": str(CPU_DEVICE_BATCH_SIZE),
-                "NANOCHAT_RUNCPU_EVAL_DEVICE_BATCH_SIZE": str(CPU_EVAL_DEVICE_BATCH_SIZE),
-                "NANOCHAT_RUNCPU_NUM_ITERATIONS": str(num_iterations),
-                "NANOCHAT_SAVE_EVERY_SECS": str(save_every_secs),
-                **_run_record_env(run_id, "modal-cpu", code_rev),
-            },
+            _cpu_train_env(cores, run_id, code_rev, num_iterations, save_every_secs),
             commit_every_secs,
         )
     finally:
