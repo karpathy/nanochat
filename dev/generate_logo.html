@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<body style="margin:0; display:flex; justify-content:center; align-items:center; height:100vh; background:#fff">
+  <svg width="400" height="400" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <radialGradient id="g" cx="50%" cy="50%">
+        <stop offset="0%" style="stop-color:#667eea;stop-opacity:1"/>
+        <stop offset="100%" style="stop-color:#764ba2;stop-opacity:0.3"/>
+      </radialGradient>
+    </defs>
+  </svg>
+  <script>
+    const svg = document.querySelector('svg');
+    const r = 120;
+    let path = '';
+    for(let i = 0; i < 24; i += 2) {
+      let a1 = i * Math.PI / 12;
+      let a2 = (i + 1) * Math.PI / 12;
+      let x2 = 200 + Math.cos(a2) * r;
+      let y2 = 200 + Math.sin(a2) * r;
+      let x3 = 200 + Math.cos(a2) * (r - 90);
+      let y3 = 200 + Math.sin(a2) * (r - 90);
+      path += `M${x2},${y2} L${x3},${y3} `;
+    }
+    svg.innerHTML += `<path d="${path}" stroke="url(#g)" stroke-width="6" stroke-linecap="round" fill="none"/>`;
+    svg.innerHTML += `<path d="M200,-12 L212,0 L200,12 L188,0 Z" transform="translate(0,200)" fill="#000"/>`;
+  </script>
+</body>
+</html>
