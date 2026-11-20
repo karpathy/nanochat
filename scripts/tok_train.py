@@ -2,14 +2,18 @@
 Train a tokenizer using our own BPE Tokenizer library.
 In the style of GPT-4 tokenizer.
 """
+import argparse
+import datetime
+import json
 import os
 import time
-import argparse
+
 import torch
-from nanochat.tokenizer import RustBPETokenizer
+
 from nanochat.common import get_base_dir
 from nanochat.dataset import parquets_iter_batched
 from nanochat.glossary import emit_define
+from nanochat.tokenizer import RustBPETokenizer
 
 # -----------------------------------------------------------------------------
 # Parse command line arguments
@@ -61,6 +65,20 @@ print(f"Training time: {train_time:.2f}s")
 base_dir = get_base_dir()
 tokenizer_dir = os.path.join(base_dir, "tokenizer")
 tokenizer.save(tokenizer_dir)
+
+# Record hyperparameters used for this tokenizer training run
+hparams = {
+    "stage": "tok_train",
+    "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+    "vocab_size": args.vocab_size,
+    "max_chars": args.max_chars,
+    "doc_cap": args.doc_cap,
+    "train_time_secs": round(train_time, 2),
+}
+hparams_path = os.path.join(tokenizer_dir, "hparams.json")
+with open(hparams_path, "w") as f:
+    json.dump(hparams, f, indent=2)
+print(f"Saved hparams to {hparams_path}")
 
 # -----------------------------------------------------------------------------
 # Quick inline sanity check

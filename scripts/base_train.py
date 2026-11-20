@@ -16,6 +16,7 @@ import sys
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import argparse
+import datetime
 import gc
 import json
 import math
@@ -473,6 +474,31 @@ total_tokens = total_batch_size * num_iterations # the actual number of tokens w
 print0(f"Total number of training tokens: {total_tokens:,}")
 print0(f"Tokens : Scaling params ratio: {total_batch_size * num_iterations / num_scaling_params:.2f}") # e.g. Chinchilla was ~20
 print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
+
+# Record fully-resolved hyperparameters at training start (rank 0 only)
+if master_process:
+    _hparams = {
+        "stage": "base_train",
+        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+        "training": {
+            **user_config,
+            "num_iterations": num_iterations,
+            "total_tokens": total_tokens,
+            "batch_lr_scale": batch_lr_scale,
+            "effective_embedding_lr": args.embedding_lr * batch_lr_scale,
+            "effective_unembedding_lr": args.unembedding_lr * batch_lr_scale,
+            "effective_matrix_lr": args.matrix_lr * batch_lr_scale,
+            "effective_scalar_lr": args.scalar_lr * batch_lr_scale,
+            "effective_weight_decay": weight_decay_scaled,
+            "num_flops_per_token": num_flops_per_token,
+        },
+        "model": {**model_config_kwargs, **param_counts},
+    }
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    _hparams_path = os.path.join(checkpoint_dir, "hparams.json")
+    with open(_hparams_path, "w") as f:
+        json.dump(_hparams, f, indent=2)
+    print0(f"[hparams] training configuration written → {_hparams_path}")
 
 # Learning rate schedule (linear warmup, constant, linear warmdown)
 def get_lr_multiplier(it):

@@ -9,6 +9,8 @@ torchrun --nproc_per_node=8 -m scripts.chat_eval -- -i sft -a ARC-Easy
 """
 
 import argparse
+import datetime
+import json
 import os
 from functools import partial
 
@@ -252,7 +254,26 @@ if __name__ == "__main__":
         print0(paint("done", f"ChatCORE metric: {chatcore_metric:.4f}"))
 
     compute_cleanup()
-    if ddp_rank == 0: # marker: last action of a successful run
+    if ddp_rank == 0:
+        step = meta.get("step")
+        record = {
+            "step": step,
+            "model_tag": model_tag,
+            "source": args.source,
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+            "device_type": device_type,
+            "max_problems": args.max_problems,
+            "tasks": {t: results[t] for t in task_names if t in results},
+            "chatcore_metric": chatcore_metric if all_tasks_were_evaluated else None,
+        }
+        ckpt_dir = os.path.join(get_base_dir(), "chatsft_checkpoints", model_tag)
+        os.makedirs(ckpt_dir, exist_ok=True)
+        step_str = f"{step:06d}" if step is not None else "unknown"
+        out_path = os.path.join(ckpt_dir, f"chatcore_{step_str}.json")
+        with open(out_path, "w") as f:
+            json.dump(record, f, indent=2)
+        print0(f"[eval] results written → {out_path}")
+
+        # marker: last action of a successful run
         marker_dir = os.path.join(get_base_dir(), "chatsft_checkpoints")
-        os.makedirs(marker_dir, exist_ok=True)
         open(os.path.join(marker_dir, ".eval_ok"), "w").close()

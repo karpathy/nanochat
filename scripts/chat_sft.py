@@ -10,11 +10,13 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --device-batch-s
 """
 
 import argparse
+import datetime
 import gc
+import json
 import os
+import time
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
-import time
 
 import torch
 import torch.distributed as dist
@@ -59,8 +61,13 @@ from nanochat.memory import (
     fit_device_batch_size,
 )
 from nanochat.run_record import make_run_logger
+from nanochat.sft_loader import (
+    ZERO_TOKEN_STREAK_LIMIT,
+    SftLoaderState,
+    is_packable,
+    next_zero_token_streak,
+)
 from nanochat.term_style import paint
-from nanochat.sft_loader import SftLoaderState, ZERO_TOKEN_STREAK_LIMIT, is_packable, next_zero_token_streak
 from nanochat.tokenizer import get_token_bytes
 from scripts.chat_eval import run_chat_eval
 from tasks.common import TaskMixture
@@ -208,6 +215,20 @@ optimizer = model.setup_optimizer(unembedding_lr=args.unembedding_lr, embedding_
 user_config.update({k: getattr(args, k) for k in SFT_RESUME_KEYS[:-1]})
 # FIX 3b: record world_size in user_config so the resume guard can verify it.
 user_config["world_size"] = ddp_world_size
+
+# Record fully-resolved hyperparameters at SFT training start (rank 0 only)
+if master_process:
+    _sft_hparams = {
+        "stage": "chat_sft",
+        "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+        "training": user_config,
+        "model_arch": meta.get("model_config", {}),
+    }
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    _sft_hparams_path = os.path.join(checkpoint_dir, "hparams.json")
+    with open(_sft_hparams_path, "w") as f:
+        json.dump(_sft_hparams, f, indent=2)
+    print0(f"[hparams] SFT configuration written → {_sft_hparams_path}")
 
 # Use pre-detected resume step (banner already printed above if resuming)
 if args.resume_from_step == -1:

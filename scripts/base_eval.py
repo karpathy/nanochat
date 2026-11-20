@@ -16,28 +16,41 @@ Examples:
     # Quick/approximate evaluation using a single GPU
     python -m scripts.base_eval --model-tag d24 --device-batch-size=16 --max-per-task=100 --split-tokens=524288
 """
-import os
-import csv
-import time
-import json
-import yaml
-import shutil
-import random
-import zipfile
-import tempfile
 import argparse
-import torch
+import csv
+import datetime
+import json
+import os
+import random
+import shutil
+import tempfile
+import time
+import zipfile
 
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
-from nanochat.defaults import DEFAULT_DEVICE_BATCH_SIZE
-from nanochat.memory import auto_fit_echo_lines, auto_fit_enabled, empty_device_cache, fit_device_batch_size
-from nanochat.tokenizer import get_token_bytes
+import yaml
+
 from nanochat.checkpoint_manager import load_model
+from nanochat.common import (
+    autodetect_device_type,
+    compute_cleanup,
+    compute_init,
+    download_file_with_lock,
+    get_base_dir,
+    print0,
+)
 from nanochat.core_eval import evaluate_task
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
-from nanochat.loss_eval import evaluate_bpb
+from nanochat.defaults import DEFAULT_DEVICE_BATCH_SIZE
 from nanochat.engine import Engine
+from nanochat.loss_eval import evaluate_bpb
+from nanochat.memory import (
+    auto_fit_echo_lines,
+    auto_fit_enabled,
+    empty_device_cache,
+    fit_device_batch_size,
+)
 from nanochat.metrics_trend import emit_metric_trend
+from nanochat.tokenizer import get_token_bytes
 
 # -----------------------------------------------------------------------------
 # CORE evaluation
@@ -176,6 +189,31 @@ def main():
         ]):
             print0(line)
         args.device_batch_size = fitted_batch_size
+
+    # Record eval hyperparameters at eval start (rank 0 only)
+    if ddp_rank == 0:
+        _eval_hparams = {
+            "stage": "base_eval",
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+            "model_tag": args.model_tag,
+            "step": meta.get("step"),
+            "model_slug": model_slug,
+            "eval": {
+                "modes": sorted(eval_modes),
+                "max_per_task": args.max_per_task,
+                "device_batch_size": args.device_batch_size,
+                "split_tokens": args.split_tokens,
+                "device_type": device_type,
+            },
+            "model_config": model_config,
+            "training_hparams": meta.get("user_config", {}),
+        }
+        _eval_dir = os.path.join(get_base_dir(), "base_eval")
+        os.makedirs(_eval_dir, exist_ok=True)
+        _eval_hparams_path = os.path.join(_eval_dir, f"{model_slug}_hparams.json")
+        with open(_eval_hparams_path, "w") as f:
+            json.dump(_eval_hparams, f, indent=2)
+        print0(f"[hparams] eval configuration written → {_eval_hparams_path}")
 
     # Results to log
     core_results = None
