@@ -186,7 +186,7 @@ def validate_chat_request(request: ChatRequest):
         if message.role not in ["user", "assistant"]:
             raise HTTPException(
                 status_code=400,
-                detail=f"Message {i} has invalid role. Must be 'user', 'assistant', or 'system'"
+                detail=f"Message {i} has invalid role. Must be 'user' or 'assistant'"
             )
 
     # Validate temperature
@@ -224,6 +224,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# allow_origins=["*"] is intentional: this server is for local/trusted use only.
+# If deploying publicly, replace "*" with your specific origin(s).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -232,10 +234,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 @app.get("/")
 async def root():
     """Serve the chat UI."""
-    ui_html_path = os.path.join("nanochat", "ui.html")
+    ui_html_path = os.path.join(_REPO_ROOT, "nanochat", "ui.html")
     with open(ui_html_path, "r", encoding="utf-8") as f:
         html_content = f.read()
     # Replace the API_URL to use the same origin
@@ -249,7 +253,7 @@ async def root():
 @app.get("/logo.svg")
 async def logo():
     """Serve the NanoChat logo for favicon and header."""
-    logo_path = os.path.join("nanochat", "logo.svg")
+    logo_path = os.path.join(_REPO_ROOT, "nanochat", "logo.svg")
     return FileResponse(logo_path, media_type="image/svg+xml")
 
 async def generate_stream(
