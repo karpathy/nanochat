@@ -249,8 +249,13 @@ This copies the tokenizer and the newest chat checkpoint to `~/.cache/nanochat-m
 - Local Python environment: run `uv sync --extra cpu` once in the repo root (same as for `runcpu.sh`).
 - Model files under `~/.cache/nanochat-modal/<mode>/`:
   - `tokenizer/tokenizer.pkl` and `tokenizer/token_bytes.pt`
+  - `tokenizer/hparams.json` — tokenizer training hyperparameters
   - `chatsft_checkpoints/<run-id>/model_<step>.pt` and `meta_<step>.json` (the newest run's folder)
+  - `chatsft_checkpoints/<run-id>/hparams.json` — SFT training hyperparameters
+  - `base_checkpoints/<run-id>/hparams.json` — base training hyperparameters (if present on the Volume)
 - ~8 GB of free disk space and ~4 GB of free RAM (to load the checkpoint).
+
+> **Hyperparameters:** `modal_peek.sh pull` downloads all `hparams.json` files alongside model weights. See [RUNNING.md §15](RUNNING.md#15-hyperparameters) for the file schema and how to read them programmatically.
 
 Check for these files with `find ~/.cache/nanochat-modal/<mode> -type f`. If any are missing, follow [Pull the models from the Volume by hand](#pull-the-models-from-the-volume-by-hand). Auto-download on success is not yet reliable, so do not assume it ran.
 
@@ -268,8 +273,8 @@ NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu uv run python -m scripts.chat_cli 
 The GPU run trains a ~1.6B parameter GPT-2-grade transformer. It makes reasonable guesses and can write stories, poems, and answer factual questions (sometimes incorrectly).
 
 ```bash
-NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/gpu python3 -m scripts.chat_cli -p "Why is the sky blue?"
-NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/gpu python3 -m scripts.chat_cli   # interactive
+NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/gpu uv run python -m scripts.chat_cli -p "Why is the sky blue?"
+NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/gpu uv run python -m scripts.chat_cli   # interactive
 ```
 
 If the training failed and the model files are missing, the script exits with an error and does not print a success tip.
@@ -393,11 +398,28 @@ Once `ALL DONE` appears in the terminal:
    ```
 4. **Re-download** (if the auto-download step failed): run `bash runs/runmodal.sh finish <run-id>`, which downloads the run's artifacts after the Modal run has stopped. It needs the app id that launch saves, which only runs started from commit `948714f` or later have; older runs need the manual commands. If that also fails, see "Pull the models from the Volume by hand" above.
 5. **Evaluate the chat model** (optional):
+
+   **Important:** ChatCORE scores produced during `chat_sft` training are logged to wandb only — they are **not** in the downloaded `meta_*.json` checkpoint files (those only contain `val_bpb`). If wandb was not enabled (`WANDB_RUN=dummy`, the default), re-run the eval standalone after downloading the model files.
+
+   Two options:
+
+   **a) Locally (after download)** — fastest on Apple Silicon (MPS):
    ```bash
-    NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu python3 -m scripts.chat_eval -i sft -x 50
+   # CPU run (quick: 50 problems per task)
+   NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu uv run python -m scripts.chat_eval -i sft -x 50
+   # CPU run (full eval — HumanEval and GSM8K are slow on CPU)
+   NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu uv run python -m scripts.chat_eval -i sft
+   # GPU run
+   NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/gpu uv run python -m scripts.chat_eval -i sft -x 50
    ```
 
-    Remove `-x 50` to run the full eval set.
+   **b) On Modal (no download needed)** — runs in the Modal container against the Volume:
+   ```bash
+   modal run runs/modal_run.py::chat --prompt "Evaluate: What is 12 × 7?"   # one-shot sanity check
+   ```
+   Full ChatCORE on Modal is not yet a built-in command; use option (a) for numeric eval scores.
+
+   See [docs/RUNNING.md §14](RUNNING.md#14-evaluations--end-to-end-and-standalone) for the full eval reference: per-task flags, re-running just the eval stage with `FORCE_STAGES`, and capturing output to a file.
 
 ## Switching CPU ↔ GPU
 

@@ -5,7 +5,7 @@ Level 2 guide. The short version lives in the [README](../README.md#running-on-c
 Design source: [docs/plan/2026-11-13-fix-forward-mac.md](plan/2026-11-13-fix-forward-mac.md).
 
 **Contents**
-[1 Pick a script](#1-pick-a-script) · [2 First run](#2-first-run-expectations) · [3 Fix-forward loop](#3-the-fix-forward-loop) · [4 Re-run map](#4-what-a-re-run-keeps-and-skips) · [5 Echo legend](#5-reading-the-logs-echo-legend) · [6 Glossary](#6-enrichment-glossary) · [6b Terms](#6b-terms) · [7 Mac / Intel torch](#7-mac--intel-torch) · [8 NaN](#8-nan-troubleshooting) · [9 Controls](#9-controls) · [10 Failure shapes](#10-common-failure-shapes) · [11 Memory / OOM](#11-memory--oom) · [12 Defaults and profiles](#12-defaults-and-profiles) · [13 After ALL DONE](#13-after-all-done)
+[1 Pick a script](#1-pick-a-script) · [2 First run](#2-first-run-expectations) · [3 Fix-forward loop](#3-the-fix-forward-loop) · [4 Re-run map](#4-what-a-re-run-keeps-and-skips) · [5 Echo legend](#5-reading-the-logs-echo-legend) · [6 Glossary](#6-enrichment-glossary) · [6b Terms](#6b-terms) · [7 Mac / Intel torch](#7-mac--intel-torch) · [8 NaN](#8-nan-troubleshooting) · [9 Controls](#9-controls) · [10 Failure shapes](#10-common-failure-shapes) · [11 Memory / OOM](#11-memory--oom) · [12 Defaults and profiles](#12-defaults-and-profiles) · [13 After ALL DONE](#13-after-all-done) · [14 Evaluations](#14-evaluations--end-to-end-and-standalone) · [15 Hyperparameters](#15-hyperparameters)
 
 How-to first (§1–4, §8–10), then reference (§5–6, §6b, §9). Kept in one L2 file on purpose so a stuck runner can stay on one page (plan doc mapping); use the TOC to jump.
 
@@ -271,10 +271,17 @@ If you need to abort, press `Ctrl-C`. The script stops at the current stage. Fin
 **Chat with your model**
 ```bash
 source .venv/bin/activate   # if not already active
-python -m scripts.chat_cli -p "What is the capital of France?"
-python -m scripts.chat_cli   # interactive
+uv run python -m scripts.chat_cli -p "What is the capital of France?"
+uv run python -m scripts.chat_cli   # interactive
 ```
 The model is a small depth-6 demo; expect limited responses.
+
+> **No local run?** If you trained on Modal instead, point `NANOCHAT_BASE_DIR` at the downloaded artifacts:
+> ```bash
+> NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu uv run python -m scripts.chat_cli -p "What is the capital of France?"
+> NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu uv run python -m scripts.chat_cli   # interactive
+> ```
+> If the artifacts aren't downloaded yet, run `bash runs/modal_peek.sh pull` first. See [docs/MODAL.md § Chat locally](MODAL.md#chat-locally).
 
 **Evaluate the chat model (optional)**
 ```bash
@@ -285,8 +292,13 @@ python -m scripts.chat_eval -i sft          # full eval
 **Where results live**
 All artifacts are under `$NANOCHAT_BASE_DIR` (default `~/.cache/nanochat`):
 - `tokenizer/tokenizer.pkl` — trained BPE tokenizer
+- `tokenizer/hparams.json` — tokenizer training hyperparameters (see [§15](#15-hyperparameters))
 - `base_checkpoints/<model-tag>/` — pretrained model (runcpu: the run id; speedrun: `d<depth>`)
+- `base_checkpoints/<model-tag>/hparams.json` — base training hyperparameters (see [§15](#15-hyperparameters))
+- `base_eval/<model_slug>_hparams.json` — base eval configuration (see [§15](#15-hyperparameters))
 - `chatsft_checkpoints/<model-tag>/` — SFT chat model (same tag as its base model)
+- `chatsft_checkpoints/<model-tag>/hparams.json` — SFT training hyperparameters (see [§15](#15-hyperparameters))
+- `chatsft_checkpoints/<model-tag>/chatcore_<step>.json` — ChatCORE eval results (written by `scripts.chat_eval`; see [§14](#14-evaluations--end-to-end-and-standalone))
 - `last_metrics.json` — latest val_bpb / CORE metric
 - `last_run.json` — knob snapshot from the last successful full run
 
@@ -296,3 +308,150 @@ If `bash runs/runcpu.sh` was killed abruptly, it may leave a `.run.lock` directo
 rm -rf "$NANOCHAT_BASE_DIR/.run.lock"
 bash runs/runcpu.sh
 ```
+
+## 14. Evaluations — end-to-end and standalone
+
+### How eval fits into the pipeline
+
+| Script | Eval stage | When it runs | What it saves |
+|--------|-----------|--------------|---------------|
+| `runcpu.sh` | No separate stage — ChatCORE runs **inline** in `chat_sft` | Every 200 SFT steps + final step | wandb only (see note) |
+| `speedrun.sh` | `chat_eval` — separate stage after `chat_sft` | Once, at the end | `.stage_chat_eval_<profile>_d<depth>` marker |
+| `base_eval.py` (both) | CORE metric for base model | After `base_train` | `last_metrics.json` (val_bpb + CORE) |
+
+> **ChatCORE is not saved to disk during `runcpu.sh`.** `chat_sft.py` computes per-task accuracies and the aggregate ChatCORE metric at each `--chatcore-every` interval and logs them to wandb (`WANDB_RUN` must be set to a real run name, not `dummy`). The checkpoint `meta_*.json` files only store `val_bpb`. If you need ChatCORE results after a run where wandb was not configured (or where you've downloaded Modal artifacts locally), re-run the eval stage standalone (see below).
+
+### Standalone eval — run any time
+
+You can re-run `scripts.chat_eval` at any time against any checkpoint. No training is re-done.
+
+```bash
+# Full ChatCORE: all 5 tasks (slow on CPU — HumanEval and GSM8K generate text)
+python -m scripts.chat_eval -i sft
+
+# Quick check: cap each task at 50 problems (~minutes on CPU)
+python -m scripts.chat_eval -i sft -x 50
+
+# Single task
+python -m scripts.chat_eval -i sft -a ARC-Easy
+python -m scripts.chat_eval -i sft -a "GSM8K"
+python -m scripts.chat_eval -i sft -a "ARC-Easy|ARC-Challenge|MMLU"   # pipe-separated
+
+# Pin checkpoint step (default: newest)
+python -m scripts.chat_eval -i sft -s 1200
+
+# Explicit device
+python -m scripts.chat_eval -i sft --device-type cpu
+```
+
+Tasks and their type:
+
+| Task | Type | Baseline (random) |
+|------|------|-------------------|
+| `ARC-Easy` | categorical (logit-based) | 25% |
+| `ARC-Challenge` | categorical (logit-based) | 25% |
+| `MMLU` | categorical (logit-based) | 25% |
+| `GSM8K` | generative (text sampling) | 0% |
+| `HumanEval` | generative (text sampling) | 0% |
+
+ChatCORE is the mean centered accuracy across all 5 tasks (0 = random, 1 = perfect). It prints only when all 5 tasks are evaluated. Use `-a` to focus on one task; the aggregate metric is skipped when fewer than all 5 tasks run.
+
+**Results are saved automatically** to `chatsft_checkpoints/<model-tag>/chatcore_<step>.json` in `NANOCHAT_BASE_DIR`. Example for the Modal CPU run after download:
+
+```
+~/.cache/nanochat-modal/cpu/chatsft_checkpoints/20261116-154817-cpu-d6/chatcore_001499.json
+```
+
+The file contains step, model_tag, source, timestamp, device_type, max_problems (if `-x` was used), per-task accuracies, and `chatcore_metric` (null when fewer than all 5 tasks were evaluated). The script also prints `[eval] results written → <path>` at the end. To additionally capture stdout:
+
+```bash
+python -m scripts.chat_eval -i sft 2>&1 | tee eval_results.txt
+```
+
+### Re-running just the eval stage
+
+**`runcpu.sh`** has no separate `chat_eval` stage; ChatCORE is inline in `chat_sft`. To re-run only the eval without redoing SFT training, use the standalone command above. To redo both SFT and inline eval:
+
+```bash
+FORCE_STAGES=chat_sft bash runs/runcpu.sh
+```
+
+**`speedrun.sh`** has a dedicated `chat_eval` stage. To redo only that stage:
+
+```bash
+FORCE_STAGES=chat_eval bash runs/speedrun.sh
+```
+
+To redo base model eval:
+
+```bash
+FORCE_STAGES=base_eval bash runs/runcpu.sh   # or speedrun.sh
+```
+
+### Modal artifacts (downloaded locally)
+
+After pulling a Modal CPU or GPU run (`bash runs/modal_peek.sh pull`), point `NANOCHAT_BASE_DIR` at the downloaded folder:
+
+```bash
+# CPU run
+NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/cpu uv run python -m scripts.chat_eval -i sft -x 50
+
+# GPU run
+NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/gpu uv run python -m scripts.chat_eval -i sft -x 50
+```
+
+See [docs/MODAL.md § After the run finishes](MODAL.md#after-the-run-finishes) for running eval on Modal directly (no download needed) and for the full eval option table.
+
+## 15. Hyperparameters
+
+Each training stage writes a `hparams.json` file at the **start** of the run (before the first checkpoint or forward pass). This captures fully-resolved hyperparameters — after inheritance, auto-fit, and scaling-law computation — so you can retrieve them without wandb.
+
+### What is recorded per stage
+
+| Stage | File | Key fields |
+|-------|------|-----------|
+| `tok_train` | `tokenizer/hparams.json` | `vocab_size`, `max_chars`, `doc_cap`, `train_time_secs` |
+| `base_train` | `base_checkpoints/<model-tag>/hparams.json` | All CLI args + `num_iterations`, `total_tokens`, effective LRs (post batch-scaling), `effective_weight_decay`, model architecture, `num_params` |
+| `base_eval` | `base_eval/<model_slug>_hparams.json` | Eval modes, `max_per_task`, `device_batch_size`, `device_type`, model config, training hparams from checkpoint |
+| `chat_sft` | `chatsft_checkpoints/<model-tag>/hparams.json` | All SFT args (after inheritance from base checkpoint), `world_size`, model architecture from base |
+
+> `tok_eval` has no configurable hyperparameters (it evaluates compression ratio on hard-coded test texts); no file is written.
+
+### Reading hparams programmatically
+
+```python
+import json, os
+
+base_dir = os.environ.get("NANOCHAT_BASE_DIR", os.path.expanduser("~/.cache/nanochat"))
+
+# Tokenizer training params
+with open(f"{base_dir}/tokenizer/hparams.json") as f:
+    tok_hparams = json.load(f)
+
+# Base training params (replace <tag> with the run id or depth, e.g. d6)
+with open(f"{base_dir}/base_checkpoints/<tag>/hparams.json") as f:
+    base_hparams = json.load(f)
+print(base_hparams["training"]["total_batch_size"])
+print(base_hparams["model"]["total"])          # total param count
+
+# SFT training params
+with open(f"{base_dir}/chatsft_checkpoints/<tag>/hparams.json") as f:
+    sft_hparams = json.load(f)
+print(sft_hparams["training"]["num_iterations"])
+```
+
+### Modal CPU / GPU runs
+
+After `bash runs/modal_peek.sh pull`, the same files are downloaded alongside the model weights:
+
+```
+~/.cache/nanochat-modal/cpu/tokenizer/hparams.json
+~/.cache/nanochat-modal/cpu/base_checkpoints/<tag>/hparams.json
+~/.cache/nanochat-modal/cpu/chatsft_checkpoints/<tag>/hparams.json
+```
+
+Point `NANOCHAT_BASE_DIR` at the downloaded folder and use the same Python snippet above. The `modal_run.py` download selector (`_select_chat_files`) picks up all `hparams.json` files from `base_checkpoints/` and `chatsft_checkpoints/` automatically.
+
+### On resume
+
+Hparams are written at stage start regardless of resume. The resume guard in `base_train.py` and `chat_sft.py` refuses to continue if key dimensions changed, so the file always reflects the effective config for that run.
