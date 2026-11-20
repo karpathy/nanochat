@@ -31,6 +31,21 @@ _SOURCE_HINTS = {
     "rl": "run scripts/chat_rl.py first (after chat_sft)",
 }
 
+def _modal_suggestion(source):
+    """Return a suggestion line if a Modal artifact dir has the needed checkpoints, else empty string."""
+    sub = _SOURCE_DIRS.get(source, "")
+    if not sub:
+        return ""
+    home = os.path.expanduser("~")
+    for mode in ("cpu", "gpu"):
+        candidate = os.path.join(home, ".cache", "nanochat-modal", mode, sub)
+        if os.path.isdir(candidate):
+            return (
+                f"\n  Found Modal {mode.upper()} artifacts. Try:"
+                f"\n    NANOCHAT_BASE_DIR=~/.cache/nanochat-modal/{mode} uv run python -m scripts.chat_cli -p \"<prompt>\""
+            )
+    return ""
+
 def _require_dir(path, source=None):
     """Raise a FileNotFoundError that says what is missing and how to get it."""
     if os.path.isdir(path):
@@ -38,6 +53,7 @@ def _require_dir(path, source=None):
     msg = f"Checkpoint directory not found: {path}"
     if source is not None:
         msg += f"\n  Expected source: '{source}' ({_SOURCE_DIRS[source]}/). Hint: {_SOURCE_HINTS[source]}."
+        msg += _modal_suggestion(source)
     msg += f"\n  Base dir: {get_base_dir()} (override with NANOCHAT_BASE_DIR). See docs/RUNNING.md."
     raise FileNotFoundError(msg)
 
