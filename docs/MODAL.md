@@ -82,7 +82,7 @@ The values below are what the scripts actually use. Profile values live in [`nan
 | `FORCE_STAGES` | unset | Redo named stages, e.g. `FORCE_STAGES=base_train,base_eval` |
 | `WANDB_RUN` | `dummy` | Weights & Biases run name; `dummy` disables logging |
 | `NANOCHAT_LOCK_STALE_SECS` | `600` | Seconds with no heartbeat before a lock is considered stale and auto-reclaimed. Lower in tests only. |
-| `NANOCHAT_LOCK_SAME_ID_WAIT_SECS` | `150` | How long to wait for a same-run-ID restart (e.g. a preempted container) to reclaim its own lock before refusing. Must be > 2 × heartbeat interval (120 s). |
+| `NANOCHAT_LOCK_SAME_ID_WAIT_SECS` | `150` | How long to wait for a same-run-ID restart (e.g. a preempted container) to reclaim its own lock before refusing. Must be > 2 × heartbeat interval (`NANOCHAT_LOCK_HB_INTERVAL`, default 60 s, so > 120 s). |
 | `NANOCHAT_ALLOW_UNCHECKED_LAUNCH` | unset | Launch without the concurrent-app guard (use when Modal CLI cannot list apps). |
 
 The runner sets the rest (`SKIP_SETUP`, `NANOCHAT_BASE_DIR`, `NANOCHAT_RUNCPU_*`, `NANOCHAT_POST_STAGE_HOOK`). You should not need to change them.
