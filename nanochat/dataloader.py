@@ -108,18 +108,24 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
         for tokens in token_lists:
             doc_buffer.append(tokens)
 
-    # Pre-allocate buffers once: layout is [inputs (B*T) | targets (B*T)]
-    # This gives us contiguous views and a single HtoD transfer
-    use_cuda = device == "cuda"
-    row_buffer = torch.empty((B, row_capacity), dtype=torch.long) # for building rows without creating Python lists
-    cpu_buffer = torch.empty(2 * B * T, dtype=torch.long, pin_memory=use_cuda) # staging area (CPU)
-    gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device=device) # on-device buffer
-    cpu_inputs = cpu_buffer[:B * T].view(B, T) # a few views into these buffers just for convenience
-    cpu_targets = cpu_buffer[B * T:].view(B, T)
-    inputs = gpu_buffer[:B * T].view(B, T)
-    targets = gpu_buffer[B * T:].view(B, T)
+    # Pre-allocate buffers once: pack directly into double-buffered pinned int32 [B, T+1]
+    # (~4x less HtoD PCIe traffic than int64 [2, B, T]); inputs stay int32 (matching chat_sft.py)
+    # and targets widen to int64 on-device into contiguous persistent buffers.
+    use_cuda = torch.device(device).type == "cuda"
+    cpu_slots = [torch.empty((B, row_capacity), dtype=torch.int32, pin_memory=use_cuda) for _ in range(2)]
+    slot_events = [torch.cuda.Event() if use_cuda else None for _ in range(2)]
+    slot_idx = 0
+    gpu_row = torch.empty((B, row_capacity), dtype=torch.int32, device=device)
+    inputs = torch.empty((B, T), dtype=torch.int32, device=device)
+    targets = torch.empty((B, T), dtype=torch.int64, device=device)
 
     while True:
+        s = slot_idx
+        slot_idx ^= 1
+        if slot_events[s] is not None:
+            slot_events[s].synchronize() # ensure previous async HtoD from this slot completed
+        row_buffer = cpu_slots[s]
+
         for row_idx in range(B):
             pos = 0
             while pos < row_capacity:
@@ -141,23 +147,23 @@ def tokenizing_distributed_data_loader_with_state_bos_bestfit(
                 if best_idx >= 0:
                     doc = doc_buffer.pop(best_idx)
                     doc_len = len(doc)
-                    row_buffer[row_idx, pos:pos + doc_len] = torch.tensor(doc, dtype=torch.long)
+                    row_buffer[row_idx, pos:pos + doc_len] = torch.tensor(doc, dtype=torch.int32)
                     pos += doc_len
                 else:
                     # No doc fits - crop shortest in buffer to fill remaining and minimize waste
                     shortest_idx = min(range(len(doc_buffer)), key=lambda i: len(doc_buffer[i]))
                     doc = doc_buffer.pop(shortest_idx)
-                    row_buffer[row_idx, pos:pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.long)
+                    row_buffer[row_idx, pos:pos + remaining] = torch.tensor(doc[:remaining], dtype=torch.int32)
                     pos += remaining
-
-        # Copy to pinned CPU buffer, then single HtoD transfer
-        cpu_inputs.copy_(row_buffer[:, :-1])
-        cpu_targets.copy_(row_buffer[:, 1:])
 
         state_dict = {"pq_idx": pq_idx, "rg_idx": rg_idx, "epoch": epoch}
 
-        # Single HtoD copy into persistent GPU buffer and yield
-        gpu_buffer.copy_(cpu_buffer, non_blocking=use_cuda)
+        # Single int32 HtoD transfer into persistent GPU buffer, then split on-device
+        gpu_row.copy_(row_buffer, non_blocking=use_cuda)
+        if slot_events[s] is not None:
+            slot_events[s].record()
+        inputs.copy_(gpu_row[:, :-1])
+        targets.copy_(gpu_row[:, 1:])
         yield inputs, targets, state_dict
 
 def tokenizing_distributed_data_loader_bos_bestfit(*args, **kwargs):
